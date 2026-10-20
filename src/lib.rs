@@ -1,11 +1,14 @@
+pub mod activities;
 pub mod auth;
 pub mod calendar;
 pub mod config;
 pub mod consultation;
 pub mod db;
+pub mod dto;
 pub mod error;
 pub mod imports;
 pub mod jobs;
+pub mod preferences;
 pub mod spotify;
 pub mod storage;
 pub mod web;

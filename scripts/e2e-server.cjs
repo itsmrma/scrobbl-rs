@@ -6,7 +6,7 @@ const dataDir = mkdtempSync(join(tmpdir(), "scrobbl-e2e-"));
 const cargo = existsSync(join(homedir(), ".cargo/bin/cargo"))
   ? join(homedir(), ".cargo/bin/cargo")
   : "cargo";
-const child = spawn(cargo, ["run", "--locked"], {
+const child = spawn(cargo, ["run", "--locked", "--bin", "scrobbl-rs"], {
   stdio: "inherit",
   env: {
     ...process.env,

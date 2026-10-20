@@ -123,13 +123,13 @@ pub fn parse_extended(bytes: &[u8]) -> Result<(Vec<Event>, IngestReport)> {
     }
     Ok((events, report))
 }
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 pub struct FileReport {
     pub filename: String,
     #[serde(flatten)]
     pub report: IngestReport,
 }
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 pub struct ImportResponse {
     pub files: Vec<FileReport>,
     pub total: IngestReport,

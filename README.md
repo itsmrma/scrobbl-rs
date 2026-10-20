@@ -27,8 +27,11 @@ The archive foundations require Rust 1.94 or later and a **new data directory** 
 the prototype. If `scrobbl.db` is present, startup stops without opening it. Set `SCROBBL_DATA_DIR`
 to a new directory and reimport there; see [archive foundations](docs/archive-foundations.md).
 
-The first build downloads dependencies and compiles bundled SQLite. Node.js is not required to run
-the application. Keep the terminal process running to collect listens; closing the browser does
+The committed React/TypeScript frontend is embedded in the Rust executable. To change it,
+install Node.js 24 and run `npm ci` then `npm run build` before compiling Rust; see
+[frontend development and contracts](docs/frontend.md). Node.js is not required to run
+the compiled application. The first Rust build downloads dependencies and compiles bundled SQLite.
+Keep the terminal process running to collect listens; closing the browser does
 not stop collection. Sleep, shutdown or stopping the process suspends collection. Press Ctrl+C
 to stop cleanly. Restart with the same command and data directory to resume.
 
@@ -48,8 +51,14 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
 - Dashboard totals and top five artists, albums and tracks, ordered by listens or listening time.
 - Calendar periods, rolling 7/30/365-day windows and custom date ranges on the dashboard.
 - Searchable, paginated listening history with date, duration and count-status filters.
-- English interface, responsive layout, light/dark/system appearance, Europe/Rome dates,
-  24-hour clock and Monday as the start of the week.
+- React shell with direct page routes, five-second toast notifications, saved activity reports,
+  and a collapsible, resizable sidebar that adapts to mobile.
+- Settings for instance name, default dashboard period, 12/24-hour clock, IANA time zone and
+  week start. Calendar changes explicitly apply to new acquisitions or the whole history.
+- Browser-specific light/dark/system theme and palette/custom HEX accent; locally bundled
+  Material Icons Outlined and image placeholders.
+- Connections separates saved/verified authorization, collection status and now playing,
+  including last attempt/success, zero-result syncs, action required and request limits.
 
 ## Data rules
 
@@ -58,7 +67,8 @@ pauses, seeking and offline records can make this approximate. API `played_at` i
 provided and treated as a start timestamp for reconciliation. All source timestamps and original
 record payloads are preserved separately, so this interpretation can be revised after live testing.
 Instants are stored as UTC milliseconds. Date filters use the calendar assigned at first acquisition
-(initially Europe/Rome), including daylight saving; the settings UI for calendar changes is upcoming.
+(initially Europe/Rome), including daylight saving. Settings → General can change the calendar
+for future acquisitions (including old listens first imported later), or recalculate the whole archive.
 Custom end dates include the whole local day. Rolling windows are elapsed 24-hour days.
 
 Imported music plays count in statistics at **30,000 ms or longer**. Shorter records are kept in
@@ -130,13 +140,15 @@ Optional browser checks require Node.js:
 
 ```sh
 npm ci
+npm run build
 npx playwright install chromium --only-shell
 npm run test:e2e
 ```
 
 Browser checks start an isolated instance on port 3211 with a temporary archive, exercise the real
 UI and capture desktop/mobile screenshots in `test-results/`. They do not contact Spotify or use
-personal credentials. `npm run format:web` formats the frontend and browser checks.
+personal credentials. `npm run format:web` formats frontend sources and browser checks.
+Rust tests verify the generated browser DTO declarations; CI also verifies embedded assets.
 
 ## Remaining verification and scope
 

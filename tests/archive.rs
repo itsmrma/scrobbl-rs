@@ -103,6 +103,339 @@ async fn sign_in(app: &Router) -> (String, String) {
 }
 
 #[tokio::test]
+async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes() {
+    let (dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, csrf) = sign_in(&app).await;
+    assert_eq!(
+        request(&app, "GET", "/api/v1/preferences", json!({}), None, None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (_, mut p, _) = request(
+        &app,
+        "GET",
+        "/api/v1/preferences",
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(p["timezone"], "Europe/Rome");
+    assert_eq!(p["initial_period"], "all");
+    let first = exported("2025-01-02T00:30:00Z", 180000);
+    let (events, _) = parse_extended(json!([first.clone()]).to_string().as_bytes()).unwrap();
+    save(&state, &events).await;
+    let old_calendar: String = sqlx::query_scalar("SELECT calendar_id FROM listens")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    p["name"] = json!("My archive");
+    p["timezone"] = json!("UTC");
+    p["week_start"] = json!(6);
+    p["hour_format"] = json!("12");
+    p["initial_period"] = json!("30d");
+    let body = json!({"preferences":p,"calendar_scope":null});
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/v1/preferences",
+            body.clone(),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/v1/preferences",
+            body,
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let (code, saved, _) = request(
+        &app,
+        "POST",
+        "/api/v1/preferences",
+        json!({"preferences":p,"calendar_scope":"future"}),
+        Some(&cookie),
+        Some(&csrf),
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(saved["preferences"]["name"], "My archive");
+    assert!(saved["job_id"].is_null());
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/v1/preferences",
+            json!({"preferences":p,"calendar_scope":"future"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let (events, _) = parse_extended(
+        json!([first, exported("2025-01-03T00:30:00Z", 180000)])
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    save(&state, &events).await;
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT calendar_id FROM listens ORDER BY played_at_ms LIMIT 1"
+        )
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap(),
+        old_calendar
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT calendar_id) FROM listens")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap(),
+        2
+    );
+    let originals: Vec<String> =
+        sqlx::query_scalar("SELECT raw_json FROM observation_variants ORDER BY id")
+            .fetch_all(&state.read_db)
+            .await
+            .unwrap();
+    let instants: Vec<i64> = sqlx::query_scalar("SELECT played_at_ms FROM listens ORDER BY id")
+        .fetch_all(&state.read_db)
+        .await
+        .unwrap();
+    p = saved["preferences"].clone();
+    p["timezone"] = json!("Asia/Tokyo");
+    let (_, queued, _) = request(
+        &app,
+        "POST",
+        "/api/v1/preferences",
+        json!({"preferences":p,"calendar_scope":"all"}),
+        Some(&cookie),
+        Some(&csrf),
+    )
+    .await;
+    let id = queued["job_id"].as_str().unwrap();
+    assert_eq!(queued["preferences"]["timezone"], "UTC");
+    let (_, activities, _) = request(
+        &app,
+        "GET",
+        "/api/v1/activities",
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(activities[0]["state"], "queued");
+    assert!(activities[0]["expected_rows"].is_null());
+    assert!(!activities.to_string().contains("parameters_json"));
+    state.storage.close().await;
+    let resumed = AppState::new(db::open(dir.path()).await.unwrap(), state.config.clone());
+    let resumed_app = web::router(resumed.clone());
+    let (_, persisted, _) = request(
+        &resumed_app,
+        "GET",
+        "/api/v1/preferences",
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(persisted["name"], "My archive");
+    assert_eq!(persisted["hour_format"], "12");
+    let lease = resumed.storage.claim("calendar").await.unwrap().unwrap();
+    assert_eq!(lease.id, id);
+    assert!(resumed.storage.calendar_step(&lease).await.unwrap());
+    let (_, effective, _) = request(
+        &resumed_app,
+        "GET",
+        "/api/v1/preferences",
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(effective["timezone"], "Asia/Tokyo");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT calendar_id) FROM listens")
+            .fetch_one(&resumed.read_db)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        originals,
+        sqlx::query_scalar::<_, String>("SELECT raw_json FROM observation_variants ORDER BY id")
+            .fetch_all(&resumed.read_db)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        instants,
+        sqlx::query_scalar::<_, i64>("SELECT played_at_ms FROM listens ORDER BY id")
+            .fetch_all(&resumed.read_db)
+            .await
+            .unwrap()
+    );
+    let (_, detail, _) = request(
+        &resumed_app,
+        "GET",
+        &format!("/api/v1/activities/{id}"),
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(detail["activity"]["state"], "completed");
+    assert_eq!(detail["activity"]["processed"], 2);
+    resumed.storage.close().await;
+}
+
+#[tokio::test]
+async fn preferences_validation_maintenance_and_activity_controls_are_guarded() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, csrf) = sign_in(&app).await;
+    let (_, p, _) = request(
+        &app,
+        "GET",
+        "/api/v1/preferences",
+        json!({}),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    for (key, value) in [
+        ("name", json!(" ")),
+        ("timezone", json!("invalid/zone")),
+        ("week_start", json!(7)),
+        ("hour_format", json!("25")),
+        ("initial_period", json!("anything")),
+    ] {
+        let mut invalid = p.clone();
+        invalid[key] = value;
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                "/api/v1/preferences",
+                json!({"preferences":invalid,"calendar_scope":"all"}),
+                Some(&cookie),
+                Some(&csrf)
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let id = state
+        .storage
+        .change_calendar("UTC", 0, true)
+        .await
+        .unwrap()
+        .unwrap();
+    let path = format!("/api/v1/activities/{id}");
+    assert_eq!(
+        request(&app, "GET", &path, json!({}), None, None).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &path,
+            json!({"action":"cancel"}),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &path,
+            json!({"action":"cancel"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &path,
+            json!({"action":"retry"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(state.storage.job(&id).await.unwrap().state, "queued");
+    state.storage.cancel(&id).await.unwrap();
+    let newer = state
+        .storage
+        .change_calendar("Asia/Tokyo", 0, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &path,
+            json!({"action":"retry"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    state.storage.cancel(&newer).await.unwrap();
+    state.storage.maintenance(true).await.unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/v1/preferences",
+            json!({"preferences":p,"calendar_scope":null}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    state.storage.close().await;
+}
+
+#[tokio::test]
 async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
     let (_dir, state) = state().await;
     let input = json!([exported("2025-06-01T12:03:00Z",180000),exported("2025-06-01T12:04:00Z",10000),{"ts":"2025-06-01T12:05:00Z","ms_played":10000,"spotify_episode_uri":"spotify:episode:abc"},exported("bad date",12000)]);

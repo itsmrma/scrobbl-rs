@@ -62,34 +62,90 @@ async fn diagnostic(state: &AppState, key: &str, value: &str) -> Result<()> {
     let mut conn = state.db.acquire().await?;
     db::set_setting(&mut conn, key, value).await
 }
-pub async fn status(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
+pub async fn status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<crate::dto::SpotifyStatus>> {
     auth::session(&state, &headers).await?;
     let configured = credentials(&state).await?.is_some();
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
         .await?;
-    let review_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
-        .fetch_one(&state.db)
-        .await?;
+    let mut view = state.storage.read_view().await?;
+    let conn = &mut *view.transaction;
+    async fn setting(conn: &mut sqlx::SqliteConnection, key: &str) -> Result<Option<String>> {
+        Ok(
+            sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
+                .bind(key)
+                .fetch_optional(conn)
+                .await?
+                .filter(|v| !v.is_empty()),
+        )
+    }
+    async fn timestamp(conn: &mut sqlx::SqliteConnection, key: &str) -> Result<Option<i64>> {
+        Ok(setting(conn, key).await?.and_then(|v| v.parse().ok()))
+    }
+    let verified_at_ms = timestamp(conn, "spotify_verified_at_ms").await?;
+    let retry_at_ms = timestamp(conn, "retry_at_ms").await?;
+    let required = setting(conn, "spotify_action_required").await?;
+    let last_error = setting(conn, "spotify_error").await?;
+    let collection_error = setting(conn, "collection_error").await?;
+    let connection = if !connected {
+        "disconnected"
+    } else if required.is_some() {
+        "action_required"
+    } else if verified_at_ms.is_some() {
+        "verified"
+    } else {
+        "unverified"
+    };
+    let collection = if !connected {
+        "paused"
+    } else if retry_at_ms.is_some_and(|v| v > auth::now_ms()) {
+        "waiting"
+    } else if required.is_some() || collection_error.is_some() {
+        "error"
+    } else {
+        "active"
+    };
     let jobs = sqlx::query(
-        "SELECT filename, created_at_ms, report_json FROM import_jobs ORDER BY id DESC LIMIT 10",
+        "SELECT filename,created_at_ms,report_json FROM import_jobs ORDER BY id DESC LIMIT 10",
     )
-    .fetch_all(&state.db)
+    .fetch_all(&mut *conn)
     .await?;
-    let jobs: Vec<_> = jobs.into_iter().map(|r| json!({"filename":r.get::<String,_>("filename"),"created_at_ms":r.get::<i64,_>("created_at_ms"),"report":serde_json::from_str::<Value>(&r.get::<String,_>("report_json")).unwrap_or(Value::Null)})).collect();
-    let cache = state.spotify.cache.lock().await;
-    let now_playing = cache
-        .as_ref()
-        .filter(|(at, _)| auth::now_ms() - at < 120_000)
-        .map(|(_, v)| v.clone());
-    drop(cache);
-    Ok(Json(
-        json!({"configured":configured,"connected":connected,"credentials_from_env":state.config.env_client_id.is_some(),"redirect_uri":state.config.redirect_uri(),"sync_seconds":state.config.sync_seconds,"now_playing_seconds":state.config.now_playing_seconds,
-        "last_sync_ms":db::setting(&state.db,"last_sync_ms").await?.and_then(|v|v.parse::<i64>().ok()),
-        "last_error":db::setting(&state.db,"spotify_error").await?,"coverage_warning":db::setting(&state.db,"coverage_warning").await?,
-        "retry_at_ms":db::setting(&state.db,"retry_at_ms").await?.and_then(|v|v.parse::<i64>().ok()),
-        "now_playing":now_playing,"imports":jobs,"review_count":review_count}),
-    ))
+    let imports = jobs
+        .into_iter()
+        .map(|r| {
+            Ok(crate::dto::ImportJob {
+                filename: r.get("filename"),
+                created_at_ms: r.get("created_at_ms"),
+                report: serde_json::from_str(&r.get::<String, _>("report_json"))
+                    .map_err(|_| AppError::Internal)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Json(crate::dto::SpotifyStatus {
+        configured,
+        connected,
+        credentials_from_env: state.config.env_client_id.is_some(),
+        redirect_uri: state.config.redirect_uri(),
+        sync_seconds: state.config.sync_seconds,
+        now_playing_seconds: state.config.now_playing_seconds,
+        connection: connection.into(),
+        collection: collection.into(),
+        last_attempt_ms: timestamp(conn, "last_attempt_ms").await?,
+        last_sync_ms: timestamp(conn, "last_sync_ms").await?,
+        last_added: timestamp(conn, "last_sync_added").await?,
+        verified_at_ms,
+        last_error: collection_error.or(last_error),
+        now_playing_error: setting(conn, "now_playing_error").await?,
+        coverage_warning: setting(conn, "coverage_warning").await?,
+        retry_at_ms,
+        imports,
+        review_count: sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
+            .fetch_one(&mut *conn)
+            .await?,
+    }))
 }
 #[derive(Deserialize)]
 pub struct Credentials {
@@ -280,6 +336,9 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
             "Spotify request limit reached. Retrying in {wait} seconds."
         )));
     }
+    if matches!(status.as_u16(), 400 | 401 | 403) {
+        diagnostic(state, "spotify_action_required", "true").await?;
+    }
     if !status.is_success() {
         // Never return upstream payloads: they can include credentials, tokens or URLs.
         let message = match status.as_u16() {
@@ -373,7 +432,10 @@ async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Res
                 AppError::Spotify("Could not reach Spotify. Collection will retry.".into())
             })?;
     }
-    checked_json(state, response).await
+    let value = checked_json(state, response).await?;
+    diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
+    diagnostic(state, "spotify_action_required", "").await?;
+    Ok(value)
 }
 pub fn parse_track(row: &Value) -> Result<Track> {
     let id = row
@@ -440,7 +502,12 @@ pub fn parse_track(row: &Value) -> Result<Track> {
 }
 pub async fn sync(state: &AppState) -> Result<Value> {
     let _gate = state.spotify.gate.lock().await;
-    sync_locked(state).await
+    diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
+    let result = sync_locked(state).await;
+    if let Err(ref error) = result {
+        diagnostic(state, "collection_error", &error.to_string()).await?;
+    }
+    result
 }
 async fn sync_locked(state: &AppState) -> Result<Value> {
     let previous = db::setting(&state.db, "recent_cursor_ms")
@@ -515,6 +582,8 @@ async fn sync_locked(state: &AppState) -> Result<Value> {
     }
     db::set_setting(&mut tx, "last_sync_ms", &auth::now_ms().to_string()).await?;
     db::set_setting(&mut tx, "spotify_error", "").await?;
+    db::set_setting(&mut tx, "collection_error", "").await?;
+    db::set_setting(&mut tx, "last_sync_added", &report.added.to_string()).await?;
     if let Some(warning) = warning {
         db::set_setting(&mut tx, "coverage_warning", warning).await?;
     }
@@ -557,7 +626,7 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let row = match result {
         Ok(row) => row,
         Err(e) => {
-            diagnostic(&state, "spotify_error", &e.to_string()).await?;
+            diagnostic(&state, "now_playing_error", &e.to_string()).await?;
             return Err(e);
         }
     };
@@ -571,6 +640,7 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     } else {
         Value::Null
     };
+    diagnostic(&state, "now_playing_error", "").await?;
     *state.spotify.cache.lock().await = Some((auth::now_ms(), value.clone()));
     Ok(Json(value))
 }
@@ -704,6 +774,118 @@ mod tests {
     }
     fn track() -> Value {
         json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Test track","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"Artist"}]})
+    }
+    async fn owner_headers(state: &AppState) -> HeaderMap {
+        let cookie = auth::random_secret();
+        sqlx::query("INSERT INTO sessions(digest,csrf,expires_at_ms) VALUES (?,'csrf',?)")
+            .bind(auth::digest(&cookie))
+            .bind(auth::now_ms() + 60000)
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            HeaderValue::from_str(&format!("scrobbl_session={cookie}")).unwrap(),
+        );
+        headers
+    }
+    #[tokio::test]
+    async fn status_distinguishes_saved_authorization_collection_and_now_playing_errors() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":[]})),
+                Reply {
+                    path: "/v1/me/player/currently-playing",
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    body: json!({"token":"secret-never-returned"}),
+                    retry: None,
+                },
+            ],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        let before = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(before.connection, "unverified");
+        assert!(before.last_sync_ms.is_none());
+        sync(&state).await.unwrap();
+        let collected = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(collected.connection, "verified");
+        assert_eq!(collected.collection, "active");
+        assert_eq!(collected.last_added, Some(0));
+        assert!(collected.last_attempt_ms.is_some());
+        assert!(collected.verified_at_ms.is_some());
+        assert!(
+            now_playing(State(state.clone()), headers.clone())
+                .await
+                .is_err()
+        );
+        let after = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(after.collection, "active");
+        assert_eq!(after.last_sync_ms, collected.last_sync_ms);
+        assert!(after.last_error.is_none());
+        assert!(after.now_playing_error.is_some());
+        assert!(
+            !serde_json::to_string(&after)
+                .unwrap()
+                .contains("secret-never-returned")
+        );
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn status_requires_action_after_rejected_refresh_and_keeps_rate_limit_visible() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![Reply {
+                path: "/api/token",
+                status: StatusCode::BAD_REQUEST,
+                body: json!({"token":"secret-never-returned"}),
+                retry: None,
+            }],
+            true,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        assert!(sync(&state).await.is_err());
+        let rejected = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(rejected.connection, "action_required");
+        assert_eq!(rejected.collection, "error");
+        assert!(rejected.last_error.is_some());
+        assert!(
+            !serde_json::to_string(&rejected)
+                .unwrap()
+                .contains("secret-never-returned")
+        );
+        handle.abort();
+        state.storage.close().await;
+        let (_dir, state, _mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/recently-played",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({}),
+                retry: Some("60"),
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        assert!(sync(&state).await.is_err());
+        let limited = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(limited.collection, "waiting");
+        assert!(limited.retry_at_ms.unwrap() > auth::now_ms());
+        assert!(limited.last_sync_ms.is_none());
+        handle.abort();
+        state.storage.close().await;
     }
     fn item(at: i64) -> Value {
         json!({"track":track(),"played_at":DateTime::from_timestamp_millis(at).unwrap().to_rfc3339()})

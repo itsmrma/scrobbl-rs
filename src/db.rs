@@ -5,7 +5,7 @@ use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use crate::storage::open;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 pub struct Artist {
     pub id: String,
     pub name: String,
@@ -33,7 +33,7 @@ pub struct Event {
     pub track: Track,
     pub raw: Value,
 }
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
 pub enum DurationKind {
     Actual,
@@ -49,7 +49,7 @@ impl DurationKind {
         }
     }
 }
-#[derive(Debug, Default, Serialize, Deserialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, ts_rs::TS)]
 #[serde(default)]
 pub struct IngestReport {
     pub originals: u64,

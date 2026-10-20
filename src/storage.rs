@@ -266,7 +266,7 @@ pub async fn recover_access(archive: &SqlitePool, private: &SqlitePool) -> anyho
         .fetch_all(private)
         .await?
     {
-        sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms')")
+        sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','collection_error','now_playing_error','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')")
             .execute(archive)
             .await?;
         sqlx::query("UPDATE access_operations SET completed=1 WHERE id=?")
