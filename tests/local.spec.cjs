@@ -1,0 +1,143 @@
+const { test, expect } = require("@playwright/test");
+const rows = [
+  {
+    ts: "2025-06-01T12:03:00Z",
+    ms_played: 180000,
+    master_metadata_track_name: "First song",
+    master_metadata_album_artist_name: "Favourite artist",
+    master_metadata_album_album_name: "First album",
+    spotify_track_uri: "spotify:track:0000000000000000000001",
+  },
+  {
+    ts: "2025-06-01T12:06:00Z",
+    ms_played: 180000,
+    master_metadata_track_name: "Second song",
+    master_metadata_album_artist_name: "Another artist",
+    master_metadata_album_album_name: "Second album",
+    spotify_track_uri: "spotify:track:0000000000000000000002",
+  },
+  {
+    ts: "2025-06-01T12:07:00Z",
+    ms_played: 10000,
+    master_metadata_track_name: "Short song",
+    master_metadata_album_artist_name: "Favourite artist",
+    master_metadata_album_album_name: "First album",
+    spotify_track_uri: "spotify:track:0000000000000000000003",
+  },
+  {
+    ts: "2025-06-01T12:08:00Z",
+    ms_played: 30000,
+    master_metadata_track_name: "<script>window.bad=1</script>",
+    master_metadata_album_artist_name: "Earth, Wind & Fire",
+    master_metadata_album_album_name: "Special album",
+    spotify_track_uri: "spotify:track:0000000000000000000004",
+  },
+];
+test("owner setup, private history, imports, search, preferences and Spotify configuration", async ({
+  page,
+  request,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const anon = await request.get("/api/history");
+  expect(anon.status()).toBe(401);
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Make this space yours" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("a local browser test password");
+  await page
+    .getByLabel("Confirm password")
+    .fill("a local browser test password");
+  await page.getByRole("button", { name: "Create your archive" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Your listening, at a glance." }),
+  ).toBeVisible();
+  await expect(page.locator("#total-listens")).toHaveText("0");
+  await page.getByRole("link", { name: "Import history", exact: true }).click();
+  await page.locator("#import-files").setInputFiles({
+    name: "Streaming_History_Audio_test.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(rows)),
+  });
+  await page.getByRole("button", { name: "Import listening history" }).click();
+  await expect(page.locator("#import-result")).toContainText("4 added");
+  await expect(page.locator("#import-result")).toContainText("0 invalid");
+  await page.getByRole("button", { name: "Import listening history" }).click();
+  await expect(page.locator("#import-result")).toContainText(
+    "4 already present",
+  );
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.locator("#total-listens")).toHaveText("3");
+  await expect(page.locator("#total-tracks")).toHaveText("3");
+  await expect(page.locator("#total-time")).toHaveText("6m");
+  expect(await page.evaluate(() => window.bad)).toBeUndefined();
+  await page.screenshot({
+    path: "test-results/dashboard-desktop.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("link", { name: "Listening history", exact: true })
+    .click();
+  await expect(page.locator("#history-total")).toHaveText("4 records");
+  await page.locator("#history-status").selectOption("short");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page.locator("#history-total")).toHaveText("1 records");
+  await expect(page.locator("#history-list")).toContainText("Short song");
+  await page.getByRole("button", { name: "Reset", exact: true }).click();
+  await page.locator("#history-q").fill("Earth, Wind & Fire");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page.locator("#history-list")).toContainText(
+    "<script>window.bad=1</script>",
+  );
+  expect(await page.evaluate(() => window.bad)).toBeUndefined();
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.locator("#redirect-uri")).toHaveText(
+    "http://127.0.0.1:3211/auth/spotify/callback",
+  );
+  await page
+    .getByLabel("Client ID", { exact: true })
+    .fill("testclient1234567890");
+  await page
+    .getByLabel("Client Secret", { exact: true })
+    .fill("testsecret1234567890");
+  await page.getByRole("button", { name: "Save Spotify app" }).click();
+  await expect(page.locator("#connection-badge")).toHaveText(
+    "Ready to connect",
+  );
+  await expect(page.getByLabel("Client Secret", { exact: true })).toHaveValue(
+    "",
+  );
+  const status = await page.evaluate(() =>
+    fetch("/api/spotify/status").then((r) => r.json()),
+  );
+  expect(JSON.stringify(status)).not.toContain("testsecret");
+  await page.locator("#theme").selectOption("light");
+  await page.reload();
+  await expect(page.locator("html")).toHaveClass(/theme-light/);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator("#total-listens")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/dashboard-mobile.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("a local browser test password");
+  await page.getByRole("button", { name: /^Sign in/ }).click();
+  await expect(page.locator("#total-listens")).toHaveText("3");
+  expect(errors).toEqual([]);
+});

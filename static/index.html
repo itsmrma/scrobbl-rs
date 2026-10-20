@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>scrobbl.rs — Your listening archive</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div id="auth-view" class="auth-layout" hidden>
+      <div class="auth-story">
+        <a class="brand" href="/"
+          ><img src="/favicon.svg" alt="" width="34" height="34" />scrobbl<span
+            >.rs</span
+          ></a
+        >
+        <p class="eyebrow">YOUR MUSIC, REMEMBERED.</p>
+        <h1>A little archive.<br />A lifetime of listening.</h1>
+        <p>
+          Your favourite songs, the late-night repeats, the artists you keep
+          coming back to. All in one place, on your own computer.
+        </p>
+        <div class="sound-wave" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i
+          ><i></i><i></i>
+        </div>
+        <span class="local-label">● Private by default · Stored locally</span>
+      </div>
+      <main class="auth-card">
+        <p class="eyebrow">SCROBBL.RS</p>
+        <h2 id="auth-title">Welcome back</h2>
+        <p id="auth-help">Sign in to your listening archive.</p>
+        <form id="auth-form">
+          <label for="password">Password</label
+          ><input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            maxlength="1024"
+            required
+          />
+          <div id="confirm-wrap" hidden>
+            <label for="confirm-password">Confirm password</label
+            ><input
+              id="confirm-password"
+              type="password"
+              autocomplete="new-password"
+              maxlength="1024"
+            />
+          </div>
+          <p id="auth-error" class="form-error" role="alert"></p>
+          <button type="submit" class="primary" id="auth-submit">
+            Sign in <span aria-hidden="true">↗</span>
+          </button>
+        </form>
+        <p class="subtle">
+          A personal space for your music.<br />No shared account. No cloud
+          database.
+        </p>
+      </main>
+    </div>
+    <div id="app-view" class="app-layout" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="#dashboard"
+          ><img src="/favicon.svg" alt="" width="30" height="30" />scrobbl<span
+            >.rs</span
+          ></a
+        ><span class="sidebar-label">YOUR LIBRARY</span>
+        <nav aria-label="Main navigation">
+          <a href="#dashboard" data-page="dashboard"
+            ><span aria-hidden="true">◫</span> Overview</a
+          ><a href="#history" data-page="history"
+            ><span aria-hidden="true">◷</span> Listening history</a
+          ><a href="#import" data-page="import"
+            ><span aria-hidden="true">↥</span> Import history</a
+          ><a href="#settings" data-page="settings"
+            ><span aria-hidden="true">⚙</span> Settings</a
+          >
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="instance">
+            <span class="status-dot"></span>
+            <div>Personal instance<small>Local · Europe/Rome</small></div>
+          </div>
+          <label class="theme-label" for="theme"
+            >Appearance<select id="theme">
+              <option value="auto">System</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select></label
+          ><button id="logout" class="quiet">Sign out ↗</button>
+        </div>
+      </aside>
+      <main class="main">
+        <header class="topbar">
+          <span id="breadcrumb">Your library / Overview</span
+          ><span class="private-badge">● Your private archive</span>
+        </header>
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section id="page-dashboard" class="page" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">THE SOUNDTRACK TO YOUR DAYS</p>
+              <h1>Your listening, at a glance<span class="accent">.</span></h1>
+              <p>A few familiar favourites. A few new discoveries.</p>
+            </div>
+            <a href="#import" class="button secondary">↥ Import history</a>
+          </div>
+          <div class="toolbar">
+            <label for="period"
+              >Show<select id="period">
+                <option value="today">Today</option>
+                <option value="week">This week</option>
+                <option value="month">This month</option>
+                <option value="year">This year</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+                <option value="365d">Last 365 days</option>
+                <option value="all" selected>All time</option>
+                <option value="custom">Custom range</option>
+              </select></label
+            >
+            <div id="dashboard-dates" class="date-range" hidden>
+              <label>From<input type="date" id="dashboard-from" /></label
+              ><label>To<input type="date" id="dashboard-to" /></label
+              ><button id="apply-period" class="secondary">Apply</button>
+            </div>
+            <label class="toolbar-end" for="ranking-sort"
+              >Rank by<select id="ranking-sort">
+                <option value="plays">Listen count</option>
+                <option value="time">Listening time</option>
+              </select></label
+            >
+          </div>
+          <div class="overview-grid">
+            <div class="stats-grid">
+              <article class="stat-card">
+                <p>Total listens <span aria-hidden="true">↗</span></p>
+                <strong id="total-listens">—</strong
+                ><small>Music worth coming back to</small>
+              </article>
+              <article class="stat-card">
+                <p>Listening time <span aria-hidden="true">◷</span></p>
+                <strong id="total-time">—</strong
+                ><small id="duration-detail"
+                  >Actual and estimated durations</small
+                >
+              </article>
+              <article class="stat-card">
+                <p>Unique tracks <span aria-hidden="true">♫</span></p>
+                <strong id="total-tracks">—</strong
+                ><small>A collection of your own</small>
+              </article>
+            </div>
+            <article class="now-card">
+              <div class="now-label">
+                <span class="status-dot"></span
+                ><span id="now-label">NOT PLAYING</span>
+              </div>
+              <div id="now-content">
+                <div class="cover large placeholder" aria-hidden="true">♫</div>
+                <div>
+                  <h3>Your next favourite awaits</h3>
+                  <p>Connect Spotify to see what’s playing.</p>
+                </div>
+              </div>
+              <small id="now-footer">Live while this page is open</small>
+            </article>
+          </div>
+          <div class="section-heading">
+            <h2>On repeat</h2>
+            <span>Your top five, for the selected period</span>
+          </div>
+          <div class="rankings-grid">
+            <article class="panel">
+              <div class="panel-title">
+                <h3>Top artists</h3>
+                <span>01—05</span>
+              </div>
+              <ol id="top-artists" class="ranking-list"></ol>
+            </article>
+            <article class="panel">
+              <div class="panel-title">
+                <h3>Top albums</h3>
+                <span>01—05</span>
+              </div>
+              <ol id="top-albums" class="ranking-list"></ol>
+            </article>
+            <article class="panel">
+              <div class="panel-title">
+                <h3>Top tracks</h3>
+                <span>01—05</span>
+              </div>
+              <ol id="top-tracks" class="ranking-list"></ol>
+            </article>
+          </div>
+          <div class="section-heading">
+            <h2>Recently in your headphones</h2>
+            <a href="#history">View history ↗</a>
+          </div>
+          <div id="recent-list" class="panel"></div>
+          <p class="footnote">
+            Statistics exclude imported listens under 30 seconds. Each credited
+            artist receives one full listen. Listening time includes clearly
+            labelled estimates.
+          </p>
+        </section>
+        <section id="page-history" class="page" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">EVERY PLAY HAS A PLACE</p>
+              <h1>Listening history<span class="accent">.</span></h1>
+              <p>
+                A searchable record of your music, including the short listens.
+              </p>
+            </div>
+            <span id="history-total" class="pill"></span>
+          </div>
+          <form id="history-filters" class="history-filters">
+            <label class="search-label"
+              >Search<input
+                id="history-q"
+                type="search"
+                placeholder="Track, artist or album"
+                maxlength="500" /></label
+            ><label>From<input id="history-from" type="date" /></label
+            ><label>To<input id="history-to" type="date" /></label
+            ><label
+              >Show<select id="history-status">
+                <option value="all">All records</option>
+                <option value="counted">Counted listens</option>
+                <option value="short">Under 30 seconds</option>
+                <option value="review">Possible duplicates</option>
+                <option value="actual">Actual duration</option>
+                <option value="estimated">Estimated / unknown</option>
+              </select></label
+            ><button type="submit" class="secondary">Search</button
+            ><button type="reset" class="quiet">Reset</button>
+          </form>
+          <div id="history-list" class="panel"></div>
+          <div class="pagination">
+            <button id="prev-page" class="secondary">← Previous</button
+            ><span id="page-number"></span
+            ><button id="next-page" class="secondary">Next →</button>
+          </div>
+          <p class="footnote">
+            Dates use Europe/Rome and the 24-hour clock. Import start times are
+            inferred from the end timestamp and time played; pauses can make
+            this approximate.
+          </p>
+        </section>
+        <section id="page-import" class="page" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">BRING YOUR MUSIC WITH YOU</p>
+              <h1>Your history starts here<span class="accent">.</span></h1>
+              <p>
+                Give your archive a past. Spotify will take care of what comes
+                next.
+              </p>
+            </div>
+          </div>
+          <div class="two-column">
+            <article class="panel padded">
+              <span class="step">01 / GET YOUR DATA</span>
+              <h2>Ask Spotify for your extended history</h2>
+              <p>
+                Open your Spotify privacy settings and request
+                <strong>Extended streaming history</strong>. The standard
+                account export is a different format.
+              </p>
+              <a
+                class="button secondary"
+                href="https://www.spotify.com/account/privacy/"
+                target="_blank"
+                rel="noreferrer"
+                >Spotify privacy settings ↗</a
+              >
+              <hr />
+              <span class="step">02 / IMPORT YOUR FILES</span>
+              <h2>Pick your history JSON files</h2>
+              <p>
+                Unzip the download first. Select one or more music history
+                files, usually named
+                <code>Streaming_History_Audio_*.json</code>. Up to 64 MiB per
+                upload.
+              </p>
+              <form id="import-form">
+                <label class="upload-zone" for="import-files"
+                  ><span class="upload-icon" aria-hidden="true">↥</span
+                  ><strong>Choose Spotify JSON files</strong
+                  ><span>Your files stay on this computer</span
+                  ><input
+                    type="file"
+                    id="import-files"
+                    name="files"
+                    accept=".json,application/json"
+                    multiple
+                    required /></label
+                ><button class="primary" type="submit" id="import-submit">
+                  Import listening history ↗
+                </button>
+              </form>
+              <div id="import-result" role="status" hidden></div>
+            </article>
+            <aside class="panel padded info-panel">
+              <h3>A little care for your data</h3>
+              <p>
+                Repeat imports are safe. Records already in your archive are
+                skipped.
+              </p>
+              <p>
+                Confident matches with Spotify collection become one listen. The
+                imported duration replaces the estimate. Ambiguous matches stay
+                separate.
+              </p>
+              <p>
+                Short listens are kept in history. Only imported plays lasting
+                at least 30 seconds count in statistics.
+              </p>
+              <p>
+                Only music is imported. Podcast and audiobook records are
+                skipped. Invalid rows are reported.
+              </p>
+              <p>
+                Imports commit one file at a time. If a later file fails,
+                earlier files remain saved and you can safely retry the upload.
+              </p>
+            </aside>
+          </div>
+        </section>
+        <section id="page-settings" class="page" hidden>
+          <div class="page-heading">
+            <div>
+              <p class="eyebrow">MAKE YOURSELF AT HOME</p>
+              <h1>Settings & connections<span class="accent">.</span></h1>
+              <p>Your Spotify connection and the health of your archive.</p>
+            </div>
+          </div>
+          <div class="two-column">
+            <div>
+              <article class="panel padded">
+                <div class="panel-title">
+                  <h2>Spotify</h2>
+                  <span id="connection-badge" class="pill">Not connected</span>
+                </div>
+                <p>
+                  Collection runs in the background while scrobbl.rs is running,
+                  even when this page is closed.
+                </p>
+                <details id="spotify-guide" open>
+                  <summary>Create your Spotify app</summary>
+                  <ol class="instructions">
+                    <li>
+                      Open the
+                      <a
+                        href="https://developer.spotify.com/dashboard"
+                        target="_blank"
+                        rel="noreferrer"
+                        >Spotify Developer Dashboard ↗</a
+                      >
+                      with your Premium account.
+                    </li>
+                    <li>
+                      Create an app named <strong>scrobbl.rs</strong>, with a
+                      description such as “My personal listening archive”.
+                      Select <strong>Web API</strong> if asked.
+                    </li>
+                    <li>
+                      Add this exact redirect URI in the app settings:<code
+                        id="redirect-uri"
+                        class="copy-value"
+                      ></code
+                      ><button type="button" id="copy-redirect" class="quiet">
+                        Copy redirect URI
+                      </button>
+                    </li>
+                    <li>
+                      Save the app. If needed, add your listening account under
+                      <strong>Users Management</strong>.
+                    </li>
+                    <li>
+                      Copy the Client ID and Client Secret from the app settings
+                      into the form below. Then choose
+                      <strong>Connect Spotify</strong> and grant access.
+                    </li>
+                  </ol>
+                </details>
+                <form id="credentials-form">
+                  <label for="client-id">Client ID</label
+                  ><input
+                    id="client-id"
+                    autocomplete="off"
+                    maxlength="256"
+                    required
+                  /><label for="client-secret">Client Secret</label
+                  ><input
+                    id="client-secret"
+                    type="password"
+                    autocomplete="off"
+                    maxlength="256"
+                    required
+                  />
+                  <p class="subtle">
+                    Stored locally. Credentials are never returned to the
+                    browser after saving.
+                  </p>
+                  <button type="submit" class="secondary" id="save-credentials">
+                    Save Spotify app
+                  </button>
+                </form>
+                <div class="connection-actions">
+                  <button id="connect-spotify" class="primary">
+                    Connect Spotify ↗</button
+                  ><button id="sync-spotify" class="secondary">Sync now</button
+                  ><button id="disconnect-spotify" class="quiet danger">
+                    Disconnect
+                  </button>
+                </div>
+                <p class="subtle">
+                  Disconnect removes the local authorization. You can also
+                  revoke access in your Spotify account’s Apps settings. Your
+                  listening archive is kept.
+                </p>
+              </article>
+              <article class="panel padded settings-note">
+                <h3>Local preferences</h3>
+                <p>Europe/Rome · 24-hour clock · Week starts Monday</p>
+                <p class="subtle">
+                  The service listens only on 127.0.0.1. The archive and
+                  credentials are stored in the local data directory.
+                </p>
+              </article>
+            </div>
+            <aside>
+              <article class="panel padded">
+                <span class="step">COLLECTION STATUS</span>
+                <h3>Keeping your archive in tune</h3>
+                <dl class="diagnostics">
+                  <dt>Last successful sync</dt>
+                  <dd id="last-sync">Never</dd>
+                  <dt>Collection interval</dt>
+                  <dd id="sync-interval">—</dd>
+                  <dt>Next allowed Spotify request</dt>
+                  <dd id="retry-at">No restriction</dd>
+                </dl>
+                <p id="spotify-error" class="form-error"></p>
+                <p id="coverage-warning" class="warning"></p>
+                <p id="reconciliation-warning" class="warning"></p>
+                <p class="subtle">
+                  Spotify returns a limited recent history. Extended-history
+                  imports reconstruct the past and can repair gaps.
+                </p>
+              </article>
+              <article class="panel padded import-log">
+                <h3>Recent imports</h3>
+                <div id="import-jobs"></div>
+              </article>
+            </aside>
+          </div>
+        </section>
+        <footer>scrobbl.rs <span>Made for the music you keep.</span></footer>
+      </main>
+    </div>
+    <div id="loading" class="loading">Opening your archive…</div>
+  </body>
+</html>

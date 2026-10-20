@@ -1,0 +1,514 @@
+use axum::{
+    Router,
+    body::Body,
+    http::{Request, StatusCode},
+};
+use chrono::{TimeZone, Utc};
+use http_body_util::BodyExt;
+use scrobbl_rs::{
+    AppState, auth,
+    config::Config,
+    db::{self, Artist, Event},
+    imports::parse_extended,
+    spotify::parse_track,
+    web,
+};
+use serde_json::{Value, json};
+use tower::ServiceExt;
+
+const URI: &str = "spotify:track:0000000000000000000001";
+fn exported(end: &str, ms: i64) -> Value {
+    json!({"ts":end,"ms_played":ms,"master_metadata_track_name":"A song","master_metadata_album_artist_name":"First artist","master_metadata_album_album_name":"An album","spotify_track_uri":URI,"spotify_episode_uri":null})
+}
+fn recent(at: i64) -> Event {
+    let row = json!({"uri":URI,"type":"track","name":"A song","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"First artist"},{"id":"artist2","name":"Second artist"}]});
+    let track = parse_track(&row).unwrap();
+    Event {
+        source: "spotify_api",
+        source_key: format!("{URI}:{at}"),
+        source_timestamp_ms: at,
+        played_at_ms: at,
+        listened_ms: track.duration_ms,
+        track,
+        raw: row,
+    }
+}
+async fn state() -> (tempfile::TempDir, AppState) {
+    let dir = tempfile::tempdir().unwrap();
+    let pool = db::open(dir.path()).await.unwrap();
+    let config = Config {
+        port: 3210,
+        data_dir: dir.path().to_owned(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    (dir, AppState::new(pool, config))
+}
+async fn save(state: &AppState, events: &[Event]) -> db::IngestReport {
+    let mut tx = state.db.begin().await.unwrap();
+    let report = db::ingest(&mut tx, events).await.unwrap();
+    tx.commit().await.unwrap();
+    report
+}
+async fn request(
+    app: &Router,
+    method: &str,
+    path: &str,
+    body: Value,
+    cookie: Option<&str>,
+    csrf: Option<&str>,
+) -> (StatusCode, Value, Option<String>) {
+    let mut r = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "127.0.0.1:3210")
+        .header("origin", "http://127.0.0.1:3210")
+        .header("content-type", "application/json");
+    if let Some(c) = cookie {
+        r = r.header("cookie", c);
+    }
+    if let Some(c) = csrf {
+        r = r.header("x-csrf-token", c);
+    }
+    let response = app
+        .clone()
+        .oneshot(r.body(Body::from(body.to_string())).unwrap())
+        .await
+        .unwrap();
+    let code = response.status();
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .map(|h| h.to_str().unwrap().split(';').next().unwrap().to_owned());
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let data = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (code, data, cookie)
+}
+async fn sign_in(app: &Router) -> (String, String) {
+    let (status, data, cookie) = request(
+        app,
+        "POST",
+        "/api/setup",
+        json!({"password":"a long local test password"}),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    (cookie.unwrap(), data["csrf"].as_str().unwrap().into())
+}
+
+#[tokio::test]
+async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
+    let (_dir, state) = state().await;
+    let input = json!([exported("2025-06-01T12:03:00Z",180000),exported("2025-06-01T12:04:00Z",10000),{"ts":"2025-06-01T12:05:00Z","ms_played":10000,"spotify_episode_uri":"spotify:episode:abc"},exported("bad date",12000)]);
+    let (events, report) = parse_extended(input.to_string().as_bytes()).unwrap();
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.invalid, 1);
+    assert_eq!(events.len(), 2);
+    assert_eq!(save(&state, &events).await.added, 2);
+    assert_eq!(save(&state, &events).await.duplicates, 2);
+    let (total, counted, actual): (i64, i64, i64) =
+        sqlx::query_as("SELECT COUNT(*),SUM(counted),SUM(listened_ms) FROM listens")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert_eq!((total, counted, actual), (2, 1, 190000));
+    let raw: String = sqlx::query_scalar("SELECT raw_json FROM observations LIMIT 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&raw).unwrap()["ts"],
+        "2025-06-01T12:03:00Z"
+    );
+}
+#[tokio::test]
+async fn actual_duration_wins_in_both_orders_and_repeats_remain_separate() {
+    for api_first in [true, false] {
+        let (_dir, state) = state().await;
+        let input = json!([exported("2025-06-01T12:03:00Z", 180000)]);
+        let (events, _) = parse_extended(input.to_string().as_bytes()).unwrap();
+        let at = events[0].played_at_ms + 900;
+        let mut api = recent(at);
+        api.listened_ms = Some(240000);
+        if api_first {
+            save(&state, &[api.clone()]).await;
+            assert_eq!(save(&state, &events).await.reconciled, 1);
+        } else {
+            save(&state, &events).await;
+            assert_eq!(save(&state, &[api.clone()]).await.reconciled, 1);
+        }
+        let (count, ms, kind): (i64, i64, String) =
+            sqlx::query_as("SELECT COUNT(*),listened_ms,duration_kind FROM listens")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!((count, ms, kind), (1, 180000, "actual".into()));
+        assert_eq!(save(&state, &[recent(at + 180000)]).await.added, 1);
+        assert_eq!(save(&state, &[api]).await.duplicates, 1);
+        let observations: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM observations")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(observations, 3);
+    }
+}
+#[tokio::test]
+async fn short_actual_listen_replaces_api_count_without_losing_metadata() {
+    let (_dir, state) = state().await;
+    let (events, _) = parse_extended(
+        json!([exported("2025-06-01T12:00:20Z", 20000)])
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    save(&state, &[recent(events[0].played_at_ms)]).await;
+    save(&state, &events).await;
+    let (counted, ms): (i64, i64) = sqlx::query_as("SELECT counted,listened_ms FROM listens")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!((counted, ms), (0, 20000));
+    let credits: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM track_artists")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(credits, 2);
+}
+#[tokio::test]
+async fn ambiguous_matches_are_kept_separate() {
+    let (_dir, state) = state().await;
+    let (events, _) = parse_extended(
+        json!([exported("2025-06-01T12:03:00Z", 180000)])
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    let at = events[0].played_at_ms;
+    save(&state, &[recent(at - 500), recent(at + 500)]).await;
+    let r = save(&state, &events).await;
+    assert_eq!(r.ambiguous, 1);
+    assert_eq!(r.added, 1);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(count, 3);
+}
+#[tokio::test]
+async fn authentication_csrf_revocation_and_restart() {
+    let (dir, state) = state().await;
+    let app = web::router(state.clone());
+    assert_eq!(
+        request(&app, "GET", "/api/history", json!(null), None, None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    let (cookie, csrf) = sign_in(&app).await;
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/setup",
+            json!({"password":"another long password"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        request(&app, "POST", "/api/logout", json!({}), Some(&cookie), None)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/spotify/credentials",
+            json!({"client_id":"abcdefghijk123456","client_secret":"testsecret123456789"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (_, status, _) = request(
+        &app,
+        "GET",
+        "/api/spotify/status",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert!(!status.to_string().contains("testsecret"));
+    assert_eq!(status["configured"], true);
+    let hash: String = sqlx::query_scalar("SELECT password_hash FROM owner")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert!(hash.starts_with("$argon2id$"));
+    let stored: String = sqlx::query_scalar("SELECT digest FROM sessions")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert!(!cookie.contains(&stored));
+    state.db.close().await;
+    let pool = db::open(dir.path()).await.unwrap();
+    let reopened = AppState::new(pool, state.config.clone());
+    let app = web::router(reopened);
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            "/api/history",
+            json!(null),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/logout",
+            json!({}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            "/api/history",
+            json!(null),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"password":"incorrect password"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"password":"a long local test password"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+#[tokio::test]
+async fn hostile_origins_hosts_expired_sessions_and_oauth_states_are_rejected() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    for (host, origin) in [
+        ("evil.test:3210", "http://127.0.0.1:3210"),
+        ("127.0.0.1:3210", "https://evil.test"),
+        ("127.0.0.1:3210", "null"),
+    ] {
+        let r = Request::builder()
+            .method("POST")
+            .uri("/api/setup")
+            .header("host", host)
+            .header("origin", origin)
+            .header("content-type", "application/json")
+            .body(Body::from("{\"password\":\"a long local test password\"}"))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(r).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    let (cookie, _) = sign_in(&app).await;
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            "/auth/spotify/callback?state=invalid&code=invalid",
+            json!(null),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    sqlx::query("UPDATE sessions SET expires_at_ms = 0")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            "/api/dashboard",
+            json!(null),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+}
+#[tokio::test]
+async fn statistics_count_each_credit_once_and_search_is_literal() {
+    let (_dir, state) = state().await;
+    let mut event = recent(Utc::now().timestamp_millis());
+    event.track.title = "100% <script>alert(1)</script>".into();
+    event.track.artists.push(Artist {
+        id: event.track.artists[0].id.clone(),
+        name: "First artist".into(),
+    });
+    save(&state, &[event]).await;
+    let app = web::router(state);
+    let (cookie, _) = sign_in(&app).await;
+    let (code, data, _) = request(
+        &app,
+        "GET",
+        "/api/dashboard?period=all",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(data["totals"]["listens"], 1);
+    assert_eq!(data["rankings"]["artists"].as_array().unwrap().len(), 2);
+    assert_eq!(data["rankings"]["artists"][0]["plays"], 1);
+    let (_, data, _) = request(
+        &app,
+        "GET",
+        "/api/history?q=100%25",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(data["total"], 1);
+    let (_, data, _) = request(
+        &app,
+        "GET",
+        "/api/history?q=_",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(data["total"], 0);
+    assert_eq!(
+        request(
+            &app,
+            "GET",
+            "/api/history?from=2025-02-01&to=2025-01-01",
+            json!(null),
+            Some(&cookie),
+            None
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+}
+#[test]
+fn rome_custom_days_follow_daylight_saving_and_end_date_is_inclusive() {
+    let f = web::Filters {
+        from: Some("2025-03-30".into()),
+        to: Some("2025-03-30".into()),
+        ..Default::default()
+    };
+    let (from, to) = web::bounds(&f).unwrap();
+    assert_eq!(to.unwrap() - from.unwrap(), 23 * 3600 * 1000);
+    assert_eq!(
+        from.unwrap(),
+        Utc.with_ymd_and_hms(2025, 3, 29, 23, 0, 0)
+            .unwrap()
+            .timestamp_millis()
+    );
+    let f = web::Filters {
+        from: Some("2025-10-26".into()),
+        to: Some("2025-10-26".into()),
+        ..Default::default()
+    };
+    let (from, to) = web::bounds(&f).unwrap();
+    assert_eq!(to.unwrap() - from.unwrap(), 25 * 3600 * 1000);
+}
+#[test]
+fn rejects_wrong_format_and_preserves_unsplit_artist_names() {
+    assert!(parse_extended(b"{\"streaming\":[]}").is_err());
+    let mut row = exported("2025-06-01T12:03:00Z", 180000);
+    row["master_metadata_album_artist_name"] = json!("Earth, Wind & Fire");
+    let (events, _) = parse_extended(json!([row]).to_string().as_bytes()).unwrap();
+    assert_eq!(events[0].track.artists.len(), 1);
+    assert_eq!(events[0].track.artists[0].name, "Earth, Wind & Fire");
+    assert!(events[0].played_at_ms < auth::now_ms());
+}
+
+#[tokio::test]
+async fn close_repeats_in_the_incoming_batch_do_not_claim_one_counterpart() {
+    let (_dir, state) = state().await;
+    let input = json!([
+        exported("2025-06-01T12:03:00Z", 180000),
+        exported("2025-06-01T12:03:00.500Z", 180000)
+    ]);
+    let (events, _) = parse_extended(input.to_string().as_bytes()).unwrap();
+    save(&state, &[recent(events[0].played_at_ms + 250)]).await;
+    let report = save(&state, &events).await;
+    assert_eq!(
+        (report.added, report.ambiguous, report.reconciled),
+        (2, 2, 0)
+    );
+    let reviews: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(reviews, 3);
+    let app = web::router(state);
+    let (cookie, _) = sign_in(&app).await;
+    let (code, data, _) = request(
+        &app,
+        "GET",
+        "/api/history?status=review",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(data["total"], 3);
+}

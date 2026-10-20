@@ -1,0 +1,12 @@
+{
+  "name": "scrobbl-rs-browser-checks",
+  "private": true,
+  "scripts": {
+    "test:e2e": "playwright test",
+    "format:web": "prettier --write static/*.html static/*.css static/*.js tests/*.cjs playwright.config.cjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "prettier": "^3.8.0"
+  }
+}

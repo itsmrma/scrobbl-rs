@@ -1,12 +1,13 @@
 # scrobbl.rs — progetto e stato dei lavori
 
-Ultimo aggiornamento: 19 ottobre 2026.
+Ultimo aggiornamento: 20 ottobre 2026.
 
 - Nome del prodotto: **scrobbl.rs**.
 - Repository: <https://github.com/itsmrma/scrobbl-rs>.
 - Nome per repository e futura immagine Docker: `scrobbl-rs`.
-- Stato: definizione dei requisiti. Backend Rust, interfaccia, pagina delle chiavi API, integrazione
-  Spotify e container **non sono ancora implementati**.
+- Stato: prima implementazione locale di backend Rust, SQLite, autenticazione, integrazione Spotify,
+  import dello storico, dashboard e cronologia. Prova reale su account Spotify ancora da completare.
+  Pagina delle chiavi API, integrazione con spotify_analysis e container non ancora implementati.
 
 Questo documento permette di riprendere il lavoro senza ricostruire la conversazione. Le
 funzionalità indicate come confermate sono state scelte dall'utente; le proposte tecniche e le
@@ -285,8 +286,9 @@ Queste sono possibilità, non decisioni già approvate:
 - GitHub Container Registry (`ghcr.io`) per le immagini Docker.
 - File Docker Compose di esempio e versioni delle immagini legate alle release.
 
-Framework Rust, frontend, schema dati, migrazioni e piattaforme delle immagini devono ancora essere
-scelti.
+Per la prima implementazione locale sono stati scelti Rust con Axum/Tokio, SQLite con SQLx e
+migrazioni SQL, frontend HTML/CSS/JavaScript servito dallo stesso processo e Reqwest per Spotify.
+Non serve Node.js a runtime. Le piattaforme delle immagini Docker restano da scegliere.
 
 ## 13. Cosa rimane da fare
 
@@ -297,10 +299,9 @@ scelti.
 - [ ] Confermare licenza e suddivisione della configurazione web/file/ambiente.
 - [ ] Identificare sistema operativo, CPU del server e ambiente Docker.
 - [ ] Definire HTTPS privato, VPN e procedura OAuth per le installazioni degli utenti.
-- [ ] Definire quando contare un ascolto e come trattare durate mancanti, ascolti brevi,
-      sovrapposizioni, timestamp e fusi orari. Le regole del progetto esistente non sono
-      automaticamente già scelte per il nuovo prodotto.
-- [ ] Definire regole di deduplicazione tra storico Spotify e import da altre fonti.
+- [x] Definire le regole iniziali per Spotify: soglia import 30 secondi, API conteggiate con durata
+      stimata o sconosciuta; UTC in archivio, Europe/Rome in UI; regola di riconciliazione nella sezione 15.
+- [ ] Validare i timestamp e la riconciliazione con dati Spotify reali; estendere le regole ad altre fonti.
 - [ ] Definire backup e dettagli delle operazioni di correzione e raggruppamento.
 - [ ] Decidere priorità e confini della prima release.
 
@@ -330,6 +331,49 @@ Leggere questo file e controllare lo stato del repository prima di intervenire. 
 decisioni aperte e dalla verifica concreta dell'integrazione Spotify. Le scelte confermate non
 devono essere richieste nuovamente, salvo nuovi vincoli tecnici da spiegare all'utente.
 
-Finora è stata prodotta soltanto documentazione. Non risultano ancora codice Rust, pagina API keys,
+La prima implementazione locale è descritta nella sezione 15. Non risultano ancora pagina API keys,
 modifiche all'integrazione di `spotify_analysis`, container, workflow di pubblicazione o
 installazione sul server.
+
+
+## 15. Prima implementazione locale — 20 ottobre 2026
+
+L'utente ha richiesto di arrivare al prototipo Spotify, al modello dati e alla prima versione
+utilizzabile, eseguendo **in locale senza Docker**. Conferme ricevute nella sessione:
+
+- Import: conservare anche gli ascolti brevi; soglia di conteggio **30 secondi**.
+- API Spotify: contare gli elementi dello storico recente; durata del brano indicata come **stimata**,
+  oppure sconosciuta se mancante. Now playing non crea ascolti.
+- Fuso **Europe/Rome**, settimana da lunedì, formato 24 ore.
+- Accesso solo da questo computer su **127.0.0.1**, porta predefinita 3210.
+- L'utente non ha ancora creato un'app Spotify: procedura nella UI e in `docs/spotify-setup.md`.
+- Riconciliazione prudente: stesso URI Spotify, inizio compatibile entro **2 secondi**, un solo
+  candidato e una osservazione per fonte. Inizio import ricavato da `ts - ms_played`; `played_at`
+  API trattato come inizio, ipotesi da validare con dati reali. Durata reale sostituisce la stima;
+  candidati multipli restano separati, segnalati nel report e nel filtro Possible duplicates della
+  cronologia. Nessuna unione fuzzy per titoli.
+
+Implementazione presente:
+
+- Rust, Axum, Tokio, SQLx/SQLite, migrazione iniziale; frontend statico originale in inglese.
+- Primo accesso con impostazione password, Argon2id, sessioni persistenti con scadenza, logout,
+  controlli Origin/Host e CSRF. Password e segreti non sono inseriti nel repository.
+- Configurazione Spotify dalla UI o da variabili d'ambiente; queste ultime hanno precedenza.
+- OAuth con state monouso legato alla sessione, token persistenti, rinnovo e retry dopo 401,
+  backoff persistente per 429 e diagnostica. Raccolta ogni 120 secondi; now playing ogni 30 secondi
+  soltanto con overview aperta. Il processo deve rimanere avviato.
+- Import JSON multiplo dello storico esteso (ZIP da estrarre), massimo 64 MiB per richiesta,
+  transazione per file, report degli errori, record sorgente conservati e reimport idempotenti.
+- Dashboard con totali e top 5 artisti/album/brani, ordinamento per ascolti o tempo, periodi calendario,
+  finestre mobili e date personalizzate; cronologia con ricerca, filtri e paginazione.
+- Identità import provvisorie quando mancano ID artista/album. I brani osservati dalle API acquisiscono
+  crediti strutturati e copertine; riconciliazione globale di artisti/album ancora da sviluppare.
+- Script di avvio `./scripts/run-local.sh`, README e guida italiana `docs/local-setup.it.md`.
+- Test Rust su sicurezza, import, riconciliazione, statistiche, fuso/ora legale e Spotify simulato;
+  verifica browser con archivio temporaneo separato e senza credenziali personali. Verificati
+  `cargo fmt --check`, Clippy senza warning, 16 test Rust e il flusso browser completo desktop/mobile.
+
+Per riprendere: avviare il servizio, creare l'app Spotify, autorizzare l'account e verificare
+raccolta a pagina chiusa, riavvio e sovrapposizione import/API con ascolti reali. I test simulati non
+sostituiscono questa verifica. Le funzionalità successive della roadmap e tutte le decisioni aperte
+non esplicitamente risolte qui rimangono in sospeso. Nessuna licenza è stata scelta implicitamente.
