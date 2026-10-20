@@ -2,7 +2,9 @@
 
 Asset per [Come rendere semplice il collegamento Spotify da PC/Mac su un server privato HTTP?](https://github.com/itsmrma/scrobbl-rs/issues/17).
 
-**Stato: proposta da provare con il proprietario, nessuna scelta approvata.** Questo branch non è destinato al merge. Non contiene credenziali né modifica il backend o la distribuzione.
+**Stato aggiornato dopo il feedback: proposta SSH esclusa dal percorso da sviluppare.** Il proprietario preferisce una finestra guidata, considera la prima demo troppo complicata e vuole evitare anche l'abilitazione di SSH su TrueNAS. La preferenza grafica non approva i prerequisiti SSH. Il meccanismo senza SSH resta da individuare e verificare: non è già stata approvata un'alternativa HTTPS, né il trasferimento di dati OAuth sul normale HTTP LAN. La decisione resta aperta nel ticket.
+
+Il resto di questo documento e l'HTML conservano la proposta precedente come evidenza storica, non come soluzione consigliata. Questo branch non è destinato al merge. Non contiene credenziali né modifica il backend o la distribuzione.
 
 Aprire con un doppio clic [`static/spotify-connect.prototype.html`](../../static/spotify-connect.prototype.html). È un singolo file autonomo, senza dipendenze o connessioni di rete automatiche. Le interazioni simulano il comportamento in memoria; anche salvataggio, rinnovo e riavvio sono simulati.
 
