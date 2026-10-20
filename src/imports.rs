@@ -93,6 +93,8 @@ pub fn parse_extended(bytes: &[u8]) -> Result<(Vec<Event>, IngestReport)> {
                 source_timestamp_ms: end,
                 played_at_ms: end - ms,
                 listened_ms: Some(ms),
+                duration_kind: db::DurationKind::Actual,
+                counted: ms >= 30_000,
                 track: Track {
                     id,
                     title: title.into(),

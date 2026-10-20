@@ -7,6 +7,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState::new(pool, config.clone());
     let listener = tokio::net::TcpListener::bind(config.address()).await?;
     let worker = tokio::spawn(spotify::worker(state.clone()));
+    let calendar_worker = tokio::spawn(scrobbl_rs::calendar::worker(state.storage.clone()));
     println!("scrobbl.rs is running at {}", config.origin());
     println!("Data: {}", config.data_dir.canonicalize()?.display());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
@@ -17,7 +18,9 @@ async fn main() -> anyhow::Result<()> {
         .await;
     worker.abort();
     let _ = worker.await;
-    state.db.close().await;
+    calendar_worker.abort();
+    let _ = calendar_worker.await;
+    state.storage.close().await;
     result?;
     Ok(())
 }

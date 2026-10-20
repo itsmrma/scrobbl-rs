@@ -2,6 +2,7 @@
 name = "scrobbl-rs"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.94"
 publish = false
 
 [dependencies]
@@ -11,12 +12,14 @@ axum = { version = "0.8", features = ["multipart"] }
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 dotenvy = "0.15"
+fs2 = "0.4"
+libsqlite3-sys = { version = "0.37", features = ["bundled"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 url = "2"

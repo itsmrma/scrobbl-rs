@@ -1,5 +1,17 @@
 # Avvio locale
 
+Le nuove fondamenta richiedono Rust 1.94 o successivo e una directory dati nuova rispetto al
+prototipo. L'avvio rifiuta `scrobbl.db` senza aprirlo. Su PowerShell, per esempio:
+
+```powershell
+$env:SCROBBL_DATA_DIR = ".\data-foundations"
+cargo run --locked
+```
+
+Reimporta lo storico nella nuova installazione. Archivio musicale e segreti sono separati in
+`archive.db` e `private/auth.db`; conserva privata l'intera directory. I dettagli tecnici sono in
+[archive-foundations.md](archive-foundations.md).
+
 Dalla cartella del progetto:
 
 ```sh
