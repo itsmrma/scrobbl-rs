@@ -1,5 +1,11 @@
 ## Agent skills
 
+### Project context
+
+Before planning or changing behavior, read the
+[development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
+for requirements, confirmed choices, prototype status and open decisions.
+
 ### Issue tracker
 
 Track issues and specs in GitHub Issues for `itsmrma/scrobbl-rs`.

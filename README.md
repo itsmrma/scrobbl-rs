@@ -7,7 +7,8 @@ Heavily inspired by [Maloja](https://github.com/krateng/maloja) by krateng.
 This first implementation runs directly on your computer. It includes owner authentication,
 Spotify authorization and background collection, extended-history imports, a dashboard and a
 searchable listening history. Docker, integration API keys and advanced library management are
-future work; see [PROJECT.md](PROJECT.md).
+future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
+for requirements, confirmed choices, prototype status and open decisions.
 
 ## Run locally
 
