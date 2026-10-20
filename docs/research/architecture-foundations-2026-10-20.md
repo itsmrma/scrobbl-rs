@@ -1,0 +1,51 @@
+# Evidenze tecniche per la decisione architetturale
+
+Ricerca del 20 ottobre 2026 per [Quali scelte architetturali confermare per evolvere oltre il prototipo?](https://github.com/itsmrma/scrobbl-rs/issues/14). Questo file raccoglie fatti e inferenze tecniche; requisiti e scelte del proprietario rimangono nei ticket. Nessun test di installazione, carico, backup o rinnovo certificati eseguito sul server.
+
+Riferimento temporale: le verifiche locali di questa ricerca riguardano il
+[prototipo precedente alle fondamenta dell'archivio](https://github.com/itsmrma/scrobbl-rs/commit/cef09db03267fe247606db0b9e6237501d1d305b).
+I riferimenti al «lockfile corrente» e alle prove ancora mancanti descrivono quel momento;
+lo stato dell'implementazione successiva e le misure locali sono in
+[Archive foundations](../archive-foundations.md). La ricerca resta una fotografia delle
+evidenze usate per la decisione, non una descrizione delle dipendenze attuali.
+
+Indicazione successiva del proprietario: la guida di prodotto deve restare generica rispetto a host e reverse proxy. I fatti TrueNAS/NPM riportati sotto sono evidenze dell'indagine iniziale, non una ricetta da implementare o una scelta di proxy approvata. Vedere la [precisazione normativa](https://github.com/itsmrma/scrobbl-rs/issues/17#issuecomment-6300594367).
+
+## SQLite: concorrenza, storage e versione
+
+- WAL consente letture concorrenti alle scritture, con **un solo writer**. Ogni transazione di lettura conserva uno snapshot stabile. Lettori lunghi possono impedire il completamento dei checkpoint e far crescere il WAL; WAL non elimina tutti i casi `SQLITE_BUSY`. WAL richiede stesso host e non supporta il filesystem di rete. Il file `-wal` è parte dello stato persistente: separarlo dal database può perdere commit o corrompere il database. [SQLite, WAL, sezioni 1, 2.2, 4, 6, 9](https://www.sqlite.org/wal.html).
+- Le stesse fonti segnalano il WAL-reset bug: riguarda più connessioni che scrivono/eseguono checkpoint contemporaneamente; corretto in **3.51.3** e successive, con backport **3.44.6** e **3.50.7**. Non basta controllare la versione di SQLx. [SQLite, WAL, sezione 11](https://www.sqlite.org/wal.html#the_wal_reset_bug).
+- Evidenza locale ripetibile: `Cargo.lock` contiene `sqlx 0.8.6` e `libsqlite3-sys 0.30.1`; `cargo tree --locked --offline -e features -i libsqlite3-sys` conferma `bundled` attivo. Nell'header della crate nella cache Cargo, `sqlite3/sqlite3.h`, `SQLITE_VERSION` è **3.46.0**, `SQLITE_VERSION_NUMBER` è **3046000**. Non è stato compilato né interrogato il binario in esecuzione. [Header della crate pubblicata](https://docs.rs/crate/libsqlite3-sys/0.30.1/source/sqlite3/sqlite3.h), [SQLx v0.8.6, feature sqlite/bundled](https://github.com/launchbadge/sqlx/blob/v0.8.6/Cargo.toml).
+- **Inferenza:** la build bundled corrispondente al lockfile corrente non offre la correzione citata. La release con WAL necessita un collegamento SQLite corretto, seguito da verifica di `sqlite_version()` e `sqlite_source_id()` nell'artefatto distribuito. L'eventuale scelta di aggiornamento SQLx/linking è lavoro successivo, non compiuto da questa ricerca.
+- SQLx v0.8.6 espone `journal_mode`, `synchronous`, `busy_timeout` e accesso read-only. Non imposta WAL implicitamente nelle normali connessioni; abilita foreign key e imposta un busy timeout predefinito di cinque secondi. [Sorgente SQLx v0.8.6, SqliteConnectOptions](https://github.com/launchbadge/sqlx/blob/v0.8.6/sqlx-sqlite/src/options/mod.rs).
+- **Inferenza:** un coordinatore delle scritture e transazioni brevi sono compatibili con questi vincoli. Export/letture lunghe devono avere un disegno esplicito per non trattenere indefinitamente lo snapshot attivo. Nessuna fonte garantisce da sola le prestazioni sul carico dell'app.
+
+## Backup coerente e limiti
+
+- L'Online Backup API produce una copia coerente del database attivo, può avanzare a passi e limita il lock ai periodi di lettura; occorre gestire errori e contesa. Copia l'intero contenuto del database, non applica un filtro di dati applicativo. [SQLite Online Backup API](https://www.sqlite.org/backup.html).
+- `VACUUM INTO` produce un altro database con lo stesso contenuto logico e uno snapshot coerente, elimina residui dei contenuti cancellati e occupazione inutilizzata. Non è incrementale; una interruzione può lasciare l'output incompleto/corrotto. Il percorso deve essere assente o un file vuoto. Può cambiare ROWID senza `INTEGER PRIMARY KEY` esplicita. [SQLite VACUUM](https://www.sqlite.org/lang_vacuum.html).
+- Copiare file di un database mentre sono in corso transazioni può mescolare stati diversi; copia raw e ripristino devono rispettare journal/WAL e connessioni. Rinominare/sostituire un database ancora in uso è un ulteriore rischio documentato. [SQLite, How To Corrupt, sezioni 1.2 e 2.5](https://www.sqlite.org/howtocorrupt.html).
+- **Inferenza:** nessuno di questi metodi rende atomico lo stato fra database e file applicativi esterni. Serve un punto coerente definito dall'app. Una copia fisica del DB contenente segreti li conserverebbe; escluderli richiede un formato logico selettivo o una copia sanificata prima dell'artefatto finale. Cancellare righe senza eliminare anche i residui non prova l'assenza dei segreti. Queste sono conseguenze dei meccanismi sopra, non una scelta già approvata del formato backup.
+
+## TrueNAS 25.10 e dataset locale
+
+- La documentazione ufficiale conferma **TrueNAS 25.10.7**, pubblicato il 2 settembre 2026. La versione installata è dichiarata dal proprietario, non rilevata dal server. [Note 25.10](https://www.truenas.com/docs/scale/25.10/gettingstarted/versionnotes/).
+- TrueNAS 25.10 offre **Install via YAML** per applicazioni Docker Compose. Host Path e ixVolume montano storage nel container tramite bind mount; SMB è un tipo distinto. Le porte host devono essere libere e possono differire da quelle del container. [TrueNAS 25.10, Custom App Screens](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/).
+- TrueNAS consente dataset Host Path persistenti, richiedendo ACL/permessi appropriati; le indicazioni Apps correnti preferiscono dataset espliciti per storage permanente rispetto a ixVolume. [TrueNAS Apps, App Storage](https://apps.truenas.com/getting-started/app-storage/).
+- Un bind mount espone nel container un percorso sul filesystem dell'host del Docker daemon; non trasforma in locale un filesystem remoto sottostante. [Docker, bind mounts](https://docs.docker.com/engine/storage/bind-mounts/).
+- **Inferenza:** un dataset locale del TrueNAS che esegue il container può ospitare SQLite; montare sul server Docker una share SMB/NFS remota per il DB attivo ricade invece nel vincolo SQLite. Vanno verificati mount effettivo, permessi e semantica di sync/locking. Chiamare un percorso «dataset NAS» non dimostra né esclude che sia locale.
+
+## HTTPS privato, DuckDNS e proxy
+
+- La release Nginx Proxy Manager verificata è **v2.16.0**, pubblicata il **24 settembre 2026 alle 09:59:08 UTC**. È il riferimento provvisorio delle evidenze, non una versione già installata o collaudata. La guida mostra `jc21/nginx-proxy-manager:2.16.0`, volumi `/data` e `/etc/letsencrypt`, porte container 80/443 e amministrazione 81. [Release](https://github.com/NginxProxyManager/nginx-proxy-manager/releases/tag/v2.16.0), [setup ufficiale](https://nginxproxymanager.com/setup/).
+- Nel tag v2.16.0 DuckDNS è registrato come plugin `dns-duckdns`, package `certbot-dns-duckdns` con vincolo `~=1.0`, credenziale `dns_duckdns_token`. La presenza dell'entry non prova emissione e rinnovo sul server. [Manifest provider del tag](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/v2.16.0/backend/certbot/dns-plugins.json).
+- NPM installa il plugin Certbot del provider scelto; la documentazione avverte che manutenzione e compatibilità variano e che dipendenze di provider diversi possono confliggere. [NPM, Certbot](https://nginxproxymanager.com/certbot/).
+- DNS-01 prova il controllo del nome pubblicando un TXT `_acme-challenge`; può emettere certificati per webserver non esposti a Internet. Servono API DNS automatizzabili, propagazione e credenziali appropriate. HTTP-01, invece, richiede port 80 raggiungibile per validazione. [Let's Encrypt, challenge types](https://letsencrypt.org/docs/challenge-types/).
+- DuckDNS offre API HTTPS per TXT con token account. Il TXT è condiviso anche dai sotto-sottodomini del nome DuckDNS: non va presunta l'indipendenza di challenge concorrenti sotto lo stesso nome. [DuckDNS API specification](https://www.duckdns.org/spec.jsp).
+- AdGuard Home supporta riscritture DNS da un nome esatto a un IP, oltre a wildcard e CNAME. [AdGuard Home, configuration, rewrites](https://adguard-dns.io/kb/adguard-home/configuration/#filtering).
+- La GUI TrueNAS usa di default **80/443**, configurabili; può quindi confliggere con il mapping standard NPM. Le porte effettive non sono state rilevate. [TrueNAS 25.10, GUI settings](https://www.truenas.com/docs/scale/25.10/scaleuireference/systemsettings/generalsettingsscreens/#gui-settings-screen).
+- **Inferenza, requisiti generici da collaudare:** il proxy termina TLS per il nome scelto e inoltra all'app sulla rete privata. Servono nome DNS, indirizzo privato raggiungibile dai client, porta HTTPS esterna, destinazione interna, certificato attendibile e rinnovo persistente, connettività in uscita verso ACME/provider DNS e configurazione coerente di origine/callback e header fidati. DNS-01 non richiede port forwarding router. Eventuali porte alternative devono comparire nell'origine esterna e nella callback. Le porte effettive e la raggiungibilità LAN/VPN restano da verificare sull'ambiente di esecuzione; questa ricerca non autorizza a cambiare la configurazione del NAS né prescrive un proxy.
+
+## Verifiche ancora mancanti
+
+Rimangono prove sull'artefatto SQLite corretto, carico e checkpoint, backup con file esterni e segreti esclusi, recovery dopo interruzione, mount/ACL reali, Compose su TrueNAS 25.10.7, disponibilità porte, risoluzione del nome esatto da LAN e VPN, emissione/rinnovo DNS-01 e callback OAuth con origin/porta effettivi. Le fonti dimostrano i meccanismi disponibili; non costituiscono evidenza che scrobbl.rs li abbia già implementati.
