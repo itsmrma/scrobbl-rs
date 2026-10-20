@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spotify connection — throwaway walkthrough</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f5f6f4;color:#202b26;font:16px/1.5 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:30px 22px 70px}h1{font-size:32px;line-height:1.2;margin:8px 0 16px}h2{font-size:20px;margin:0 0 14px}h3{font-size:17px;margin:0 0 8px}p{margin:8px 0 16px}.muted,small{color:#526158}.tag{font-size:12px;font-weight:750;letter-spacing:.09em;color:#236548}.notice{padding:14px 18px;border-left:4px solid #aa711c;background:#fff5df;margin:20px 0}.grid{display:grid;grid-template-columns:1.15fr 1fr;gap:20px}.card{background:white;border:1px solid #d7ded7;border-radius:12px;padding:24px;margin:18px 0}.card .card{padding:16px;margin:12px 0}button,select{font:inherit;border:1px solid #a8b8ae;border-radius:7px;background:white;color:#203d2d;padding:9px 13px;cursor:pointer}button:hover{background:#edf4ee}button:disabled{opacity:.48;cursor:default}button.primary{background:#266547;color:white;border-color:#266547}button[aria-selected=true]{background:#e0eee3;border-color:#266547}button:focus-visible,select:focus-visible{outline:3px solid #4f946c;outline-offset:3px}.row{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.wide{width:100%}label{display:block;margin-bottom:6px;font-weight:650}dl{display:grid;grid-template-columns:1fr 1.2fr;gap:9px 14px;margin:0}dt{color:#526158}dd{margin:0;font-weight:600;overflow-wrap:anywhere}code,pre{font:13px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#edf2ed;padding:10px;border-radius:6px;display:block}ol,ul{padding-left:22px}li{margin-bottom:8px}.steps{display:grid;gap:8px}.steps button{text-align:left}.steps button.done{color:#526158;background:#f0f4f0}.status{font-weight:700;font-size:24px;color:#266547}#message{background:#eef4ef;padding:13px 16px;border-radius:8px;min-height:74px}summary{cursor:pointer;font-weight:650}.log{max-height:200px;overflow:auto;font-size:14px}a{color:#205b3e}@media(max-width:760px){.grid{display:block}main{padding:20px 14px}h1{font-size:27px}.card{padding:18px}dl{grid-template-columns:1fr 1fr}}
+</style>
+<main>
+<div class="tag">SCROBBL.RS · THROWAWAY PROTOTYPE · NO REAL AUTHORIZATION</div>
+<h1>Connect once. Keep collecting on your server.</h1>
+<p>Can a temporary connection from your PC/Mac make Spotify setup on a private HTTP server simple enough? Explore the full journey, including failures, before choosing the mechanism.</p>
+<div class="notice">Every action below is simulated in memory. This file never connects to Spotify, opens SSH, saves credentials or changes your installation. Refreshing the page resets everything.</div>
+<section class="card">
+<label for="route">Compare the connection methods</label>
+<select id="route" class="wide">
+<option value="terminal">Private HTTP + temporary SSH tunnel (terminal)</option>
+<option value="helper">Private HTTP + desktop helper over SSH (concept)</option>
+<option value="https">Existing HTTPS + direct browser connection</option>
+</select>
+<p id="routeDescription" class="muted"></p>
+<div id="prerequisites"></div>
+</section>
+<div class="grid">
+<section class="card" aria-labelledby="journeyTitle">
+<h2 id="journeyTitle">Try a guided journey</h2>
+<div id="tabs" class="row" role="tablist" aria-label="Connection scenarios"></div>
+<h3 id="scenarioTitle"></h3><p id="scenarioDescription" class="muted"></p>
+<div id="steps" class="steps"></div>
+<div class="row"><button id="reset">Restart this journey</button></div>
+</section>
+<section class="card" aria-labelledby="stateTitle">
+<h2 id="stateTitle">What is happening now?</h2>
+<p id="connection" class="status"></p>
+<p id="message" role="status" aria-live="polite"></p>
+<dl id="state"></dl>
+</section>
+</div>
+<section class="card">
+<h2>Explore freely</h2>
+<p class="muted">Press actions in any order, including invalid ones. The explanation shows what the proposed flow accepts or rejects. A free action pauses the guided journey; restart it to follow the steps again.</p>
+<div id="actions" class="row"></div>
+</section>
+<section class="card"><h2>Recent actions</h2><ol id="log" class="log" reversed></ol></section>
+<details class="card"><summary>Prototype notes and evidence still needed</summary>
+<p>The English interface above is a proposal. The session, callback, persistence, restart and refresh results shown here are a model, not technical proof. The desktop helper is only a packaging alternative over SSH; it has not been built.</p>
+<ul>
+<li>The existing backend accepts only one exact loopback Host/Origin. Its normal LAN/VPN and optional HTTPS support still need implementation. The proposed temporary flow must remain separate from the everyday interface.</li>
+<li>Open the whole app through the tunnel, sign in there, then configure/connect Spotify. Do not copy the LAN session cookie or move a callback URL between hosts. Use the same browser and profile throughout.</li>
+<li>The proposed server-side attempt belongs to that local authenticated session; state is one-use and expires after ten minutes. Explicit cancellation and cancellation on restart in this model are proposed recovery behavior, not a claim about existing code.</li>
+<li>For the current backend the local port must match SCROBBL_PORT. A different local port requires an explicitly configured allowed origin and matching redirect URI; an automatic fallback would break the current contract.</li>
+<li>SSH encrypts the PC-to-SSH-host segment after server identity verification. The target shown is loopback on that same host; Docker must expose an appropriate endpoint there. Forwarding from that host to another machine over HTTP would add an unencrypted segment.</li>
+<li>The browser sends the authorization code and session through loopback + SSH; the server exchanges the code directly with Spotify over HTTPS and stores tokens in its persistent database. The user may enter app credentials in the browser via the tunnel. No token or database copying is part of the journey. Everyday LAN HTTP still carries session and archive traffic without TLS, as already accepted for the private installation.</li>
+<li>Before release: verify SSH availability and forwarding permissions on Windows/macOS and TrueNAS/Portainer, host key verification, container reachability, local port conflict, exact redirect registration, real Firefox callback/session/state behavior, cancellation/expiry/replay/wrong-session rejection, failed exchange, persistent token storage, refresh and collection with browser/tunnel closed and after server recreation. Verify HTTPS cookies/proxy/Origin and Safari consultation separately.</li>
+<li>Reconnection after an invalid or expired refresh token repeats authorization. A transient refresh/network error should retry on the server rather than automatically require authorization.</li>
+</ul>
+<p>Sources: <a href="https://developer.spotify.com/documentation/web-api/concepts/redirect_uri">Spotify redirect URIs</a>, <a href="https://developer.spotify.com/documentation/web-api/tutorials/refreshing-tokens">Spotify refresh tokens</a>, <a href="https://man.openbsd.org/ssh.1">OpenSSH forwarding</a>. Rechecked 20 October 2026. Spotify currently documents six-month refresh-token lifetime for Developer Dashboard apps; ordinary refresh does not extend it.</p>
+<p><a href="https://github.com/itsmrma/scrobbl-rs/issues/17">Decision: Come rendere semplice il collegamento Spotify da PC/Mac su un server privato HTTP?</a> · <a href="https://github.com/itsmrma/scrobbl-rs/issues/3">Real-account validation</a></p>
+</details>
+</main>
+<script>
+// Portable model: no DOM, IO, timers, real credentials or persistence.
+const ConnectionModel = (() => {
+  const initial = route => ({route, location:route==='https'?'https':'lan', transport:false, session:false, configured:false, attempt:0, pending:false, consumed:false, checked:false, tokens:false, collecting:false, browser:true, needsReconnect:false, message:'Start from Settings on your private server. Your usual server login does not sign you in on the local address.'});
+  const origin = s => s.route==='https'?'https://your-private-host': 'http://127.0.0.1:3210';
+  const reachable = s => s.browser && (s.route==='https'||s.transport) && s.location!=='lan';
+  function reduce(s,action){
+    const n={...s}; const say=message=>({...n,message});
+    switch(action){
+    case 'guide': return say(s.route==='https'?'HTTPS is already configured. Continue in this browser.':'Use your PC/Mac for this setup. Prepare temporary SSH access to the same server that runs scrobbl.rs.');
+    case 'transport': if(s.route==='https') return say('HTTPS is already the protected connection; no local helper is needed.'); n.transport=true; return say(s.route==='helper'?'Concept: the helper verifies the SSH host and opens the tunnel. No helper has actually run.':'Simulated: verify the SSH host identity, sign in to SSH, and leave the terminal running. A quiet terminal is normal.');
+    case 'port_busy': n.transport=false; return say('Local port 3210 is in use. Close the conflicting program, then retry. Do not silently change the port or open an unrelated local app.');
+    case 'open': if(s.route!=='https'&&!s.transport) return say('Start the tunnel first, then open the local address.'); n.browser=true;n.location=s.route==='https'?'https':'loopback';return say('Open '+origin(s)+' in the browser/profile you will use for Spotify authorization.');
+    case 'login': if(!reachable(s)) return say('Open the protected setup address first.'); n.session=true;return say('Signed in to scrobbl.rs on the setup address. The LAN session was not copied.');
+    case 'configure': if(!reachable(s)||!s.session) return say('Sign in on the setup address before entering app credentials.'); n.configured=true;return say('First setup only: create your Spotify Developer app, register the displayed redirect URI, save Client ID/Secret here and allow your listening account if needed. This demo collects none of those values.');
+    case 'connect': if(!reachable(s)||!s.session||!s.configured) return say('Open the setup address, sign in and finish Developer app configuration first.'); n.attempt++;n.pending=true;n.consumed=false;n.checked=false;return say('Spotify opens in this browser. A new ten-minute attempt is tied to this scrobbl.rs session; an older attempt from it is superseded.');
+    case 'allow': if(!s.pending||!reachable(s)||!s.session) return say('No valid callback can be accepted. Keep this browser/profile and tunnel open, or start a fresh Connect attempt.'); n.pending=false;n.consumed=true;n.checked=true;return say('Simulated Spotify return: the server checks this session and the one-use state, consumes the attempt, then exchanges the code with Spotify over HTTPS.');
+    case 'save': if(!s.checked) return say('No accepted authorization is waiting for token exchange.');n.checked=false;n.tokens=true;n.collecting=true;n.needsReconnect=false;return say('Simulated successful exchange and save on the server. Connected: you may close the browser and stop the tunnel. Collection stays on the server.');
+    case 'exchange_fail': if(!s.checked) return say('No accepted callback is waiting for exchange.');n.checked=false;return say('The exchange failed after state was consumed. The previous saved connection, if any, is unchanged. Start a fresh Connect attempt.');
+    case 'deny': case 'cancel': if(!s.pending&&!s.checked) return say('There is no active attempt to cancel.');n.pending=false;n.checked=false;n.consumed=true;return say('Connection attempt cancelled. Saved credentials and history are unchanged. You can press Connect again.');
+    case 'expire': if(!s.pending) return say('No pending authorization to expire.');n.pending=false;n.consumed=true;return say('Ten minutes passed. This callback is no longer accepted. Start a fresh Connect attempt.');
+    case 'missing': return say(s.pending?'No return from Spotify yet. Check the tunnel and browser/profile. Cancel and retry if the callback never arrives.':'There is no pending Spotify return.');
+    case 'wrong_session': return say('Rejected: the callback has a different or missing scrobbl.rs session. No new credentials are saved. Return to the original browser/profile or sign in and start again.');
+    case 'replay': return say('Rejected: this simulated callback is stale or already used. A callback cannot create a second connection.');
+    case 'stop': n.transport=false;return say(s.tokens?'Tunnel stopped. Server collection and token refresh continue.':'Tunnel stopped before completion. Reopen it in time or cancel and retry.');
+    case 'close':n.browser=false;return say(s.tokens?'Browser closed. The server keeps collecting; mobile consultation uses the ordinary LAN/VPN address.':'Browser closed. An unfinished authorization may expire; saved connection is unchanged.');
+    case 'restart':n.pending=false;n.checked=false;n.consumed=s.attempt>0;n.collecting=s.tokens;return say(s.tokens?'Simulated server restart: saved connection restored, collection resumes. PC/Mac is not needed.':'Proposed recovery: unfinished authorization is invalidated on restart. Reopen setup and press Connect again.');
+    case 'refresh':if(!s.tokens) return say('No saved connection available for refresh.');return say('Simulated ordinary refresh: the server contacts Spotify over HTTPS. Browser and tunnel are not needed.');
+    case 'network':return say('Temporary Spotify/network error. Keep the saved connection and retry on the server; this alone does not require reconnecting.');
+    case 'invalid':if(!s.tokens) return say('No saved refresh token to invalidate.');n.tokens=false;n.collecting=false;n.needsReconnect=true;return say('Spotify rejected the refresh token as invalid/expired. Reconnect from PC/Mac with the same setup journey; the archive stays intact.');
+    case 'mobile':return say(s.tokens?'On iPhone/iPad, open the usual private LAN/VPN URL. Collection does not depend on the PC/Mac.':'Mobile consultation remains available; Spotify setup still needs completion.');
+    default: return s;
+    }
+  }
+  return {initial,reduce,origin};
+})();
+</script>
+<script>
+const names={guide:'Open connection guide',transport:'Start temporary connection',port_busy:'Simulate port already in use',open:'Open setup address',login:'Sign in to scrobbl.rs here',configure:'Complete Developer app setup',connect:'Connect Spotify',allow:'Approve Spotify / receive callback',save:'Simulate successful exchange and save',exchange_fail:'Simulate failed token exchange',deny:'Decline on Spotify',cancel:'Cancel this attempt',expire:'Simulate ten-minute expiry',missing:'Callback did not arrive',wrong_session:'Try callback from another session',replay:'Try old / reused callback',stop:'Stop temporary connection',close:'Close browser',restart:'Restart server',refresh:'Simulate ordinary token refresh',network:'Simulate temporary network error',invalid:'Simulate expired / revoked refresh token',mobile:'Consult from iPhone / iPad'};
+const setup=['guide','transport','open','login','configure'];
+const connected=[...setup,'connect','allow','save'];
+const scenarios=[
+{title:'First connection',description:'Start on the private server, move to the protected setup address, configure your app and authorize. Stop the temporary connection only after Connected.',steps:[...connected,'stop','close','refresh','mobile']},
+{title:'Cancel & retry',description:'Declining permission must leave no partial new connection. Try again without repeating the Developer app setup.',steps:[...setup,'connect','deny','replay','connect','allow','save']},
+{title:'No callback',description:'A missing return or expired attempt needs a clear way back. A late callback must not silently complete a new attempt.',steps:[...setup,'connect','missing','expire','replay','connect','allow','save']},
+{title:'Session mismatch',description:'Another browser/profile cannot finish this authorization. The original session can still complete the valid attempt.',steps:[...setup,'connect','wrong_session','allow','save','replay']},
+{title:'Tunnel interrupted',description:'Closing the tunnel blocks the return. Reopen it before expiry; otherwise start a new attempt.',steps:[...setup,'connect','stop','allow','transport','expire','connect','allow','save']},
+{title:'Server restart',description:'A completed connection survives a server restart in this model. An unfinished exchange needs a new attempt.',steps:[...setup,'connect','allow','restart','connect','allow','save','stop','close','restart','refresh']},
+{title:'Reconnect later',description:'Ordinary refresh is automatic. An invalid refresh token requires authorization again, preserving the archive and app configuration.',steps:[...connected,'stop','close','refresh','invalid','transport','open','login','connect','allow','save','stop']},
+{title:'Port conflict',description:'A busy local port must stop setup clearly. With the current backend, changing only the local port would break Host and callback checks.',steps:['guide','port_busy','open','transport','open','login','configure','connect','allow','save']},
+{title:'Exchange fails',description:'A consumed callback cannot be reused after an exchange failure. Begin a fresh attempt.',steps:[...setup,'connect','allow','exchange_fail','replay','connect','allow','save']}
+];
+let route='terminal',state=ConnectionModel.initial(route),scenario=0,step=0,free=false,history=[];
+const byId=id=>document.getElementById(id);
+function reset(){state=ConnectionModel.initial(route);step=0;free=false;history=[];render();}
+function dispatch(action,guided=false){state=ConnectionModel.reduce(state,action);history.unshift(names[action]+': '+state.message);if(guided)step++;else free=true;render();}
+function render(){
+ const secure=route==='https';
+ byId('routeDescription').textContent=secure?'When HTTPS is already correctly configured, authorization stays on the server address. This walkthrough does not configure certificates or a proxy.':route==='helper'?'Compare a future desktop helper that wraps the same SSH tunnel. It would remove the terminal command, but still needs SSH access and verified server identity. This is only a concept.':'Use a temporary SSH tunnel for the entire setup page. Once Connected, close it. The server collects directly from Spotify.';
+ byId('prerequisites').innerHTML=secure?'<p>One-time prerequisite: a trusted HTTPS URL and the matching Spotify redirect URI.</p>':'<p>One-time prerequisites: SSH access and forwarding permitted on your server; an SSH client on PC/Mac; the app reachable on the SSH host’s loopback; local port 3210 available.</p>'+(route==='terminal'?'<p>Illustrative command — replace the account and address with your server details. Do not run this sample unchanged.</p><code>ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3210:127.0.0.1:3210 YOUR_USER@YOUR_SERVER</code><p>On the first connection, verify the SSH host fingerprint through a trusted server console. Keep the terminal open until Connected; then Ctrl+C stops the tunnel.</p>':'<p>Concept: launch the helper, select your server, verify its SSH identity, authenticate to SSH, then open the setup page. No SSH password should be entered into the ordinary HTTP web page.</p>');
+ byId('connection').textContent=state.tokens?'Connected':state.needsReconnect?'Reconnect required':state.checked?'Completing connection':state.pending?'Waiting for Spotify':'Not connected';
+ byId('message').textContent=state.message;
+ const fields=[['Browser address',state.location==='lan'?'Your usual HTTP LAN/VPN address':ConnectionModel.origin(state)],['Temporary connection',secure?'Not needed':state.transport?'Open (simulated)':'Closed'],['Browser',state.browser?'Open':'Closed'],['Setup login',state.session?'Signed in on setup address':'Sign-in required'],['Developer app',state.configured?'Configured (simulated)':'Setup required'],['Authorization attempt',state.attempt?'Attempt '+state.attempt+(state.pending?' · awaiting return':state.checked?' · exchange pending':' · finished / invalidated'):'None'],['Callback state',state.pending?'Unused · ten-minute limit':state.consumed?'Consumed / invalidated':'None'],['Persistent connection',state.tokens?'On server (simulated)':'None'],['Collection',state.collecting?'On server (simulated)':'Waiting for connection'],['History','Unchanged by connection attempts']];
+ const dl=byId('state');dl.replaceChildren();fields.forEach(([label,value])=>{const dt=document.createElement('dt');dt.textContent=label;const dd=document.createElement('dd');dd.textContent=value;dl.append(dt,dd);});
+ const tabs=byId('tabs');tabs.replaceChildren();scenarios.forEach((item,index)=>{const b=document.createElement('button');b.textContent=item.title;b.role='tab';b.setAttribute('aria-selected',index===scenario);b.onclick=()=>{scenario=index;reset();};tabs.append(b);});
+ const current=scenarios[scenario],steps=current.steps.filter(action=>!secure||!['transport','stop','port_busy'].includes(action));
+ byId('scenarioTitle').textContent=current.title;byId('scenarioDescription').textContent=current.description+(free?' Free exploration is active. Restart to resume the guided sequence.':'');
+ const stepsDiv=byId('steps');stepsDiv.replaceChildren();steps.forEach((action,index)=>{const b=document.createElement('button');b.textContent=(index<step?'✓ ':String(index+1)+'. ')+names[action];b.disabled=free||index!==step;b.className=index<step?'done':index===step?'primary':'';b.onclick=()=>dispatch(action,true);stepsDiv.append(b);});
+ const log=byId('log');log.replaceChildren();history.forEach(item=>{const li=document.createElement('li');li.textContent=item;log.append(li);});
+}
+Object.entries(names).forEach(([action,label])=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>dispatch(action);byId('actions').append(b);});
+byId('route').onchange=e=>{route=e.target.value;reset();};byId('reset').onclick=reset;render();
+</script>
+</html>
