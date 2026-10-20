@@ -52,7 +52,7 @@ pub async fn session(state: &AppState, headers: &HeaderMap) -> Result<Session> {
     let row = sqlx::query("SELECT csrf FROM sessions WHERE digest = ? AND expires_at_ms > ?")
         .bind(&digest)
         .bind(now_ms())
-        .fetch_optional(&state.db)
+        .fetch_optional(&state.private_db)
         .await?
         .ok_or(AppError::Unauthorized)?;
     Ok(Session {
@@ -70,7 +70,7 @@ pub async fn require_write(state: &AppState, headers: &HeaderMap) -> Result<Sess
 async fn new_session(state: &AppState) -> Result<Response> {
     let token = random_secret();
     let csrf = random_secret();
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.private_db.begin().await?;
     sqlx::query("DELETE FROM sessions WHERE expires_at_ms <= ?")
         .bind(now_ms())
         .execute(&mut *tx)
@@ -97,7 +97,7 @@ pub async fn status(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>> {
     let setup_required = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM owner")
-        .fetch_one(&state.db)
+        .fetch_one(&state.private_db)
         .await?
         == 0;
     match session(&state, &headers).await {
@@ -152,7 +152,7 @@ pub async fn setup(
     )
     .bind(hash)
     .bind(now_ms())
-    .execute(&state.db)
+    .execute(&state.private_db)
     .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::Conflict(
@@ -170,7 +170,7 @@ pub async fn login(
         return Err(AppError::Unauthorized);
     }
     let hash: Option<String> = sqlx::query_scalar("SELECT password_hash FROM owner WHERE id = 1")
-        .fetch_optional(&state.db)
+        .fetch_optional(&state.private_db)
         .await?;
     let hash = hash.ok_or(AppError::Unauthorized)?;
     let valid = tokio::task::spawn_blocking(move || {
@@ -189,7 +189,7 @@ pub async fn login(
 }
 pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
     let s = require_write(&state, &headers).await?;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.private_db.begin().await?;
     sqlx::query("DELETE FROM oauth_states WHERE session_digest = ?")
         .bind(&s.digest)
         .execute(&mut *tx)

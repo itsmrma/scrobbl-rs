@@ -29,6 +29,8 @@ fn recent(at: i64) -> Event {
         source_timestamp_ms: at,
         played_at_ms: at,
         listened_ms: track.duration_ms,
+        duration_kind: db::DurationKind::Estimated,
+        counted: true,
         track,
         raw: row,
     }
@@ -253,16 +255,16 @@ async fn authentication_csrf_revocation_and_restart() {
     assert!(!status.to_string().contains("testsecret"));
     assert_eq!(status["configured"], true);
     let hash: String = sqlx::query_scalar("SELECT password_hash FROM owner")
-        .fetch_one(&state.db)
+        .fetch_one(&state.private_db)
         .await
         .unwrap();
     assert!(hash.starts_with("$argon2id$"));
     let stored: String = sqlx::query_scalar("SELECT digest FROM sessions")
-        .fetch_one(&state.db)
+        .fetch_one(&state.private_db)
         .await
         .unwrap();
     assert!(!cookie.contains(&stored));
-    state.db.close().await;
+    state.storage.close().await;
     let pool = db::open(dir.path()).await.unwrap();
     let reopened = AppState::new(pool, state.config.clone());
     let app = web::router(reopened);
@@ -369,7 +371,7 @@ async fn hostile_origins_hosts_expired_sessions_and_oauth_states_are_rejected() 
         StatusCode::FORBIDDEN
     );
     sqlx::query("UPDATE sessions SET expires_at_ms = 0")
-        .execute(&state.db)
+        .execute(&state.private_db)
         .await
         .unwrap();
     assert_eq!(
@@ -511,4 +513,72 @@ async fn close_repeats_in_the_incoming_batch_do_not_claim_one_counterpart() {
     .await;
     assert_eq!(code, StatusCode::OK);
     assert_eq!(data["total"], 3);
+}
+
+#[tokio::test]
+async fn later_batches_expose_ambiguity_without_preserving_a_false_pair() {
+    for api_first in [true, false] {
+        let (_dir, state) = state().await;
+        let (events, _) = parse_extended(
+            json!([
+                exported("2025-06-01T12:03:00Z", 180000),
+                exported("2025-06-01T12:03:00.500Z", 180000)
+            ])
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+        let api = recent(events[0].played_at_ms + 250);
+        if api_first {
+            save(&state, &[api]).await;
+            save(&state, &events[..1]).await;
+        } else {
+            save(&state, &events[..1]).await;
+            save(&state, &[api]).await;
+        }
+        let before = state.storage.read_view().await.unwrap().identity;
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            1
+        );
+        let result = save(&state, &events[1..]).await;
+        assert_eq!(result.added, 2);
+        assert_eq!(result.ambiguous, 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens WHERE needs_review=1")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            3
+        );
+        assert_eq!(
+            state.storage.changes(&before, 100).await.unwrap().1.len(),
+            3
+        );
+    }
+}
+
+#[tokio::test]
+async fn reverse_ambiguity_uses_the_counterpart_time_not_the_merged_time() {
+    let (_dir, state) = state().await;
+    let (events, _) = parse_extended(
+        json!([exported("2025-06-01T12:03:00Z", 180000)])
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    let at = events[0].played_at_ms;
+    save(&state, &events).await;
+    assert_eq!(save(&state, &[recent(at - 1800)]).await.reconciled, 1);
+    assert_eq!(save(&state, &[recent(at + 1800)]).await.ambiguous, 1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens WHERE needs_review=1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        3
+    );
 }

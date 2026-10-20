@@ -23,6 +23,10 @@ Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, set your o
 (at least 12 characters), and open **Settings** to configure Spotify. The service binds only to
 `127.0.0.1`; use that exact address, including the port, rather than `localhost`.
 
+The archive foundations require Rust 1.94 or later and a **new data directory** when moving from
+the prototype. If `scrobbl.db` is present, startup stops without opening it. Set `SCROBBL_DATA_DIR`
+to a new directory and reimport there; see [archive foundations](docs/archive-foundations.md).
+
 The first build downloads dependencies and compiles bundled SQLite. Node.js is not required to run
 the application. Keep the terminal process running to collect listens; closing the browser does
 not stop collection. Sleep, shutdown or stopping the process suspends collection. Press Ctrl+C
@@ -53,7 +57,8 @@ Spotify export `ts` is the end timestamp. Imported start time is inferred as `ts
 pauses, seeking and offline records can make this approximate. API `played_at` is retained as
 provided and treated as a start timestamp for reconciliation. All source timestamps and original
 record payloads are preserved separately, so this interpretation can be revised after live testing.
-Dates are stored as UTC milliseconds and filtered/displayed in Europe/Rome, including daylight saving.
+Instants are stored as UTC milliseconds. Date filters use the calendar assigned at first acquisition
+(initially Europe/Rome), including daylight saving; the settings UI for calendar changes is upcoming.
 Custom end dates include the whole local day. Rolling windows are elapsed 24-hour days.
 
 Imported music plays count in statistics at **30,000 ms or longer**. Shorter records are kept in
@@ -94,14 +99,20 @@ take precedence and the web credential form is disabled. Restart after changing 
 | `SPOTIFY_CLIENT_ID` | unset | Optional Spotify app ID, paired with the secret |
 | `SPOTIFY_CLIENT_SECRET` | unset | Optional Spotify app secret, paired with the ID |
 
-`data/scrobbl.db` contains the listening archive, original source records, owner password hash,
-Spotify app credentials and authorization tokens. `data/`, local `.env` files and SQLite files are
+`data/archive.db` contains music, original source records, preferences and persistent job/revision
+state. `data/private/auth.db` separately contains the owner verifier, sessions and Spotify secrets.
+`data/`, local `.env` files and SQLite files are
 excluded from Git. On Unix, newly created data directories and database files have private filesystem
 permissions. Credentials and tokens are not returned by status/history endpoints or logged.
 
 For a manual local copy, stop the process cleanly and copy the whole data directory; keep any `.env`
 with the copy if you use one. Start with that directory to use the copy. Automated backups and a
 restore interface are not implemented yet.
+
+Release upgrades make verified technical safety copies before schema changes. These protected
+copies include authentication storage and depend on the preserved spool; they are distinct from
+the planned portable application backup. Details and offline rollback guidance are in
+[archive foundations](docs/archive-foundations.md).
 
 ## Checks
 

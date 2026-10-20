@@ -192,17 +192,44 @@ pub fn bounds(filters: &Filters) -> Result<(Option<i64>, Option<i64>)> {
         Some(midnight(today.succ_opt().ok_or(AppError::Internal)?)?),
     ))
 }
-fn selection(filters: &Filters) -> Result<QueryBuilder<'static, Sqlite>> {
-    let (from, to) = bounds(filters)?;
+async fn selection(
+    conn: &mut sqlx::SqliteConnection,
+    filters: &Filters,
+) -> Result<QueryBuilder<Sqlite>> {
     let mut b = QueryBuilder::new(
-        "WITH selected AS (SELECT l.*, t.title, t.album_id, t.spotify_url, a.name AS album, a.cover_url FROM listens l JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id WHERE 1=1",
+        "WITH selected AS (SELECT l.*, t.title, t.album_id, t.spotify_url, a.name AS album, a.cover_url FROM listens l JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id WHERE l.trashed_at_ms IS NULL",
     );
-    if let Some(from) = from {
-        b.push(" AND l.played_at_ms >= ").push_bind(from);
-    }
-    if let Some(to) = to {
-        b.push(" AND l.played_at_ms < ").push_bind(to);
-    }
+    let parse = |s: &Option<String>| -> Result<Option<NaiveDate>> {
+        s.as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map_err(|_| AppError::BadRequest("Use dates in YYYY-MM-DD format.".into()))
+            })
+            .transpose()
+    };
+    let period = if filters.from.as_deref().is_some_and(|s| !s.is_empty())
+        || filters.to.as_deref().is_some_and(|s| !s.is_empty())
+        || filters.period.as_deref() == Some("custom")
+    {
+        crate::calendar::Period::Dates {
+            from: parse(&filters.from)?,
+            through: parse(&filters.to)?,
+        }
+    } else {
+        match filters.period.as_deref().unwrap_or("all") {
+            "all" => crate::calendar::Period::All,
+            "today" => crate::calendar::Period::Today,
+            "week" => crate::calendar::Period::Week,
+            "month" => crate::calendar::Period::Month,
+            "year" => crate::calendar::Period::Year,
+            "7d" => crate::calendar::Period::RollingDays(7),
+            "30d" => crate::calendar::Period::RollingDays(30),
+            "365d" => crate::calendar::Period::RollingDays(365),
+            _ => return Err(AppError::BadRequest("Unknown period.".into())),
+        }
+    };
+    crate::calendar::filter(conn, &mut b, &period, auth::now_ms()).await?;
     if let Some(q) = filters.q.as_deref().filter(|s| !s.trim().is_empty()) {
         if q.len() > 500 {
             return Err(AppError::BadRequest(
@@ -239,7 +266,7 @@ fn selection(filters: &Filters) -> Result<QueryBuilder<'static, Sqlite>> {
     Ok(b)
 }
 fn listen_json(r: sqlx::sqlite::SqliteRow) -> Value {
-    json!({"id":r.get::<i64,_>("id"),"track_id":r.get::<String,_>("track_id"),"title":r.get::<String,_>("title"),"album":r.get::<Option<String>,_>("album"),"cover_url":r.get::<Option<String>,_>("cover_url"),"spotify_url":r.get::<Option<String>,_>("spotify_url"),"played_at_ms":r.get::<i64,_>("played_at_ms"),"listened_ms":r.get::<Option<i64>,_>("listened_ms"),"duration_kind":r.get::<String,_>("duration_kind"),"counted":r.get::<bool,_>("counted"),"needs_review":r.get::<bool,_>("needs_review"),
+    json!({"id":r.get::<String,_>("id"),"track_id":r.get::<String,_>("track_id"),"title":r.get::<String,_>("title"),"album":r.get::<Option<String>,_>("album"),"cover_url":r.get::<Option<String>,_>("cover_url"),"spotify_url":r.get::<Option<String>,_>("spotify_url"),"played_at_ms":r.get::<i64,_>("played_at_ms"),"listened_ms":r.get::<Option<i64>,_>("listened_ms"),"duration_kind":r.get::<String,_>("duration_kind"),"counted":r.get::<bool,_>("counted"),"needs_review":r.get::<bool,_>("needs_review"),
         "artists":serde_json::from_str::<Value>(&r.get::<String,_>("artists")).unwrap_or(json!([])),"sources":serde_json::from_str::<Value>(&r.get::<String,_>("sources")).unwrap_or(json!([]))})
 }
 const LISTEN_COLUMNS: &str = "SELECT s.*, (SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT ar.id, ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artists, (SELECT json_group_array(source) FROM observations o WHERE o.listen_id=s.id) AS sources FROM selected s ";
@@ -249,18 +276,22 @@ pub async fn history(
     Query(filters): Query<Filters>,
 ) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
+    let mut view = state.storage.read_view().await?;
     let page = filters.page.unwrap_or(1).clamp(1, 1_000_000);
-    let mut count = selection(&filters)?;
+    let mut count = selection(&mut view.transaction, &filters).await?;
     count.push("SELECT COUNT(*) FROM selected");
-    let total: i64 = count.build_query_scalar().fetch_one(&state.db).await?;
-    let mut query = selection(&filters)?;
+    let total: i64 = count
+        .build_query_scalar()
+        .fetch_one(&mut *view.transaction)
+        .await?;
+    let mut query = selection(&mut view.transaction, &filters).await?;
     query
         .push(LISTEN_COLUMNS)
         .push("ORDER BY s.played_at_ms DESC, s.id DESC LIMIT 50 OFFSET ")
         .push_bind((page as i64 - 1) * 50);
     let items: Vec<_> = query
         .build()
-        .fetch_all(&state.db)
+        .fetch_all(&mut *view.transaction)
         .await?
         .into_iter()
         .map(listen_json)
@@ -275,9 +306,10 @@ pub async fn dashboard(
     Query(filters): Query<Filters>,
 ) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
-    let mut query = selection(&filters)?;
+    let mut view = state.storage.read_view().await?;
+    let mut query = selection(&mut view.transaction, &filters).await?;
     query.push("SELECT COUNT(*) AS records, COALESCE(SUM(counted),0) AS listens, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms ELSE 0 END),0) AS actual_ms, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms ELSE 0 END),0) AS estimated_ms, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='unknown' THEN 1 ELSE 0 END),0) AS unknown_durations, COUNT(DISTINCT CASE WHEN counted=1 THEN track_id END) AS tracks FROM selected");
-    let r = query.build().fetch_one(&state.db).await?;
+    let r = query.build().fetch_one(&mut *view.transaction).await?;
     let totals = json!({"records":r.get::<i64,_>("records"),"listens":r.get::<i64,_>("listens"),"tracks":r.get::<i64,_>("tracks"),"actual_ms":r.get::<i64,_>("actual_ms"),"estimated_ms":r.get::<i64,_>("estimated_ms"),"unknown_durations":r.get::<i64,_>("unknown_durations")});
     let order = match filters.sort.as_deref().unwrap_or("plays") {
         "plays" => "plays DESC, name COLLATE NOCASE",
@@ -299,18 +331,18 @@ pub async fn dashboard(
             "SELECT s.track_id AS entity_id, s.title AS name, s.album AS subtitle, MAX(s.cover_url) AS cover_url, COUNT(*) AS plays, COALESCE(SUM(s.listened_ms),0) AS listened_ms FROM selected s WHERE s.counted=1 GROUP BY s.track_id",
         ),
     ] {
-        let mut q = selection(&filters)?;
+        let mut q = selection(&mut view.transaction, &filters).await?;
         q.push(sql).push(" ORDER BY ").push(order).push(" LIMIT 5");
-        let items:Vec<_> = q.build().fetch_all(&state.db).await?.into_iter().map(|r|json!({"id":r.get::<String,_>("entity_id"),"name":r.get::<String,_>("name"),"subtitle":r.get::<Option<String>,_>("subtitle"),"cover_url":r.get::<Option<String>,_>("cover_url"),"plays":r.get::<i64,_>("plays"),"listened_ms":r.get::<i64,_>("listened_ms")})).collect();
+        let items:Vec<_> = q.build().fetch_all(&mut *view.transaction).await?.into_iter().map(|r|json!({"id":r.get::<String,_>("entity_id"),"name":r.get::<String,_>("name"),"subtitle":r.get::<Option<String>,_>("subtitle"),"cover_url":r.get::<Option<String>,_>("cover_url"),"plays":r.get::<i64,_>("plays"),"listened_ms":r.get::<i64,_>("listened_ms")})).collect();
         rankings.insert(kind.into(), json!(items));
     }
-    let mut recent = selection(&filters)?;
+    let mut recent = selection(&mut view.transaction, &filters).await?;
     recent
         .push(LISTEN_COLUMNS)
         .push(" ORDER BY s.played_at_ms DESC, s.id DESC LIMIT 8");
     let recent: Vec<_> = recent
         .build()
-        .fetch_all(&state.db)
+        .fetch_all(&mut *view.transaction)
         .await?
         .into_iter()
         .map(listen_json)

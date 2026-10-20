@@ -54,8 +54,8 @@ async fn credentials(state: &AppState) -> Result<Option<(String, String)>> {
     {
         return Ok(Some((id.clone(), secret.clone())));
     }
-    let id = db::setting(&state.db, "spotify_client_id").await?;
-    let secret = db::setting(&state.db, "spotify_client_secret").await?;
+    let id = db::setting(&state.private_db, "spotify_client_id").await?;
+    let secret = db::setting(&state.private_db, "spotify_client_secret").await?;
     Ok(id.zip(secret))
 }
 async fn diagnostic(state: &AppState, key: &str, value: &str) -> Result<()> {
@@ -66,7 +66,7 @@ pub async fn status(State(state): State<AppState>, headers: HeaderMap) -> Result
     auth::session(&state, &headers).await?;
     let configured = credentials(&state).await?.is_some();
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-        .fetch_one(&state.db)
+        .fetch_one(&state.private_db)
         .await?;
     let review_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
         .fetch_one(&state.db)
@@ -121,7 +121,7 @@ pub async fn save_credentials(
         ));
     }
     let _gate = state.spotify.gate.lock().await;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.private_db.begin().await?;
     db::set_setting(&mut tx, "spotify_client_id", id).await?;
     db::set_setting(&mut tx, "spotify_client_secret", secret).await?;
     sqlx::query("DELETE FROM spotify_tokens")
@@ -130,10 +130,14 @@ pub async fn save_credentials(
     sqlx::query("DELETE FROM oauth_states")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms')")
+    sqlx::query("INSERT INTO access_operations(id,kind) VALUES(?,'spotify_access_changed')")
+        .bind(db::new_id())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::storage::recover_access(&state.db, &state.private_db)
+        .await
+        .map_err(|_| AppError::Internal)?;
     *state.spotify.cache.lock().await = None;
     Ok(Json(json!({"ok":true})))
 }
@@ -143,7 +147,7 @@ pub async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Resul
         .await?
         .ok_or_else(|| AppError::BadRequest("Configure your Spotify app first.".into()))?;
     let secret = auth::random_secret();
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.private_db.begin().await?;
     sqlx::query("DELETE FROM oauth_states WHERE session_digest = ? OR expires_at_ms <= ?")
         .bind(&session.digest)
         .bind(auth::now_ms())
@@ -192,7 +196,7 @@ pub async fn callback(
     .bind(auth::digest(&secret))
     .bind(session.digest)
     .bind(auth::now_ms())
-    .execute(&state.db)
+    .execute(&state.private_db)
     .await?;
     if used.rows_affected() != 1 {
         return Err(AppError::Forbidden);
@@ -253,7 +257,7 @@ async fn save_tokens(
         .filter(|v| *v > 0 && *v <= 86_400)
         .ok_or_else(|| AppError::Spotify("Spotify returned an invalid token lifetime.".into()))?;
     sqlx::query("INSERT INTO spotify_tokens(id, access_token, refresh_token, expires_at_ms) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET access_token = excluded.access_token, refresh_token = excluded.refresh_token, expires_at_ms = excluded.expires_at_ms")
-        .bind(access).bind(refresh).bind(auth::now_ms()+seconds*1000).execute(&state.db).await?;
+        .bind(access).bind(refresh).bind(auth::now_ms()+seconds*1000).execute(&state.private_db).await?;
     Ok(())
 }
 async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<Value> {
@@ -310,7 +314,7 @@ async fn access_token(state: &AppState, force_refresh: bool) -> Result<String> {
     let row = sqlx::query(
         "SELECT access_token, refresh_token, expires_at_ms FROM spotify_tokens WHERE id = 1",
     )
-    .fetch_optional(&state.db)
+    .fetch_optional(&state.private_db)
     .await?
     .ok_or_else(|| AppError::BadRequest("Connect your Spotify account first.".into()))?;
     if !force_refresh && row.get::<i64, _>("expires_at_ms") > auth::now_ms() + 60_000 {
@@ -476,6 +480,12 @@ async fn sync_locked(state: &AppState) -> Result<Value> {
                 source_timestamp_ms: timestamp,
                 played_at_ms: timestamp,
                 listened_ms: track.duration_ms,
+                duration_kind: if track.duration_ms.is_some() {
+                    db::DurationKind::Estimated
+                } else {
+                    db::DurationKind::Unknown
+                },
+                counted: true,
                 track,
                 raw: row.clone(),
             });
@@ -538,7 +548,7 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
         return Ok(Json(value.clone()));
     }
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-        .fetch_one(&state.db)
+        .fetch_one(&state.private_db)
         .await?;
     if !connected {
         return Ok(Json(Value::Null));
@@ -567,17 +577,21 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
 pub async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
     let _gate = state.spotify.gate.lock().await;
-    let mut tx = state.db.begin().await?;
+    let mut tx = state.private_db.begin().await?;
     sqlx::query("DELETE FROM spotify_tokens")
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM oauth_states")
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms')")
+    sqlx::query("INSERT INTO access_operations(id,kind) VALUES(?,'spotify_access_changed')")
+        .bind(db::new_id())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::storage::recover_access(&state.db, &state.private_db)
+        .await
+        .map_err(|_| AppError::Internal)?;
     *state.spotify.cache.lock().await = None;
     Ok(Json(json!({"ok":true})))
 }
@@ -585,7 +599,7 @@ pub async fn worker(state: AppState) {
     loop {
         let connected =
             sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-                .fetch_one(&state.db)
+                .fetch_one(&state.private_db)
                 .await
                 .unwrap_or(false);
         if connected && let Err(error) = sync(&state).await {
@@ -677,7 +691,7 @@ mod tests {
         let mut state = AppState::new(db, config);
         state.spotify.api_base = format!("http://{address}/v1");
         state.spotify.token_url = format!("http://{address}/api/token");
-        sqlx::query("INSERT INTO spotify_tokens(id,access_token,refresh_token,expires_at_ms) VALUES (1,'initial-access','initial-refresh',?)").bind(if expired{0}else{auth::now_ms()+3_600_000}).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO spotify_tokens(id,access_token,refresh_token,expires_at_ms) VALUES (1,'initial-access','initial-refresh',?)").bind(if expired{0}else{auth::now_ms()+3_600_000}).execute(&state.private_db).await.unwrap();
         (dir, state, mock, handle)
     }
     fn reply(path: &'static str, body: Value) -> Reply {
@@ -710,7 +724,7 @@ mod tests {
         .await;
         assert_eq!(sync(&state).await.unwrap()["added"], 1);
         let refresh: String = sqlx::query_scalar("SELECT refresh_token FROM spotify_tokens")
-            .fetch_one(&state.db)
+            .fetch_one(&state.private_db)
             .await
             .unwrap();
         assert_eq!(refresh, "initial-refresh");
@@ -719,7 +733,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(checkpoint, at.to_string());
-        state.db.close().await;
+        state.storage.close().await;
         let pool = db::open(dir.path()).await.unwrap();
         let mut restarted = AppState::new(pool, state.config.clone());
         restarted.spotify = state.spotify.clone();
@@ -736,7 +750,7 @@ mod tests {
         let (_dir,state,mock,handle)=fixture(vec![Reply{path:"/v1/me/player/recently-played",status:StatusCode::UNAUTHORIZED,body:json!({"error":"do not return this token"}),retry:None},reply("/api/token",json!({"access_token":"replacement","refresh_token":"rotated-refresh","expires_in":3600})),reply("/v1/me/player/recently-played",json!({"items":[]}))],false).await;
         sync(&state).await.unwrap();
         let refresh: String = sqlx::query_scalar("SELECT refresh_token FROM spotify_tokens")
-            .fetch_one(&state.db)
+            .fetch_one(&state.private_db)
             .await
             .unwrap();
         assert_eq!(refresh, "rotated-refresh");
@@ -828,14 +842,14 @@ mod tests {
         sqlx::query("INSERT INTO sessions(digest,csrf,expires_at_ms) VALUES (?,'csrf',?)")
             .bind(auth::digest(&cookie))
             .bind(auth::now_ms() + 60000)
-            .execute(&state.db)
+            .execute(&state.private_db)
             .await
             .unwrap();
         sqlx::query("INSERT INTO oauth_states(digest,session_digest,expires_at_ms) VALUES (?,?,?)")
             .bind(auth::digest(&secret))
             .bind(auth::digest(&cookie))
             .bind(auth::now_ms() + 60000)
-            .execute(&state.db)
+            .execute(&state.private_db)
             .await
             .unwrap();
         let mut headers = HeaderMap::new();
@@ -875,7 +889,7 @@ mod tests {
         sqlx::query("INSERT INTO sessions(digest,csrf,expires_at_ms) VALUES (?,'csrf',?)")
             .bind(auth::digest(&cookie))
             .bind(auth::now_ms() + 60000)
-            .execute(&state.db)
+            .execute(&state.private_db)
             .await
             .unwrap();
         let mut headers = HeaderMap::new();
