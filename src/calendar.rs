@@ -151,43 +151,8 @@ impl Storage {
         week_start: i64,
         whole_history: bool,
     ) -> Result<Option<String>> {
-        if timezone.parse::<Tz>().is_err() || !(0..=6).contains(&week_start) {
-            return Err(AppError::BadRequest(
-                "Use an IANA timezone and week start 0 (Monday) through 6.".into(),
-            ));
-        }
         let mut tx = self.writer.begin().await?;
-        // First statement reserves the sole writer before reading state.
-        sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
-        let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='calendar' AND state IN ('queued','running','waiting'))").fetch_one(&mut *tx).await?;
-        if active {
-            return Err(AppError::Conflict(
-                "A calendar recalculation is already pending.".into(),
-            ));
-        }
-        let calendar_id = db::new_id();
-        sqlx::query("INSERT INTO calendars VALUES(?,?,?,1)")
-            .bind(&calendar_id)
-            .bind(timezone)
-            .bind(week_start)
-            .execute(&mut *tx)
-            .await?;
-        let job = if whole_history {
-            let base: i64 =
-                sqlx::query_scalar("SELECT revision FROM archive_state WHERE singleton=1")
-                    .fetch_one(&mut *tx)
-                    .await?;
-            let job_id = db::new_id();
-            sqlx::query("INSERT INTO jobs(id,kind,parameters_json,state,created_at_ms,updated_at_ms) VALUES(?,'calendar',?,'queued',?,?)")
-                .bind(&job_id).bind(serde_json::json!({"calendar_id":calendar_id,"base_revision":base}).to_string()).bind(auth::now_ms()).bind(auth::now_ms()).execute(&mut *tx).await?;
-            Some(job_id)
-        } else {
-            db::set_setting(&mut tx, "calendar_id", &calendar_id).await?;
-            sqlx::query("UPDATE archive_state SET revision=revision+1 WHERE singleton=1")
-                .execute(&mut *tx)
-                .await?;
-            None
-        };
+        let job = change_in_transaction(&mut tx, timezone, week_start, whole_history).await?;
         tx.commit().await?;
         Ok(job)
     }
@@ -249,6 +214,7 @@ impl Storage {
             .bind(id).bind(revision).bind(&lease.id).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO changes(revision,listen_id,operation) SELECT ?,listen_id,'upsert' FROM calendar_staging WHERE job_id=?").bind(revision).bind(&lease.id).execute(&mut *tx).await?;
         db::set_setting(&mut tx, "calendar_id", id).await?;
+        sqlx::query("INSERT INTO settings(key,value) VALUES('preferences_version','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET state='completed',updated_at_ms=? WHERE id=?")
             .bind(auth::now_ms())
             .bind(&lease.id)
@@ -284,4 +250,49 @@ pub async fn worker(storage: Storage) {
         }
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
+}
+
+/// Caller holds the archive writer; preferences and future/calendar work commit together.
+pub(crate) async fn change_in_transaction(
+    conn: &mut SqliteConnection,
+    timezone: &str,
+    week_start: i64,
+    whole_history: bool,
+) -> Result<Option<String>> {
+    if timezone.parse::<Tz>().is_err() || !(0..=6).contains(&week_start) {
+        return Err(AppError::BadRequest(
+            "Use an IANA timezone and week start 0 (Monday) through 6.".into(),
+        ));
+    }
+    // First statement reserves the sole writer before reading state.
+    sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *conn).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
+    let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='calendar' AND state IN ('queued','running','waiting'))").fetch_one(&mut *conn).await?;
+    if active {
+        return Err(AppError::Conflict(
+            "A calendar recalculation is already pending.".into(),
+        ));
+    }
+    let calendar_id = db::new_id();
+    sqlx::query("INSERT INTO calendars VALUES(?,?,?,1)")
+        .bind(&calendar_id)
+        .bind(timezone)
+        .bind(week_start)
+        .execute(&mut *conn)
+        .await?;
+    let job = if whole_history {
+        let base: i64 = sqlx::query_scalar("SELECT revision FROM archive_state WHERE singleton=1")
+            .fetch_one(&mut *conn)
+            .await?;
+        let job_id = db::new_id();
+        sqlx::query("INSERT INTO jobs(id,kind,parameters_json,state,created_at_ms,updated_at_ms) VALUES(?,'calendar',?,'queued',?,?)")
+                .bind(&job_id).bind(serde_json::json!({"calendar_id":calendar_id,"base_revision":base}).to_string()).bind(auth::now_ms()).bind(auth::now_ms()).execute(&mut *conn).await?;
+        Some(job_id)
+    } else {
+        db::set_setting(conn, "calendar_id", &calendar_id).await?;
+        sqlx::query("UPDATE archive_state SET revision=revision+1 WHERE singleton=1")
+            .execute(&mut *conn)
+            .await?;
+        None
+    };
+    Ok(job)
 }

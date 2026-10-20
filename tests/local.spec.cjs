@@ -94,6 +94,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   );
   expect(await page.evaluate(() => window.bad)).toBeUndefined();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("link", { name: "Connections", exact: true }).click();
   await expect(page.locator("#redirect-uri")).toHaveText(
     "http://127.0.0.1:3211/auth/spotify/callback",
   );
@@ -104,7 +105,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     .getByLabel("Client Secret", { exact: true })
     .fill("testsecret1234567890");
   await page.getByRole("button", { name: "Save Spotify app" }).click();
-  await expect(page.locator("#connection-badge")).toHaveText(
+  await expect(page.locator("#connection-badge")).toContainText(
     "Ready to connect",
   );
   await expect(page.getByLabel("Client Secret", { exact: true })).toHaveValue(
@@ -114,6 +115,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     fetch("/api/spotify/status").then((r) => r.json()),
   );
   expect(JSON.stringify(status)).not.toContain("testsecret");
+  await page.getByRole("link", { name: "Appearance", exact: true }).click();
   await page.locator("#theme").selectOption("light");
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/theme-light/);

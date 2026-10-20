@@ -24,6 +24,24 @@ pub fn router(state: AppState) -> Router {
         .route("/app.js", get(js))
         .route("/style.css", get(css))
         .route("/favicon.svg", get(icon))
+        .route("/settings", get(index))
+        .route("/settings/{section}", get(index))
+        .route("/dashboard", get(index))
+        .route("/history", get(index))
+        .route("/import", get(index))
+        .route("/activities", get(index))
+        .route("/activities/{id}", get(index))
+        .route("/integrations/api-keys", get(index))
+        .route("/material-icons.woff2", get(icons_font))
+        .route(
+            "/api/v1/preferences",
+            get(crate::preferences::get).post(crate::preferences::save),
+        )
+        .route("/api/v1/activities", get(crate::activities::list))
+        .route(
+            "/api/v1/activities/{id}",
+            get(crate::activities::detail).post(crate::activities::action),
+        )
         .route("/api/session", get(auth::status))
         .route("/api/setup", post(auth::setup))
         .route("/api/login", post(auth::login))
@@ -52,24 +70,30 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 async fn index() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+    Html(include_str!("../static/dist/index.html"))
 }
 async fn js() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("../static/app.js"),
+        include_str!("../static/dist/app.js"),
     )
 }
 async fn css() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("../static/style.css"),
+        include_str!("../static/dist/style.css"),
     )
 }
 async fn icon() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "image/svg+xml")],
         include_str!("../static/favicon.svg"),
+    )
+}
+async fn icons_font() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "font/woff2")],
+        include_bytes!("../static/dist/material-icons.woff2").as_slice(),
     )
 }
 async fn security(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
@@ -100,7 +124,7 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' https://i.scdn.co; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
+    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' https://i.scdn.co; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -274,7 +298,7 @@ pub async fn history(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(filters): Query<Filters>,
-) -> Result<Json<Value>> {
+) -> Result<Json<crate::dto::History>> {
     auth::session(&state, &headers).await?;
     let mut view = state.storage.read_view().await?;
     let page = filters.page.unwrap_or(1).clamp(1, 1_000_000);
@@ -297,14 +321,14 @@ pub async fn history(
         .map(listen_json)
         .collect();
     Ok(Json(
-        json!({"items":items,"total":total,"page":page,"page_size":50,"timezone":"Europe/Rome"}),
+        serde_json::from_value(json!({"items":items,"total":total,"page":page,"page_size":50,"timezone":crate::preferences::read(&mut view.transaction).await?.timezone})).map_err(|_| AppError::Internal)?,
     ))
 }
 pub async fn dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
     Query(filters): Query<Filters>,
-) -> Result<Json<Value>> {
+) -> Result<Json<crate::dto::Dashboard>> {
     auth::session(&state, &headers).await?;
     let mut view = state.storage.read_view().await?;
     let mut query = selection(&mut view.transaction, &filters).await?;
@@ -348,6 +372,6 @@ pub async fn dashboard(
         .map(listen_json)
         .collect();
     Ok(Json(
-        json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":"Europe/Rome"}),
+        serde_json::from_value(json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":crate::preferences::read(&mut view.transaction).await?.timezone})).map_err(|_| AppError::Internal)?,
     ))
 }

@@ -121,8 +121,17 @@ impl Storage {
         Ok(())
     }
     pub async fn retry(&self, id: &str) -> Result<()> {
+        let mut tx = self.writer.begin().await?;
+        sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
+        let another_calendar: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs target WHERE target.id=? AND target.kind='calendar' AND EXISTS(SELECT 1 FROM jobs other WHERE other.id!=target.id AND other.kind='calendar' AND other.state IN ('queued','running','waiting')))").bind(id).fetch_one(&mut *tx).await?;
+        if another_calendar {
+            return Err(AppError::Conflict(
+                "Another calendar recalculation is already pending.".into(),
+            ));
+        }
         sqlx::query("UPDATE jobs SET state='queued',cancel_requested=0,retry_at_ms=NULL,error_code=NULL WHERE id=? AND state IN ('failed','cancelled')")
-            .bind(id).execute(&self.writer).await?;
+            .bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     /// Rows must be a contiguous checkpoint interval. Invalid/skipped originals are retained too.

@@ -1,12 +1,25 @@
 {
-  "name": "scrobbl-rs-browser-checks",
+  "name": "scrobbl-rs-frontend",
   "private": true,
   "scripts": {
     "test:e2e": "playwright test",
-    "format:web": "prettier --write static/*.html static/*.css static/*.js tests/*.cjs playwright.config.cjs"
+    "format:web": "prettier --write frontend/src/*.{ts,tsx,css} frontend/index.html vite.config.mts tests/*.cjs playwright.config.cjs",
+    "build": "tsc -p frontend/tsconfig.json && vite build",
+    "typecheck": "tsc -p frontend/tsconfig.json",
+    "dev": "vite",
+    "check:web": "tsc -p frontend/tsconfig.json"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.0",
-    "prettier": "^3.8.0"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "prettier": "^3.8.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "dependencies": {
+    "material-icons": "^1.13.14",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }
