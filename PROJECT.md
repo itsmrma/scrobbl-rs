@@ -377,3 +377,21 @@ Per riprendere: avviare il servizio, creare l'app Spotify, autorizzare l'account
 raccolta a pagina chiusa, riavvio e sovrapposizione import/API con ascolti reali. I test simulati non
 sostituiscono questa verifica. Le funzionalità successive della roadmap e tutte le decisioni aperte
 non esplicitamente risolte qui rimangono in sospeso. Nessuna licenza è stata scelta implicitamente.
+
+## 16. Mappa decisionale su GitHub — 20 ottobre 2026
+
+Il primo prototipo locale è pubblicato nel commit
+[`cef09db`](https://github.com/itsmrma/scrobbl-rs/commit/cef09db03267fe247606db0b9e6237501d1d305b).
+Per pianificare le prossime iterazioni, leggere la
+[mappa dal primo prototipo alla prima release](https://github.com/itsmrma/scrobbl-rs/issues/1)
+e scegliere fra i suoi sotto-ticket aperti con prerequisiti risolti.
+
+L'utente considera questa versione una base sufficiente come primo prototipo, ma ha segnalato
+problemi che descriverà in seguito, anche tramite ticket. Raccogliere prima il feedback e gli
+esempi concreti: il comportamento attuale e alcune scelte potranno cambiare. Non presumere
+che i test automatici superati risolvano questi problemi o sostituiscano la prova con Spotify reale.
+
+La mappa raccoglie domande, verifiche preliminari e dipendenze; non approva nuove scelte né
+avvia automaticamente lo sviluppo. Conservare le conferme di questo documento finché non
+vengono riviste esplicitamente. Registrare le nuove decisioni nei rispettivi ticket e aggiornare
+questo documento quando cambiano i requisiti; creare poi i ticket di implementazione pertinenti.
