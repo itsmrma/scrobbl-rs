@@ -2,7 +2,7 @@
 
 Asset per [Come rendere semplice il collegamento Spotify da PC/Mac su un server privato HTTP?](https://github.com/itsmrma/scrobbl-rs/issues/17).
 
-**Stato aggiornato dopo il feedback: proposta SSH esclusa dal percorso da sviluppare.** Il proprietario preferisce una finestra guidata, considera la prima demo troppo complicata e vuole evitare anche l'abilitazione di SSH su TrueNAS. La preferenza grafica non approva i prerequisiti SSH. Il meccanismo senza SSH resta da individuare e verificare: non è già stata approvata un'alternativa HTTPS, né il trasferimento di dati OAuth sul normale HTTP LAN. La decisione resta aperta nel ticket.
+**Esito dopo il feedback: scelto HTTPS privato con guida nelle Settings, usando DuckDNS oppure un dominio proprio.** La proposta SSH è stata esclusa e il proprietario ha considerato la prima demo troppo complicata. La decisione vive nel [ticket del collegamento Spotify](https://github.com/itsmrma/scrobbl-rs/issues/17); il nuovo [asset di testo per Settings](spotify-https-settings-copy.md) rende concreto il percorso concordato. Il resto di questo documento non rappresenta il flusso scelto. Verifica infrastrutturale e implementazione del supporto HTTPS restano da svolgere.
 
 Il resto di questo documento e l'HTML conservano la proposta precedente come evidenza storica, non come soluzione consigliata. Questo branch non è destinato al merge. Non contiene credenziali né modifica il backend o la distribuzione.
 
