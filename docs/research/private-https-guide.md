@@ -1,0 +1,42 @@
+# Private HTTPS: Settings guide evidence
+
+Research date: 2026-10-20. Context: [Spotify connection decision](https://github.com/itsmrma/scrobbl-rs/issues/17). This is a disposable research asset for the decision, not an implementation, deployment recipe certified for the owner's TrueNAS, or proof that the current app supports this flow.
+
+## Findings from primary sources
+
+**DuckDNS is sufficient for a public certificate without buying a domain.** It provides free dynamic DNS names and a token-authenticated TXT update API. Its TXT response also covers names below the allocated name, including the ACME challenge name. The provider explicitly identifies Let's Encrypt ownership validation as a use case. The account token controls DNS changes: it belongs in the certificate manager's protected configuration, never in a public issue, screenshot, or this app's ordinary URL field. [DuckDNS specification](https://www.duckdns.org/spec.jsp).
+
+**The certificate can be issued without making the app public.** DNS-01 proves control using a public DNS TXT record, rather than an incoming request to the webserver. Let's Encrypt explicitly supports webservers that are not exposed publicly. The ACME client still needs outbound Internet access. DNS changes must propagate before validation; do not promise a fixed completion time. Automated renewal requires an appropriate DNS API integration; manually creating TXT records is not automatic renewal. A provider without an API needs a different arrangement; delegated challenge DNS is an advanced possibility. [Let's Encrypt challenge types](https://letsencrypt.org/docs/challenge-types/#dns-01-challenge).
+
+**Nginx Proxy Manager is a possible GUI reference, not a required product dependency.** Its own guide documents a web administration interface and TLS termination. Its default home-network tutorial also tells users to forward public ports: that part must not be copied into this private setup. Its persistent data/certificate volumes must survive container replacement. [NPM guide](https://nginxproxymanager.com/guide/).
+
+NPM's provider catalog includes DuckDNS and the credential entry `dns_duckdns_token=your-duckdns-token`. Other providers have different credential names and permission requirements; owning a domain alone does not guarantee the current DNS provider has a supported automation API. Use the current installed manager's provider list. [NPM catalog at inspected master revision](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/a29eae9dc271ceabda51a6197bf1790644c99202/backend/certbot/dns-plugins.json#L201).
+
+NPM's certificate implementation has an automatic expiry-check timer and uses the DNS renewal path for certificates created with a DNS challenge. It retains DNS credentials for renewal and passes them to Certbot as a protected temporary file. This verifies capability, not a successful renewal on the owner's server. Keep the manager running and its persistent configuration intact; show renewal failure status rather than claiming renewal can never fail. [NPM certificate implementation](https://github.com/NginxProxyManager/nginx-proxy-manager/blob/a29eae9dc271ceabda51a6197bf1790644c99202/backend/internal/certificate.js#L28).
+
+The DuckDNS plugin documents automated TXT creation, configurable propagation delay, and a shared TXT limitation: avoid unrelated concurrent certificate requests against the same DuckDNS name. A single application hostname is sufficient; a wildcard is unnecessary. [Plugin maintainer's documentation](https://github.com/infinityofspace/certbot_dns_duckdns#usage).
+
+**AdGuard Home can resolve the name to the LAN proxy.** Its DNS rewrite form accepts a domain and an answer IP (A/AAAA) or a domain (CNAME). For this case, add the exact application hostname with the reverse proxy's stable LAN IP as the answer. DNS rewrites contain no URL scheme, path, or port. The device's effective resolver must use this local DNS answer; browser/private DNS bypasses can prevent it from reaching the private server. [Rewrite form source](https://github.com/AdguardTeam/AdGuardHome/blob/b13042b071790a3eeb28c73feeb88034801ee1d1/client/src/components/Filters/Rewrites/Form.tsx), [official UI strings](https://github.com/AdguardTeam/AdGuardHome/blob/b13042b071790a3eeb28c73feeb88034801ee1d1/client/src/__locales/en.json#L598).
+
+**A certificate does not allocate a server port.** TrueNAS documents 443 as its GUI HTTPS default. Do not assume host ports 80 or 443 are free. The proxy needs an available LAN IP/port and must reach the app's internal HTTP endpoint. A dedicated address or an alternate LAN TLS port can avoid conflict, depending on topology. Do not prescribe moving the management GUI or one container networking mode without the installed TrueNAS version and network layout. [TrueNAS GUI settings reference](https://www.truenas.com/docs/scale/25.10/scaleuireference/systemsettings/generalsettingsscreens/).
+
+**Spotify accepts an HTTPS hostname callback.** Except for explicit loopback IP addresses, redirect URIs must use HTTPS and match the registered URI exactly. Include any explicit alternate TLS port consistently; for example `https://music.example.com:8443/<actual-callback-path>`. The actual callback route must come from the app, not a guessed `/callback`. [Spotify redirect requirements](https://developer.spotify.com/documentation/web-api/concepts/redirect_uri).
+
+Spotify redirects the user's browser after approval/denial; the server later exchanges the returned code through an outbound token request. Therefore the private callback needs to be reachable by that browser, not publicly reachable by a Spotify server. This is an inference from the documented flow, not an end-to-end test. The browser must resolve the chosen hostname locally and trust its certificate. [Spotify authorization-code flow](https://developer.spotify.com/documentation/web-api/tutorials/code-flow).
+
+## Recommended guide structure (proposal, not an implemented wizard)
+
+Keep Settings concise: **Secure address**, one sentence explaining that Spotify needs HTTPS, and two expandable paths: **I don't have a domain — use free DuckDNS** / **I already have a domain**. HTTPS and DNS configuration happen in the user's infrastructure; an app field does not create the certificate or rewrite DNS.
+
+The DuckDNS path should walk through:
+
+1. Open DuckDNS, sign in, and reserve an available name such as `my-music.duckdns.org`. Retain the name and token privately.
+2. Install or open a certificate-capable reverse proxy using its graphical interface. Explain this as a one-time server prerequisite. Offer NPM as an example, with version-appropriate instructions, not a universal TrueNAS deployment command.
+3. Request a Let's Encrypt certificate for that exact name using **DNS challenge**, provider **DuckDNS**, and the token in the manager's credential field. Wait for issuance; leave automation configured for renewal. Never instruct public port forwarding for this flow.
+4. Configure the proxy hostname, LAN TLS listener, certificate, and the reachable internal scrobbl.rs endpoint. Check occupied ports first. An alternate TLS port belongs in the browser URL.
+5. In the local DNS server, for example AdGuard Home's DNS rewrites, map the exact hostname to the proxy's LAN IP. Ensure the connecting device uses that resolver.
+6. Open the resulting HTTPS URL in the same browser that will authorize Spotify. Continue only when the app opens with a trusted certificate. Then save the complete HTTPS address and copy the app's exact callback URL to the Spotify dashboard.
+
+The owned-domain path replaces step 1 with choosing a subdomain the user controls, such as `music.example.com`. Step 3 uses the **authoritative DNS provider's** supported API/credentials, which may differ from the registrar. The remaining steps are shared. If the provider lacks an integration, explain that provider-specific certificate setup is needed; do not force DuckDNS, silently change DNS hosting, or offer a manual TXT procedure as automatic renewal.
+
+For an implementation, the guide needs explicit states for certificate issuance pending, domain resolving to the wrong endpoint, TLS trust failure, unreachable service, and exact redirect mismatch. These are proposed acceptance checks. Do not present them as working checks in a static prototype. This research installed nothing, used no credentials, issued no certificate, and did not validate private OAuth or renewals on TrueNAS.
