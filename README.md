@@ -106,14 +106,18 @@ then defaults. Copy `.env.example` to `.env` only if you need overrides. Setting
 interface are stored in SQLite. When **both** Spotify credential environment variables are set, they
 take precedence and the web credential form is disabled. Restart after changing environment values.
 
+Change Spotify collection and now-playing intervals in **Settings → Connections → Spotify → Refresh
+intervals**. These values apply without restarting, persist with the archive and override the initial
+environment defaults. See [refresh interval settings](docs/spotify-setup.md#refresh-intervals).
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SCROBBL_BIND` | `127.0.0.1` | Internal listening IP; Docker uses `0.0.0.0` |
 | `SCROBBL_PORT` | `3210` | Internal HTTP port |
 | `SCROBBL_EXTERNAL_ORIGIN` | local listener origin | Browser-facing origin for Host/Origin, Spotify callback and Secure cookies; required beyond loopback |
 | `SCROBBL_DATA_DIR` | `./data` | Persistent SQLite directory, relative to the process working directory |
-| `SCROBBL_SYNC_SECONDS` | `120` | Background recent-history collection interval, minimum 60 seconds |
-| `SCROBBL_NOW_PLAYING_SECONDS` | `30` | Now-playing cache/poll interval, minimum 15 seconds |
+| `SCROBBL_SYNC_SECONDS` | `120` | Initial collection interval, minimum 60 seconds; saved Settings take precedence |
+| `SCROBBL_NOW_PLAYING_SECONDS` | `30` | Initial now-playing interval, minimum 15 seconds; saved Settings take precedence |
 | `SCROBBL_IMPORT_UPLOAD_BYTES` | `268435456` | Total received file bytes per selection |
 | `SCROBBL_IMPORT_EXPANDED_BYTES` | `1073741824` | Cumulative expanded ZIP/JSON bytes |
 | `SCROBBL_IMPORT_MEMBER_BYTES` | `268435456` | Expanded bytes per member/file |
