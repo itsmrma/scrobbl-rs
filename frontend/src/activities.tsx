@@ -4,8 +4,71 @@ import { date, ErrorText, Heading, useToast } from "./ui";
 import { Link } from "./navigation";
 import { useLoad } from "./library";
 import { useEffect, useState } from "react";
+import { ListenBrainzOriginals } from "./listenbrainz";
+const jobMessage = (code: string) => {
+  const messages: Record<string, string> = {
+    coverage_uncertain_use_official_zip:
+      "Coverage is uncertain. Saved listens are retained. Upload the official ListenBrainz ZIP to complete this interval safely.",
+    partial_import_review_report:
+      "Import finished with rejected rows or unreadable parts. Valid rows are saved; review the report and originals below.",
+    listenbrainz_username_not_found:
+      "This public ListenBrainz username was not found. Check the name and start another fetch.",
+    listenbrainz_rate_wait:
+      "Waiting for ListenBrainz rate limits. This activity will resume automatically.",
+    listenbrainz_network_wait:
+      "ListenBrainz could not be reached. Saved progress is safe; retrying automatically.",
+    listenbrainz_service_wait:
+      "ListenBrainz is temporarily unavailable or limiting requests. Waiting before retrying.",
+    invalid_archive_or_configured_limit_review_original:
+      "The archive is unreadable, has an account conflict or exceeds a configured limit. Saved rows and the original file are retained. Review the files and retry.",
+    listenbrainz_processing_failed_saved_rows_retained:
+      "Processing stopped. Confirm server storage is available and retry. Confirmed rows remain saved.",
+    malformed_page:
+      "ListenBrainz returned a malformed page. Saved rows remain; retry or upload the official ZIP.",
+    nonadvancing_or_unsorted_page:
+      "ListenBrainz pagination did not advance safely. Saved rows remain; use the official ZIP for complete coverage.",
+  };
+  return (
+    messages[code] ||
+    `Activity reported: ${code}. Saved rows are retained; retry or use the official ZIP.`
+  );
+};
+function SourceInterval({ params }: { params: unknown }) {
+  if (params && typeof params === "object" && "account" in params) {
+    return (
+      <p>
+        Source account:{" "}
+        {typeof params.account === "string" ? params.account : "unknown"}.
+        Changed payloads without a verified playback identifier stay separate.
+        Matches requiring an account assumption are flagged for review.
+      </p>
+    );
+  }
+  if (
+    !params ||
+    typeof params !== "object" ||
+    !("start" in params) ||
+    !("end" in params) ||
+    !("timezone" in params) ||
+    !("username" in params) ||
+    typeof params.start !== "number" ||
+    typeof params.end !== "number"
+  )
+    return null;
+  return (
+    <p>
+      Public account: {String(params.username)} · saved interval:{" "}
+      {new Date(params.start * 1000).toISOString()} through{" "}
+      {new Date(params.end * 1000 - 1).toISOString()} · selected calendar:{" "}
+      {String(params.timezone)}. This interval stays fixed on retry.
+    </p>
+  );
+}
 export const isActive = (job: Activity) =>
   ["queued", "running", "waiting"].includes(job.state);
+export const activityState = (job: Activity) =>
+  job.outcome ||
+  (job.state === "completed" && job.error_code ? "partial" : job.state);
 export const activityName = (job: Activity) =>
   job.kind === "calendar"
     ? "Recalculate assigned calendar"
@@ -88,8 +151,7 @@ export function Activities({
             <article className="panel padded">
               <h2>{activityName(job)}</h2>
               <p role="status">
-                {job.outcome || job.state} · phase {job.phase} · attempt{" "}
-                {job.attempt}
+                {activityState(job)} · phase {job.phase} · attempt {job.attempt}
               </p>
               {job.target_timezone && (
                 <p>
@@ -108,6 +170,13 @@ export function Activities({
                 </p>
               )}
               <Progress job={job} />
+              <SourceInterval params={detail.data?.source_parameters} />
+              {job.state === "completed" &&
+                job.kind === "listenbrainz_fetch" &&
+                job.processed === 0 &&
+                !job.error_code && (
+                  <p>The public archive is empty for the selected interval.</p>
+                )}
               {job.kind === "spotify_import" && (
                 <p>
                   {job.inventory_complete
@@ -121,7 +190,9 @@ export function Activities({
                 <p className="form-error">
                   {job.error_code === "calendar_recalculation_failed"
                     ? "Calendar recalculation failed. The previous calendar is still active. Check server storage and retry."
-                    : `Activity reported: ${job.error_code}`}
+                    : job.kind.startsWith("listenbrainz_")
+                      ? jobMessage(job.error_code)
+                      : `Activity reported: ${job.error_code}`}
                 </p>
               )}
               {job.retry_at_ms && (
@@ -161,13 +232,19 @@ export function Activities({
                   </div>
                 ))}
               </dl>
-              {["calendar", "spotify_import"].includes(job.kind) &&
+              {[
+                "calendar",
+                "spotify_import",
+                "listenbrainz_file",
+                "listenbrainz_fetch",
+              ].includes(job.kind) &&
                 job.phase !== "receiving" && (
                   <div className="connection-actions">
                     {(isActive(job)
                       ? ["cancel"]
                       : ["failed", "cancelled"].includes(job.state) ||
-                          job.outcome === "partial"
+                          (job.outcome === "partial" &&
+                            job.kind !== "listenbrainz_fetch")
                         ? ["retry"]
                         : []
                     ).map((action) => (
@@ -202,17 +279,26 @@ export function Activities({
                         {action === "cancel"
                           ? job.kind === "calendar"
                             ? "Cancel recalculation"
-                            : "Cancel import"
+                            : job.kind.startsWith("listenbrainz_")
+                              ? "Cancel activity"
+                              : "Cancel import"
                           : job.kind === "calendar"
                             ? "Retry recalculation"
-                            : "Retry import"}
+                            : job.kind.startsWith("listenbrainz_")
+                              ? "Retry activity"
+                              : "Retry import"}
                       </button>
                     ))}
                   </div>
                 )}
               {detail.data && detail.data.issues?.length > 0 && (
                 <div>
-                  <h3>Invalid source rows (page {issuesPage + 1})</h3>
+                  <h3>
+                    {job.kind.startsWith("listenbrainz_")
+                      ? "Row issues and duration warnings"
+                      : "Invalid source rows"}{" "}
+                    (page {issuesPage + 1})
+                  </h3>
                   <div className="connection-actions">
                     <button
                       className="secondary"
@@ -223,7 +309,11 @@ export function Activities({
                     </button>
                     <button
                       className="secondary"
-                      disabled={(issuesPage + 1) * 100 >= job.invalid}
+                      disabled={
+                        job.kind.startsWith("listenbrainz_")
+                          ? detail.data.issues.length < 100
+                          : (issuesPage + 1) * 100 >= job.invalid
+                      }
                       onClick={() => setIssuesPage((p) => p + 1)}
                     >
                       Next errors
@@ -231,7 +321,11 @@ export function Activities({
                   </div>
                   {detail.data.issues.map((issue) => (
                     <p key={`${issue.member}:${issue.row_number}`}>
-                      {issue.member}, row {issue.row_number}: {issue.reason}
+                      {issue.member}
+                      {job.kind.startsWith("listenbrainz_")
+                        ? " ? row "
+                        : ", row "}
+                      {issue.row_number}: {issue.reason}
                     </p>
                   ))}
                 </div>
@@ -291,6 +385,9 @@ export function Activities({
                   )}
                 </div>
               ))}
+              {job.kind.startsWith("listenbrainz_") && (
+                <ListenBrainzOriginals key={job.id} id={job.id} />
+              )}
             </article>
           )}
         </>
@@ -308,6 +405,12 @@ export function Activities({
               <option value="">All activities</option>
               <option value="spotify_import">Spotify imports</option>
               <option value="spotify_collection">Spotify collection</option>
+              <option value="listenbrainz_file">
+                ListenBrainz file imports
+              </option>
+              <option value="listenbrainz_fetch">
+                ListenBrainz public fetches
+              </option>
               <option value="calendar">Calendar</option>
             </select>
           </label>
@@ -336,7 +439,7 @@ export function Activities({
                   <strong>{activityName(job)}</strong>
                 </Link>
                 <span className={job.state === "failed" ? "form-error" : ""}>
-                  {job.outcome || job.state}
+                  {activityState(job)}
                 </span>
                 <Progress job={job} />
               </article>

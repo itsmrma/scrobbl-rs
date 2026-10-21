@@ -1,0 +1,3 @@
+# Vite preserves source HTML line endings when injecting asset tags.
+frontend/index.html text eol=lf
+static/dist/index.html text eol=lf

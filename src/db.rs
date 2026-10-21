@@ -330,8 +330,36 @@ pub async fn ingest_at(
                     .bind(&track_id).bind(event.source).bind(&event.source_key).bind(time.saturating_sub(2000)).bind(time.saturating_add(2000)).fetch_one(&mut **tx).await?;
                 reverse_ambiguous |= known_competitor;
             }
-            let ambiguous = candidates.len() > 1 || reverse_ambiguous;
-            let listen_id = if candidates.len() == 1 && !ambiguous {
+            // ListenBrainz seconds, account ambiguity and unverified Spotify time
+            // semantics never acquire the provisional Spotify ±2s matching rule.
+            // Surface plausible overlaps for review while preserving both events.
+            let identity_base = event
+                .source_key
+                .rsplit_once(':')
+                .filter(|(_, slot)| slot.parse::<u64>().is_ok())
+                .map(|(key, _)| key)
+                .unwrap_or(&event.source_key);
+            let repeated_identity = format!("{identity_base}:%");
+            let uncertain: Vec<String> = if event.source == "listenbrainz"
+                || event.source.starts_with("spotify_")
+            {
+                sqlx::query_scalar("SELECT DISTINCT l.id FROM listens l JOIN tracks t ON t.id=l.track_id WHERE l.played_at_ms>=? AND l.played_at_ms<? AND EXISTS(SELECT 1 FROM observations o WHERE o.listen_id=l.id AND (o.source='listenbrainz' OR ?='listenbrainz')) AND NOT EXISTS(SELECT 1 FROM observations o WHERE o.listen_id=l.id AND o.source='listenbrainz' AND o.source_key LIKE ?) AND (l.track_id=? OR (t.title=? AND EXISTS(SELECT 1 FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id AND a.name=?)))")
+                    .bind(event.played_at_ms.div_euclid(1000)*1000).bind(event.played_at_ms.div_euclid(1000)*1000+1000).bind(event.source).bind(&repeated_identity).bind(&track_id).bind(&event.track.title).bind(event.track.artists.first().map(|a|a.name.as_str()).unwrap_or("")).fetch_all(&mut **tx).await?
+            } else {
+                Vec::new()
+            };
+            let pairing_ambiguous = candidates.len() > 1 || reverse_ambiguous;
+            let ambiguous = pairing_ambiguous || !uncertain.is_empty();
+            if !uncertain.is_empty() {
+                for id in &uncertain {
+                    sqlx::query("UPDATE listens SET needs_review=1 WHERE id=?")
+                        .bind(id)
+                        .execute(&mut **tx)
+                        .await?;
+                }
+                affected.extend(uncertain);
+            }
+            let listen_id = if candidates.len() == 1 && !pairing_ambiguous {
                 report.reconciled += 1;
                 candidates[0].get::<String, _>("id")
             } else {
@@ -350,6 +378,12 @@ pub async fn ingest_at(
                     .bind(event.listened_ms).bind(kind).bind(counted).bind(ambiguous).bind(event.source).execute(&mut **tx).await?;
                 id
             };
+            if ambiguous {
+                sqlx::query("UPDATE listens SET needs_review=1 WHERE id=?")
+                    .bind(&listen_id)
+                    .execute(&mut **tx)
+                    .await?;
+            }
             let observation_id = new_id();
             sqlx::query("INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,raw_json) VALUES(?,?,?,?,?,?)")
                 .bind(&observation_id).bind(event.source).bind(&event.source_key).bind(&listen_id).bind(event.source_timestamp_ms).bind(event.raw.to_string()).execute(&mut **tx).await?;

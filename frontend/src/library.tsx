@@ -22,6 +22,7 @@ import {
 } from "./ui";
 import { periods } from "./preferences";
 import { Link } from "./navigation";
+import { ListenBrainzImport } from "./listenbrainz";
 
 function useLoad<T>(
   load: () => Promise<T>,
@@ -554,8 +555,9 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
         title="Import your listening history"
         eyebrow="BRING YOUR PAST WITH YOU"
       >
-        Add your Spotify Extended Streaming History ZIP or JSON files.
+        Add your Spotify Extended Streaming History or ListenBrainz archive.
       </Heading>
+      <ListenBrainzImport refresh={refresh} />
       <div className="two-column">
         <article className="panel padded">
           <form

@@ -1096,3 +1096,13 @@ footer {
     scroll-behavior: auto;
   }
 }
+.listenbrainz-import {
+  margin-bottom: 1.5rem;
+}
+.original-json {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 28rem;
+  overflow: auto;
+  font-size: 0.8rem;
+}

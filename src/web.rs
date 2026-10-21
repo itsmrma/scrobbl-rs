@@ -41,6 +41,22 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/activities", get(crate::activities::list))
         .route(
+            "/api/v1/listenbrainz/limits",
+            get(crate::listenbrainz::limits),
+        )
+        .route(
+            "/api/v1/listenbrainz/fetch",
+            post(crate::listenbrainz::fetch),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/originals",
+            get(crate::listenbrainz::originals),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/files/{file_id}",
+            get(crate::listenbrainz::original_file),
+        )
+        .route(
             "/api/v1/activities/{id}",
             get(crate::activities::detail).post(crate::activities::action),
         )
@@ -64,6 +80,10 @@ pub fn router(state: AppState) -> Router {
             post(imports::upload).layer(DefaultBodyLimit::max(
                 upload_limit.saturating_add(state.config.import_limits.files.saturating_mul(1024)),
             )),
+        )
+        .route(
+            "/api/v1/listenbrainz/upload",
+            post(crate::listenbrainz::upload).layer(DefaultBodyLimit::disable()),
         )
         .fallback(|| async {
             (

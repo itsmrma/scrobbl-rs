@@ -3,7 +3,12 @@ import { createRoot } from "react-dom/client";
 import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
-import { Activities, activityName, isActive } from "./activities";
+import {
+  Activities,
+  activityName,
+  activityState,
+  isActive,
+} from "./activities";
 import { HistoryPage, ImportPage, Overview } from "./library";
 import { Link, navigate, useLocation } from "./navigation";
 import {
@@ -395,7 +400,7 @@ function Shell({ logout }: { logout: () => void }) {
               >
                 <strong>{activityName(job)}</strong>
                 <small>
-                  {job.state} · {job.processed} processed
+                  {activityState(job)} · {job.processed} processed
                 </small>
               </Link>
             ))}
