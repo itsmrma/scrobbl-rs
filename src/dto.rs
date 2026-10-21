@@ -179,6 +179,8 @@ pub struct ActivityMember {
 }
 #[derive(Serialize, TS)]
 pub struct ActivityDetail {
+    #[ts(type = "unknown")]
+    pub source_parameters: Option<serde_json::Value>,
     pub issues: Vec<RowIssue>,
     pub activity: Activity,
     pub members: Vec<ActivityMember>,
@@ -218,6 +220,7 @@ mod tests {
             Activity::decl(&config),
             ActivityMember::decl(&config),
             ActivityDetail::decl(&config),
+            crate::listenbrainz::Limits::decl(&config),
             RowIssue::decl(&config),
             crate::imports::ImportLimits::decl(&config),
             crate::imports::ImportResponse::decl(&config),

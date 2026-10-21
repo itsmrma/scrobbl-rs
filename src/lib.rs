@@ -9,6 +9,7 @@ pub mod error;
 pub mod import_worker;
 pub mod imports;
 pub mod jobs;
+pub mod listenbrainz;
 pub mod preferences;
 pub mod spotify;
 pub mod storage;

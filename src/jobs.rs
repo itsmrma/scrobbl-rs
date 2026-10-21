@@ -159,10 +159,25 @@ impl Storage {
         rows: &[SourceRow],
         complete: bool,
     ) -> Result<IngestReport> {
+        self.commit_source_batch(lease, member, first_row, rows, complete, None)
+            .await
+    }
+    pub async fn commit_source_batch(
+        &self,
+        lease: &Job,
+        member: &str,
+        first_row: i64,
+        rows: &[SourceRow],
+        complete: bool,
+        parameters: Option<&Value>,
+    ) -> Result<IngestReport> {
         let mut tx = self.writer.begin().await?;
         let report = self
             .commit_member_batch_in(&mut tx, lease, member, first_row, rows, complete)
             .await?;
+        if let Some(parameters) = parameters {
+            sqlx::query("UPDATE jobs SET parameters_json=?,error_code=?,phase=?,outcome=?,inventory_complete=? WHERE id=?").bind(parameters.to_string()).bind(parameters["_terminal_code"].as_str()).bind(if complete {"finished"}else{"fetching"}).bind(if complete {Some(if parameters["_terminal_code"].is_string() {"partial"}else{"complete"})}else{None}).bind(complete).bind(&lease.id).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(report)
     }
@@ -191,13 +206,19 @@ impl Storage {
         if first_row != position + 1 {
             return Err(stale());
         }
-        let events: Vec<Event> = rows
+        let mut events: Vec<Event> = rows
             .iter()
             .filter_map(|r| match r {
                 SourceRow::Event(e) => Some(e.as_ref().clone()),
                 _ => None,
             })
             .collect();
+        for event in &mut events {
+            if event.source == "listenbrainz" {
+                let ordinal:i64=sqlx::query_scalar("INSERT INTO job_identity_counts(job_id,identity_key,occurrences) VALUES(?,?,1) ON CONFLICT(job_id,identity_key) DO UPDATE SET occurrences=occurrences+1 RETURNING occurrences").bind(&lease.id).bind(&event.source_key).fetch_one(&mut **tx).await?;
+                event.source_key = format!("{}:{ordinal}", event.source_key);
+            }
+        }
         let mut report = db::ingest(tx, &events).await?;
         db::review_spotify_imports(tx, &events).await?;
         let below_threshold = events.iter().filter(|e| !e.counted).count() as i64;
@@ -207,21 +228,42 @@ impl Storage {
                 .bind(member)
                 .fetch_one(&mut **tx)
                 .await?;
-        let file_id = file_id.or_else(|| lease.file_id.clone());
+        let file_id = if lease.kind == "listenbrainz_fetch" {
+            sqlx::query_scalar::<_, String>(
+                "SELECT file_id FROM listenbrainz_pages WHERE job_id=? AND member=?",
+            )
+            .bind(&lease.id)
+            .bind(member)
+            .fetch_optional(&mut **tx)
+            .await?
+        } else {
+            file_id.or_else(|| lease.file_id.clone())
+        };
+        let mut accepted = events.iter();
         for (index, row) in rows.iter().enumerate() {
             let (raw, variant, outcome, reason) = match row {
-                SourceRow::Event(event) => {
+                SourceRow::Event(_) => {
+                    let event = accepted.next().ok_or(AppError::Internal)?;
                     let variant:String=sqlx::query_scalar("SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?")
                         .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut **tx).await?;
-                    (event.raw.clone(), Some(variant), "accepted", None)
+                    (
+                        event.raw.clone(),
+                        Some(variant),
+                        "accepted",
+                        if event.source == "listenbrainz" {
+                            crate::listenbrainz::duration_warning(&event.raw)
+                        } else {
+                            None
+                        },
+                    )
                 }
                 SourceRow::Invalid { raw, reason } => {
                     report.invalid += 1;
-                    (raw.clone(), None, "invalid", Some(reason.as_str()))
+                    (raw.clone(), None, "invalid", Some(reason.clone()))
                 }
                 SourceRow::Skipped { raw, reason } => {
                     report.skipped += 1;
-                    (raw.clone(), None, "skipped", Some(reason.as_str()))
+                    (raw.clone(), None, "skipped", Some(reason.clone()))
                 }
             };
             sqlx::query("INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,raw_json,outcome,reason) VALUES(?,?,?,?,?,?,?,?)")

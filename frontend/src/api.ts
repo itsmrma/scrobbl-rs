@@ -11,6 +11,7 @@ import type {
   SavedPreferences,
   SavePreferences,
   SpotifyStatus,
+  Limits,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -72,6 +73,11 @@ export const api = {
   importLimits: () => request<ImportLimits>("/api/v1/import/limits"),
   importSpotify: (form: FormData) =>
     post<ImportResponse>("/api/import/spotify", form),
+  listenBrainzLimits: () => request<Limits>("/api/v1/listenbrainz/limits"),
+  importListenBrainz: (form: FormData) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/upload", form),
+  fetchListenBrainz: (form: { username: string; from: string; to: string }) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/fetch", form),
   activities: (page = 0, kind = "") =>
     request<Activity[]>(
       `/api/v1/activities${page || kind ? `?page=${page}&kind=${encodeURIComponent(kind)}` : ""}`,

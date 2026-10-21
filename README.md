@@ -48,6 +48,9 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
   Receipt precedes durable background processing, with restart recovery, inventory and saved reports.
   Configurable defaults: 256 MiB uploaded, 1 GiB expanded, 256 MiB per file and 2 MiB per row.
   See [Spotify import and timing](docs/spotify-import.md) for limits, retries and verification.
+- ListenBrainz JSON arrays/API responses, JSONL and official ZIP imports, plus bounded manual public
+  fetches without tokens. Durable activities retain originals, partial reports, cancellation and
+  restart progress. See [ListenBrainz usage, limits and verification](docs/listenbrainz.md).
 - Idempotent repeated imports and collection; conservative reconciliation between the two sources.
 - Actual, estimated and unavailable durations are distinguished. Short imports remain searchable.
 - Dashboard totals and top five artists, albums and tracks, ordered by listens or listening time.
@@ -81,7 +84,7 @@ duration is marked unknown. Now playing itself never creates a listen.
 Exact reimports preserve source occurrences without multiplying listens or original variants.
 For a known Spotify track, equal export time and listened duration identify one observation;
 changed metadata becomes a preserved original variant. Uncertain identities remain separate and
-reviewable. Cross-source reconciliation
+reviewable. Spotify API/export reconciliation
 requires the same Spotify track URI, start times within two seconds and exactly one eligible
 counterpart. A listen has at most one observation per source. Actual duration replaces the API
 estimate, including the count-status decision. Distinct plays from the same source are kept.
@@ -90,6 +93,11 @@ separate, reported and marked for the **Possible duplicates** history filter. Ti
 window, relinked IDs and local files are not merged by fuzzy metadata. They may require later
 library-cleanup work. The matching rule is covered by synthetic tests; matching behavior still needs
 validation with real API/export pairs.
+
+ListenBrainz retains UTC start timestamps, actual/estimated/unknown durations and source provenance.
+Equivalent imports with the same known account reuse semantic payload/multiplicity identities.
+Unknown accounts and uncertain ListenBrainz/Spotify overlaps stay separate and are flagged;
+recording identifiers and inferred mappings do not prove a playback match.
 
 API metadata credits every structured track artist once, while total listens and tracks count once.
 Extended history usually supplies only the album artist string; it is preserved as one credit,
