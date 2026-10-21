@@ -1,4 +1,4 @@
-use scrobbl_rs::{AppState, config::Config, db, spotify, web};
+use  scrobbl_rs::{AppState, config::Config, db, spotify, web};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
