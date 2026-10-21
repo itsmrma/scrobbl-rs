@@ -66,11 +66,50 @@ async fn diagnostic(state: &AppState, key: &str, value: &str) -> Result<()> {
     let mut conn = state.db.acquire().await?;
     db::set_setting(&mut conn, key, value).await
 }
+async fn intervals(state: &AppState) -> Result<crate::dto::SpotifyIntervals> {
+    match db::setting(&state.read_db, "spotify_intervals").await? {
+        Some(value) => serde_json::from_str(&value).map_err(|_| AppError::Internal),
+        None => Ok(crate::dto::SpotifyIntervals {
+            sync_seconds: state.config.sync_seconds,
+            now_playing_seconds: state.config.now_playing_seconds,
+        }),
+    }
+}
+
+pub async fn save_intervals(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(form): Json<crate::dto::SpotifyIntervals>,
+) -> Result<Json<crate::dto::SpotifyIntervals>> {
+    auth::require_write(&state, &headers).await?;
+    if !(60..=86400).contains(&form.sync_seconds)
+        || !(15..=86400).contains(&form.now_playing_seconds)
+    {
+        return Err(AppError::BadRequest(
+            "Use 60–86400 seconds for collection and 15–86400 seconds for now playing.".into(),
+        ));
+    }
+    let _now = state.spotify.now_gate.lock().await;
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision")
+        .fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
+    db::set_setting(
+        &mut tx,
+        "spotify_intervals",
+        &serde_json::to_string(&form).map_err(|_| AppError::Internal)?,
+    )
+    .await?;
+    tx.commit().await?;
+    *state.spotify.cache.lock().await = None;
+    state.spotify.wake.notify_one();
+    Ok(Json(form))
+}
 pub async fn status(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<crate::dto::SpotifyStatus>> {
     auth::session(&state, &headers).await?;
+    let intervals = intervals(&state).await?;
     let configured = credentials(&state).await?.is_some();
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
@@ -133,8 +172,8 @@ pub async fn status(
         connected,
         credentials_from_env: state.config.env_client_id.is_some(),
         redirect_uri: state.config.redirect_uri(),
-        sync_seconds: state.config.sync_seconds,
-        now_playing_seconds: state.config.now_playing_seconds,
+        sync_seconds: intervals.sync_seconds,
+        now_playing_seconds: intervals.now_playing_seconds,
         connection: connection.into(),
         collection: collection.into(),
         last_attempt_ms: timestamp(conn, "last_attempt_ms").await?,
@@ -573,6 +612,7 @@ pub fn parse_track(row: &Value) -> Result<Track> {
     })
 }
 pub async fn sync(state: &AppState) -> Result<Value> {
+    let intervals = intervals(state).await?;
     let _collection = state.spotify.collection_gate.lock().await;
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='spotify_collection' AND state IN ('queued','waiting'))").fetch_one(&state.db).await?;
     if !pending {
@@ -599,7 +639,7 @@ pub async fn sync(state: &AppState) -> Result<Value> {
             .await?
             .and_then(|v| v.parse::<i64>().ok())
             .filter(|v| *v > auth::now_ms())
-            .unwrap_or(auth::now_ms() + state.config.sync_seconds as i64 * 1000);
+            .unwrap_or(auth::now_ms() + intervals.sync_seconds as i64 * 1000);
         state.storage.pause(&job,Some(retry),"spotify_collection_failed: see Connections for authorization, request limit or network details").await?;
     }
     result
@@ -727,9 +767,9 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     auth::session(&state, &headers).await?;
     let requested_at_ms = auth::now_ms();
     let _now = state.spotify.now_gate.lock().await;
+    let interval = intervals(&state).await?.now_playing_seconds as i64 * 1000;
     if let Some((time, value)) = &*state.spotify.cache.lock().await
-        && auth::now_ms() / (state.config.now_playing_seconds as i64 * 1000)
-            == time / (state.config.now_playing_seconds as i64 * 1000)
+        && auth::now_ms() / interval == time / interval
     {
         let mut value = value.clone();
         if let Some(object) = value.as_object_mut() {
@@ -799,7 +839,11 @@ pub async fn worker(state: AppState) {
         if connected && let Err(error) = sync(&state).await {
             let _ = diagnostic(&state, "spotify_error", &error.to_string()).await;
         }
-        tokio::select! { _ = tokio::time::sleep(Duration::from_secs(state.config.sync_seconds)) => {}, _ = state.spotify.wake.notified() => {} }
+        let seconds = intervals(&state)
+            .await
+            .map(|value| value.sync_seconds)
+            .unwrap_or(state.config.sync_seconds);
+        tokio::select! { _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}, _ = state.spotify.wake.notified() => {} }
     }
 }
 
@@ -919,6 +963,130 @@ mod tests {
             HeaderValue::from_str(&format!("scrobbl_session={cookie}")).unwrap(),
         );
         headers
+    }
+    #[tokio::test]
+    async fn saved_intervals_survive_restart_override_environment_defaults_and_reset_the_cache() {
+        let (dir, state, _mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/currently-playing",
+                json!({"is_playing":true,"currently_playing_type":"track","item":track()}),
+            )],
+            false,
+        )
+        .await;
+        let mut headers = owner_headers(&state).await;
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        *state.spotify.cache.lock().await = Some((auth::now_ms(), json!({"title":"old sample"})));
+        let configured = crate::dto::SpotifyIntervals {
+            sync_seconds: 60,
+            now_playing_seconds: 15,
+        };
+        assert_eq!(
+            save_intervals(State(state.clone()), headers.clone(), Json(configured))
+                .await
+                .unwrap()
+                .0,
+            configured
+        );
+        assert!(state.spotify.cache.lock().await.is_none());
+        let shown = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!((shown.sync_seconds, shown.now_playing_seconds), (60, 15));
+        assert_eq!(
+            now_playing(State(state.clone()), headers).await.unwrap().0["title"],
+            "Test track"
+        );
+        let mut config = state.config.clone();
+        config.sync_seconds = 600;
+        config.now_playing_seconds = 300;
+        state.storage.close().await;
+        let store = db::open(dir.path()).await.unwrap();
+        let restarted = AppState::new(store, config);
+        assert_eq!(intervals(&restarted).await.unwrap(), configured);
+        restarted.storage.close().await;
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn interval_updates_validate_authorization_ranges_and_maintenance_and_wake_collection() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":[]})),
+                reply("/v1/me/player/recently-played", json!({"items":[]})),
+            ],
+            false,
+        )
+        .await;
+        let mut headers = owner_headers(&state).await;
+        let configured = crate::dto::SpotifyIntervals {
+            sync_seconds: 60,
+            now_playing_seconds: 15,
+        };
+        assert!(matches!(
+            save_intervals(State(state.clone()), headers.clone(), Json(configured)).await,
+            Err(AppError::Forbidden)
+        ));
+        assert!(matches!(
+            save_intervals(State(state.clone()), HeaderMap::new(), Json(configured)).await,
+            Err(AppError::Unauthorized)
+        ));
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        for (sync_seconds, now_playing_seconds) in [(59, 15), (60, 14), (86401, 15), (60, 86401)] {
+            assert!(matches!(
+                save_intervals(
+                    State(state.clone()),
+                    headers.clone(),
+                    Json(crate::dto::SpotifyIntervals {
+                        sync_seconds,
+                        now_playing_seconds
+                    })
+                )
+                .await,
+                Err(AppError::BadRequest(_))
+            ));
+        }
+        assert!(
+            db::setting(&state.db, "spotify_intervals")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("UPDATE archive_state SET maintenance=1")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert!(matches!(
+            save_intervals(State(state.clone()), headers.clone(), Json(configured)).await,
+            Err(AppError::Conflict(_))
+        ));
+        sqlx::query("UPDATE archive_state SET maintenance=0")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let collecting = tokio::spawn(worker(state.clone()));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock.calls.lock().await.is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let _ = save_intervals(State(state.clone()), headers, Json(configured))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while mock.calls.lock().await.len() < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        collecting.abort();
+        let _ = collecting.await;
+        handle.abort();
+        state.storage.close().await;
     }
     #[tokio::test]
     async fn status_distinguishes_saved_authorization_collection_and_now_playing_errors() {

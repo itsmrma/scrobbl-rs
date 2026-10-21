@@ -10,6 +10,7 @@ services:
       SCROBBL_PORT: "3210"
       SCROBBL_DATA_DIR: /data
       SCROBBL_EXTERNAL_ORIGIN: ${SCROBBL_EXTERNAL_ORIGIN:?Set the browser-facing origin}
+      # Legacy initial defaults only; saved Settings > Connections values take precedence.
       SCROBBL_SYNC_SECONDS: ${SCROBBL_SYNC_SECONDS:-120}
       SCROBBL_NOW_PLAYING_SECONDS: ${SCROBBL_NOW_PLAYING_SECONDS:-30}
     ports:

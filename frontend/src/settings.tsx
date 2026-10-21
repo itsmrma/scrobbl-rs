@@ -429,6 +429,108 @@ function HttpsGuide() {
     </details>
   );
 }
+function RefreshIntervals({
+  status,
+  refresh,
+}: {
+  status: SpotifyStatus;
+  refresh: () => Promise<void>;
+}) {
+  const incoming = {
+    sync: String(status.sync_seconds),
+    now: String(status.now_playing_seconds),
+  };
+  const [draft, setDraft] = useState(incoming);
+  const [baseline, setBaseline] = useState(incoming);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+  const dirty = draft.sync !== baseline.sync || draft.now !== baseline.now;
+  useEffect(() => {
+    if (!dirty) {
+      setDraft(incoming);
+      setBaseline(incoming);
+    }
+  }, [status.sync_seconds, status.now_playing_seconds]);
+  return (
+    <form
+      className="settings-form"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        setError("");
+        try {
+          const result = await api.saveSpotifyIntervals({
+            sync_seconds: Number(draft.sync),
+            now_playing_seconds: Number(draft.now),
+          });
+          const saved = {
+            sync: String(result.sync_seconds),
+            now: String(result.now_playing_seconds),
+          };
+          setDraft(saved);
+          setBaseline(saved);
+          await refresh();
+          toast(
+            "Spotify intervals saved. Changes apply without restarting the server.",
+          );
+        } catch (error) {
+          setError(error instanceof Error ? error.message : String(error));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <h3>Refresh intervals</h3>
+      <p>
+        Saved for this instance and shared across browsers. Changes apply while
+        the server is running.
+      </p>
+      <div className="form-grid">
+        <label>
+          Collection interval (seconds)
+          <input
+            type="number"
+            min="60"
+            max="86400"
+            step="1"
+            required
+            value={draft.sync}
+            disabled={busy}
+            onChange={(event) =>
+              setDraft((value) => ({ ...value, sync: event.target.value }))
+            }
+          />
+        </label>
+        <label>
+          Now playing interval (seconds)
+          <input
+            type="number"
+            min="15"
+            max="86400"
+            step="1"
+            required
+            value={draft.now}
+            disabled={busy}
+            onChange={(event) =>
+              setDraft((value) => ({ ...value, now: event.target.value }))
+            }
+          />
+        </label>
+      </div>
+      <p className="subtle">
+        Collection: at least 60 seconds. Now playing: at least 15 seconds, while
+        the page is visible. Spotify availability and request limits can add
+        delay.
+      </p>
+      <ErrorText>{error}</ErrorText>
+      <button className="secondary" disabled={busy || !dirty}>
+        Save intervals
+      </button>
+    </form>
+  );
+}
+
 export function Connections({
   status,
   preferences,
@@ -636,6 +738,7 @@ export function Connections({
             Verification reports the last successful request. Now playing has
             its own status and never proves background collection.
           </p>
+          <RefreshIntervals status={status} refresh={refresh} />
           <HttpsGuide />
           <details className="guide" open={!status.configured}>
             <summary>Create or configure your Spotify app</summary>
@@ -801,6 +904,7 @@ export function Settings({
           ["appearance", "Appearance"],
           ["connections", "Connections"],
           ["data", "Data & recovery"],
+          ["api-keys", "API keys"],
         ].map(([key, title]) => (
           <Link
             key={key}
@@ -827,6 +931,16 @@ export function Settings({
       </div>
       <div hidden={section !== "data"}>
         <DataRecovery status={status} preferences={preferences} />
+      </div>
+      <div hidden={section !== "api-keys"}>
+        <article className="panel padded">
+          <h2>API keys</h2>
+          <p>Read-only access for your applications.</p>
+          <p>
+            Key creation and revocation will be available with the read API.
+            Owner access does not expose an integration key.
+          </p>
+        </article>
       </div>
     </>
   );

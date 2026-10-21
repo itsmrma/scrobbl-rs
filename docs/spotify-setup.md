@@ -54,6 +54,27 @@ inferred start; Spotify does not guarantee identical timing across those records
 
 ## Connection diagnostics
 
+### Refresh intervals
+
+Use **Settings → Connections → Spotify → Refresh intervals** to change collection
+and now-playing intervals in seconds. Collection accepts 60–86400 seconds; now
+playing accepts 15–86400 seconds. Save applies immediately without restarting or
+recreating the container. Values are stored with the archive's instance settings,
+shared by browsers and preserved across restarts and archive snapshots.
+Changing them does not bypass Spotify's shared request-limit wait.
+
+Existing `SCROBBL_SYNC_SECONDS` / `SCROBBL_NOW_PLAYING_SECONDS` values remain initial
+fallbacks until intervals are saved through Settings. Saved values then take
+precedence even if the old Docker variables are still present. Now playing still
+polls only while the page is visible. Intervals are polling settings, not a promise
+of provider availability or end-to-end latency.
+
+API keys is now a section under **Settings → API keys**. The previous
+`/integrations/api-keys` address redirects there; key creation/revocation remains
+part of the separate read-API implementation.
+
+### Authorization and recovery
+
 Connect/Reconnect Spotify opens a separate browser tab. Keep the scrobbl.rs tab:
 its dialog waits for this specific authorization attempt, then shows **Connected**
 with a check mark or the refusal/error and a retry action. A previously saved

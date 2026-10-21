@@ -258,6 +258,7 @@ function Shell({ logout }: { logout: () => void }) {
     "appearance",
     "connections",
     "data",
+    "api-keys",
   ].includes(path.split("/")[2])
     ? path.split("/")[2]
     : "general";
@@ -267,9 +268,8 @@ function Shell({ logout }: { logout: () => void }) {
         dashboard: "Overview",
         history: "Listening history",
         import: "Import history",
-        settings: "Settings",
+        settings: settingsSection === "api-keys" ? "API keys" : "Settings",
         activities: "Activities",
-        integrations: "API keys",
       } as Record<string, string>
     )[page] || "Page not found";
   useEffect(() => {
@@ -293,7 +293,6 @@ function Shell({ logout }: { logout: () => void }) {
     ["/history", "history", "Listening history", "history"],
     ["/import", "import", "Import history", "file_upload"],
     ["/settings/general", "settings", "Settings", "settings"],
-    ["/integrations/api-keys", "integrations", "API keys", "key"],
   ];
   return (
     <div
@@ -348,16 +347,7 @@ function Shell({ logout }: { logout: () => void }) {
               aria-current={page === key ? "page" : undefined}
             >
               <Icon>{icon}</Icon>
-              <span className="nav-copy">
-                {key === "integrations" ? (
-                  <>
-                    <small>Integrations</small>
-                    {label}
-                  </>
-                ) : (
-                  label
-                )}
-              </span>
+              <span className="nav-copy">{label}</span>
               <span className="collapsed-label">{label}</span>
             </Link>
           ))}
@@ -534,26 +524,12 @@ function Shell({ logout }: { logout: () => void }) {
               refresh={refresh}
             />
           </section>
-          {page === "integrations" && (
-            <>
-              <Heading title="API keys" eyebrow="INTEGRATIONS">
-                Read-only access for your applications.
-              </Heading>
-              <div className="panel padded">
-                <p>
-                  Key creation and revocation will be available with the read
-                  API. Owner access does not expose an integration key.
-                </p>
-              </div>
-            </>
-          )}
           {![
             "dashboard",
             "history",
             "import",
             "settings",
             "activities",
-            "integrations",
           ].includes(page) && (
             <>
               <Heading title="Page not found" />
