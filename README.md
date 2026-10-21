@@ -143,6 +143,10 @@ the planned portable application backup. Details and offline rollback guidance a
 
 ## Checks
 
+Pull requests must pass the Linux/Windows backend, three browser and Docker
+checks before merging. See [CI checks and publication](docs/ci.md) for local
+commands, required checks, diagnostics, fork behavior and manual load tests.
+
 ```sh
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
