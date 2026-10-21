@@ -503,12 +503,21 @@ pub async fn worker(storage: Storage) {
         match storage.claim("spotify_import").await {
             Ok(Some(job)) => {
                 let id = job.id.clone();
-                if let Err(error)=run(&storage,job).await
-                    && !matches!(error,AppError::Conflict(_))
-                    && let Ok(current)=storage.job(&id).await
-                    && storage.pause(&current,None,"import_storage_failed: check disk space and retry; confirmed rows remain saved").await.is_ok()
-                {
-                    let _=sqlx::query("UPDATE jobs SET outcome=CASE WHEN processed>invalid THEN 'partial' ELSE 'error' END,phase='finished' WHERE id=?").bind(&id).execute(&storage.writer).await;
+                let attempt = job.attempt;
+                match run(&storage, job).await {
+                    Ok(()) => {}
+                    Err(AppError::Conflict(_)) => {
+                        // Maintenance also fences a running lease. Make its confirmed
+                        // checkpoint takeable again without resurrecting cancelled work.
+                        let _=sqlx::query("UPDATE jobs SET state='queued',updated_at_ms=? WHERE id=? AND attempt=? AND state='running' AND cancel_requested=0").bind(auth::now_ms()).bind(&id).bind(attempt).execute(&storage.writer).await;
+                    }
+                    Err(_) => {
+                        if let Ok(current) = storage.job(&id).await
+                            && storage.pause(&current,None,"import_storage_failed: check disk space and retry; confirmed rows remain saved").await.is_ok()
+                        {
+                            let _=sqlx::query("UPDATE jobs SET outcome=CASE WHEN processed>invalid THEN 'partial' ELSE 'error' END,phase='finished' WHERE id=?").bind(&id).execute(&storage.writer).await;
+                        }
+                    }
                 }
             }
             _ => tokio::time::sleep(std::time::Duration::from_millis(300)).await,

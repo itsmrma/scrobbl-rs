@@ -28,7 +28,8 @@ rows retain their source positions and reasons.
 
 Each batch commits observations, variants, occurrences, counters and checkpoint together.
 Startup requeues interrupted work; replay scans the immutable source and skips confirmed rows.
-Cancellation retains committed data and needs explicit retry. Retry uses current server limits
+Maintenance fences the current lease and requeues its confirmed checkpoint until the barrier
+clears. Cancellation retains committed data and needs explicit retry. Retry uses current server limits
 and retains existing row counters; reupload creates a separate report without multiplying
 musical identities. A corrected source file needs a new upload.
 
@@ -74,7 +75,8 @@ collection. The cache uses polling windows, avoiding an extra full interval when
 polls just before a relative cache TTL would expire. Returning to a visible page refreshes it.
 
 The sample records browser-handler arrival, actual provider-request start, parsed response,
-source timestamp and response-serving time. Overview displays queue/request/cache timing and
+source timestamp and response-serving time. The queue/preparation interval includes authorization renewal and any earlier rejected attempt;
+provider-request timing describes the final HTTP attempt. Overview displays queue/request/cache timing and
 browser request/response plus render-commit time. Connections retains the last server sample
 timing even without a current track. Neither the sample nor a successful authorization check
 creates a listen or proves ongoing collection health.
@@ -118,3 +120,46 @@ Do not pass personal exports without owner agreement. Do not commit the temporar
 or its detailed reports. The helper never connects Spotify and never opens the prototype.
 Live Spotify, device/browser acceptance and overlapping-export reconciliation remain separate
 from synthetic tests and the original-ZIP acceptance run.
+
+## Acceptance evidence, 2026-10-21
+
+Windows development build, temporary release archives, bundled SQLite. The synthetic
+18-member/124,396,022-byte ZIP completed in 227.141 seconds with 18,000 source rows.
+The owner's separately authorized original ZIP was uploaded through HTTP without extraction
+or splitting. Its 20 members included 18 JSON files totalling 124,396,022 bytes; total expanded
+size including the two excluded ancillary members was 126,014,161 bytes.
+
+| Original archive result | Observed |
+| --- | ---: |
+| Source rows processed | 159,560 |
+| Musical source rows | 159,269 |
+| New observations / retained listens | 158,576 |
+| Additional original variants | 399 |
+| Already-known musical rows | 294 |
+| Excluded non-musical rows | 291 |
+| Invalid rows | 0 |
+| Below-threshold musical source rows | 30,562 |
+| Counted listens | 128,149 |
+
+An independent read of the source reproduced the observation, variant, threshold and row
+counts. The isolated server was killed after 500 confirmed rows and restarted;
+the same job completed on attempt 2, with exactly one occurrence per source row.
+The full reimport processed 159,560 rows, adding zero listens, observations or
+variants. Occurrences increased from 159,560 to
+319,120, as two separate upload reports require.
+
+Elapsed HTTP-upload/processing time including the forced restart was 560.630 seconds;
+full reimport took 392.086 seconds. These are local development-build observations,
+not server throughput promises. The original ZIP's hash, size and modification time remained
+unchanged. The prototype archive was never opened. Detailed personal reports and databases
+remain in the private temporary acceptance directory, outside Git.
+
+By the owner's instruction, real Spotify authorization, background collection and playback
+latency will be tested after installation on the server, in the deployment/final-acceptance
+work. The tests above do not claim those results or real API/export reconciliation.
+
+Final automated checks: 47 Rust tests passed; the separate ZIP load test passed explicitly.
+The unrelated foundation load benchmark remains ignored. Four browser scenarios passed on each
+of Chromium, Firefox and WebKit on Windows (12 total); device acceptance remains separate.
+Synthetic report screenshots: [desktop](screenshots/spotify-import-desktop.png),
+[mobile](screenshots/spotify-import-mobile.png).

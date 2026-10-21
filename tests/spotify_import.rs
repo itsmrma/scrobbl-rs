@@ -588,3 +588,57 @@ async fn crc_encryption_and_row_expansion_limits_cannot_report_complete_imports(
     assert_eq!(error, "expanded_byte_limit");
     storage.close().await;
 }
+#[tokio::test]
+async fn maintenance_fences_and_requeues_a_running_import_without_orphaning_its_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let rows: Vec<_> = (0..2001).map(|i| row(i * 60, 30000)).collect();
+    let id = queue(
+        &storage,
+        &[("history.json", serde_json::to_vec(&rows).unwrap())],
+        ImportLimits::default(),
+    )
+    .await;
+    let work = storage.clone();
+    let worker = tokio::spawn(async move { import_worker::worker(work).await });
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if storage.job(&id).await.unwrap().processed >= 250 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        storage.maintenance(true).await.unwrap();
+        loop {
+            if storage.job(&id).await.unwrap().state == "queued" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let paused = storage.job(&id).await.unwrap();
+    assert!(paused.processed < 2001);
+    tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+    assert_eq!(storage.job(&id).await.unwrap().processed, paused.processed);
+    storage.maintenance(false).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if storage.job(&id).await.unwrap().state == "completed" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let complete = storage.job(&id).await.unwrap();
+    assert_eq!(complete.processed, 2001);
+    assert_eq!(complete.added, 2001);
+    assert_eq!(complete.duplicates, 0);
+    assert_eq!(complete.attempt, 2);
+    worker.abort();
+    let _ = worker.await;
+    storage.close().await;
+}
