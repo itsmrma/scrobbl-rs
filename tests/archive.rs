@@ -43,6 +43,7 @@ async fn state() -> (tempfile::TempDir, AppState) {
         data_dir: dir.path().to_owned(),
         sync_seconds: 120,
         now_playing_seconds: 30,
+        import_limits: Default::default(),
         env_client_id: None,
         env_client_secret: None,
     };

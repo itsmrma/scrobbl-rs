@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   Dashboard,
   History,
-  ImportResponse,
+  ActivityDetail,
+  ImportLimits,
   Listen,
   NowPlaying,
   Preferences,
@@ -52,6 +53,10 @@ function useLoad<T>(
       }
     };
     void refresh();
+    const wake = () => {
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", wake);
     const timer = interval
       ? setInterval(() => {
           if (!document.hidden) void refresh();
@@ -60,6 +65,7 @@ function useLoad<T>(
     return () => {
       active = false;
       clearInterval(timer);
+      document.removeEventListener("visibilitychange", wake);
     };
     // The serialized key defines the request. Callers avoid request-function identity as a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -132,12 +138,24 @@ function Now({
   visible: boolean;
   status: SpotifyStatus | null;
 }) {
+  const [browserTiming, setBrowserTiming] = useState<number | null>(null);
+  const [browserCommit, setBrowserCommit] = useState<number | null>(null);
+  const requestStart = useRef(0);
   const { data, error } = useLoad<NowPlaying | null>(
-    api.nowPlaying,
+    async () => {
+      const start = performance.now();
+      requestStart.current = start;
+      const sample = await api.nowPlaying();
+      setBrowserTiming(performance.now() - start);
+      return sample;
+    },
     "now",
     visible,
     (status?.now_playing_seconds || 30) * 1000,
   );
+  useLayoutEffect(() => {
+    if (data) setBrowserCommit(performance.now() - requestStart.current);
+  }, [data]);
   return (
     <article className="panel now-panel">
       <p className="eyebrow">
@@ -167,6 +185,36 @@ function Now({
             ? `${duration(data.progress_ms)} / ${duration(data.duration_ms)} · From Spotify`
             : "Live while this page is open")}
       </p>
+      {data && (
+        <details>
+          <summary>Sample timing</summary>
+          <p>
+            Source playback-state change:{" "}
+            {data.source_timestamp_ms
+              ? new Date(data.source_timestamp_ms).toISOString()
+              : "not reported"}
+            . This is a state-change timestamp, not a measure of Spotify
+            propagation delay.
+          </p>
+          <p>
+            Server queue: {data.source_requested_at_ms - data.requested_at_ms}{" "}
+            ms | provider request:{" "}
+            {data.response_received_at_ms - data.source_requested_at_ms} ms |
+            cached sample age when served:{" "}
+            {Math.max(0, data.served_at_ms - data.response_received_at_ms)} ms |
+            browser request/response:{" "}
+            {browserTiming === null ? "unknown" : Math.round(browserTiming)} ms.
+          </p>
+          <p>
+            Browser request through render commit:{" "}
+            {browserCommit === null ? "unknown" : Math.round(browserCommit)} ms.
+          </p>
+          <p>
+            Polled every {status?.now_playing_seconds || 30} seconds while
+            visible; source delay requires comparison with actual playback.
+          </p>
+        </details>
+      )}
       <small>
         Now playing is separate from background collection.{" "}
         <Link to="/settings/connections">Check collection status</Link>.
@@ -469,21 +517,44 @@ export function HistoryPage({
     </>
   );
 }
-const reportText = (r: ImportResponse["total"]) =>
-  `${number.format(r.added)} added · ${number.format(r.reconciled)} reconciled · ${number.format(r.duplicates)} already present · ${r.skipped} non-music skipped · ${r.invalid} invalid`;
 export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
-  const [files, setFiles] = useState<FileList | null>(null),
-    [busy, setBusy] = useState(false),
-    [result, setResult] = useState<ImportResponse | null>(null),
-    [error, setError] = useState("");
+  const [files, setFiles] = useState<FileList | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [jobId, setJobId] = useState("");
+  const [error, setError] = useState("");
+  const [version, setVersion] = useState(0);
+  const limits = useLoad<ImportLimits>(api.importLimits, "limits");
+  const report = useLoad<ActivityDetail>(
+    () => api.activity(jobId),
+    `${jobId}:${version}`,
+    !!jobId,
+    1000,
+  );
   const toast = useToast();
+  const job = report.data?.activity;
+  const lastState = useRef("");
+  useEffect(() => {
+    if (!job) return;
+    const state = `${job.id}:${job.state}:${job.outcome}`;
+    if (lastState.current === state) return;
+    lastState.current = state;
+    if (["completed", "failed"].includes(job.state)) {
+      toast(
+        job.outcome === "complete"
+          ? "Import complete. Report saved in Activities."
+          : `Import ${job.outcome || job.state}. Open the saved report for details.`,
+        job.outcome === "error",
+      );
+      void refresh();
+    }
+  }, [job?.id, job?.state, job?.outcome]);
   return (
     <>
       <Heading
         title="Import your listening history"
         eyebrow="BRING YOUR PAST WITH YOU"
       >
-        Add your Spotify Extended Streaming History.
+        Add your Spotify Extended Streaming History ZIP or JSON files.
       </Heading>
       <div className="two-column">
         <article className="panel padded">
@@ -491,67 +562,104 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
             onSubmit={async (e) => {
               e.preventDefault();
               setBusy(true);
-              setResult(null);
               setError("");
+              setJobId("");
               try {
                 const form = new FormData();
                 if (files) for (const file of files) form.append("files", file);
-                const data = await api.importSpotify(form);
-                setResult(data);
+                const result = await api.importSpotify(form);
+                setJobId(result.job_id);
+                setVersion((v) => v + 1);
                 toast(
-                  "Import complete. The report is available here and in Data & recovery.",
+                  "Files received. Processing continues on the server; you can close this page.",
                 );
                 await refresh();
               } catch (e) {
-                const message = `${e instanceof Error ? e.message : e} Files completed before this error remain saved; retrying is safe.`;
+                const message = `${e instanceof Error ? e.message : e} Check Activities: a lost connection does not prove processing failed. Sending the complete upload again is safe.`;
                 setError(message);
                 toast(message, true);
+                await refresh();
               } finally {
                 setBusy(false);
               }
             }}
           >
             <label>
-              History JSON files
+              History ZIP or JSON files
               <input
                 id="import-files"
                 type="file"
-                accept=".json,application/json"
+                accept=".zip,.json,application/json,application/zip"
                 multiple
                 required
                 onChange={(e) => setFiles(e.target.files)}
               />
             </label>
-            <p>
-              Current importer: JSON files, up to 64 MiB per request and 200,000
-              rows per file. Unzip your archive first. The persistent ZIP
-              workflow is a separate release task.
-            </p>
-            <button className="primary" disabled={busy || !files?.length}>
+            {limits.data ? (
+              <p>
+                Upload limit: {number.format(limits.data.upload_bytes)} bytes
+                per selection. Expanded limit:{" "}
+                {number.format(limits.data.expanded_bytes)} bytes; per file:{" "}
+                {number.format(limits.data.member_bytes)} bytes; per JSON row:{" "}
+                {number.format(limits.data.row_bytes)} bytes; at most{" "}
+                {number.format(limits.data.files)} files. Limits are configured
+                on the server.
+              </p>
+            ) : (
+              <p>Loading server limits...</p>
+            )}
+            <ErrorText>{limits.error}</ErrorText>
+            <button
+              className="primary"
+              disabled={busy || !files?.length || !limits.data}
+            >
               {busy
-                ? "Importing… Keep this browser open"
+                ? "Receiving files... Keep this page open"
                 : "Import listening history"}
             </button>
           </form>
-          <ErrorText>{error}</ErrorText>
-          {result && (
-            <div id="import-result">
-              <h3>Import complete</h3>
-              <p>{reportText(result.total)}</p>
-              {result.total.ambiguous > 0 && (
+          <ErrorText>{error || report.error}</ErrorText>
+          {job && (
+            <div id="import-result" role="status">
+              <h3>
+                {job.outcome === "complete"
+                  ? "Import complete"
+                  : job.outcome === "no_music"
+                    ? "No music found"
+                    : `Import ${job.outcome || job.state}`}
+              </h3>
+              <p>
+                Phase: {job.phase}. {job.processed} source rows processed.
+              </p>
+              <p>
+                {number.format(job.added)} added |{" "}
+                {number.format(job.reconciled)} reconciled |{" "}
+                {number.format(job.duplicates)} already present |{" "}
+                {job.originals} new originals | {job.variants} new variants |{" "}
+                {job.skipped} non-music skipped | {job.invalid} invalid |{" "}
+                {job.below_threshold} below threshold
+              </p>
+              <p>
+                Row and original counts describe source coverage; they are not a
+                sum of new listens.
+              </p>
+              {job.ambiguous > 0 && (
                 <p className="warning">
-                  {result.total.ambiguous} ambiguous matches were kept separate.
+                  {job.ambiguous} ambiguous matches were kept separate.
                 </p>
               )}
+              <Link to={`/activities/${job.id}`}>
+                Open full saved report and retry controls
+              </Link>
               <ul>
-                {result.files.map((file, i) => (
-                  <li key={i}>
-                    <strong>{file.filename}</strong>: {reportText(file)}
-                    {file.errors.map((message, n) => (
-                      <p className="form-error" key={n}>
-                        {message}
-                      </p>
-                    ))}
+                {report.data?.members.map((m) => (
+                  <li key={m.member}>
+                    <strong>{m.member}</strong>: {m.kind} | {m.state} |{" "}
+                    {m.processed} processed / {m.expected_rows ?? "unknown"}{" "}
+                    rows{" "}
+                    {m.error_code && (
+                      <p className="form-error">{m.error_code}</p>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -562,18 +670,20 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
         <aside className="panel padded">
           <h2>Keep your originals</h2>
           <p>
-            Use Spotify’s Extended Streaming History, rather than the shorter
-            account-data export. Actual listening time stays distinct from
-            estimates.
+            Upload the entire ZIP without extracting or splitting it. The report
+            inventories every member, including nested folders and excluded
+            content.
           </p>
           <p>
-            Podcast and audiobook rows are skipped. Short music plays stay
-            searchable; plays below 30 seconds are excluded from valid-listen
-            statistics.
+            Keep this page open until receipt is confirmed. After receipt,
+            processing continues with the page closed and resumes after a server
+            restart. Reports remain in Activities.
           </p>
           <p>
-            Exact reimports are safe. Files commit separately; the result of
-            completed files is kept if a later file fails.
+            Originals, variants and source positions are preserved. Reimporting
+            renamed or reformatted files does not multiply listens. Podcast and
+            audiobook rows are excluded. Music below 30 seconds remains in the
+            archive and stays outside valid-listen statistics.
           </p>
           <Link to="/activities">View persistent activities</Link>
         </aside>

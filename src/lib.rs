@@ -6,6 +6,7 @@ pub mod consultation;
 pub mod db;
 pub mod dto;
 pub mod error;
+pub mod import_worker;
 pub mod imports;
 pub mod jobs;
 pub mod preferences;
@@ -27,7 +28,6 @@ pub struct AppState {
     pub config: Config,
     pub spotify: spotify::Spotify,
     pub login_attempts: Arc<Mutex<VecDeque<Instant>>>,
-    pub imports: Arc<Mutex<()>>,
 }
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
@@ -39,7 +39,6 @@ impl AppState {
             config,
             spotify: spotify::Spotify::new(),
             login_attempts: Default::default(),
-            imports: Default::default(),
         }
     }
 }

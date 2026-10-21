@@ -96,7 +96,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByRole("link", { name: "Connections", exact: true }).click();
   await expect(page.locator("#redirect-uri")).toHaveText(
-    "http://127.0.0.1:3211/auth/spotify/callback",
+    `${new URL(page.url()).origin}/auth/spotify/callback`,
   );
   await page
     .getByLabel("Client ID", { exact: true })

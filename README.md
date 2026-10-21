@@ -44,8 +44,10 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
 - Spotify authorization code flow, refresh tokens, background synchronization (every 120 seconds by
   default), bounded recent-history recovery and persistent diagnostics.
 - Now playing, cached and fetched only while the overview is open (every 30 seconds by default).
-- Multiple Spotify **Extended Streaming History** JSON files per upload; unzip the downloaded archive
-  first. Maximum upload: 64 MiB; maximum records per file: 200,000. Files commit individually.
+- Spotify **Extended Streaming History** ZIP or multiple JSON uploads, including nested folders.
+  Receipt precedes durable background processing, with restart recovery, inventory and saved reports.
+  Configurable defaults: 256 MiB uploaded, 1 GiB expanded, 256 MiB per file and 2 MiB per row.
+  See [Spotify import and timing](docs/spotify-import.md) for limits, retries and verification.
 - Idempotent repeated imports and collection; conservative reconciliation between the two sources.
 - Actual, estimated and unavailable durations are distinguished. Short imports remain searchable.
 - Dashboard totals and top five artists, albums and tracks, ordered by listens or listening time.
@@ -76,7 +78,10 @@ history. API recent-history entries count as listens; their track length is an *
 presented as measured listening time. If duration is unavailable, the listen still counts and the
 duration is marked unknown. Now playing itself never creates a listen.
 
-Exact reimports are skipped using a source-specific event identity. Cross-source reconciliation
+Exact reimports preserve source occurrences without multiplying listens or original variants.
+For a known Spotify track, equal export time and listened duration identify one observation;
+changed metadata becomes a preserved original variant. Uncertain identities remain separate and
+reviewable. Cross-source reconciliation
 requires the same Spotify track URI, start times within two seconds and exactly one eligible
 counterpart. A listen has at most one observation per source. Actual duration replaces the API
 estimate, including the count-status decision. Distinct plays from the same source are kept.
@@ -106,6 +111,11 @@ take precedence and the web credential form is disabled. Restart after changing 
 | `SCROBBL_DATA_DIR` | `./data` | Persistent SQLite directory, relative to the process working directory |
 | `SCROBBL_SYNC_SECONDS` | `120` | Background recent-history collection interval, minimum 60 seconds |
 | `SCROBBL_NOW_PLAYING_SECONDS` | `30` | Now-playing cache/poll interval, minimum 15 seconds |
+| `SCROBBL_IMPORT_UPLOAD_BYTES` | `268435456` | Total received file bytes per selection |
+| `SCROBBL_IMPORT_EXPANDED_BYTES` | `1073741824` | Cumulative expanded ZIP/JSON bytes |
+| `SCROBBL_IMPORT_MEMBER_BYTES` | `268435456` | Expanded bytes per member/file |
+| `SCROBBL_IMPORT_ROW_BYTES` | `2097152` | Encoded JSON row budget, including adjacent separators/whitespace |
+| `SCROBBL_IMPORT_FILES` | `10000` | Input files and inventoried archive entries |
 | `SPOTIFY_CLIENT_ID` | unset | Optional Spotify app ID, paired with the secret |
 | `SPOTIFY_CLIENT_SECRET` | unset | Optional Spotify app secret, paired with the ID |
 

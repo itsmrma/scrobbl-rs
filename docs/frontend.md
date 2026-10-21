@@ -67,9 +67,11 @@ error payload is returned. The HTTPS guide covers DuckDNS or an existing domain 
 private reverse-proxy inputs. External-origin/trusted-proxy deployment options and real
 server validation belong to the deployment work; the current backend remains loopback-only.
 
-This block preserves the existing JSON importer and dashboard/history. ZIP jobs, full
-consultation/list-grid pages, read API/key management and backup/restore operations remain
-in their own release tickets. Data & recovery and Integrations → API keys reserve their
+The Spotify ZIP/JSON workflow receives files before returning a durable activity ID. Activities
+exposes inventory, per-file counters, paginated invalid-row reasons, cancellation and retry;
+reports can be filtered by source and paged beyond the latest 100 activities. Its receipt and
+resource contract is in [Spotify import and timing](spotify-import.md). Full consultation/list-grid
+pages, read API/key management and backup/restore operations remain in their own release tickets. Data & recovery and Integrations → API keys reserve their
 agreed locations without advertising unavailable actions.
 
 ## Browser verification

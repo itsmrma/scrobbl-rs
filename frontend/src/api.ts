@@ -4,6 +4,7 @@ import type {
   Dashboard,
   History,
   ImportResponse,
+  ImportLimits,
   IngestReport,
   NowPlaying,
   Preferences,
@@ -68,11 +69,17 @@ export const api = {
   connect: () => post<{ url: string }>("/api/spotify/connect"),
   sync: () => post<IngestReport>("/api/spotify/sync"),
   disconnect: () => post("/api/spotify/disconnect"),
+  importLimits: () => request<ImportLimits>("/api/v1/import/limits"),
   importSpotify: (form: FormData) =>
     post<ImportResponse>("/api/import/spotify", form),
-  activities: () => request<Activity[]>("/api/v1/activities"),
-  activity: (id: string) =>
-    request<ActivityDetail>(`/api/v1/activities/${encodeURIComponent(id)}`),
+  activities: (page = 0, kind = "") =>
+    request<Activity[]>(
+      `/api/v1/activities${page || kind ? `?page=${page}&kind=${encodeURIComponent(kind)}` : ""}`,
+    ),
+  activity: (id: string, issuesPage = 0) =>
+    request<ActivityDetail>(
+      `/api/v1/activities/${encodeURIComponent(id)}${issuesPage ? `?issues_page=${issuesPage}` : ""}`,
+    ),
   activityAction: (id: string, action: string) =>
     post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
 };

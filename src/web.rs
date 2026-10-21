@@ -19,6 +19,8 @@ use serde_json::{Value, json};
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 pub fn router(state: AppState) -> Router {
+    let upload_limit =
+        usize::try_from(state.config.import_limits.upload_bytes).unwrap_or(usize::MAX);
     Router::new()
         .route("/", get(index))
         .route("/app.js", get(js))
@@ -42,6 +44,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/activities/{id}",
             get(crate::activities::detail).post(crate::activities::action),
         )
+        .route("/api/v1/import/limits", get(imports::limits))
         .route("/api/session", get(auth::status))
         .route("/api/setup", post(auth::setup))
         .route("/api/login", post(auth::login))
@@ -58,7 +61,9 @@ pub fn router(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(16 * 1024))
         .route(
             "/api/import/spotify",
-            post(imports::upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+            post(imports::upload).layer(DefaultBodyLimit::max(
+                upload_limit.saturating_add(state.config.import_limits.files.saturating_mul(1024)),
+            )),
         )
         .fallback(|| async {
             (

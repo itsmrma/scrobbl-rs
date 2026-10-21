@@ -93,12 +93,24 @@ pub struct NowPlaying {
     pub duration_ms: Option<i64>,
     pub progress_ms: Option<i64>,
     pub observed_at_ms: i64,
+    pub source_timestamp_ms: Option<i64>,
+    pub requested_at_ms: i64,
+    pub source_requested_at_ms: i64,
+    pub response_received_at_ms: i64,
+    pub served_at_ms: i64,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct ImportJob {
     pub filename: String,
     pub created_at_ms: i64,
     pub report: IngestReport,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct NowPlayingTiming {
+    pub source_timestamp_ms: Option<i64>,
+    pub requested_at_ms: i64,
+    pub source_requested_at_ms: i64,
+    pub response_received_at_ms: i64,
 }
 #[derive(Serialize, TS)]
 pub struct SpotifyStatus {
@@ -116,6 +128,7 @@ pub struct SpotifyStatus {
     pub verified_at_ms: Option<i64>,
     pub last_error: Option<String>,
     pub now_playing_error: Option<String>,
+    pub now_playing_timing: Option<NowPlayingTiming>,
     pub coverage_warning: Option<String>,
     pub retry_at_ms: Option<i64>,
     pub imports: Vec<ImportJob>,
@@ -138,11 +151,25 @@ pub struct Activity {
     pub retry_at_ms: Option<i64>,
     pub error_code: Option<String>,
     pub expected_rows: Option<i64>,
+    pub phase: String,
+    pub outcome: Option<String>,
+    pub inventory_complete: bool,
+    pub originals: i64,
+    pub variants: i64,
+    pub below_threshold: i64,
     pub target_timezone: Option<String>,
     pub target_week_start: Option<i64>,
 }
 #[derive(Serialize, sqlx::FromRow, TS)]
 pub struct ActivityMember {
+    pub originals: i64,
+    pub variants: i64,
+    pub duplicates: i64,
+    pub added: i64,
+    pub reconciled: i64,
+    pub invalid: i64,
+    pub skipped: i64,
+    pub below_threshold: i64,
     pub member: String,
     pub kind: String,
     pub state: String,
@@ -152,8 +179,16 @@ pub struct ActivityMember {
 }
 #[derive(Serialize, TS)]
 pub struct ActivityDetail {
+    pub issues: Vec<RowIssue>,
     pub activity: Activity,
     pub members: Vec<ActivityMember>,
+}
+
+#[derive(Serialize, sqlx::FromRow, TS)]
+pub struct RowIssue {
+    pub member: String,
+    pub row_number: i64,
+    pub reason: String,
 }
 
 #[cfg(test)]
@@ -177,12 +212,14 @@ mod tests {
             Rankings::decl(&config),
             Dashboard::decl(&config),
             NowPlaying::decl(&config),
+            NowPlayingTiming::decl(&config),
             ImportJob::decl(&config),
             SpotifyStatus::decl(&config),
             Activity::decl(&config),
             ActivityMember::decl(&config),
             ActivityDetail::decl(&config),
-            crate::imports::FileReport::decl(&config),
+            RowIssue::decl(&config),
+            crate::imports::ImportLimits::decl(&config),
             crate::imports::ImportResponse::decl(&config),
         ];
         let content = format!(

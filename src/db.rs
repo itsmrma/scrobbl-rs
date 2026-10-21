@@ -81,6 +81,45 @@ impl IngestReport {
         );
     }
 }
+/// Source review markers are separate from reconciliation. Equal export end times with
+/// different durations remain distinct; missing external identity never authorizes a merge.
+pub(crate) async fn review_spotify_imports(
+    tx: &mut Transaction<'_, Sqlite>,
+    events: &[Event],
+) -> Result<()> {
+    let mut changed = BTreeSet::new();
+    for event in events.iter().filter(|e| e.source == "spotify_import") {
+        let rows:Vec<(String,String)>=sqlx::query_as("SELECT o.listen_id,l.track_id FROM observations o JOIN listens l ON l.id=o.listen_id WHERE o.source='spotify_import' AND o.source_key=?").bind(&event.source_key).fetch_all(&mut **tx).await?;
+        let Some((listen, track)) = rows.first() else {
+            continue;
+        };
+        let uncertain = !event.track.id.starts_with("spotify:track:");
+        let peers: Vec<String> = if uncertain {
+            Vec::new()
+        } else {
+            sqlx::query_scalar("SELECT o.listen_id FROM observations o JOIN listens l ON l.id=o.listen_id WHERE o.source='spotify_import' AND l.track_id=? AND o.source_timestamp_ms=? AND o.source_key!=?").bind(track).bind(event.source_timestamp_ms).bind(&event.source_key).fetch_all(&mut **tx).await?
+        };
+        if !uncertain && peers.is_empty() {
+            continue;
+        }
+        for id in std::iter::once(listen.clone()).chain(peers) {
+            let flagged =
+                sqlx::query("UPDATE listens SET needs_review=1 WHERE id=? AND needs_review=0")
+                    .bind(&id)
+                    .execute(&mut **tx)
+                    .await?
+                    .rows_affected();
+            let inserted=sqlx::query("INSERT INTO conflicts(id,listen_id,kind,evidence_json) VALUES(?,?,?,?) ON CONFLICT(listen_id,kind) DO NOTHING").bind(new_id()).bind(&id).bind(if uncertain{"spotify_identity_uncertain"}else{"spotify_export_duration"}).bind(serde_json::json!({"source":"spotify_import","timestamp_ms":event.source_timestamp_ms}).to_string()).execute(&mut **tx).await?.rows_affected();
+            if flagged > 0 || inserted > 0 {
+                changed.insert(id);
+            }
+        }
+    }
+    if !changed.is_empty() {
+        publish(tx, &changed).await?;
+    }
+    Ok(())
+}
 /// Internal IDs are independent of source keys, titles and timestamps.
 pub fn new_id() -> String {
     crate::auth::random_secret()
