@@ -48,6 +48,22 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/activities", get(crate::activities::list))
         .route(
+            "/api/v1/recovery",
+            get(crate::recovery_http::list).post(crate::recovery_http::start),
+        )
+        .route(
+            "/api/v1/recovery/{id}",
+            get(crate::recovery_http::download).post(crate::recovery_http::action),
+        )
+        .route(
+            "/api/v1/recovery/restore",
+            post(crate::recovery_http::restore),
+        )
+        .route(
+            "/api/v1/recovery/resume",
+            post(crate::recovery_http::resume),
+        )
+        .route(
             "/api/v1/activities/{id}",
             get(crate::activities::detail).post(crate::activities::action),
         )
@@ -71,6 +87,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/spotify/now-playing", get(spotify::now_playing))
         .route("/auth/spotify/callback", get(spotify::callback))
         .layer(DefaultBodyLimit::max(16 * 1024))
+        .route(
+            "/api/v1/recovery/upload",
+            post(crate::recovery_http::upload).layer(DefaultBodyLimit::max(
+                crate::recovery::PACKED_LIMIT as usize + 65536,
+            )),
+        )
         .route(
             "/api/import/spotify",
             post(imports::upload).layer(DefaultBodyLimit::max(
@@ -124,6 +146,36 @@ async fn icons_font() -> impl IntoResponse {
     )
 }
 async fn security(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
+    if request.uri().path().starts_with("/api/v1/recovery")
+        && request.headers().contains_key(header::AUTHORIZATION)
+    {
+        return AppError::Forbidden.into_response();
+    }
+    // All in-flight HTTP requests drain before confirmation. The durable marker rejects
+    // later mutations; startup activates only after this process has stopped.
+    let gate = state.storage.requests.clone();
+    let exclusive =
+        request.uri().path() == "/api/v1/recovery/restore" && request.method() == Method::POST;
+    let _read = if exclusive {
+        None
+    } else {
+        Some(gate.read().await)
+    };
+    let _write = if exclusive {
+        Some(gate.write().await)
+    } else {
+        None
+    };
+    if state.storage.directory.join("recovery.pending").exists()
+        && ((request.method() != Method::GET && request.method() != Method::HEAD)
+            || request.uri().path() == "/auth/spotify/callback")
+    {
+        return AppError::Conflict(
+            "Restore is prepared. Restart the container, then sign in with the new password."
+                .into(),
+        )
+        .into_response();
+    }
     let expected_host = state.config.host();
     if request
         .headers()
@@ -243,7 +295,7 @@ pub fn bounds(filters: &Filters) -> Result<(Option<i64>, Option<i64>)> {
         Some(midnight(today.succ_opt().ok_or(AppError::Internal)?)?),
     ))
 }
-async fn selection(
+pub(crate) async fn selection(
     conn: &mut sqlx::SqliteConnection,
     filters: &Filters,
 ) -> Result<QueryBuilder<Sqlite>> {

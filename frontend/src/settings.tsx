@@ -6,6 +6,7 @@ import { SpotifyConnectButton } from "./spotify-connect";
 import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
 import { Link } from "./navigation";
+import { Recovery } from "./recovery";
 
 export function General({
   preferences,
@@ -846,11 +847,7 @@ export function DataRecovery({
       <Link to="/activities" className="button secondary">
         View persistent activities
       </Link>
-      <h3>Export, backup and restore</h3>
-      <p>
-        These operations are being implemented in the release’s recovery work.
-        No backup or recovery check has been performed by opening this page.
-      </p>
+      <Recovery preferences={preferences} />
       <h3>Recent imports</h3>
       {!status?.imports.length && <p>No imports yet.</p>}
       {status?.imports.map((job, i) => (

@@ -62,6 +62,9 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
   Material Icons Outlined and image placeholders.
 - Connections separates saved/verified authorization, collection status and now playing,
   including last attempt/success, zero-result syncs, action required and request limits.
+- Data & recovery offers JSON/CSV exports, manual portable backups, isolated restore
+  verification, protected replacement and offline upgrade recovery. See [backup and
+  recovery](docs/recovery.md) for formats, excluded credentials and restart steps.
 
 ## Data rules
 

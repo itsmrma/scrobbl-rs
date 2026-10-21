@@ -23,3 +23,7 @@ export type ActivityDetail = { issues: Array<RowIssue>, activity: Activity, memb
 export type RowIssue = { member: string, row_number: number, reason: string, };
 export type ImportLimits = { upload_bytes: number, expanded_bytes: number, member_bytes: number, row_bytes: number, files: number, };
 export type ImportResponse = { job_id: string, };
+export type ExportSelection = { from: string | null, to: string | null, q: string | null, status: string | null, };
+export type InventoryFile = { name: string, sha256: string, size_bytes: number, };
+export type Manifest = { format: string, format_version: number, app_version: string, schema_version: number, created_at_ms: number, instance_id: string, generation: string, revision: number, counts: { [key in string]: number }, files: Array<InventoryFile>, };
+export type Asset = { id: string, job_id: string, kind: string, format: string, state: string, created_at_ms: number, size_bytes: number | null, manifest_json: string | null, verified_at_ms: number | null, verification_error: string | null, error: string | null, };

@@ -107,6 +107,11 @@ impl Storage {
     }
     /// Atomic claim and attempt fencing. Each worker claims only kinds it can execute.
     pub async fn claim(&self, kind: &str) -> Result<Option<Job>> {
+        if self.directory.join("recovery.pending").exists()
+            || (!kind.starts_with("recovery_") && crate::recovery::paused(self).await)
+        {
+            return Ok(None);
+        }
         Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
             .bind(auth::now_ms()).bind(kind).bind(auth::now_ms()).fetch_optional(&self.writer).await?)
     }

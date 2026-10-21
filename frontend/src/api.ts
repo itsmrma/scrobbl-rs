@@ -12,6 +12,8 @@ import type {
   SavePreferences,
   SpotifyStatus,
   SpotifyIntervals,
+  Asset,
+  ExportSelection,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -106,4 +108,25 @@ export const api = {
     ),
   activityAction: (id: string, action: string) =>
     post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
+  recovery: () =>
+    request<{ assets: Asset[]; paused: boolean; restart_required: boolean }>(
+      "/api/v1/recovery",
+    ),
+  createBackup: () => post("/api/v1/recovery", { kind: "backup" }),
+  exportArchive: (format: string, selection: ExportSelection) =>
+    post("/api/v1/recovery", { kind: "export", format, selection }),
+  backupAction: (id: string, action: string) =>
+    post(`/api/v1/recovery/${encodeURIComponent(id)}`, { action }),
+  uploadBackup: (file: File) => {
+    const form = new FormData();
+    form.append("backup", file);
+    return post("/api/v1/recovery/upload", form);
+  },
+  restoreBackup: (asset_id: string, password: string) =>
+    post("/api/v1/recovery/restore", {
+      asset_id,
+      password,
+      confirm_replace: true,
+    }),
+  resumeRecovery: () => post("/api/v1/recovery/resume"),
 };

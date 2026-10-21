@@ -14,7 +14,7 @@ use std::{
 };
 
 pub static ARCHIVE_MIGRATOR: Migrator = sqlx::migrate!("./release-migrations");
-static PRIVATE_MIGRATOR: Migrator = sqlx::migrate!("./private-migrations");
+pub(crate) static PRIVATE_MIGRATOR: Migrator = sqlx::migrate!("./private-migrations");
 
 #[derive(Clone)]
 pub struct Storage {
@@ -24,6 +24,8 @@ pub struct Storage {
     pub directory: PathBuf,
     lock: Arc<Mutex<Option<File>>>,
     pub(crate) snapshots: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) requests: Arc<tokio::sync::RwLock<()>>,
+    pub(crate) recovery_operations: Arc<tokio::sync::Mutex<()>>,
 }
 
 fn private_directory(path: &Path) -> anyhow::Result<()> {
@@ -37,6 +39,10 @@ fn private_directory(path: &Path) -> anyhow::Result<()> {
 }
 
 pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
+    ensure!(
+        !directory.join("recovery.incomplete").exists(),
+        "Offline recovery is incomplete. Do not start this directory; retry recovery into a new destination."
+    );
     ensure!(
         !directory.join("scrobbl.db").exists(),
         "Prototype database detected. Use a new SCROBBL_DATA_DIR; no prototype migration is supported."
@@ -52,6 +58,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
     lock_file
         .try_lock_exclusive()
         .context("Another process owns this data directory")?;
+    crate::recovery::activate_pending(&directory).await?;
     for child in [
         "private",
         "spool",
@@ -95,6 +102,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         }
         ARCHIVE_MIGRATOR.run(&writer).await?;
         PRIVATE_MIGRATOR.run(&private).await?;
+        sqlx::query("INSERT INTO settings(key,value) VALUES('app_build',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development")}).to_string()).execute(&writer).await?;
         recover_access(&writer, &private).await?;
         sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code='upload_incomplete',retry_at_ms=NULL WHERE kind='spotify_import' AND phase='receiving'").execute(&writer).await?;
         sqlx::query("UPDATE jobs SET state=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END, updated_at_ms=? WHERE state='running'")
@@ -136,6 +144,8 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         directory,
         lock: Arc::new(Mutex::new(Some(lock_file))),
         snapshots: Default::default(),
+        requests: Default::default(),
+        recovery_operations: Default::default(),
     })
 }
 
@@ -221,6 +231,10 @@ async fn pre_upgrade_copy(
             std::fs::metadata(directory.join("spool").join(&hash))?.len() == size as u64,
             "Spool file missing or incomplete before upgrade"
         );
+        ensure!(
+            crate::recovery::hash_file(&directory.join("spool").join(&hash))?.0 == hash,
+            "Spool checksum mismatch before upgrade"
+        );
         files.push(serde_json::json!({"sha256":hash,"size_bytes":size}));
     }
     let archive_schema: Option<i64> =
@@ -232,7 +246,7 @@ async fn pre_upgrade_copy(
             .fetch_one(private)
             .await?;
     let content = serde_json::to_vec(
-        &serde_json::json!({"format":1,"purpose":"pre-upgrade-private","app_version":env!("CARGO_PKG_VERSION"),"archive_schema":archive_schema,"private_schema":private_schema,"spool":"unchanged immutable files in data directory","files":files}),
+        &serde_json::json!({"format":1,"purpose":"pre-upgrade-private","source_app":crate::db::setting(archive,"app_build").await?,"target_app_version":env!("CARGO_PKG_VERSION"),"target_revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development"),"created_at_ms":crate::auth::now_ms(),"archive_schema":archive_schema,"private_schema":private_schema,"spool":"unchanged immutable files in data directory","files":files,"database_sha256":{"archive.db":crate::recovery::hash_file(&destination.join("archive.db"))?.0,"auth.db":crate::recovery::hash_file(&destination.join("auth.db"))?.0}}),
     )?;
     let manifest = destination.join("complete.json");
     std::fs::write(&manifest, content)?;

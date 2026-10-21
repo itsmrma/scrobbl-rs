@@ -39,8 +39,9 @@ Release schemas use `release-migrations/` and `private-migrations/`. Do not edit
 Before an upgrade, startup creates both database copies using `VACUUM INTO`, verifies their integrity
 and checks referenced spool files before publishing `complete.json`. A copy failure prevents migration.
 The manifest identifies schema/app versions and immutable spool references. These startup copies are
-not portable user backups: they depend on the same preserved spool. The user-facing backup format,
-which excludes private authentication storage, belongs to the recovery implementation.
+not portable user backups: they depend on the same preserved spool. The [user-facing backup
+format](recovery.md) excludes private authentication storage and carries its own received files.
+Recovery jobs and the React interface implement creation, isolated verification and replacement.
 
 For an offline rollback, stop all processes, retain the entire failed data directory and its spool,
 and work on a separate copy. Use only a pre-upgrade directory with `complete.json`; place its
