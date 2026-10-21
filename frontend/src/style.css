@@ -756,6 +756,48 @@ dialog {
 dialog::backdrop {
   background: #0009;
 }
+.spotify-connect-result {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin: 24px 0;
+  overflow-wrap: anywhere;
+}
+.spotify-connect-result > .material-icons-outlined {
+  font-size: 36px;
+}
+.spotify-connect-result.connected {
+  color: var(--text);
+}
+.spotify-connect-result.connected > .material-icons-outlined {
+  color: var(--accent);
+}
+.spotify-connect-result.error,
+.spotify-connect-result.interrupted {
+  color: var(--error);
+}
+.connect-spinner {
+  flex: 0 0 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: connect-spin 1s linear infinite;
+}
+.connect-return {
+  width: min(540px, calc(100vw - 32px));
+  margin: 10vh auto;
+}
+@keyframes connect-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-spinner {
+    animation: none;
+  }
+}
 .toasts {
   position: fixed;
   bottom: 24px;

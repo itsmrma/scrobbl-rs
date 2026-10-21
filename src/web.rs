@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .route("/favicon.svg", get(icon))
         .route("/settings", get(index))
         .route("/settings/{section}", get(index))
+        .route("/spotify/connect-result/{attempt}", get(index))
         .route("/dashboard", get(index))
         .route("/history", get(index))
         .route("/import", get(index))
@@ -57,6 +58,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/spotify/status", get(spotify::status))
         .route("/api/spotify/credentials", post(spotify::save_credentials))
         .route("/api/spotify/connect", post(spotify::connect))
+        .route(
+            "/api/spotify/connect/{attempt}",
+            get(spotify::connect_status).post(spotify::cancel_connect),
+        )
         .route("/api/spotify/disconnect", post(spotify::disconnect))
         .route("/api/spotify/sync", post(spotify::sync_now))
         .route("/api/spotify/now-playing", get(spotify::now_playing))

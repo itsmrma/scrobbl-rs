@@ -13,6 +13,7 @@ import {
   useBrowserPreference,
 } from "./preferences";
 import { Settings } from "./settings";
+import { SpotifyConnectReturn } from "./spotify-connect";
 import { ErrorText, Heading, Icon, Toasts, useToast } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
@@ -623,4 +624,9 @@ function App() {
     </Toasts>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+const spotifyReturn = location.pathname.match(
+  /^\/spotify\/connect-result\/([a-f0-9]{64})$/,
+);
+createRoot(document.getElementById("root")!).render(
+  spotifyReturn ? <SpotifyConnectReturn attempt={spotifyReturn[1]} /> : <App />,
+);

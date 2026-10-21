@@ -40,15 +40,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(data.error || `Request failed (${response.status}).`);
   return data;
 }
-const post = <T>(path: string, body: unknown = {}) =>
+const post = <T>(path: string, body: unknown = {}, signal?: AbortSignal) =>
   request<T>(path, {
     method: "POST",
+    signal,
     body: body instanceof FormData ? body : JSON.stringify(body),
   });
 export type Session = {
   authenticated: boolean;
   setup_required: boolean;
   csrf: string | null;
+};
+export type ConnectOutcome = {
+  outcome: "pending" | "processing" | "connected" | "error";
+  message: string | null;
 };
 export const api = {
   session: () => request<Session>("/api/session"),
@@ -66,7 +71,23 @@ export const api = {
   nowPlaying: () => request<NowPlaying | null>("/api/spotify/now-playing"),
   credentials: (client_id: string, client_secret: string) =>
     post("/api/spotify/credentials", { client_id, client_secret }),
-  connect: () => post<{ url: string }>("/api/spotify/connect"),
+  connect: () =>
+    post<{ url: string; attempt: string }>(
+      "/api/spotify/connect",
+      {},
+      AbortSignal.timeout(15000),
+    ),
+  connectStatus: (attempt: string) =>
+    request<ConnectOutcome>(
+      `/api/spotify/connect/${encodeURIComponent(attempt)}`,
+      { signal: AbortSignal.timeout(15000) },
+    ),
+  cancelConnect: (attempt: string) =>
+    post(
+      `/api/spotify/connect/${encodeURIComponent(attempt)}`,
+      {},
+      AbortSignal.timeout(15000),
+    ),
   sync: () => post<IngestReport>("/api/spotify/sync"),
   disconnect: () => post("/api/spotify/disconnect"),
   importLimits: () => request<ImportLimits>("/api/v1/import/limits"),

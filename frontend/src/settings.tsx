@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CalendarScope, Preferences, SpotifyStatus } from "./generated";
 import { api } from "./api";
 import { date, ErrorText, Heading, Icon, Modal, useToast } from "./ui";
+import { SpotifyConnectButton } from "./spotify-connect";
 import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
 import { Link } from "./navigation";
@@ -596,22 +597,11 @@ export function Connections({
           )}
           <ErrorText>{error}</ErrorText>
           <div className="connection-actions">
-            <button
-              className="primary"
+            <SpotifyConnectButton
+              connected={status.connected}
               disabled={busy || !status.configured}
-              onClick={() =>
-                void action(async () => {
-                  const result = await api.connect();
-                  const url = new URL(result.url);
-                  if (url.origin !== "https://accounts.spotify.com")
-                    throw new Error("Unexpected Spotify authorization URL.");
-                  location.assign(url.href);
-                })
-              }
-            >
-              {status.connected ? "Reconnect Spotify" : "Connect Spotify"}
-              <Icon>open_in_new</Icon>
-            </button>
+              refresh={refresh}
+            />
             <button
               className="secondary"
               disabled={
