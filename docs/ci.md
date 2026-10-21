@@ -27,6 +27,11 @@ current PR revision can satisfy required checks. GitHub's up-to-date requirement
 also prevents using checks against an obsolete base. Keep these names and the
 repository protection synchronized when changing the workflow.
 
+From a PR branch, inspect its current required results with `gh pr checks
+--required`. A pending result on a newly pushed commit must complete before
+merging, even if an older run succeeded. To retry an infrastructure failure,
+use the run's **Re-run failed jobs** action; download its diagnostics first.
+
 The workflows use Rust **1.99.1** (matching Docker) and Node **24**. npm caches
 use `package-lock.json`; Cargo caches use OS/toolchain/`Cargo.lock` and separate
 browser/load keys. Jobs have timeouts. Actions are pinned by commit; update the
