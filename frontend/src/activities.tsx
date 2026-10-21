@@ -48,16 +48,29 @@ export function Activities({
   const id = path.startsWith("/activities/")
     ? path.slice("/activities/".length)
     : "";
+  const [listPage, setListPage] = useState(0);
+  const [kind, setKind] = useState("");
+  const history = useLoad<Activity[]>(
+    () => api.activities(listPage, kind),
+    `${listPage}:${kind}`,
+    !id && (!!listPage || !!kind),
+    3000,
+  );
+  const visibleJobs = listPage || kind ? history.data || [] : jobs;
+  const [issuesPage, setIssuesPage] = useState(0);
   const detail = useLoad<ActivityDetail>(
-    () => api.activity(id),
-    id,
+    () => api.activity(id, issuesPage),
+    `${id}:${issuesPage}`,
     !!id,
     2000,
   );
   const toast = useToast();
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => setActionError(""), [id]);
+  useEffect(() => {
+    setActionError("");
+    setIssuesPage(0);
+  }, [id]);
   const job = detail.data?.activity;
   return (
     <>
@@ -75,7 +88,8 @@ export function Activities({
             <article className="panel padded">
               <h2>{activityName(job)}</h2>
               <p role="status">
-                {job.state} · attempt {job.attempt}
+                {job.outcome || job.state} · phase {job.phase} · attempt{" "}
+                {job.attempt}
               </p>
               {job.target_timezone && (
                 <p>
@@ -94,6 +108,15 @@ export function Activities({
                 </p>
               )}
               <Progress job={job} />
+              {job.kind === "spotify_import" && (
+                <p>
+                  {job.inventory_complete
+                    ? "Inventory complete"
+                    : "Inventory not yet complete"}
+                  . Saved rows remain available after errors or cancellation.
+                  Row counts and original counts are not totals of new listens.
+                </p>
+              )}
               {job.error_code && (
                 <p className="form-error">
                   {job.error_code === "calendar_recalculation_failed"
@@ -107,6 +130,9 @@ export function Activities({
               <dl className="diagnostics">
                 {(
                   [
+                    "originals",
+                    "variants",
+                    "below_threshold",
                     "added",
                     "reconciled",
                     "duplicates",
@@ -116,63 +142,150 @@ export function Activities({
                   ] as const
                 ).map((key) => (
                   <div key={key}>
-                    <dt>{key[0].toUpperCase() + key.slice(1)}</dt>
+                    <dt>
+                      {
+                        {
+                          originals: "New original observations",
+                          variants: "New original variants",
+                          below_threshold: "Below-threshold music rows",
+                          added: "New listens",
+                          reconciled: "Reconciliations",
+                          duplicates: "Known source rows",
+                          invalid: "Invalid source rows",
+                          skipped: "Non-musical source rows",
+                          ambiguous: "Ambiguous matches",
+                        }[key]
+                      }
+                    </dt>
                     <dd>{job[key]}</dd>
                   </div>
                 ))}
               </dl>
-              {job.kind === "calendar" && (
-                <div className="connection-actions">
-                  {(isActive(job)
-                    ? ["cancel"]
-                    : ["failed", "cancelled"].includes(job.state)
-                      ? ["retry"]
-                      : []
-                  ).map((action) => (
+              {["calendar", "spotify_import"].includes(job.kind) &&
+                job.phase !== "receiving" && (
+                  <div className="connection-actions">
+                    {(isActive(job)
+                      ? ["cancel"]
+                      : ["failed", "cancelled"].includes(job.state) ||
+                          job.outcome === "partial"
+                        ? ["retry"]
+                        : []
+                    ).map((action) => (
+                      <button
+                        key={action}
+                        className="secondary"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          setActionError("");
+                          try {
+                            await api.activityAction(job.id, action);
+                            await refresh();
+                            toast(
+                              action === "cancel"
+                                ? "Cancellation requested. Confirmed changes remain saved."
+                                : "Activity queued again. Confirmed rows will not be repeated.",
+                            );
+                          } catch (e) {
+                            setActionError(
+                              e instanceof Error ? e.message : String(e),
+                            );
+                            toast(
+                              e instanceof Error ? e.message : String(e),
+                              true,
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        {action === "cancel"
+                          ? job.kind === "calendar"
+                            ? "Cancel recalculation"
+                            : "Cancel import"
+                          : job.kind === "calendar"
+                            ? "Retry recalculation"
+                            : "Retry import"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              {detail.data && detail.data.issues?.length > 0 && (
+                <div>
+                  <h3>Invalid source rows (page {issuesPage + 1})</h3>
+                  <div className="connection-actions">
                     <button
-                      key={action}
                       className="secondary"
-                      disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        setActionError("");
-                        try {
-                          await api.activityAction(job.id, action);
-                          await refresh();
-                          toast(
-                            action === "cancel"
-                              ? "Cancellation requested. The previous calendar remains active."
-                              : "Calendar recalculation queued again.",
-                          );
-                        } catch (e) {
-                          setActionError(
-                            e instanceof Error ? e.message : String(e),
-                          );
-                          toast(
-                            e instanceof Error ? e.message : String(e),
-                            true,
-                          );
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
+                      disabled={issuesPage === 0}
+                      onClick={() => setIssuesPage((p) => p - 1)}
                     >
-                      {action === "cancel"
-                        ? "Cancel recalculation"
-                        : "Retry recalculation"}
+                      Previous errors
                     </button>
+                    <button
+                      className="secondary"
+                      disabled={(issuesPage + 1) * 100 >= job.invalid}
+                      onClick={() => setIssuesPage((p) => p + 1)}
+                    >
+                      Next errors
+                    </button>
+                  </div>
+                  {detail.data.issues.map((issue) => (
+                    <p key={`${issue.member}:${issue.row_number}`}>
+                      {issue.member}, row {issue.row_number}: {issue.reason}
+                    </p>
                   ))}
                 </div>
+              )}
+              {detail.data && (
+                <p>
+                  Files discovered:{" "}
+                  {
+                    detail.data.members.filter((m) => m.kind !== "directory")
+                      .length
+                  }
+                  . Processed:{" "}
+                  {
+                    detail.data.members.filter((m) =>
+                      ["completed", "partial"].includes(m.state),
+                    ).length
+                  }
+                  . Excluded:{" "}
+                  {
+                    detail.data.members.filter(
+                      (m) => m.state === "excluded" && m.kind !== "directory",
+                    ).length
+                  }
+                  . Failed:{" "}
+                  {
+                    detail.data.members.filter((m) => m.state === "failed")
+                      .length
+                  }
+                  . Still to process:{" "}
+                  {
+                    detail.data.members.filter((m) =>
+                      ["pending", "received", "processing"].includes(m.state),
+                    ).length
+                  }
+                  .
+                </p>
               )}
               {detail.data?.members.map((member) => (
                 <div className="job" key={member.member}>
                   <strong>{member.member}</strong>
                   <span>
-                    {member.state} · {member.processed} processed
+                    {member.kind} · {member.state} · {member.processed}{" "}
+                    processed
                     {member.expected_rows === null
                       ? " · total unknown"
                       : ` of ${member.expected_rows}`}
                   </span>
+                  <p>
+                    {member.originals} new originals | {member.variants} new
+                    variants | {member.duplicates} known rows | {member.added}{" "}
+                    new listens | {member.reconciled} reconciled |{" "}
+                    {member.invalid} invalid | {member.skipped} non-music |{" "}
+                    {member.below_threshold} below threshold
+                  </p>
                   {member.error_code && (
                     <p className="form-error">{member.error_code}</p>
                   )}
@@ -183,14 +296,47 @@ export function Activities({
         </>
       ) : (
         <div className="panel padded">
-          {jobs.length ? (
-            jobs.map((job) => (
+          <label>
+            Activity type
+            <select
+              value={kind}
+              onChange={(e) => {
+                setKind(e.target.value);
+                setListPage(0);
+              }}
+            >
+              <option value="">All activities</option>
+              <option value="spotify_import">Spotify imports</option>
+              <option value="spotify_collection">Spotify collection</option>
+              <option value="calendar">Calendar</option>
+            </select>
+          </label>
+          <ErrorText>{history.error}</ErrorText>
+          <div className="connection-actions">
+            <button
+              className="secondary"
+              disabled={listPage === 0}
+              onClick={() => setListPage((p) => p - 1)}
+            >
+              Previous activities
+            </button>
+            <span>Page {listPage + 1}</span>
+            <button
+              className="secondary"
+              disabled={visibleJobs.length < 100}
+              onClick={() => setListPage((p) => p + 1)}
+            >
+              Next activities
+            </button>
+          </div>
+          {visibleJobs.length ? (
+            visibleJobs.map((job) => (
               <article className="activity-row" key={job.id}>
                 <Link to={`/activities/${job.id}`}>
                   <strong>{activityName(job)}</strong>
                 </Link>
                 <span className={job.state === "failed" ? "form-error" : ""}>
-                  {job.state}
+                  {job.outcome || job.state}
                 </span>
                 <Progress job={job} />
               </article>

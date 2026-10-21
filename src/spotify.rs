@@ -22,6 +22,8 @@ use tokio::sync::{Mutex, Notify};
 pub struct Spotify {
     client: Client,
     pub gate: Arc<Mutex<()>>,
+    collection_gate: Arc<Mutex<()>>,
+    now_gate: Arc<Mutex<()>>,
     wake: Arc<Notify>,
     cache: Arc<Mutex<Option<(i64, Value)>>>,
     // Fixed production endpoints. Tests substitute a local HTTP server, never user-controlled URLs.
@@ -42,6 +44,8 @@ impl Spotify {
                 .build()
                 .expect("HTTP client initialization failed"),
             gate: Default::default(),
+            collection_gate: Default::default(),
+            now_gate: Default::default(),
             wake: Default::default(),
             cache: Default::default(),
             api_base: "https://api.spotify.com/v1".into(),
@@ -139,6 +143,9 @@ pub async fn status(
         verified_at_ms,
         last_error: collection_error.or(last_error),
         now_playing_error: setting(conn, "now_playing_error").await?,
+        now_playing_timing: setting(conn, "now_playing_timing")
+            .await?
+            .and_then(|v| serde_json::from_str(&v).ok()),
         coverage_warning: setting(conn, "coverage_warning").await?,
         retry_at_ms,
         imports,
@@ -176,6 +183,7 @@ pub async fn save_credentials(
             "Enter the Client ID and Client Secret from your Spotify app settings.".into(),
         ));
     }
+    let _collection = state.spotify.collection_gate.lock().await;
     let _gate = state.spotify.gate.lock().await;
     let mut tx = state.private_db.begin().await?;
     db::set_setting(&mut tx, "spotify_client_id", id).await?;
@@ -245,6 +253,7 @@ pub async fn callback(
         .state
         .filter(|s| s.len() == 64)
         .ok_or(AppError::Forbidden)?;
+    let _collection = state.spotify.collection_gate.lock().await;
     let _gate = state.spotify.gate.lock().await;
     let used = sqlx::query(
         "DELETE FROM oauth_states WHERE digest = ? AND session_digest = ? AND expires_at_ms > ?",
@@ -407,8 +416,19 @@ async fn access_token(state: &AppState, force_refresh: bool) -> Result<String> {
         .into())
 }
 async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Result<Value> {
+    let _gate = state.spotify.gate.lock().await;
+    api_get_locked(state, path, params)
+        .await
+        .map(|(value, _, _)| value)
+}
+async fn api_get_locked(
+    state: &AppState,
+    path: &str,
+    params: &[(&str, String)],
+) -> Result<(Value, i64, i64)> {
     let token = access_token(state, false).await?;
     let url = format!("{}{path}", state.spotify.api_base);
+    let mut source_requested_at_ms = auth::now_ms();
     let mut response = state
         .spotify
         .client
@@ -420,6 +440,7 @@ async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Res
         .map_err(|_| AppError::Spotify("Could not reach Spotify. Collection will retry.".into()))?;
     if response.status() == StatusCode::UNAUTHORIZED {
         let token = access_token(state, true).await?;
+        source_requested_at_ms = auth::now_ms();
         response = state
             .spotify
             .client
@@ -433,9 +454,10 @@ async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Res
             })?;
     }
     let value = checked_json(state, response).await?;
+    let response_received_at_ms = auth::now_ms();
     diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
     diagnostic(state, "spotify_action_required", "").await?;
-    Ok(value)
+    Ok((value, source_requested_at_ms, response_received_at_ms))
 }
 pub fn parse_track(row: &Value) -> Result<Track> {
     let id = row
@@ -501,20 +523,44 @@ pub fn parse_track(row: &Value) -> Result<Track> {
     })
 }
 pub async fn sync(state: &AppState) -> Result<Value> {
-    let _gate = state.spotify.gate.lock().await;
+    let _collection = state.spotify.collection_gate.lock().await;
+    let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='spotify_collection' AND state IN ('queued','waiting'))").fetch_one(&state.db).await?;
+    if !pending {
+        state
+            .storage
+            .enqueue(
+                "spotify_collection",
+                None,
+                Some("Spotify background collection"),
+                &json!({}),
+            )
+            .await?;
+    }
+    let job = state
+        .storage
+        .claim("spotify_collection")
+        .await?
+        .ok_or_else(|| AppError::Conflict("Collection is waiting for its next attempt.".into()))?;
     diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
-    let result = sync_locked(state).await;
+    let result = sync_locked(state, &job).await;
     if let Err(ref error) = result {
         diagnostic(state, "collection_error", &error.to_string()).await?;
+        let retry = db::setting(&state.db, "retry_at_ms")
+            .await?
+            .and_then(|v| v.parse::<i64>().ok())
+            .filter(|v| *v > auth::now_ms())
+            .unwrap_or(auth::now_ms() + state.config.sync_seconds as i64 * 1000);
+        state.storage.pause(&job,Some(retry),"spotify_collection_failed: see Connections for authorization, request limit or network details").await?;
     }
     result
 }
-async fn sync_locked(state: &AppState) -> Result<Value> {
+async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> {
     let previous = db::setting(&state.db, "recent_cursor_ms")
         .await?
         .and_then(|v| v.parse::<i64>().ok());
     let mut before: Option<i64> = None;
     let mut events = Vec::new();
+    let mut excluded = Vec::new();
     let mut newest = previous;
     let mut warning = None;
     // Walk backwards using our own cursors. Never follow arbitrary upstream URLs with a bearer token.
@@ -530,6 +576,12 @@ async fn sync_locked(state: &AppState) -> Result<Value> {
             .ok_or_else(|| {
                 AppError::Spotify("Spotify returned invalid listening history.".into())
             })?;
+        if rows.len() > 50 {
+            return Err(AppError::Spotify(
+                "Spotify returned more history rows than requested. The cursor has not advanced."
+                    .into(),
+            ));
+        }
         let mut oldest: Option<i64> = None;
         for row in rows {
             let timestamp = row.get("played_at").and_then(Value::as_str).and_then(|s|DateTime::parse_from_rfc3339(s).ok()).map(|v|v.timestamp_millis()).ok_or_else(||AppError::Spotify("Spotify returned an invalid listening timestamp. The sync cursor has not advanced.".into()))?;
@@ -538,6 +590,10 @@ async fn sync_locked(state: &AppState) -> Result<Value> {
             if row["track"]["type"].as_str().is_some_and(|v| v != "track")
                 || row["track"]["is_local"] == true
             {
+                excluded.push(crate::jobs::SourceRow::Skipped {
+                    raw: row.clone(),
+                    reason: "Non-musical or local track excluded from API collection.".into(),
+                });
                 continue;
             }
             let track = parse_track(&row["track"])?;
@@ -576,10 +632,19 @@ async fn sync_locked(state: &AppState) -> Result<Value> {
     }
     events.sort_by_key(|e| e.played_at_ms);
     let mut tx = state.db.begin().await?;
-    let report = db::ingest(&mut tx, &events).await?;
+    let mut rows: Vec<_> = events
+        .into_iter()
+        .map(crate::jobs::SourceRow::from)
+        .collect();
+    rows.extend(excluded);
+    let report = state
+        .storage
+        .commit_member_batch_in(&mut tx, job, "recently-played", 1, &rows, true)
+        .await?;
     if let Some(cursor) = newest {
         db::set_setting(&mut tx, "recent_cursor_ms", &cursor.to_string()).await?;
     }
+    sqlx::query("UPDATE jobs SET phase='finished',outcome='complete',retry_at_ms=NULL,error_code=NULL,inventory_complete=1 WHERE id=?").bind(&job.id).execute(&mut *tx).await?;
     db::set_setting(&mut tx, "last_sync_ms", &auth::now_ms().to_string()).await?;
     db::set_setting(&mut tx, "spotify_error", "").await?;
     db::set_setting(&mut tx, "collection_error", "").await?;
@@ -610,11 +675,17 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
 }
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
-    let _gate = state.spotify.gate.lock().await;
+    let requested_at_ms = auth::now_ms();
+    let _now = state.spotify.now_gate.lock().await;
     if let Some((time, value)) = &*state.spotify.cache.lock().await
-        && auth::now_ms() - time < state.config.now_playing_seconds as i64 * 1000
+        && auth::now_ms() / (state.config.now_playing_seconds as i64 * 1000)
+            == time / (state.config.now_playing_seconds as i64 * 1000)
     {
-        return Ok(Json(value.clone()));
+        let mut value = value.clone();
+        if let Some(object) = value.as_object_mut() {
+            object.insert("served_at_ms".into(), json!(auth::now_ms()));
+        }
+        return Ok(Json(value));
     }
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
@@ -622,9 +693,10 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     if !connected {
         return Ok(Json(Value::Null));
     }
-    let result = api_get(&state, "/me/player/currently-playing", &[]).await;
-    let row = match result {
-        Ok(row) => row,
+    let _gate = state.spotify.gate.lock().await;
+    let result = api_get_locked(&state, "/me/player/currently-playing", &[]).await;
+    let (row, source_requested_at_ms, response_received_at_ms) = match result {
+        Ok(sample) => sample,
         Err(e) => {
             diagnostic(&state, "now_playing_error", &e.to_string()).await?;
             return Err(e);
@@ -633,19 +705,21 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let value = if row["is_playing"] == true && row["currently_playing_type"] == "track" {
         match parse_track(&row["item"]) {
             Ok(track) => {
-                json!({"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":auth::now_ms()})
+                json!({"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
             }
             Err(_) => Value::Null,
         }
     } else {
         Value::Null
     };
+    diagnostic(&state, "now_playing_timing", &json!({"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64()}).to_string()).await?;
     diagnostic(&state, "now_playing_error", "").await?;
-    *state.spotify.cache.lock().await = Some((auth::now_ms(), value.clone()));
+    *state.spotify.cache.lock().await = Some((source_requested_at_ms, value.clone()));
     Ok(Json(value))
 }
 pub async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
+    let _collection = state.spotify.collection_gate.lock().await;
     let _gate = state.spotify.gate.lock().await;
     let mut tx = state.private_db.begin().await?;
     sqlx::query("DELETE FROM spotify_tokens")
@@ -721,6 +795,9 @@ mod tests {
             .expect("unexpected Spotify request");
         assert_eq!(uri.path(), reply.path);
         assert!(headers.get("authorization").is_some());
+        if let Some(ms) = reply.body["_test_delay_ms"].as_u64() {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
         let mut response = (reply.status, Json(reply.body)).into_response();
         if let Some(wait) = reply.retry {
             response
@@ -755,6 +832,7 @@ mod tests {
             data_dir: dir.path().to_owned(),
             sync_seconds: 120,
             now_playing_seconds: 30,
+            import_limits: Default::default(),
             env_client_id: Some("clientid".into()),
             env_client_secret: Some("secret-never-returned".into()),
         };
@@ -1013,7 +1091,22 @@ mod tests {
                 json!({"items":[item(at-50*180_000)]}),
             ),
         ]);
+        // The failed attempt is durably waiting. Simulate its scheduled retry becoming due.
+        sqlx::query(
+            "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
         assert_eq!(sync(&state).await.unwrap()["added"], 51);
+        let completed: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(completed.outcome.as_deref(), Some("complete"));
+        assert!(completed.error_code.is_none());
+        assert!(completed.retry_at_ms.is_none());
         handle.abort();
     }
     #[tokio::test]
@@ -1063,6 +1156,67 @@ mod tests {
         assert!(matches!(replay, Err(AppError::Forbidden)));
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
+    }
+    #[tokio::test]
+    async fn now_playing_interleaves_with_paginated_collection_and_reports_separate_clocks() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180000)).collect();
+        let (_dir,state,mock,handle)=fixture(vec![
+            reply("/v1/me/player/recently-played",json!({"items":batch,"_test_delay_ms":100})),
+            reply("/v1/me/player/currently-playing",json!({"is_playing":true,"currently_playing_type":"track","timestamp":at,"item":track(),"progress_ms":1000,"_test_delay_ms":20})),
+            reply("/v1/me/player/recently-played",json!({"items":[item(at-50*180000)]})),
+        ],false).await;
+        let headers = owner_headers(&state).await;
+        let collector = state.clone();
+        let collecting = tokio::spawn(async move { sync(&collector).await });
+        while mock.calls.lock().await.is_empty() {
+            tokio::task::yield_now().await;
+        }
+        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(
+            mock.calls.lock().await[1].1,
+            "/v1/me/player/currently-playing"
+        );
+        assert_eq!(sample["source_timestamp_ms"], at);
+        let requested = sample["requested_at_ms"].as_i64().unwrap();
+        let sent = sample["source_requested_at_ms"].as_i64().unwrap();
+        let received = sample["response_received_at_ms"].as_i64().unwrap();
+        assert!(requested <= sent && sent + 15 <= received);
+        assert_eq!(collecting.await.unwrap().unwrap()["added"], 51);
+        let activity: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(activity.state, "completed");
+        assert_eq!(activity.processed, 51);
+        let originals: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM source_occurrences WHERE job_id=?")
+                .bind(activity.id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(originals, 51);
+        println!(
+            "simulated now-playing queue={} ms, provider={} ms, source={} ms",
+            sent - requested,
+            received - sent,
+            at
+        );
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn a_new_poll_window_refreshes_even_when_previous_sample_is_younger_than_the_interval() {
+        let (_dir,state,mock,handle)=fixture(vec![reply("/v1/me/player/currently-playing",json!({"is_playing":true,"currently_playing_type":"track","item":track(),"timestamp":1234}))],false).await;
+        let headers = owner_headers(&state).await;
+        let bucket = auth::now_ms() / 30000 * 30000;
+        *state.spotify.cache.lock().await = Some((bucket - 1, json!({"title":"stale sample"})));
+        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(sample["title"], "Test track");
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        handle.abort();
+        state.storage.close().await;
     }
     #[tokio::test]
     async fn caches_now_playing_and_never_inserts_a_listen_from_it() {

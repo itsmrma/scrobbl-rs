@@ -42,10 +42,13 @@ Il rinnovo dell'autorizzazione è automatico. La guida completa e le fonti uffic
 
 ## Importare lo storico
 
-Richiedi **Extended streaming history** nelle impostazioni privacy di Spotify. Estrai lo ZIP e,
-alla pagina **Import history**, seleziona uno o più JSON musicali. Massimo 64 MiB per caricamento:
-per archivi grandi usa più caricamenti. I file già completati restano salvati se un file successivo
-fallisce; puoi ripetere il caricamento senza duplicarli.
+Richiedi **Extended streaming history** nelle impostazioni privacy di Spotify. Alla pagina
+**Import history**, seleziona direttamente lo ZIP completo oppure i JSON. I limiti configurati
+sono visibili prima dell'invio: il limite iniziale è 256 MiB caricati e 1 GiB decompresso.
+Attendi la conferma di ricezione; poi puoi chiudere la pagina. L'elaborazione continua sul server
+e riprende dopo un riavvio. Inventario, errori e risultati restano in **Activities**, anche dopo
+un errore di rete. Puoi riprovare il lavoro o ricaricare i file senza moltiplicare gli ascolti.
+Vedi [limiti e verifiche dell'import Spotify](spotify-import.md).
 
 Gli ascolti importati sotto 30 secondi restano nella cronologia e non contano nelle statistiche.
 Le durate dalle API sono stimate; l'import conserva la durata effettiva. Le corrispondenze sicure

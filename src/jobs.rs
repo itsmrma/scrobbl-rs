@@ -33,6 +33,10 @@ pub struct Job {
     pub cancel_requested: bool,
     pub retry_at_ms: Option<i64>,
     pub error_code: Option<String>,
+    pub phase: String,
+    pub outcome: Option<String>,
+    pub inventory_complete: bool,
+    pub below_threshold: i64,
 }
 
 impl Storage {
@@ -129,7 +133,7 @@ impl Storage {
                 "Another calendar recalculation is already pending.".into(),
             ));
         }
-        sqlx::query("UPDATE jobs SET state='queued',cancel_requested=0,retry_at_ms=NULL,error_code=NULL WHERE id=? AND state IN ('failed','cancelled')")
+        sqlx::query("UPDATE jobs SET state='queued',cancel_requested=0,retry_at_ms=NULL,error_code=NULL,outcome=NULL WHERE id=? AND (state IN ('failed','cancelled') OR outcome='partial') AND phase!='receiving'")
             .bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
@@ -155,19 +159,34 @@ impl Storage {
         rows: &[SourceRow],
         complete: bool,
     ) -> Result<IngestReport> {
+        let mut tx = self.writer.begin().await?;
+        let report = self
+            .commit_member_batch_in(&mut tx, lease, member, first_row, rows, complete)
+            .await?;
+        tx.commit().await?;
+        Ok(report)
+    }
+    pub(crate) async fn commit_member_batch_in(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        lease: &Job,
+        member: &str,
+        first_row: i64,
+        rows: &[SourceRow],
+        complete: bool,
+    ) -> Result<IngestReport> {
         if rows.len() > 1000 {
             return Err(AppError::BadRequest(
                 "A job batch may contain at most 1000 rows.".into(),
             ));
         }
-        let mut tx = self.writer.begin().await?;
-        validate_lease(&mut tx, lease).await?;
-        sqlx::query("INSERT OR IGNORE INTO job_members(job_id,member,kind,state) VALUES(?,?,'music','processing')").bind(&lease.id).bind(member).execute(&mut *tx).await?;
+        validate_lease(tx, lease).await?;
+        sqlx::query("INSERT OR IGNORE INTO job_members(job_id,member,kind,state) VALUES(?,?,'music','processing')").bind(&lease.id).bind(member).execute(&mut **tx).await?;
         let position: i64 =
             sqlx::query_scalar("SELECT processed FROM job_members WHERE job_id=? AND member=?")
                 .bind(&lease.id)
                 .bind(member)
-                .fetch_one(&mut *tx)
+                .fetch_one(&mut **tx)
                 .await?;
         if first_row != position + 1 {
             return Err(stale());
@@ -179,12 +198,21 @@ impl Storage {
                 _ => None,
             })
             .collect();
-        let mut report = db::ingest(&mut tx, &events).await?;
+        let mut report = db::ingest(tx, &events).await?;
+        db::review_spotify_imports(tx, &events).await?;
+        let below_threshold = events.iter().filter(|e| !e.counted).count() as i64;
+        let file_id: Option<String> =
+            sqlx::query_scalar("SELECT file_id FROM job_members WHERE job_id=? AND member=?")
+                .bind(&lease.id)
+                .bind(member)
+                .fetch_one(&mut **tx)
+                .await?;
+        let file_id = file_id.or_else(|| lease.file_id.clone());
         for (index, row) in rows.iter().enumerate() {
             let (raw, variant, outcome, reason) = match row {
                 SourceRow::Event(event) => {
                     let variant:String=sqlx::query_scalar("SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?")
-                        .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut *tx).await?;
+                        .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut **tx).await?;
                     (event.raw.clone(), Some(variant), "accepted", None)
                 }
                 SourceRow::Invalid { raw, reason } => {
@@ -197,22 +225,28 @@ impl Storage {
                 }
             };
             sqlx::query("INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,raw_json,outcome,reason) VALUES(?,?,?,?,?,?,?,?)")
-                .bind(&lease.id).bind(&lease.file_id).bind(member).bind(first_row+index as i64).bind(variant).bind(raw.to_string()).bind(outcome).bind(reason).execute(&mut *tx).await?;
+                .bind(&lease.id).bind(&file_id).bind(member).bind(first_row+index as i64).bind(variant).bind(raw.to_string()).bind(outcome).bind(reason).execute(&mut **tx).await?;
         }
         sqlx::query("UPDATE job_members SET processed=processed+? WHERE job_id=? AND member=?")
             .bind(rows.len() as i64)
             .bind(&lease.id)
             .bind(member)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
         if complete {
             sqlx::query("UPDATE job_members SET state=CASE WHEN EXISTS(SELECT 1 FROM source_occurrences o WHERE o.job_id=job_members.job_id AND o.member=job_members.member AND o.outcome='invalid') THEN 'partial' ELSE 'completed' END,expected_rows=processed WHERE job_id=? AND member=?")
-                .bind(&lease.id).bind(member).execute(&mut *tx).await?;
+                .bind(&lease.id).bind(member).execute(&mut **tx).await?;
         }
+        sqlx::query("UPDATE job_members SET originals=originals+?,variants=variants+?,duplicates=duplicates+?,added=added+?,reconciled=reconciled+?,invalid=invalid+?,skipped=skipped+?,below_threshold=below_threshold+? WHERE job_id=? AND member=?")
+            .bind(report.originals as i64).bind(report.variants as i64).bind(report.duplicates as i64).bind(report.added as i64).bind(report.reconciled as i64).bind(report.invalid as i64).bind(report.skipped as i64).bind(below_threshold).bind(&lease.id).bind(member).execute(&mut **tx).await?;
+        sqlx::query("UPDATE jobs SET below_threshold=below_threshold+? WHERE id=?")
+            .bind(below_threshold)
+            .bind(&lease.id)
+            .execute(&mut **tx)
+            .await?;
         sqlx::query("UPDATE jobs SET checkpoint=checkpoint+?,processed=processed+?,added=added+?,reconciled=reconciled+?,duplicates=duplicates+?,originals=originals+?,variants=variants+?,invalid=invalid+?,skipped=skipped+?,ambiguous=ambiguous+?,state=?,updated_at_ms=? WHERE id=?")
             .bind(rows.len() as i64).bind(rows.len() as i64).bind(report.added as i64).bind(report.reconciled as i64).bind(report.duplicates as i64).bind(report.originals as i64).bind(report.variants as i64).bind(report.invalid as i64).bind(report.skipped as i64).bind(report.ambiguous as i64)
-            .bind(if complete{"completed"}else{"running"}).bind(auth::now_ms()).bind(&lease.id).execute(&mut *tx).await?;
-        tx.commit().await?;
+            .bind(if complete{"completed"}else{"running"}).bind(auth::now_ms()).bind(&lease.id).execute(&mut **tx).await?;
         Ok(report)
     }
     /// Inventory can represent unreadable/excluded/unprocessed files without inventing row counts.

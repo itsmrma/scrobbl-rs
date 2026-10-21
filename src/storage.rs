@@ -96,6 +96,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         ARCHIVE_MIGRATOR.run(&writer).await?;
         PRIVATE_MIGRATOR.run(&private).await?;
         recover_access(&writer, &private).await?;
+        sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code='upload_incomplete',retry_at_ms=NULL WHERE kind='spotify_import' AND phase='receiving'").execute(&writer).await?;
         sqlx::query("UPDATE jobs SET state=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END, updated_at_ms=? WHERE state='running'")
             .bind(crate::auth::now_ms()).execute(&writer).await?;
         sqlx::query("UPDATE jobs SET state='cancelled' WHERE cancel_requested=1 AND state IN ('queued','waiting')").execute(&writer).await?;
@@ -170,11 +171,11 @@ async fn has_pending(pool: &SqlitePool, migrator: &Migrator) -> anyhow::Result<b
     if !table_exists(pool, "_sqlx_migrations").await? {
         return Ok(true);
     }
-    let version: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(version),0) FROM _sqlx_migrations WHERE success=1")
-            .fetch_one(pool)
+    let applied: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations WHERE success=1")
+            .fetch_all(pool)
             .await?;
-    Ok(migrator.iter().any(|m| m.version > version))
+    Ok(migrator.iter().any(|m| !applied.contains(&m.version)))
 }
 
 /// Startup-only safety copy, including private credentials. Not the user-facing backup format.

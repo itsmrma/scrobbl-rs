@@ -85,8 +85,9 @@ Music, original/variant/known-row counters, provenance and checkpoints commit at
 roll back the whole batch. Cancellation preserves confirmed work and prevents automatic restart;
 retry is explicit. Running jobs become queued after process failure, waiting jobs retain their
 retry time, and cancelled jobs remain cancelled. `activities` exposes persistent state for the later
-global UI. Source workers and complete ZIP/JSON/JSONL validation remain in their import tickets;
-the legacy upload handler still has its documented prototype limits until that integration.
+global UI. Spotify ZIP/JSON receipt and workers now use this interface; the source-specific
+contract and checks are in [Spotify import and timing](spotify-import.md). Other adapters remain
+in their own import tickets.
 
 `change_calendar` applies either to future acquisitions or queues a global job. Existing listens
 retain their first acquisition and assigned calendar on reimport/reconciliation. Global preparation

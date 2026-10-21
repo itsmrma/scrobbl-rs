@@ -10,7 +10,7 @@ const child = spawn(cargo, ["run", "--locked", "--bin", "scrobbl-rs"], {
   stdio: "inherit",
   env: {
     ...process.env,
-    SCROBBL_PORT: "3211",
+    SCROBBL_PORT: process.env.SCROBBL_E2E_PORT || "3211",
     SCROBBL_DATA_DIR: dataDir,
     SPOTIFY_CLIENT_ID: "",
     SPOTIFY_CLIENT_SECRET: "",

@@ -10,6 +10,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub sync_seconds: u64,
     pub now_playing_seconds: u64,
+    pub import_limits: crate::imports::ImportLimits,
     pub env_client_id: Option<String>,
     pub env_client_secret: Option<String>,
 }
@@ -51,6 +52,7 @@ impl Config {
                 .unwrap_or_else(|| "data".into()),
             sync_seconds,
             now_playing_seconds,
+            import_limits: crate::imports::ImportLimits::from_env()?,
             env_client_id,
             env_client_secret,
         })

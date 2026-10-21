@@ -541,6 +541,43 @@ export function Connections({
                   : "After authorization"}
             </dd>
           </dl>
+          {status.now_playing_timing && (
+            <details>
+              <summary>Last now-playing sample timing</summary>
+              <p>
+                Request:{" "}
+                {date(
+                  status.now_playing_timing.source_requested_at_ms,
+                  preferences,
+                )}
+                . Response:{" "}
+                {date(
+                  status.now_playing_timing.response_received_at_ms,
+                  preferences,
+                )}
+                .
+              </p>
+              <p>
+                Server queue:{" "}
+                {status.now_playing_timing.source_requested_at_ms -
+                  status.now_playing_timing.requested_at_ms}{" "}
+                ms. Provider request:{" "}
+                {status.now_playing_timing.response_received_at_ms -
+                  status.now_playing_timing.source_requested_at_ms}{" "}
+                ms.
+              </p>
+              <p>
+                Source playback-state change:{" "}
+                {date(
+                  status.now_playing_timing.source_timestamp_ms,
+                  preferences,
+                )}
+                . This source timestamp does not measure propagation delay. Now
+                playing never creates listens.
+              </p>
+            </details>
+          )}
+          <Link to="/activities">Collection and import reports</Link>
           {status.coverage_warning && (
             <p className="warning">{status.coverage_warning}</p>
           )}
