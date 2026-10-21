@@ -155,6 +155,18 @@ impl Storage {
         rows: &[SourceRow],
         complete: bool,
     ) -> Result<IngestReport> {
+        self.commit_source_batch(lease, member, first_row, rows, complete, None)
+            .await
+    }
+    pub async fn commit_source_batch(
+        &self,
+        lease: &Job,
+        member: &str,
+        first_row: i64,
+        rows: &[SourceRow],
+        complete: bool,
+        parameters: Option<&Value>,
+    ) -> Result<IngestReport> {
         if rows.len() > 1000 {
             return Err(AppError::BadRequest(
                 "A job batch may contain at most 1000 rows.".into(),
@@ -180,9 +192,11 @@ impl Storage {
             })
             .collect();
         let mut report = db::ingest(&mut tx, &events).await?;
+        let mut accepted = events.iter();
         for (index, row) in rows.iter().enumerate() {
             let (raw, variant, outcome, reason) = match row {
-                SourceRow::Event(event) => {
+                SourceRow::Event(_) => {
+                    let event = accepted.next().ok_or(AppError::Internal)?;
                     let variant:String=sqlx::query_scalar("SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?")
                         .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut *tx).await?;
                     (event.raw.clone(), Some(variant), "accepted", None)
@@ -212,6 +226,13 @@ impl Storage {
         sqlx::query("UPDATE jobs SET checkpoint=checkpoint+?,processed=processed+?,added=added+?,reconciled=reconciled+?,duplicates=duplicates+?,originals=originals+?,variants=variants+?,invalid=invalid+?,skipped=skipped+?,ambiguous=ambiguous+?,state=?,updated_at_ms=? WHERE id=?")
             .bind(rows.len() as i64).bind(rows.len() as i64).bind(report.added as i64).bind(report.reconciled as i64).bind(report.duplicates as i64).bind(report.originals as i64).bind(report.variants as i64).bind(report.invalid as i64).bind(report.skipped as i64).bind(report.ambiguous as i64)
             .bind(if complete{"completed"}else{"running"}).bind(auth::now_ms()).bind(&lease.id).execute(&mut *tx).await?;
+        if let Some(parameters) = parameters {
+            sqlx::query("UPDATE jobs SET parameters_json=? WHERE id=?")
+                .bind(parameters.to_string())
+                .bind(&lease.id)
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         Ok(report)
     }
