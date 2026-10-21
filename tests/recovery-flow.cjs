@@ -1,20 +1,7 @@
-const { test, expect } = require("@playwright/test");
+const { expect } = require("@playwright/test");
 
-test("Data & recovery creates downloadable exports, verifies backups and requires explicit replacement", async ({
-  page,
-}) => {
-  const password = "a local browser test password";
-  const session = await (await page.request.get("/api/session")).json();
+module.exports = async function recoveryFlow(page) {
   await page.goto("/settings/data");
-  await page.getByLabel("Password", { exact: true }).fill(password);
-  if (session.setup_required)
-    await page.getByLabel("Confirm password").fill(password);
-  await page
-    .getByRole("button", {
-      name: session.setup_required ? "Create your archive" : "Sign in",
-      exact: true,
-    })
-    .click();
   await expect(
     page.getByRole("heading", { name: "Manual backup" }),
   ).toBeVisible();
@@ -83,6 +70,10 @@ test("Data & recovery creates downloadable exports, verifies backups and require
   await page.getByLabel("I confirm replacement of the current archive").check();
   await expect(confirm).toBeEnabled();
   await page.keyboard.press("Escape");
+  await expect(page.locator(".toast")).toHaveCount(0, { timeout: 7000 });
+  await page
+    .getByRole("heading", { name: "Data & recovery", exact: true })
+    .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("heading", { name: "Manual backup" }),
@@ -101,4 +92,4 @@ test("Data & recovery creates downloadable exports, verifies backups and require
     path: "test-results/recovery-desktop.png",
     fullPage: true,
   });
-});
+};

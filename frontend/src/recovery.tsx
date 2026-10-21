@@ -209,9 +209,9 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
         />
       </div>
       <p>
-        Upload limit: 2 GiB compressed, 8 GiB expanded. Allow free disk space
-        for the backup, working copies and retained previous archive. Progress,
-        errors and finished operations are saved in{" "}
+        Backup size limit: 2 GiB compressed, 8 GiB expanded. Allow free disk
+        space for the backup, working copies and retained previous archive.
+        Progress, errors and finished operations are saved in{" "}
         <Link to="/activities">Activities</Link>.
       </p>
       <h3>Saved files</h3>
