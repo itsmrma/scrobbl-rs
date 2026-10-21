@@ -489,6 +489,19 @@ async fn lock_secrets_read_only_pool_and_access_recovery() {
             .await
             .unwrap();
     println!("SQLite artifact: {version}");
+    // Check the library used by SQLx against the native symbols in this binary,
+    // rather than accepting the version of a separate system SQLite command.
+    let native_version = unsafe {
+        std::ffi::CStr::from_ptr(libsqlite3_sys::sqlite3_libversion())
+            .to_str()
+            .unwrap()
+    };
+    let native_source = unsafe {
+        std::ffi::CStr::from_ptr(libsqlite3_sys::sqlite3_sourceid())
+            .to_str()
+            .unwrap()
+    };
+    assert_eq!(version, format!("{native_version} {native_source}"));
     assert_eq!(
         sqlx::query_scalar::<_, i64>("PRAGMA synchronous")
             .fetch_one(&store.writer)

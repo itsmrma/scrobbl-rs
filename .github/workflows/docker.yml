@@ -1,73 +1,62 @@
-name: Docker
+name: Docker verification
 on:
-  push:
-    branches: [main, "feat/**"]
-    tags: ["v*"]
-  pull_request:
+  workflow_call:
 permissions:
   contents: read
-concurrency:
-  group: docker-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   image:
+    name: linux/amd64
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Build linux/amd64 with locked Rust and frontend inputs
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           platforms: linux/amd64
           load: true
+          push: false
           tags: scrobbl-ci:${{ github.sha }}
           build-args: |
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Check generic Compose and image persistence
-        run: python3 scripts/verify-docker.py "scrobbl-ci:$GITHUB_SHA" --revision "$GITHUB_SHA"
+      - name: Check generic Compose, linked SQLite and image persistence
+        run: |
+          mkdir -p ci-logs
+          python3 scripts/verify-docker.py "scrobbl-ci:$GITHUB_SHA" --revision "$GITHUB_SHA" 2>&1 | tee ci-logs/docker.log
       - name: Extract matching source and notices
         run: |
           docker create --name scrobbl-sources "scrobbl-ci:$GITHUB_SHA"
           docker cp scrobbl-sources:/usr/share/scrobbl-rs ./distribution
           docker rm scrobbl-sources
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: scrobbl-distribution-${{ github.sha }}
           path: distribution/
-      - name: Sign in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@v4
+          overwrite: true
+          retention-days: 7
+      - name: Save the tested image for trusted publication
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: docker save --output tested-image.tar "scrobbl-ci:$GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish tested image by commit and version
-        if: github.event_name == 'push'
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}
-        run: |
-          docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:sha-$GITHUB_SHA"
-          docker push "$IMAGE:sha-$GITHUB_SHA"
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:$GITHUB_REF_NAME"
-            docker push "$IMAGE:$GITHUB_REF_NAME"
-          elif [ "$GITHUB_REF_NAME" = main ]; then
-            docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:main"
-            docker push "$IMAGE:main"
-          fi
-      - name: Attach matching sources to a draft version release
-        if: github.event_name == 'push' && github.ref_type == 'tag'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes 'Release verification pending.'
-          fi
-          gh release upload "$GITHUB_REF_NAME" distribution/source.tar.gz distribution/source.tar.gz.sha256 --clobber
+          name: tested-image-${{ github.sha }}
+          path: tested-image.tar
+          overwrite: true
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: docker-diagnostics-${{ github.run_attempt }}
+          path: ci-logs/
+          retention-days: 7

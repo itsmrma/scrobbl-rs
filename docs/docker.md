@@ -9,7 +9,7 @@ stack manager. No particular NAS, proxy, VPN or DNS provider is required.
 ## Choose the image and data directory
 
 Use `ghcr.io/itsmrma/scrobbl-rs:sha-FULL_COMMIT` from a successful **Docker** Actions
-run. `:main` follows tested main-branch commits; version tags match Git tags. Pin a
+run (now orchestrated by **Checks**). `:main` follows tested main-branch commits; version tags match Git tags. Pin a
 commit or digest for deliberate updates. Publishing never updates your running
 container automatically. Feature-branch commit images are development builds,
 not a declaration that the first release is complete.
@@ -217,8 +217,10 @@ through Docker, its build stages install npm dependencies again and need network
 access. The source archive and notices are also attached to the matching Docker
 Actions run and version-release draft; see [third-party notices](../THIRD_PARTY_NOTICES.md).
 
-The Docker workflow builds and loads the image, runs the generic Compose smoke
+The reusable Docker verification builds and loads the image, runs the generic Compose smoke
 (import, health, non-root/read-only mode, persistent owner/session/preferences/data,
-recreation and graceful stop), then publishes that tested image. PR builds exercise
+recreation and graceful stop). After all backend and browser checks pass, trusted
+main/tag pushes publish that exact image; see [CI checks and publication](ci.md).
+PR builds exercise
 the same image without publishing. Image contents include exact source/notices and
 `--version` reports the linked SQLite version/source ID for artifact verification.
