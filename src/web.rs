@@ -9,7 +9,7 @@ use axum::{
     extract::{DefaultBodyLimit, Query, Request, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
@@ -37,7 +37,10 @@ pub fn router(state: AppState) -> Router {
         .route("/import", get(index))
         .route("/activities", get(index))
         .route("/activities/{id}", get(index))
-        .route("/integrations/api-keys", get(index))
+        .route(
+            "/integrations/api-keys",
+            get(|| async { Redirect::permanent("/settings/api-keys") }),
+        )
         .route("/material-icons.woff2", get(icons_font))
         .route(
             "/api/v1/preferences",
@@ -56,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/history", get(history))
         .route("/api/dashboard", get(dashboard))
         .route("/api/spotify/status", get(spotify::status))
+        .route("/api/spotify/intervals", post(spotify::save_intervals))
         .route("/api/spotify/credentials", post(spotify::save_credentials))
         .route("/api/spotify/connect", post(spotify::connect))
         .route(

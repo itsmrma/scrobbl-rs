@@ -11,6 +11,7 @@ import type {
   SavedPreferences,
   SavePreferences,
   SpotifyStatus,
+  SpotifyIntervals,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -68,6 +69,8 @@ export const api = {
   history: (params: URLSearchParams) =>
     request<History>(`/api/history?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
+  saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
+    post<SpotifyIntervals>("/api/spotify/intervals", intervals),
   nowPlaying: () => request<NowPlaying | null>("/api/spotify/now-playing"),
   credentials: (client_id: string, client_secret: string) =>
     post("/api/spotify/credentials", { client_id, client_secret }),

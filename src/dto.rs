@@ -112,6 +112,12 @@ pub struct NowPlayingTiming {
     pub source_requested_at_ms: i64,
     pub response_received_at_ms: i64,
 }
+#[derive(Serialize, TS, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SpotifyIntervals {
+    pub sync_seconds: u64,
+    pub now_playing_seconds: u64,
+}
 #[derive(Serialize, TS)]
 pub struct SpotifyStatus {
     pub configured: bool,
@@ -214,6 +220,7 @@ mod tests {
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
             ImportJob::decl(&config),
+            SpotifyIntervals::decl(&config),
             SpotifyStatus::decl(&config),
             Activity::decl(&config),
             ActivityMember::decl(&config),
