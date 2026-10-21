@@ -54,6 +54,26 @@ inferred start; Spotify does not guarantee identical timing across those records
 
 ## Connection diagnostics
 
+Connect/Reconnect Spotify opens a separate browser tab. Keep the scrobbl.rs tab:
+its dialog waits for this specific authorization attempt, then shows **Connected**
+with a check mark or the refusal/error and a retry action. A previously saved
+authorization does not count as success for a new attempt. Spotify may return
+immediately when consent has already been granted.
+
+If the browser blocks the tab, allow new tabs for this site and choose **Try again**.
+Closing the Spotify tab shows an interrupted attempt where the browser can detect
+closure; browser isolation may make the tab unreachable instead. The original tab
+continues checking the server in either case, so a real callback can still complete.
+**Cancel** invalidates the pending attempt. Retrying supersedes it. Attempts expire
+after ten minutes; the UI also bounds its wait if a callback is interrupted.
+If the original tab is gone, the return tab displays the result with a link back
+to Connections. No access token or refresh token is sent to either tab.
+
+The server preserves the original authenticated session, CSRF checks and single-use
+OAuth state. A new private-database migration records the attempt outcome; it does
+not alter listening data. Live Firefox/Safari acceptance remains separate from the
+automated browser checks.
+
 - **403:** check Premium, app access/allowlist and permissions, then reconnect.
 - **401 or authorization rejected:** reconnect; app changes or revoked authorization can invalidate
   tokens. The server attempts one refresh for an expired API token.

@@ -6,7 +6,7 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::Redirect,
 };
@@ -210,6 +210,7 @@ pub async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Resul
     if !state.config.spotify_redirect_allowed() {
         return Err(AppError::BadRequest("Spotify requires HTTPS on a private server. Follow the HTTPS guide in Connections, configure SCROBBL_EXTERNAL_ORIGIN, then sign in at that address.".into()));
     }
+    let _gate = state.spotify.gate.lock().await;
     let (id, _) = credentials(&state)
         .await?
         .ok_or_else(|| AppError::BadRequest("Configure your Spotify app first.".into()))?;
@@ -238,7 +239,41 @@ pub async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Resul
             "scope",
             "user-read-recently-played user-read-currently-playing",
         );
-    Ok(Json(json!({"url":url.to_string()})))
+    Ok(Json(
+        json!({"url":url.to_string(), "attempt":auth::digest(&secret)}),
+    ))
+}
+
+pub async fn connect_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(attempt): Path<String>,
+) -> Result<Json<Value>> {
+    let session = auth::session(&state, &headers).await?;
+    let row = sqlx::query("SELECT outcome,message,expires_at_ms FROM oauth_states WHERE digest=? AND session_digest=?")
+        .bind(attempt).bind(session.digest).fetch_optional(&state.private_db).await?
+        .ok_or(AppError::Forbidden)?;
+    let outcome: String = row.get("outcome");
+    if outcome == "pending" && row.get::<i64, _>("expires_at_ms") <= auth::now_ms() {
+        return Ok(Json(
+            json!({"outcome":"error", "message":"This connection attempt expired. Please try again."}),
+        ));
+    }
+    Ok(Json(
+        json!({"outcome":outcome,"message":row.get::<Option<String>,_>("message")}),
+    ))
+}
+
+pub async fn cancel_connect(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(attempt): Path<String>,
+) -> Result<Json<Value>> {
+    let session = auth::require_write(&state, &headers).await?;
+    let _gate = state.spotify.gate.lock().await;
+    sqlx::query("UPDATE oauth_states SET outcome='error',message='Connection cancelled. You can try again.' WHERE digest=? AND session_digest=? AND outcome='pending'")
+        .bind(attempt).bind(session.digest).execute(&state.private_db).await?;
+    Ok(Json(json!({"ok":true})))
 }
 #[derive(Deserialize)]
 pub struct Callback {
@@ -259,7 +294,7 @@ pub async fn callback(
     let _collection = state.spotify.collection_gate.lock().await;
     let _gate = state.spotify.gate.lock().await;
     let used = sqlx::query(
-        "DELETE FROM oauth_states WHERE digest = ? AND session_digest = ? AND expires_at_ms > ?",
+        "UPDATE oauth_states SET outcome='processing' WHERE digest = ? AND session_digest = ? AND expires_at_ms > ? AND outcome='pending'",
     )
     .bind(auth::digest(&secret))
     .bind(session.digest)
@@ -269,19 +304,34 @@ pub async fn callback(
     if used.rows_affected() != 1 {
         return Err(AppError::Forbidden);
     }
-    if query.error.is_some() {
-        diagnostic(
-            &state,
-            "spotify_error",
-            "Spotify authorization was declined. You can try connecting again.",
-        )
+    let attempt = auth::digest(&secret);
+    let result = if query.error.is_some() {
+        Err(AppError::Spotify(
+            "Spotify authorization was declined. You can try connecting again.".into(),
+        ))
+    } else {
+        exchange_code(&state, query.code).await
+    };
+    let (outcome, message) = match result {
+        Ok(()) => ("connected", None),
+        Err(error) => ("error", Some(error.to_string())),
+    };
+    sqlx::query("UPDATE oauth_states SET outcome=?,message=? WHERE digest=?")
+        .bind(outcome)
+        .bind(&message)
+        .bind(&attempt)
+        .execute(&state.private_db)
         .await?;
-        return Ok(Redirect::to("/settings/connections"));
+    diagnostic(&state, "spotify_error", message.as_deref().unwrap_or("")).await?;
+    if outcome == "connected" {
+        state.spotify.wake.notify_one();
     }
-    let code = query
-        .code
-        .ok_or_else(|| AppError::BadRequest("Missing authorization code.".into()))?;
-    let (id, secret) = credentials(&state)
+    Ok(Redirect::to(&format!("/spotify/connect-result/{attempt}")))
+}
+
+async fn exchange_code(state: &AppState, code: Option<String>) -> Result<()> {
+    let code = code.ok_or_else(|| AppError::BadRequest("Missing authorization code.".into()))?;
+    let (id, secret) = credentials(state)
         .await?
         .ok_or_else(|| AppError::BadRequest("Configure your Spotify app first.".into()))?;
     let response = state
@@ -297,11 +347,8 @@ pub async fn callback(
         .send()
         .await
         .map_err(|_| AppError::Spotify("Could not reach Spotify. Try connecting again.".into()))?;
-    let value = checked_json(&state, response).await?;
-    save_tokens(&state, &value, None).await?;
-    diagnostic(&state, "spotify_error", "").await?;
-    state.spotify.wake.notify_one();
-    Ok(Redirect::to("/settings/connections"))
+    let value = checked_json(state, response).await?;
+    save_tokens(state, &value, None).await
 }
 async fn save_tokens(
     state: &AppState,
@@ -1148,6 +1195,17 @@ mod tests {
         )
         .await;
         assert!(result.is_ok());
+        assert_eq!(
+            connect_status(
+                State(state.clone()),
+                headers.clone(),
+                Path(auth::digest(&secret))
+            )
+            .await
+            .unwrap()
+            .0["outcome"],
+            "connected"
+        );
         let replay = callback(
             State(state),
             headers,
@@ -1161,6 +1219,182 @@ mod tests {
         assert!(matches!(replay, Err(AppError::Forbidden)));
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
+    }
+    async fn begin_connect(state: &AppState, headers: &HeaderMap) -> (String, String) {
+        let mut headers = headers.clone();
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        let result = connect(State(state.clone()), headers).await.unwrap().0;
+        let url = url::Url::parse(result["url"].as_str().unwrap()).unwrap();
+        let secret = url
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        (result["attempt"].as_str().unwrap().to_owned(), secret)
+    }
+    #[tokio::test]
+    async fn oauth_rejection_and_exchange_errors_belong_to_the_attempt_not_the_saved_connection() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/api/token",
+                status: StatusCode::BAD_GATEWAY,
+                body: json!({"error":"secret-upstream-payload"}),
+                retry: None,
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        let (attempt, secret) = begin_connect(&state, &headers).await;
+        assert_eq!(
+            connect_status(State(state.clone()), headers.clone(), Path(attempt.clone()))
+                .await
+                .unwrap()
+                .0["outcome"],
+            "pending"
+        );
+        let _ = callback(
+            State(state.clone()),
+            headers.clone(),
+            Query(Callback {
+                state: Some(secret),
+                code: None,
+                error: Some("access_denied".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        let result = connect_status(State(state.clone()), headers.clone(), Path(attempt))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(result["outcome"], "error");
+        assert!(result["message"].as_str().unwrap().contains("declined"));
+        assert!(mock.calls.lock().await.is_empty());
+        let (attempt, secret) = begin_connect(&state, &headers).await;
+        let _ = callback(
+            State(state.clone()),
+            headers.clone(),
+            Query(Callback {
+                state: Some(secret),
+                code: Some("code".into()),
+                error: None,
+            }),
+        )
+        .await
+        .unwrap();
+        let result = connect_status(State(state.clone()), headers, Path(attempt))
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(result["outcome"], "error");
+        assert!(!result.to_string().contains("secret-upstream-payload"));
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT access_token FROM spotify_tokens")
+                .fetch_one(&state.private_db)
+                .await
+                .unwrap(),
+            "initial-access"
+        );
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn oauth_attempts_reject_wrong_sessions_expiry_cancellation_and_superseded_callbacks() {
+        let (_dir, state, mock, handle) = fixture(vec![], false).await;
+        let mut headers = owner_headers(&state).await;
+        let other = owner_headers(&state).await;
+        let (attempt, secret) = begin_connect(&state, &headers).await;
+        assert!(matches!(
+            connect_status(State(state.clone()), other.clone(), Path(attempt.clone())).await,
+            Err(AppError::Forbidden)
+        ));
+        assert!(matches!(
+            callback(
+                State(state.clone()),
+                other,
+                Query(Callback {
+                    state: Some(secret.clone()),
+                    code: Some("code".into()),
+                    error: None
+                })
+            )
+            .await,
+            Err(AppError::Forbidden)
+        ));
+        assert!(matches!(
+            cancel_connect(State(state.clone()), headers.clone(), Path(attempt.clone())).await,
+            Err(AppError::Forbidden)
+        ));
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        let _ = cancel_connect(State(state.clone()), headers.clone(), Path(attempt.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            connect_status(State(state.clone()), headers.clone(), Path(attempt))
+                .await
+                .unwrap()
+                .0["outcome"],
+            "error"
+        );
+        assert!(matches!(
+            callback(
+                State(state.clone()),
+                headers.clone(),
+                Query(Callback {
+                    state: Some(secret),
+                    code: Some("code".into()),
+                    error: None
+                })
+            )
+            .await,
+            Err(AppError::Forbidden)
+        ));
+        let (attempt, secret) = begin_connect(&state, &headers).await;
+        sqlx::query("UPDATE oauth_states SET expires_at_ms=0 WHERE digest=?")
+            .bind(&attempt)
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        assert_eq!(
+            connect_status(State(state.clone()), headers.clone(), Path(attempt))
+                .await
+                .unwrap()
+                .0["outcome"],
+            "error"
+        );
+        assert!(matches!(
+            callback(
+                State(state.clone()),
+                headers.clone(),
+                Query(Callback {
+                    state: Some(secret),
+                    code: Some("code".into()),
+                    error: None
+                })
+            )
+            .await,
+            Err(AppError::Forbidden)
+        ));
+        let (_, secret) = begin_connect(&state, &headers).await;
+        begin_connect(&state, &headers).await;
+        assert!(matches!(
+            callback(
+                State(state.clone()),
+                headers,
+                Query(Callback {
+                    state: Some(secret),
+                    code: Some("code".into()),
+                    error: None
+                })
+            )
+            .await,
+            Err(AppError::Forbidden)
+        ));
+        assert!(mock.calls.lock().await.is_empty());
+        handle.abort();
+        state.storage.close().await;
     }
     #[tokio::test]
     async fn now_playing_interleaves_with_paginated_collection_and_reports_separate_clocks() {

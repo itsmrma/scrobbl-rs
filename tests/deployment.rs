@@ -134,7 +134,33 @@ async fn https_origin_survives_proxy_and_oauth_requires_the_same_secure_session(
     );
     let (status, headers, _) = call(&app, "GET", &callback, &authenticated, json!({})).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    assert_eq!(headers["location"], "/settings/connections");
+    assert_eq!(
+        headers["location"],
+        format!(
+            "/spotify/connect-result/{}",
+            connect["attempt"].as_str().unwrap()
+        )
+    );
+    let attempt_url = format!(
+        "/api/spotify/connect/{}",
+        connect["attempt"].as_str().unwrap()
+    );
+    let (status, _, result) = call(&app, "GET", &attempt_url, &authenticated, json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["outcome"], "error");
+    assert!(result["message"].as_str().unwrap().contains("declined"));
+    assert_eq!(
+        call(
+            &app,
+            "GET",
+            &attempt_url,
+            &[("host", &host), ("cookie", other_cookie)],
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
     assert_eq!(
         call(&app, "GET", &callback, &authenticated, json!({}))
             .await
