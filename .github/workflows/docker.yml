@@ -1,0 +1,73 @@
+name: Docker
+on:
+  push:
+    branches: [main, "feat/**"]
+    tags: ["v*"]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: docker/setup-buildx-action@v4
+      - name: Build linux/amd64 with locked Rust and frontend inputs
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: scrobbl-ci:${{ github.sha }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Check generic Compose and image persistence
+        run: python3 scripts/verify-docker.py "scrobbl-ci:$GITHUB_SHA" --revision "$GITHUB_SHA"
+      - name: Extract matching source and notices
+        run: |
+          docker create --name scrobbl-sources "scrobbl-ci:$GITHUB_SHA"
+          docker cp scrobbl-sources:/usr/share/scrobbl-rs ./distribution
+          docker rm scrobbl-sources
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scrobbl-distribution-${{ github.sha }}
+          path: distribution/
+      - name: Sign in to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish tested image by commit and version
+        if: github.event_name == 'push'
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+        run: |
+          docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:sha-$GITHUB_SHA"
+          docker push "$IMAGE:sha-$GITHUB_SHA"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:$GITHUB_REF_NAME"
+            docker push "$IMAGE:$GITHUB_REF_NAME"
+          elif [ "$GITHUB_REF_NAME" = main ]; then
+            docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:main"
+            docker push "$IMAGE:main"
+          fi
+      - name: Attach matching sources to a draft version release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes 'Release verification pending.'
+          fi
+          gh release upload "$GITHUB_REF_NAME" distribution/source.tar.gz distribution/source.tar.gz.sha256 --clobber

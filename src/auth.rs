@@ -86,7 +86,12 @@ async fn new_session(state: &AppState) -> Result<Response> {
     response.headers_mut().insert(
         header::SET_COOKIE,
         HeaderValue::from_str(&format!(
-            "scrobbl_session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800"
+            "scrobbl_session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800{}",
+            if state.config.secure_cookies() {
+                "; Secure"
+            } else {
+                ""
+            }
         ))
         .map_err(|_| AppError::Internal)?,
     );
@@ -202,7 +207,15 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result
     let mut response = Json(json!({"ok":true})).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_static("scrobbl_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0"),
+        HeaderValue::from_str(&format!(
+            "scrobbl_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0{}",
+            if state.config.secure_cookies() {
+                "; Secure"
+            } else {
+                ""
+            }
+        ))
+        .map_err(|_| AppError::Internal)?,
     );
     Ok(response)
 }

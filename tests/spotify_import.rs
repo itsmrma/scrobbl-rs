@@ -351,6 +351,8 @@ async fn http_state() -> (tempfile::TempDir, AppState, String) {
     let dir = tempfile::tempdir().unwrap();
     let storage = db::open(dir.path()).await.unwrap();
     let config = Config {
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
         port: 3210,
         data_dir: dir.path().to_owned(),
         sync_seconds: 120,

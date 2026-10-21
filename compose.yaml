@@ -1,0 +1,28 @@
+# Use a prebuilt commit image; there is no server-side build.
+services:
+  scrobbl:
+    image: ${SCROBBL_IMAGE:?Set SCROBBL_IMAGE to ghcr.io/itsmrma/scrobbl-rs:sha-COMMIT}
+    restart: unless-stopped
+    init: true
+    user: "${SCROBBL_UID:-10001}:${SCROBBL_GID:-10001}"
+    environment:
+      SCROBBL_BIND: 0.0.0.0
+      SCROBBL_PORT: "3210"
+      SCROBBL_DATA_DIR: /data
+      SCROBBL_EXTERNAL_ORIGIN: ${SCROBBL_EXTERNAL_ORIGIN:?Set the browser-facing origin}
+      SCROBBL_SYNC_SECONDS: ${SCROBBL_SYNC_SECONDS:-120}
+      SCROBBL_NOW_PLAYING_SECONDS: ${SCROBBL_NOW_PLAYING_SECONDS:-30}
+    ports:
+      - "${SCROBBL_HOST_IP:?Set the private host IP}:${SCROBBL_HOST_PORT:-3210}:3210"
+    volumes:
+      - type: bind
+        source: ${SCROBBL_DATA_PATH:?Set an existing absolute local data directory}
+        target: /data
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 60s

@@ -393,15 +393,17 @@ function HttpsGuide() {
           network.
         </li>
         <li>
-          Forward the full path and query consistently. Align the Host header
-          and any forwarding headers with the app’s configured external origin
-          and explicitly trusted proxies. Do not trust headers from arbitrary
-          clients.
+          Forward the full path and query and preserve the external Host header,
+          including any nonstandard port. scrobbl.rs ignores Forwarded and
+          X-Forwarded-* headers. Restrict its upstream port to the proxy’s
+          private network; there is no trusted forwarding-header list to
+          configure.
         </li>
         <li>
-          Configure the same external origin in your server deployment, then
-          open it in the browser and sign in. The server deployment work
-          supplies these options; changing DNS alone does not configure the app.
+          Set SCROBBL_EXTERNAL_ORIGIN to that exact HTTPS origin and restart the
+          app. SCROBBL_BIND and SCROBBL_PORT control the internal HTTP listener
+          (0.0.0.0:3210 inside Docker). Open the HTTPS name in your browser and
+          sign in there before connecting Spotify.
         </li>
         <li>
           Copy the exact redirect URI displayed below into Spotify. Match
@@ -415,8 +417,13 @@ function HttpsGuide() {
         </li>
       </ol>
       <p>
-        DNS tokens do not belong in Spotify credentials or URLs. This guide does
-        not install a proxy or issue certificates.
+        If the browser reports a certificate error, fix DNS, the hostname and
+        full certificate chain before signing in. A 403 from the app usually
+        means the proxy changed Host or the browser uses a different origin. A
+        missing OAuth session means you must sign in at the configured HTTPS
+        name and start again. For failed renewals, check the certificate
+        manager’s DNS permissions, logs and persistent storage. Never bypass a
+        certificate error. DNS tokens belong only in the certificate manager.
       </p>
     </details>
   );
