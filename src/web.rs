@@ -23,6 +23,9 @@ pub fn router(state: AppState) -> Router {
         usize::try_from(state.config.import_limits.upload_bytes).unwrap_or(usize::MAX);
     Router::new()
         .route("/", get(index))
+        .route("/healthz", get(health))
+        .route("/license", get(license))
+        .route("/licenses", get(licenses))
         .route("/app.js", get(js))
         .route("/style.css", get(css))
         .route("/favicon.svg", get(icon))
@@ -74,6 +77,16 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), security))
         .with_state(state)
 }
+async fn health(State(state): State<AppState>) -> Result<&'static str> {
+    sqlx::query("SELECT 1").execute(&state.read_db).await?;
+    Ok("ok")
+}
+async fn license() -> &'static str {
+    include_str!("../LICENSE")
+}
+async fn licenses() -> &'static str {
+    include_str!("../static/dist/third-party-notices.txt")
+}
 async fn index() -> Html<&'static str> {
     Html(include_str!("../static/dist/index.html"))
 }
@@ -102,7 +115,7 @@ async fn icons_font() -> impl IntoResponse {
     )
 }
 async fn security(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
-    let expected_host = state.config.address().to_string();
+    let expected_host = state.config.host();
     if request
         .headers()
         .get(header::HOST)

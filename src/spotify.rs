@@ -207,6 +207,9 @@ pub async fn save_credentials(
 }
 pub async fn connect(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     let session = auth::require_write(&state, &headers).await?;
+    if !state.config.spotify_redirect_allowed() {
+        return Err(AppError::BadRequest("Spotify requires HTTPS on a private server. Follow the HTTPS guide in Connections, configure SCROBBL_EXTERNAL_ORIGIN, then sign in at that address.".into()));
+    }
     let (id, _) = credentials(&state)
         .await?
         .ok_or_else(|| AppError::BadRequest("Configure your Spotify app first.".into()))?;
@@ -273,7 +276,7 @@ pub async fn callback(
             "Spotify authorization was declined. You can try connecting again.",
         )
         .await?;
-        return Ok(Redirect::to("/#settings"));
+        return Ok(Redirect::to("/settings/connections"));
     }
     let code = query
         .code
@@ -298,7 +301,7 @@ pub async fn callback(
     save_tokens(&state, &value, None).await?;
     diagnostic(&state, "spotify_error", "").await?;
     state.spotify.wake.notify_one();
-    Ok(Redirect::to("/#settings"))
+    Ok(Redirect::to("/settings/connections"))
 }
 async fn save_tokens(
     state: &AppState,
@@ -828,6 +831,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = db::open(dir.path()).await.unwrap();
         let config = Config {
+            bind_ip: "127.0.0.1".parse().unwrap(),
+            external_origin: None,
             port: 3210,
             data_dir: dir.path().to_owned(),
             sync_seconds: 120,

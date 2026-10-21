@@ -4,10 +4,11 @@ A self-hosted, single-owner listening archive written in Rust, initially focused
 
 Heavily inspired by [Maloja](https://github.com/krateng/maloja) by krateng.
 
-This first implementation runs directly on your computer. It includes owner authentication,
-Spotify authorization and background collection, extended-history imports, a dashboard and a
-searchable listening history. Docker, integration API keys and advanced library management are
-future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
+Run locally or install the prebuilt linux/amd64 Docker image with a persistent data directory.
+It includes owner authentication, Spotify authorization and background collection,
+extended-history imports, a dashboard and searchable listening history. For generic Docker,
+Compose and private HTTPS configuration, see [Docker installation](docs/docker.md).
+Integration API keys and advanced library management are future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
 for requirements, confirmed choices, prototype status and open decisions.
 
 ## Run locally
@@ -107,7 +108,9 @@ take precedence and the web credential form is disabled. Restart after changing 
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SCROBBL_PORT` | `3210` | Local HTTP port; also determines the Spotify callback URI |
+| `SCROBBL_BIND` | `127.0.0.1` | Internal listening IP; Docker uses `0.0.0.0` |
+| `SCROBBL_PORT` | `3210` | Internal HTTP port |
+| `SCROBBL_EXTERNAL_ORIGIN` | local listener origin | Browser-facing origin for Host/Origin, Spotify callback and Secure cookies; required beyond loopback |
 | `SCROBBL_DATA_DIR` | `./data` | Persistent SQLite directory, relative to the process working directory |
 | `SCROBBL_SYNC_SECONDS` | `120` | Background recent-history collection interval, minimum 60 seconds |
 | `SCROBBL_NOW_PLAYING_SECONDS` | `30` | Now-playing cache/poll interval, minimum 15 seconds |
@@ -167,7 +170,15 @@ must be checked with an owner-created app. Spotify's API returns limited recent 
 extended history is the way to reconstruct the past. Request-limit backoff is shared between
 collection and now playing. An interrupted recovery does not advance the durable sync checkpoint.
 
-This build is for local use. LAN/VPN/HTTPS access, Docker, public hosting, integration API keys,
+Generic Docker and private LAN/VPN/HTTPS configuration are implemented; live server/browser,
+Spotify and certificate-renewal acceptance still require recorded evidence. Public hosting, integration API keys,
 `spotify_analysis`, other import sources, entity pages, charts, editing/merging, custom images,
-exports and scheduled backups are outside this implementation. The project license remains an open
-product decision; no license selection is implied by this scaffold. No Maloja code has been copied.
+exports and scheduled backups are outside this implementation.
+
+## License
+
+Copyright (c) 2026 itsmrma and scrobbl.rs contributors. Original project code is licensed under
+**GPL-3.0-or-later** (GNU GPL version 3 or any later version), without warranty; see [LICENSE](LICENSE).
+Per-file declarations are recorded in [REUSE.toml](REUSE.toml). Dependency and asset notices,
+matching source distributions and their build instructions are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+No Maloja code has been copied.

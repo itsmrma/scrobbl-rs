@@ -4,7 +4,7 @@
   "scripts": {
     "test:e2e": "playwright test",
     "format:web": "prettier --write frontend/src/*.{ts,tsx,css} frontend/index.html vite.config.mts tests/*.cjs playwright.config.cjs",
-    "build": "tsc -p frontend/tsconfig.json && vite build",
+    "build": "tsc -p frontend/tsconfig.json && vite build && node scripts/frontend-notices.cjs",
     "typecheck": "tsc -p frontend/tsconfig.json",
     "dev": "vite",
     "check:web": "tsc -p frontend/tsconfig.json"
@@ -21,5 +21,6 @@
     "material-icons": "^1.13.14",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
-  }
+  },
+  "license": "GPL-3.0-or-later"
 }

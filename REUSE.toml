@@ -1,0 +1,13 @@
+version = 1
+
+[[annotations]]
+path = ["src/**", "frontend/**", "tests/**", "scripts/**", "migrations/**", "release-migrations/**", "private-migrations/**", "static/favicon.svg", "README.md", "GLOSSARY.md", "AGENTS.md", "Dockerfile", "compose.yaml", ".dockerignore", ".env.example", ".gitignore", "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "vite.config.mts", "playwright.config.cjs", ".github/**", "docs/*.md", "docs/agents/**", "docs/research/**", "docs/screenshots/**"]
+SPDX-FileCopyrightText = "2026 itsmrma and scrobbl.rs contributors"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+# Embedded generated output contains third-party code/assets governed by their
+# notices, alongside GPL project code. Its inputs retain their individual licenses.
+[[annotations]]
+path = ["static/dist/**"]
+SPDX-FileCopyrightText = "scrobbl.rs contributors and respective upstream authors; see THIRD_PARTY_NOTICES.md"
+SPDX-License-Identifier = "GPL-3.0-or-later AND MIT AND Apache-2.0"
