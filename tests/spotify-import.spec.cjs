@@ -81,5 +81,7 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
   });
   await page.getByRole("link", { name: "All activities", exact: true }).click();
   await page.getByLabel("Activity type").selectOption("spotify_import");
-  await expect(page.locator(`a[href="/activities/${job_id}"]`)).toBeVisible();
+  await expect(
+    page.getByRole("main").locator(`a[href="/activities/${job_id}"]`),
+  ).toBeVisible();
 });
