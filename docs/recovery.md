@@ -194,9 +194,11 @@ Playwright suite. Temporary archives exercise portable content/secret separation
 export projections, persistent operations, corrupt-package refusal, protected
 replacement, generation/access changes and restart behavior.
 
-Before closing the implementation ticket, perform an actual restore on the
-agreed TrueNAS/Portainer/linux-amd64 installation, with Spotify/ListenBrainz data
-and API clients when integrated. Check Firefox PC/Mac and Safari iPhone/iPad,
+The owner accepted closing the implementation ticket after actual local recovery
+trials and successful CI. Before publishing the release, [release acceptance](https://github.com/itsmrma/scrobbl-rs/issues/31)
+still requires an actual restore on the agreed TrueNAS/Portainer/linux-amd64
+installation, with Spotify/ListenBrainz data and API clients when integrated.
+Check Firefox PC/Mac and Safari iPhone/iPad on the physical devices,
 interruption, original data, received files, retained old state and explicit
 resumption. Local or isolated verification does not establish server acceptance.
 Physical disk exhaustion, abrupt machine power loss and device-specific acceptance
