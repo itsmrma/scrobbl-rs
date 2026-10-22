@@ -861,14 +861,36 @@ async fn foundation_load() {
         .execute(&store.private)
         .await
         .unwrap();
-    for path in ["/api/history", "/api/history?page=1000", "/api/dashboard"] {
+    let track: String = sqlx::query_scalar("SELECT id FROM tracks LIMIT 1")
+        .fetch_one(&store.readers)
+        .await
+        .unwrap();
+    let artist: String = sqlx::query_scalar("SELECT id FROM artists LIMIT 1")
+        .fetch_one(&store.readers)
+        .await
+        .unwrap();
+    let paths = vec![
+        "/api/history".into(),
+        "/api/history?page=1000".into(),
+        "/api/dashboard".into(),
+        "/api/v1/consultation/rankings/artists".into(),
+        "/api/v1/consultation/rankings/albums".into(),
+        "/api/v1/consultation/rankings/tracks?page=50&page_size=100".into(),
+        "/api/v1/consultation/activity?grain=day".into(),
+        "/api/v1/consultation/activity?grain=week".into(),
+        "/api/v1/consultation/activity?grain=month".into(),
+        "/api/v1/consultation/activity?grain=year".into(),
+        format!("/api/v1/consultation/music/tracks/{track}"),
+        format!("/api/v1/consultation/activity?artist={artist}&grain=month"),
+    ];
+    for path in paths {
         for attempt in 1..=3 {
             let query_start = Instant::now();
             let response = app
                 .clone()
                 .oneshot(
                     Request::builder()
-                        .uri(path)
+                        .uri(&path)
                         .header("host", "127.0.0.1:3210")
                         .header("cookie", format!("scrobbl_session={token}"))
                         .body(Body::empty())

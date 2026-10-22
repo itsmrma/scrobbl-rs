@@ -33,6 +33,10 @@ pub struct Listen {
     pub id: String,
     pub track_id: String,
     pub title: String,
+    pub album_id: Option<String>,
+    pub timezone: String,
+    pub local_date: String,
+    pub week_date: String,
     pub album: Option<String>,
     pub cover_url: Option<String>,
     pub spotify_url: Option<String>,
@@ -69,6 +73,10 @@ pub struct Ranking {
     pub cover_url: Option<String>,
     pub plays: i64,
     pub listened_ms: i64,
+    pub position: i64,
+    pub actual_ms: i64,
+    pub estimated_ms: i64,
+    pub unknown_durations: i64,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct Rankings {
@@ -82,6 +90,41 @@ pub struct Dashboard {
     pub rankings: Rankings,
     pub recent: Vec<Listen>,
     pub timezone: String,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct RankingPage {
+    pub items: Vec<Ranking>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct MusicPage {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub cover_url: Option<String>,
+    pub album_id: Option<String>,
+    pub album: Option<String>,
+    pub artists: Vec<Artist>,
+    pub totals: Totals,
+}
+#[derive(Default, Serialize, Deserialize, TS)]
+pub struct ActivityBucket {
+    pub start: String,
+    pub through: String,
+    pub listens: i64,
+    pub actual_ms: i64,
+    pub estimated_ms: i64,
+    pub unknown_durations: i64,
+    pub partial: bool,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct ActivityChart {
+    pub grain: String,
+    pub buckets: Vec<ActivityBucket>,
+    pub mixed_week_starts: bool,
+    pub partial: bool,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
@@ -217,6 +260,10 @@ mod tests {
             Ranking::decl(&config),
             Rankings::decl(&config),
             Dashboard::decl(&config),
+            RankingPage::decl(&config),
+            MusicPage::decl(&config),
+            ActivityBucket::decl(&config),
+            ActivityChart::decl(&config),
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
             ImportJob::decl(&config),

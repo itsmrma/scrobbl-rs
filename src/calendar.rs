@@ -5,7 +5,7 @@ use crate::{
     jobs::{Job, validate_lease},
     storage::Storage,
 };
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Months, NaiveDate, Utc};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, Row, SqliteConnection};
@@ -127,7 +127,7 @@ pub async fn filter(
     if calendars.is_empty() {
         query.push("0");
     }
-    query.push(")");
+    query.push(") AND l.played_at_ms<=").push_bind(now_ms);
     Ok(())
 }
 pub(crate) async fn get(conn: &mut SqliteConnection, id: &str) -> Result<Calendar> {
@@ -295,4 +295,42 @@ pub(crate) async fn change_in_transaction(
         None
     };
     Ok(job)
+}
+
+pub fn bucket_bounds(
+    day: NaiveDate,
+    grain: &str,
+    week_start: i64,
+) -> Result<(NaiveDate, NaiveDate)> {
+    let invalid = || AppError::BadRequest("Activity date outside supported range.".into());
+    let start = match grain {
+        "day" => day,
+        "week" => day
+            .checked_sub_signed(Duration::days(
+                (i64::from(day.weekday().num_days_from_monday()) - week_start).rem_euclid(7),
+            ))
+            .ok_or_else(invalid)?,
+        "month" => day.with_day(1).ok_or_else(invalid)?,
+        "year" => NaiveDate::from_ymd_opt(day.year(), 1, 1).ok_or_else(invalid)?,
+        _ => {
+            return Err(AppError::BadRequest(
+                "Choose day, week, month or year.".into(),
+            ));
+        }
+    };
+    let end = match grain {
+        "day" => start,
+        "week" => start
+            .checked_add_signed(Duration::days(6))
+            .ok_or_else(invalid)?,
+        "month" => start
+            .checked_add_months(Months::new(1))
+            .and_then(|d| d.pred_opt())
+            .ok_or_else(invalid)?,
+        "year" => NaiveDate::from_ymd_opt(start.year() + 1, 1, 1)
+            .and_then(|d| d.pred_opt())
+            .ok_or_else(invalid)?,
+        _ => unreachable!(),
+    };
+    Ok((start, end))
 }

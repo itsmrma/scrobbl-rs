@@ -2,6 +2,9 @@ import type {
   Activity,
   ActivityDetail,
   Dashboard,
+  RankingPage,
+  MusicPage,
+  ActivityChart,
   History,
   ImportResponse,
   ImportLimits,
@@ -70,6 +73,14 @@ export const api = {
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>
     request<History>(`/api/history?${params}`),
+  rankings: (kind: string, params: URLSearchParams) =>
+    request<RankingPage>(`/api/v1/consultation/rankings/${kind}?${params}`),
+  music: (kind: string, id: string, params: URLSearchParams) =>
+    request<MusicPage>(
+      `/api/v1/consultation/music/${kind}/${encodeURIComponent(id)}?${params}`,
+    ),
+  chart: (params: URLSearchParams) =>
+    request<ActivityChart>(`/api/v1/consultation/activity?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

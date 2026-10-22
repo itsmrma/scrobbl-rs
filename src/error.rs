@@ -7,6 +7,8 @@ use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error("Page not found.")]
+    NotFound,
     #[error("{0}")]
     BadRequest(String),
     #[error("Please sign in again.")]
@@ -30,6 +32,7 @@ pub type Result<T> = std::result::Result<T, AppError>;
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = match self {
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::BadRequest(_) => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,

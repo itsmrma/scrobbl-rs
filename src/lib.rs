@@ -1,5 +1,6 @@
 pub mod activities;
 pub mod auth;
+pub mod browse;
 pub mod calendar;
 pub mod config;
 pub mod consultation;

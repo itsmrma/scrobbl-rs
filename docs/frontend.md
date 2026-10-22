@@ -42,15 +42,17 @@ JSON uses numbers for millisecond timestamps/counters, matching the Rust JSON en
   worker; the calendar and derived dates activate together. Until then the form shows
   the effective calendar and Activities shows the requested target. Cancellation keeps
   the previous calendar. Retrying an old job cannot overlap another calendar job.
-- Theme, accent, sidebar width and collapsed state belong to each browser. Components
-  for later rankings can use the common browser-preference hook for list/grid/page size.
+- Theme, accent, sidebar width, collapsed state, ranking list/grid view and consultation
+  page size belong to each browser. Ranking view and page size synchronize across the
+  mounted consultation components; history remains a list.
 - `/api/v1/activities` and its detail endpoint require the owner session. Reports expose
   counters and member states without raw source payloads, job parameters or paths.
   Unknown progress remains indeterminate. Calendar controls require CSRF authorization.
 - Toasts live in the shared shell for five seconds per notification, with an independently
   timed remaining-time bar. Reports and inline errors remain after notifications expire.
 - `/settings/general`, `/settings/appearance`, `/settings/connections`, `/settings/data`,
-  `/activities`, `/history`, `/import` and `/dashboard` support direct loads. Legacy hashes
+  `/activities`, `/history`, `/import`, `/dashboard`, `/rankings/{kind}` and
+  `/music/{kind}/{id}` support direct loads. Legacy hashes
   still resolve. Navigation retains current page selections within a browser visit.
 
 ## Spotify diagnostics and remaining integration
@@ -70,9 +72,9 @@ server validation belong to the deployment work; the current backend remains loo
 The Spotify ZIP/JSON workflow receives files before returning a durable activity ID. Activities
 exposes inventory, per-file counters, paginated invalid-row reasons, cancellation and retry;
 reports can be filtered by source and paged beyond the latest 100 activities. Its receipt and
-resource contract is in [Spotify import and timing](spotify-import.md). Full consultation/list-grid
-pages, read API/key management and backup/restore operations remain in their own release tickets. Data & recovery and Integrations → API keys reserve their
-agreed locations without advertising unavailable actions.
+resource contract is in [Spotify import and timing](spotify-import.md). The [consultation guide](consultation.md) covers complete rankings, musical pages and
+activity charts. Data & recovery implements export and backup/restore; external read
+API/key management remains in its separate release ticket.
 
 ## Browser verification
 

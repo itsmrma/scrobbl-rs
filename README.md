@@ -6,7 +6,9 @@ Heavily inspired by [Maloja](https://github.com/krateng/maloja) by krateng.
 
 Run locally or install the prebuilt linux/amd64 Docker image with a persistent data directory.
 It includes owner authentication, Spotify authorization and background collection,
-extended-history imports, a dashboard and searchable listening history. For generic Docker,
+extended-history imports, complete rankings, music pages, activity charts and searchable
+listening history. See [exploring your archive](docs/consultation.md) for filters and
+counting rules. For generic Docker,
 Compose and private HTTPS configuration, see [Docker installation](docs/docker.md).
 Integration API keys and advanced library management are future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
 for requirements, confirmed choices, prototype status and open decisions.
@@ -51,7 +53,10 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
   See [Spotify import and timing](docs/spotify-import.md) for limits, retries and verification.
 - Idempotent repeated imports and collection; conservative reconciliation between the two sources.
 - Actual, estimated and unavailable durations are distinguished. Short imports remain searchable.
-- Dashboard totals and top five artists, albums and tracks, ordered by listens or listening time.
+- Dashboard previews and complete artist/album/track rankings, with shared positions,
+  listen/time ordering, search, 10/25/50/100-row pagination and browser list/grid preferences.
+- Artist, album and track pages with statistics, album galleries, track lists and history.
+- Day/week/month/year activity charts with actual/estimated time and history drilldown.
 - Calendar periods, rolling 7/30/365-day windows and custom date ranges on the dashboard.
 - Searchable, paginated listening history with date, duration and count-status filters.
 - React shell with direct page routes, five-second toast notifications, saved activity reports,
