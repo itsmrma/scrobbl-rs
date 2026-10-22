@@ -361,6 +361,7 @@ async fn http_state() -> (tempfile::TempDir, AppState, String) {
         now_playing_seconds: 30,
         env_client_id: None,
         env_client_secret: None,
+        api_snapshot_limits: Default::default(),
         import_limits: ImportLimits {
             upload_bytes: 4096,
             ..Default::default()

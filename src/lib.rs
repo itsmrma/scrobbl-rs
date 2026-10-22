@@ -1,4 +1,5 @@
 pub mod activities;
+pub mod api_keys;
 pub mod auth;
 pub mod browse;
 pub mod calendar;
@@ -13,6 +14,7 @@ pub mod imports;
 mod ingest;
 pub mod jobs;
 pub mod preferences;
+pub mod read_api;
 pub mod recovery;
 pub mod recovery_http;
 pub mod retention;

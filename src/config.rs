@@ -13,6 +13,7 @@ pub struct Config {
     pub sync_seconds: u64,
     pub now_playing_seconds: u64,
     pub import_limits: crate::imports::ImportLimits,
+    pub api_snapshot_limits: crate::consultation::SnapshotLimits,
     pub env_client_id: Option<String>,
     pub env_client_secret: Option<String>,
 }
@@ -68,6 +69,7 @@ impl Config {
             sync_seconds,
             now_playing_seconds,
             import_limits: crate::imports::ImportLimits::from_env()?,
+            api_snapshot_limits: api_snapshot_limits()?,
             env_client_id,
             env_client_secret,
         })
@@ -107,6 +109,28 @@ impl Config {
     pub fn redirect_uri(&self) -> String {
         format!("{}/auth/spotify/callback", self.origin())
     }
+}
+
+fn api_snapshot_limits() -> anyhow::Result<crate::consultation::SnapshotLimits> {
+    let positive = |name: &str, default: u64| -> anyhow::Result<u64> {
+        let value = env::var(name)
+            .ok()
+            .map(|s| s.parse::<u64>())
+            .transpose()?
+            .unwrap_or(default);
+        anyhow::ensure!(value > 0, "{name} must be positive");
+        Ok(value)
+    };
+    Ok(crate::consultation::SnapshotLimits {
+        max_copies: usize::try_from(positive("SCROBBL_API_MAX_COPIES", 4)?)?,
+        max_total_bytes: positive("SCROBBL_API_COPY_BYTES", 2 * 1024 * 1024 * 1024)?,
+        ttl: std::time::Duration::from_secs(
+            positive("SCROBBL_API_COPY_TTL_SECONDS", 900)?.min(86400),
+        ),
+        preparation_timeout: std::time::Duration::from_secs(
+            positive("SCROBBL_API_COPY_TIMEOUT_SECONDS", 60)?.min(3600),
+        ),
+    })
 }
 
 pub fn parse_origin(value: &str) -> anyhow::Result<url::Url> {

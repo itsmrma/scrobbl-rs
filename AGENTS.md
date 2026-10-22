@@ -16,6 +16,10 @@ For ticket operations, read `docs/agents/issue-tracker.md`.
 Create PRs ready for review, without `--draft`. Before calling a PR ready to
 merge, verify that required checks pass and GitHub reports no merge blockers.
 
+Link every PR to its ticket through GitHub's native Development relationship.
+For a PR resolving the ticket, include `Closes #<number>` in the PR body.
+Before handoff, verify the native link appears on the ticket.
+
 ### Triage labels
 
 Use the five default triage labels.

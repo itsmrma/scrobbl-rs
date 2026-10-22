@@ -10,7 +10,8 @@ extended-history imports, complete rankings, music pages, activity charts and se
 listening history. See [exploring your archive](docs/consultation.md) for filters and
 counting rules. For generic Docker,
 Compose and private HTTPS configuration, see [Docker installation](docs/docker.md).
-Integration API keys and advanced library management are future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
+Read-only API keys, coherent copies and incremental synchronization are available; see the
+[read API guide](docs/read-api.md). Advanced library management remains future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
 for requirements, confirmed choices, prototype status and open decisions.
 
 ## Run locally
@@ -190,8 +191,9 @@ extended history is the way to reconstruct the past. Request-limit backoff is sh
 collection and now playing. An interrupted recovery does not advance the durable sync checkpoint.
 
 Generic Docker and private LAN/VPN/HTTPS configuration are implemented; live server/browser,
-Spotify and certificate-renewal acceptance still require recorded evidence. Public hosting, integration API keys,
-`spotify_analysis`, other import sources, entity pages, charts, editing/merging, custom images
+Spotify and certificate-renewal acceptance still require recorded evidence. The read API and
+key management have local automatic coverage; the real `spotify_analysis` connection remains
+in its dedicated follow-up. Public hosting, Maloja/Last.fm imports, editing/merging, custom images
 and scheduled backups are outside this implementation.
 
 ## License

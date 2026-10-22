@@ -199,6 +199,17 @@ pub(crate) fn publish(conn: &Connection, affected: &BTreeSet<String>) -> Result<
             params![revision, id],
         )?;
     }
+    let through = revision.saturating_sub(10000);
+    execute(
+        conn,
+        "UPDATE archive_state SET retained_from=MAX(retained_from,?) WHERE singleton=1",
+        params![through],
+    )?;
+    execute(
+        conn,
+        "DELETE FROM changes WHERE revision<=?",
+        params![through],
+    )?;
     Ok(())
 }
 struct Variant {

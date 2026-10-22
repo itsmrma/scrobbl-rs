@@ -286,6 +286,15 @@ mod tests {
             crate::recovery::InventoryFile::decl(&config),
             crate::recovery::Manifest::decl(&config),
             crate::recovery::Asset::decl(&config),
+            crate::api_keys::ApiKey::decl(&config),
+            crate::api_keys::ApiKeySettings::decl(&config),
+            crate::api_keys::CreateApiKey::decl(&config),
+            crate::api_keys::CreatedApiKey::decl(&config),
+            crate::api_keys::ApiCorsSettings::decl(&config),
+            crate::read_api::ApiSelection::decl(&config),
+            crate::read_api::ApiListen::decl(&config),
+            crate::read_api::ApiRemoval::decl(&config),
+            crate::read_api::ApiPage::decl(&config),
         ];
         let content = format!(
             "// Generated from Rust DTOs. Run UPDATE_BROWSER_TYPES=1 cargo test browser_contract_is_current.\n{}\n",

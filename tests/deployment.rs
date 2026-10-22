@@ -23,6 +23,7 @@ async fn deployment(origin: &str) -> (tempfile::TempDir, AppState, Router) {
         sync_seconds: 120,
         now_playing_seconds: 30,
         import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
         env_client_id: Some("test-client".into()),
         env_client_secret: Some("test-secret".into()),
     };

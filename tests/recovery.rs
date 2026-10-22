@@ -54,7 +54,7 @@ async fn seed(store: &Storage) {
         .execute(&store.private)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO api_keys VALUES('secret-api','test',NULL,NULL)")
+    sqlx::query("INSERT INTO api_keys(digest,name,id) VALUES('secret-api','test','test-key-id')")
         .execute(&store.private)
         .await
         .unwrap();
@@ -655,6 +655,7 @@ async fn recovery_http_requires_owner_csrf_and_explicit_confirmation() {
         sync_seconds: 120,
         now_playing_seconds: 30,
         import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
         env_client_id: None,
         env_client_secret: None,
     };
