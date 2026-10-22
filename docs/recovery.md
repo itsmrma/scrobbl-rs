@@ -2,7 +2,7 @@
 
 Open **Settings → Data & recovery** while signed in as the owner. Mutations require
 the owner session, instance origin and CSRF token. Read-only API keys do not grant
-administrative access. Product requirements remain in the [recovery decision](https://github.com/itsmrma/scrobbl-rs/issues/12#issuecomment-6300319358).
+administrative access. Product requirements remain in the [recovery decision](https://github.com/itsmrma/scrobbl-rs/issues/12#issuecomment-6300319358), amended by the owner’s [compact retention decision](https://github.com/itsmrma/scrobbl-rs/issues/12#issuecomment-6340572663).
 
 ## Export listening history
 
@@ -21,10 +21,16 @@ whether the listen contributes to statistical counts. `track_duration_ms` is the
 track's length, separate from listening time. Calendar week starts are 0 = Monday
 through 6 = Sunday.
 
-JSON format `scrobbl-export`, version 1, contains snapshot identity/revision,
+JSON format `scrobbl-export`, version 2, contains snapshot identity/revision,
 explicit selection and one `listens` array. Each listen preserves metadata,
-assigned calendar/date/week, acquisition time, duration classification, original
-observations, payload variants and file/member/row provenance. Multiple source
+assigned calendar/date/week, acquisition time, duration classification, normalized source
+observations, variant fingerprints and file/member/row provenance.
+`original_retention` is `compact`: source observations/variants report `raw: null`,
+`raw_available: false` and `raw_fingerprint` (SHA-256 of canonical source JSON).
+Occurrence fingerprints identify their original row; `source_retained` states whether
+the snapshot still references source bytes. Raw fields not modeled by the app cannot
+be reconstructed. This explicit change from version 1 avoids presenting missing
+originals as exact source data. Multiple source
 observations stay in one listen; repeated distinct plays remain distinct.
 
 CSV has one header and one row per listen, CRLF line endings, double-quoted text
@@ -42,17 +48,21 @@ preserves `+44`. This does not alter stored metadata. Artist names inside
 coherent SQLite `VACUUM INTO` copy fixes one archive point. The single writer is
 occupied during this copy, temporarily pausing archive commits; queries continue
 and collection/import commits resume afterwards. The file inventory comes from
-the frozen database and references immutable received files. Later uploads or
-commits cannot enter this earlier snapshot. See [SQLite's documented guarantees](https://www.sqlite.org/lang_vacuum.html#vacuum_with_an_into_clause).
+the frozen database and references the received files still retained at that point. Later uploads or
+commits cannot enter this earlier snapshot. Source cleanup waits until the package
+owns every retained file from that point; upload publication and job attachment
+are protected from cleanup as one operation. See [SQLite's documented guarantees](https://www.sqlite.org/lang_vacuum.html#vacuum_with_an_into_clause).
 
 Portable format `scrobbl-backup`, version 1, is a ZIP containing:
 
 - `manifest.json`: format, app/schema versions, snapshot identity/revision/time,
   table counts and SHA-256/size inventory;
-- `archive.db`: music, originals, variants, provenance, relationships, ordinary
+- `archive.db`: music, normalized observations, variant fingerprints, provenance, relationships, ordinary
   server preferences, assigned calendars, jobs/checkpoints and saved reports;
-- `spool/<sha256>`: fully received files referenced by that snapshot, including
-  material needed to resume unfinished imports.
+- `spool/<sha256>`: retained files referenced by that snapshot, including
+  material needed to resume unfinished or partial imports. Metadata, hashes and
+  reports for successfully completed imports remain in the database, even after
+  their bytes have been released. A complete history backup may contain no spool files.
 
 The package excludes private authentication storage, passwords/verifiers,
 sessions, Spotify credentials/tokens and API key digests. It also excludes other
@@ -118,7 +128,7 @@ accepts bytes before queuing persistent inspection.
 5. Startup activates the prepared archive, access store and spool before pools or
    workers start. Sign in with the new password. Old sessions, keys, OAuth state,
    tokens and snapshot cursors cannot be reused. API clients must reload a full copy.
-6. Inspect counts, originals, calendars, preferences and imports. Configure Spotify
+6. Inspect counts, source observations/fingerprints, calendars, preferences and imports. Configure Spotify
    credentials and connect again; recreate API keys when available. Explicitly
    choose **Resume collection and pending jobs** when ready. Ordinary restarts
    continue to resume unfinished imports without this extra step.
@@ -149,8 +159,10 @@ failure prevents migration. The manifest records source application when known,
 target version/build, schemas, database hashes and immutable spool inventory.
 Older builds may lack the source build identity: keep the previous image reference.
 
-Technical copies **include private authentication data** and depend on the original
-spool. They are not portable user backups. Preserve the whole failed installation.
+Technical copies **include private authentication data**. New copies include a
+`spool/` snapshot (immutable hard links, with a file-copy fallback); import cleanup
+can release live files without invalidating offline recovery. Older technical
+copies depend on the original live spool, so cleanup continues to pin their sources. They are not portable user backups. Preserve the whole failed installation.
 An older image running against already migrated data is not a rollback.
 
 Stop the application, then use the recovery-capable image to copy a completed
@@ -202,12 +214,12 @@ the subsequent work below specifically addresses disk use.
 
 ## Disk use follow-up, 2026-10-22
 
-Schema 0007 stores each variant's original JSON once in `original_payloads`.
+Historical behavior before compact retention: schema 0007 stored each variant's original JSON once in `original_payloads`.
 Observations and accepted source occurrences reference those same bytes. Reimport
 still adds a separate occurrence/report, but does not repeat that payload. Changed
 variants, the first observation's original, invalid/skipped input and legacy rows
-whose payload differs from their linked variant are preserved exactly. JSON export
-keeps the same external structure; original received files remain immutable.
+whose payload differs from their linked variant are preserved exactly. That earlier follow-up retained original payloads and did not change export version 1.
+Schema 0008 below deliberately supersedes those retention guarantees.
 
 Existing release archives receive the verified pre-upgrade copy first. The migration
 rebuilds provenance tables in a transaction; startup then compacts freed pages before
@@ -248,3 +260,77 @@ retained. Updating does not automatically reclaim them or the owner's existing t
 directories. Download/verify saved backups before deleting them via the existing UI;
 retain technical recovery states until the update/restore has been accepted. No
 personal archive or server directory was changed for these measurements.
+
+## Compact retention, 2026-10-22
+
+The owner chose normalized history over keeping raw JSON. New ingestion writes
+only payload fingerprints, normalized fields and provenance; accepted, invalid and
+excluded rows keep their outcome/reason and position. All variant fingerprints
+remain distinct and semantic reimport still avoids duplicate listens. The internal
+`raw_json` sentinel is JSON `null`, explicitly exposed as unavailable in export v2.
+No optional full-originals mode is added in this change.
+
+After a successful complete/no-music import, source bytes are released when all
+jobs sharing that file have completed successfully. Pending, interrupted, failed,
+partial and cancelled imports retain their files for retry; unattached uploads
+are retained too. Reimport a completed selection by uploading its source again.
+Publication, backup and cleanup share a file gate. Metadata is marked released
+before unlinking; interrupted or failed cleanup retries without relabeling a
+committed import as failed. Saved backups, previous restore states and technical
+upgrade copies are never automatically deleted.
+
+Schema 0008 hashes existing originals in bounded, restartable transactions before
+readers or workers open, then compacts the database using the persistent VACUUM
+marker. The verified pre-upgrade copy preserves the previous schema and raw data.
+Old portable backups remain accepted: their normalized history and provenance
+are migrated in isolation under the current retention policy; the input ZIP stays
+unchanged. New technical copies independently retain required source bytes.
+
+Same owner-authorized ZIP, same macOS arm64 release build environment, one initial
+import in each new isolated instance (decimal bytes, after stopping/checkpointing):
+
+| Measurement | Previous retention | Compact retention |
+| --- | ---: | ---: |
+| Original ZIP (unchanged) | 8,436,462 B | 8,436,462 B |
+| Expanded ZIP content | 126,014,161 B | 126,014,161 B |
+| Active database | 685,248,512 B | 583,581,696 B |
+| Live source spool after completion | 8,436,462 B | 0 B |
+| Database + live source spool | 693,684,974 B | 583,581,696 B (-15.9%) |
+| Import | 16.759 s | 15.156 s |
+| First Overview request | 67.106 ms | 67.294 ms |
+
+Both retained 158,576 listens/observations, 158,975 variants, 159,560 occurrences
+and zero invalid rows. These are local measurements, not a server throughput
+guarantee or a total including retained backup/rollback directories. A ZIP compresses
+repeated JSON very well; SQLite additionally holds normalized records, relationships
+and indexes. Compact retention removes raw JSON writes but does not make an indexed
+database as small as the compressed source.
+
+Reproduce with `python3 scripts/verify-spotify-archive.py PATH_TO_ZIP --binary
+target/release/scrobbl-rs --benchmark --max-import-seconds 180 --max-dashboard-ms 3000`.
+The budgets are explicit trial limits, not product performance promises. Use
+`--recovery` instead of `--benchmark` to interrupt/resume, reimport, create and
+verify a backup, download/upload it into another isolated instance, confirm
+replacement, restart, compare normalized tables/preferences, reject the old
+session and check explicit resumption. It retains private trial data outside Git
+and verifies that the supplied ZIP’s hash, size and mtime remain unchanged.
+
+Local recovery follow-up: process termination after 2,000 committed rows resumed
+to completion on attempt 2 (15.392 s); reupload/reimport took 5.793 s and added no
+listens, observations or variants. Occurrences increased from 159,560 to 319,120
+for the two reports. The actual 148,391,474-byte portable backup was created with
+checks in 20.526 s, explicitly verified, downloaded and uploaded to another new
+local instance. Confirmation/restart/login took 13.512 s; 19 normalized tables,
+fingerprints/provenance and server preferences matched, old access was refused,
+previous destination data remained available and explicit resumption succeeded.
+The two-import source database was 714,780,672 bytes; its restored compact copy
+was 653,008,896 bytes. Those larger figures include the second report’s provenance
+and must not be compared to the single-import benchmark as if they were the same load.
+
+A separate offline trial cloned the stopped schema-7 personal test archive,
+upgraded it (14.057 s), compared 13 normalized tables, released its completed
+source and recovered the independently retained technical copy using the CLI.
+The previous schema-7 binary started successfully against the recovered directory;
+owner storage and all 105,362,275 bytes of previous raw JSON were preserved.
+Offline recovery plus the previous binary’s startup took 7.333 s. The source ZIP
+and the owner’s application/server directories were not modified.

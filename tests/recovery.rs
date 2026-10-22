@@ -178,7 +178,7 @@ async fn exports_use_one_row_per_listen_preserve_unknown_time_and_share_assigned
         .execute(&store.writer)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO original_payloads(id,raw_json) VALUES(-1,'{}'); INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,payload_id) SELECT 'extra','listenbrainz','extra',id,played_at_ms,-1 FROM listens ORDER BY played_at_ms LIMIT 1").execute(&store.writer).await.unwrap();
+    sqlx::query("INSERT INTO original_payloads(id,raw_json,fingerprint) VALUES(-1,'null','44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,payload_id) SELECT 'extra','listenbrainz','extra',id,played_at_ms,-1 FROM listens ORDER BY played_at_ms LIMIT 1").execute(&store.writer).await.unwrap();
     sqlx::query("UPDATE listens SET listened_ms=NULL,duration_kind='unknown' WHERE played_at_ms=(SELECT MAX(played_at_ms) FROM listens)").execute(&store.writer).await.unwrap();
     let work = tempfile::tempdir().unwrap();
     let frozen = work.path().join("frozen.db");

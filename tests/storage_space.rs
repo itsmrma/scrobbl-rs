@@ -5,7 +5,7 @@ use sqlx::{Connection, Executor};
 /// Exercise real import/provenance writes. Large originals must not be stored
 /// again for the observation and for every occurrence of the same variant.
 #[tokio::test]
-async fn originals_share_disk_space_across_observations_variants_and_reimports() {
+async fn compact_import_retains_fingerprints_and_provenance_without_raw_payloads() {
     let directory = tempfile::tempdir().unwrap();
     let store = storage::open(directory.path()).await.unwrap();
     let rows: Vec<_> = (0..256)
@@ -54,10 +54,12 @@ async fn originals_share_disk_space_across_observations_variants_and_reimports()
             .unwrap(),
         256
     );
+    let retained: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM original_payloads WHERE raw_json!='null' OR length(fingerprint)!=64 OR fingerprint IS NULL").fetch_one(&store.readers).await.unwrap();
+    assert_eq!(retained, 0);
     println!("SPACE observations=256 occurrences=768 compact_archive_bytes={bytes}");
     assert!(
-        bytes < 256 * 8192 * 2,
-        "Repeated originals consume {bytes} bytes; budget allows one payload plus indexes/provenance"
+        bytes < 1536 * 1024,
+        "Repeated originals consume {bytes} bytes; budget excludes raw payloads and allows normalized data, hashes and provenance"
     );
     store.close().await;
 }
@@ -150,7 +152,7 @@ async fn shared_payload_migration_preserves_legacy_originals_and_foreign_keys() 
 }
 
 #[tokio::test]
-async fn schema_six_portable_backup_still_restores_with_shared_originals() {
+async fn schema_six_portable_backup_restores_normalized_history_and_original_fingerprints() {
     use std::io::Write;
     let source = tempfile::tempdir().unwrap();
     let database = source.path().join("archive.db");
@@ -198,13 +200,14 @@ async fn schema_six_portable_backup_still_restores_with_shared_originals() {
     let counts = recovery::validate_database(&mut restored).await.unwrap();
     assert_eq!(counts["listens"], 1);
     assert_eq!(counts["source_occurrences"], 5);
-    let raw: String = sqlx::query_scalar(
-        "SELECT p.raw_json FROM observations o JOIN original_payloads p ON p.id=o.payload_id",
-    )
-    .fetch_one(&mut restored)
-    .await
-    .unwrap();
-    assert_eq!(raw, "{\"original\":true}");
+    let (raw, fingerprint): (String, String) = sqlx::query_as(
+        "SELECT p.raw_json,p.fingerprint FROM observations o JOIN original_payloads p ON p.id=o.payload_id",
+    ).fetch_one(&mut restored).await.unwrap();
+    assert_eq!(raw, "null");
+    assert_eq!(
+        fingerprint,
+        scrobbl_rs::db::payload_fingerprint(&json!({"original":true}))
+    );
     restored.close().await.unwrap();
 }
 
@@ -305,5 +308,148 @@ async fn startup_compacts_existing_archives_and_keeps_the_pre_upgrade_copy() {
         .unwrap(),
         0
     );
+    store.close().await;
+}
+
+#[tokio::test]
+async fn compact_upgrade_keeps_independent_sources_for_offline_rollback_after_cleanup() {
+    let directory = tempfile::tempdir().unwrap();
+    storage::open(directory.path()).await.unwrap().close().await;
+    std::fs::remove_file(directory.path().join("archive.db")).unwrap();
+    let mut conn = legacy_archive(&directory.path().join("archive.db")).await;
+    let seven = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            storage::ARCHIVE_MIGRATOR
+                .iter()
+                .filter(|m| m.version < 8)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate::Migrator::DEFAULT
+    };
+    seven.run_direct(None, &mut conn, false).await.unwrap();
+    let bytes = b"complete immutable history";
+    let hash = scrobbl_rs::auth::digest(std::str::from_utf8(bytes).unwrap());
+    std::fs::write(directory.path().join("spool").join(&hash), bytes).unwrap();
+    sqlx::query("INSERT INTO source_files VALUES(?,?,?,1)")
+        .bind(&hash)
+        .bind(&hash)
+        .bind(bytes.len() as i64)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET file_id=?")
+        .bind(&hash)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    conn.close().await.unwrap();
+
+    let store = storage::open(directory.path()).await.unwrap();
+    scrobbl_rs::retention::cleanup(&store).await.unwrap();
+    assert!(!directory.path().join("spool").join(&hash).exists());
+    let mut compact = store.writer.acquire().await.unwrap();
+    recovery::validate_database(&mut compact).await.unwrap();
+    let original: (String,String) = sqlx::query_as("SELECT raw_json,fingerprint FROM original_payloads WHERE id=(SELECT payload_id FROM observations)")
+        .fetch_one(&mut *compact).await.unwrap();
+    assert_eq!(original.0, "null");
+    assert_eq!(
+        original.1,
+        scrobbl_rs::db::payload_fingerprint(&json!({"original":true}))
+    );
+    drop(compact);
+    store.close().await;
+
+    let safety = std::fs::read_dir(directory.path().join("backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.join("complete.json").is_file())
+        .unwrap();
+    assert_eq!(
+        std::fs::read(safety.join("spool").join(&hash)).unwrap(),
+        bytes
+    );
+    let target = directory.path().join("offline-rollback");
+    recovery::recover_upgrade(
+        directory.path(),
+        safety.file_name().unwrap().to_str().unwrap(),
+        &target,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(target.join("spool").join(hash)).unwrap(),
+        bytes
+    );
+    let mut previous = recovery::connect(&target.join("archive.db"), true)
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT MAX(version) FROM _sqlx_migrations")
+            .fetch_one(&mut previous)
+            .await
+            .unwrap(),
+        7
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>(
+            "SELECT raw_json FROM original_payloads WHERE id=(SELECT payload_id FROM observations)"
+        )
+        .fetch_one(&mut previous)
+        .await
+        .unwrap(),
+        "{\"original\":true}"
+    );
+    previous.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn compact_upgrade_resumes_after_a_committed_payload_batch() {
+    let directory = tempfile::tempdir().unwrap();
+    storage::open(directory.path()).await.unwrap().close().await;
+    std::fs::remove_file(directory.path().join("archive.db")).unwrap();
+    let mut conn = legacy_archive(&directory.path().join("archive.db")).await;
+    storage::ARCHIVE_MIGRATOR
+        .run_direct(None, &mut conn, false)
+        .await
+        .unwrap();
+    let (id, raw): (i64, String) =
+        sqlx::query_as("SELECT id,raw_json FROM original_payloads ORDER BY id LIMIT 1")
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+    let fingerprint = scrobbl_rs::db::payload_fingerprint(
+        &serde_json::from_str::<serde_json::Value>(&raw).unwrap(),
+    );
+    // Simulate a crash after one bounded transaction; the pending marker remains.
+    sqlx::query("UPDATE original_payloads SET raw_json='null',fingerprint=? WHERE id=?")
+        .bind(&fingerprint)
+        .bind(id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    conn.close().await.unwrap();
+    let store = storage::open(directory.path()).await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT fingerprint FROM original_payloads WHERE id=?")
+            .bind(id)
+            .fetch_one(&store.readers)
+            .await
+            .unwrap(),
+        fingerprint
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM original_payloads WHERE raw_json!='null' OR fingerprint IS NULL"
+        )
+        .fetch_one(&store.readers)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM settings WHERE key IN ('compact_retention_pending','original_payload_compaction_pending')").fetch_one(&store.readers).await.unwrap(),0);
+    let mut conn = store.writer.acquire().await.unwrap();
+    recovery::validate_database(&mut conn).await.unwrap();
+    drop(conn);
     store.close().await;
 }

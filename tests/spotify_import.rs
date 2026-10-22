@@ -225,22 +225,24 @@ async fn restart_resumes_confirmed_rows_and_cancelled_jobs_require_explicit_retr
     )
     .await;
     let job = storage.claim("spotify_import").await.unwrap().unwrap();
-    let clone = storage.clone();
-    let processing = tokio::spawn(async move { import_worker::run(&clone, job).await });
-    tokio::time::timeout(std::time::Duration::from_secs(30), async {
-        loop {
-            if storage.job(&id).await.unwrap().processed >= 250 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-        }
-    })
-    .await
-    .unwrap();
-    processing.abort();
-    let _ = processing.await;
-    let partial = storage.job(&id).await.unwrap().processed;
-    assert!((250..1001).contains(&partial));
+    // Persist an exact first batch instead of racing a timer against the worker.
+    // Real process termination is covered by foundations and ZIP acceptance.
+    storage
+        .record_member(&id, "1: rows.json", "music", "processing", Some(1001), None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE job_members SET file_id=(SELECT file_id FROM job_inputs WHERE job_id=?) WHERE job_id=?")
+        .bind(&id).bind(&id).execute(&storage.writer).await.unwrap();
+    let batch: Vec<_> = rows[..1000]
+        .iter()
+        .cloned()
+        .map(scrobbl_rs::imports::parse_row)
+        .collect();
+    storage
+        .commit_member_batch(&job, "1: rows.json", 1, &batch, false)
+        .await
+        .unwrap();
+    assert_eq!(storage.job(&id).await.unwrap().processed, 1000);
     storage.close().await;
     let restarted = db::open(dir.path()).await.unwrap();
     run(&restarted, &id).await;

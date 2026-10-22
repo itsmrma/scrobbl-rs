@@ -23,8 +23,11 @@ Content identifies extended history, including JSON arrays stored under unexpect
 The parser validates each array before acquisition, then streams source rows through a
 bounded channel. Batches stop at 1,000 rows or about 1 MiB of encoded data, with one larger row
 permitted up to the row limit. Parsing, decompression and network I/O stay outside archive
-transactions. Original bytes remain in the spool; accepted, invalid and excluded musical-source
-rows retain their source positions and reasons.
+transactions. Normalized observations, variant fingerprints and row provenance are
+retained without raw JSON. Source bytes remain while an import is unfinished, partial,
+failed or cancelled, and are released after successful completion once no other job
+or backup still needs them. Accepted, invalid and excluded musical-source rows
+retain their fingerprints, source positions and reasons.
 
 Each batch commits observations, variants, occurrences, counters and checkpoint together.
 Startup requeues interrupted work; replay scans the immutable source and skips confirmed rows.
@@ -43,8 +46,10 @@ adjacent separators and whitespace. There is no 200,000-row ceiling and no split
 
 Expanded-size checks include excluded members. Actual member reads are bounded too. Write
 failures preserve confirmed transactions; free server storage before retrying a storage failure.
-Spool and database disk usage grow with retained originals and source occurrences, including
-reimport provenance. This block does not add automatic retention or garbage collection.
+Database disk usage grows with normalized history and source occurrences, including
+reimport provenance. Compact retention releases successfully processed source files,
+but never deletes saved backups or previous recovery states. Keep your own original
+ZIP for future reimports; see [retention, compatibility and measurements](recovery.md#compact-retention-2026-10-22).
 
 Activities distinguishes receiving/inventory/processing/finished and complete/partial/error/
 no-music outcomes. It exposes per-file classification and counters, unknown row counts as null,

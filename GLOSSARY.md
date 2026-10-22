@@ -17,7 +17,10 @@ Una valutazione del tempo riprodotto ricavata dalle informazioni disponibili, an
 Il tempo riprodotto di un ascolto per il quale non sono disponibili né un valore effettivo né una stima. L'assenza di questa informazione non equivale a un tempo di zero secondi.
 
 **Osservazione originale**:
-Il resoconto di un ascolto ricevuto da una fonte, con i metadati e i tempi forniti da quella fonte.
+Il resoconto di un ascolto ricevuto da una fonte, con i metadati e i tempi forniti da quella fonte. È distinto dal file e dai dati grezzi che lo contengono.
+
+**Conservazione compatta**:
+La conservazione dei dati normalizzati degli ascolti, delle impronte e della provenienza, senza i dati grezzi delle righe. I file sorgente restano disponibili finché servono a completare o riprendere un import.
 
 **Riconciliazione di ascolti**:
 L'associazione delle osservazioni originali che descrivono lo stesso ascolto, rappresentato una sola volta nell'archivio. È distinta dall'unione di identità musicali e dal raggruppamento di edizioni.

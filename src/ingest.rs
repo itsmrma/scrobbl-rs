@@ -585,7 +585,7 @@ pub(crate) fn import_rows(
 fn payload(conn: &Connection, raw: &serde_json::Value) -> Result<i64> {
     one(
         conn,
-        "INSERT INTO original_payloads(raw_json) VALUES(?) RETURNING id",
-        [raw.to_string()],
+        "INSERT INTO original_payloads(raw_json,fingerprint) VALUES('null',?) RETURNING id",
+        [db::payload_fingerprint(raw)],
     )
 }

@@ -14,6 +14,7 @@ pub mod jobs;
 pub mod preferences;
 pub mod recovery;
 pub mod recovery_http;
+pub mod retention;
 pub mod spotify;
 pub mod storage;
 pub mod web;

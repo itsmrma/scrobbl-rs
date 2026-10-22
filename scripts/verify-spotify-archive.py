@@ -1,4 +1,4 @@
-﻿"""Owner-approved ZIP acceptance: isolated HTTP upload, process failure, restart and reimport.
+"""Owner-approved ZIP acceptance: isolated HTTP upload, process failure, restart and reimport.
 
 The source is opened read-only. The temporary archive is retained for inspection; it may
 contain personal data. Stdout contains counters only. Detailed reports stay in that directory.
@@ -28,13 +28,17 @@ def main():
     parser.add_argument('--benchmark', action='store_true', help='Uninterrupted import and Overview latency, retaining the isolated archive')
     parser.add_argument('--max-import-seconds', type=float, default=20)
     parser.add_argument('--max-dashboard-ms', type=float, default=100)
+    parser.add_argument('--recovery', action='store_true', help='Also create/verify/download/upload/restore the personal archive into a second isolated instance')
     args = parser.parse_args()
     source = args.zip.resolve(strict=True)
     binary = args.binary.resolve(strict=True)
     metadata = source.stat()
     def digest():
         with source.open('rb') as stream:
-            return hashlib.file_digest(stream, 'sha256').hexdigest()
+            hash_value = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(65536), b''):
+                hash_value.update(chunk)
+            return hash_value.hexdigest()
     before_hash = digest()
     directory = Path(tempfile.mkdtemp(prefix='scrobbl-spotify-acceptance-'))
     # Pin the tested executable; rebuilding must not change/lock the running trial.
@@ -55,7 +59,7 @@ def main():
         if csrf: headers['X-CSRF-Token'] = csrf
         if data is not None: headers['Content-Type'] = 'application/json'
         request = urllib.request.Request(origin + path, data=None if data is None else json.dumps(data).encode(), headers=headers)
-        return urllib.request.urlopen(request, timeout=30)
+        return urllib.request.urlopen(request, timeout=300)
     def start():
         nonlocal process
         process = subprocess.Popen([str(runner)], env=env, stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
@@ -109,6 +113,111 @@ def main():
     def totals():
         with sqlite3.connect(f'file:{directory.as_posix()}/archive.db?mode=ro', uri=True) as conn:
             return {table: conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] for table in ('listens','observations','observation_variants','source_occurrences')}
+    def archive_fingerprints(root):
+        tables = ('listens','observations','observation_variants','original_payloads',
+                  'source_occurrences','source_files','calendars','tracks','artists','albums',
+                  'track_artists','entity_links','local_corrections','entity_groups','group_members',
+                  'identity_decisions','conflicts','job_inputs','job_members')
+        result = {}
+        with sqlite3.connect(f'file:{root.as_posix()}/archive.db?mode=ro', uri=True) as conn:
+            for table in tables:
+                columns = len(conn.execute(f'PRAGMA table_info({table})').fetchall())
+                ordering = ','.join(str(index+1) for index in range(columns))
+                value = hashlib.sha256()
+                for row in conn.execute(f'SELECT * FROM {table} ORDER BY {ordering}'):
+                    value.update(json.dumps(row, ensure_ascii=False, separators=(',',':')).encode())
+                    value.update(b'\n')
+                result[table] = value.hexdigest()
+        return result
+    def disk_usage(root):
+        # The isolated process is stopped before checkpointing; never touches the source ZIP.
+        conn = sqlite3.connect(str(root / 'archive.db'))
+        conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+        conn.close()
+        return {'database_bytes': (root / 'archive.db').stat().st_size,
+                'spool_bytes': sum(f.stat().st_size for f in (root / 'spool').iterdir() if f.is_file())}
+    def recovery_trial():
+        nonlocal cookie, csrf
+        expected = archive_fingerprints(directory)
+        with api('/api/v1/preferences') as response: preferences = json.load(response)
+        with api('/api/v1/recovery', {'kind':'backup'}) as response: asset_id = json.load(response)['id']
+        def ready(identifier):
+            for _ in range(3600):
+                with api('/api/v1/recovery') as response:
+                    asset = next(a for a in json.load(response)['assets'] if a['id'] == identifier)
+                if asset['state'] == 'ready': return asset
+                if asset['state'] == 'failed': raise AssertionError('Recovery operation failed; inspect private logs')
+                time.sleep(0.1)
+            raise AssertionError('Backup operation timed out')
+        began = time.monotonic()
+        saved = ready(asset_id)
+        creation_seconds = time.monotonic()-began
+        assert saved['verified_at_ms'] is None
+        with api(f'/api/v1/recovery/{asset_id}', {'action':'verify'}) as response: verification = json.load(response)['job_id']
+        assert wait(verification)['activity']['state'] == 'completed'
+        assert ready(asset_id)['verified_at_ms'] is not None
+        assert expected == archive_fingerprints(directory), 'Verify backup changed live music'
+        package = directory / 'downloaded-backup.zip'
+        with api(f'/api/v1/recovery/{asset_id}') as response, package.open('wb') as output:
+            shutil.copyfileobj(response, output, 65536)
+        stop()
+        original_disk = disk_usage(directory)
+        destination = directory / 'restored-instance'
+        env['SCROBBL_DATA_DIR'] = str(destination)
+        cookie, csrf = None, None
+        start()
+        with api('/api/setup', {'password': secrets.token_hex(24)}) as response:
+            cookie = response.headers['Set-Cookie'].split(';')[0]
+            csrf = json.load(response)['csrf']
+        old_cookie = cookie
+        boundary = secrets.token_hex(20)
+        prefix = f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="backup.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode()
+        suffix = f'\r\n--{boundary}--\r\n'.encode()
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=300)
+        connection.putrequest('POST', '/api/v1/recovery/upload')
+        for key,value in {'Origin':origin,'Cookie':cookie,'X-CSRF-Token':csrf,
+                          'Content-Type':f'multipart/form-data; boundary={boundary}',
+                          'Content-Length':str(len(prefix)+package.stat().st_size+len(suffix))}.items(): connection.putheader(key,value)
+        connection.endheaders()
+        connection.send(prefix)
+        with package.open('rb') as source_package:
+            for chunk in iter(lambda:source_package.read(65536),b''): connection.send(chunk)
+        connection.send(suffix)
+        response = connection.getresponse()
+        assert response.status == 200, 'Backup upload failed'
+        imported_id = json.loads(response.read())['id']
+        connection.close()
+        ready(imported_id)
+        password = secrets.token_hex(24)
+        began = time.monotonic()
+        with api('/api/v1/recovery/restore', {'asset_id':imported_id,'password':password,'confirm_replace':True}) as response:
+            assert json.load(response)['restart_required']
+        stop()
+        start()
+        try:
+            with api('/api/v1/recovery'): pass
+            raise AssertionError('Old session survived replacement')
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
+        cookie, csrf = None, None
+        with api('/api/login', {'password':password}) as response:
+            cookie = response.headers['Set-Cookie'].split(';')[0]
+            csrf = json.load(response)['csrf']
+        assert cookie != old_cookie
+        with api('/api/v1/recovery') as response: assert json.load(response)['paused']
+        assert expected == archive_fingerprints(destination), 'Restored normalized data, fingerprints or provenance differ'
+        with api('/api/v1/preferences') as response: assert json.load(response) == preferences
+        with api('/api/v1/recovery/resume', {}) as response: assert json.load(response)['ok']
+        with api('/api/v1/recovery') as response: assert not json.load(response)['paused']
+        assert list(destination.glob('recovery-*/previous/archive.db')), 'Previous destination missing'
+        stop()
+        restored_disk = disk_usage(destination)
+        assert before_hash == digest() and metadata.st_size == source.stat().st_size and metadata.st_mtime_ns == source.stat().st_mtime_ns
+        return {'backup_bytes':package.stat().st_size,'backup_creation_seconds':round(creation_seconds,3),
+                'restore_seconds_including_restart':round(time.monotonic()-began,3),
+                'verified_live_unchanged':True,'restored_tables_identical':len(expected),
+                'preferences_preserved':True,'old_session_rejected':True,'explicit_resumption_verified':True,
+                'source_disk':original_disk,'restored_disk':restored_disk}
     try:
         start()
         with api('/api/setup', {'password': secrets.token_hex(24)}) as response:
@@ -132,6 +241,8 @@ def main():
                        'first_seconds':round(first_seconds,3), 'dashboard_ms':dashboard_ms,
                        'initial_totals':initial,
                        'processed':first['activity']['processed'], 'invalid':first['activity']['invalid']}
+            stop()
+            summary['disk'] = disk_usage(directory)
             (directory / 'benchmark.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
             print(json.dumps(summary,indent=2),flush=True)
             assert first_seconds <= args.max_import_seconds, 'Import exceeds the requested time budget'
@@ -158,6 +269,8 @@ def main():
             'initial_totals': initial,
             'final_totals': final,
         }
+        if args.recovery:
+            summary['recovery'] = recovery_trial()
         (directory / 'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
         # No source paths, member names or music metadata in stdout.
         print(json.dumps(summary,indent=2),flush=True)

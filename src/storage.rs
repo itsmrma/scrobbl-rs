@@ -26,6 +26,7 @@ pub struct Storage {
     pub(crate) snapshots: Arc<tokio::sync::Mutex<()>>,
     pub(crate) requests: Arc<tokio::sync::RwLock<()>>,
     pub(crate) recovery_operations: Arc<tokio::sync::Mutex<()>>,
+    pub(crate) spool_operations: Arc<tokio::sync::RwLock<()>>,
 }
 
 fn private_directory(path: &Path) -> anyhow::Result<()> {
@@ -111,6 +112,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
             pre_upgrade_copy(&directory, &writer, &private).await?;
         }
         ARCHIVE_MIGRATOR.run(&writer).await?;
+        crate::retention::compact_payloads(&mut *writer.acquire().await?).await?;
         compact_original_payloads(&mut *writer.acquire().await?).await?;
         PRIVATE_MIGRATOR.run(&private).await?;
         sqlx::query("INSERT INTO settings(key,value) VALUES('app_build',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development")}).to_string()).execute(&writer).await?;
@@ -157,6 +159,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         snapshots: Default::default(),
         requests: Default::default(),
         recovery_operations: Default::default(),
+        spool_operations: Default::default(),
     })
 }
 
@@ -254,12 +257,9 @@ async fn pre_upgrade_copy(
         sync_file(&target)?;
     }
     let mut files = Vec::new();
-    for row in sqlx::query("SELECT content_hash,size_bytes FROM source_files")
-        .fetch_all(archive)
-        .await?
-    {
-        let hash: String = row.get("content_hash");
-        let size: i64 = row.get("size_bytes");
+    let spool = destination.join("spool");
+    private_directory(&spool)?;
+    for (hash, size) in crate::retention::files(&mut *archive.acquire().await?).await? {
         ensure!(
             std::fs::metadata(directory.join("spool").join(&hash))?.len() == size as u64,
             "Spool file missing or incomplete before upgrade"
@@ -268,8 +268,17 @@ async fn pre_upgrade_copy(
             crate::recovery::hash_file(&directory.join("spool").join(&hash))?.0 == hash,
             "Spool checksum mismatch before upgrade"
         );
+        // A completed import can now release its live source. Keep this technical
+        // copy independently recoverable; immutable hard links add no data blocks.
+        let source = directory.join("spool").join(&hash);
+        let target = spool.join(&hash);
+        if std::fs::hard_link(&source, &target).is_err() {
+            std::fs::copy(&source, &target)?;
+        }
+        sync_file(&target)?;
         files.push(serde_json::json!({"sha256":hash,"size_bytes":size}));
     }
+    sync_directory(&spool)?;
     let archive_schema: Option<i64> =
         sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations WHERE success=1")
             .fetch_one(archive)
@@ -279,7 +288,7 @@ async fn pre_upgrade_copy(
             .fetch_one(private)
             .await?;
     let content = serde_json::to_vec(
-        &serde_json::json!({"format":1,"purpose":"pre-upgrade-private","source_app":crate::db::setting(archive,"app_build").await?,"target_app_version":env!("CARGO_PKG_VERSION"),"target_revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development"),"created_at_ms":crate::auth::now_ms(),"archive_schema":archive_schema,"private_schema":private_schema,"spool":"unchanged immutable files in data directory","files":files,"database_sha256":{"archive.db":crate::recovery::hash_file(&destination.join("archive.db"))?.0,"auth.db":crate::recovery::hash_file(&destination.join("auth.db"))?.0}}),
+        &serde_json::json!({"format":1,"purpose":"pre-upgrade-private","source_app":crate::db::setting(archive,"app_build").await?,"target_app_version":env!("CARGO_PKG_VERSION"),"target_revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development"),"created_at_ms":crate::auth::now_ms(),"archive_schema":archive_schema,"private_schema":private_schema,"spool":"snapshot","files":files,"database_sha256":{"archive.db":crate::recovery::hash_file(&destination.join("archive.db"))?.0,"auth.db":crate::recovery::hash_file(&destination.join("auth.db"))?.0}}),
     )?;
     let manifest = destination.join("complete.json");
     std::fs::write(&manifest, content)?;

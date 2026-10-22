@@ -47,6 +47,16 @@ impl Storage {
         reader: &mut R,
         max_bytes: u64,
     ) -> anyhow::Result<String> {
+        let _files = self.spool_operations.read().await;
+        self.receive_locked(reader, max_bytes).await
+    }
+
+    /// The caller holds the file gate through publication AND attachment to a job.
+    pub(crate) async fn receive_locked<R: AsyncRead + Unpin>(
+        &self,
+        reader: &mut R,
+        max_bytes: u64,
+    ) -> anyhow::Result<String> {
         let incoming = self.directory.join("spool/incoming").join(db::new_id());
         let result=async {
             let mut file=tokio::fs::OpenOptions::new().write(true).create_new(true).open(&incoming).await?;
@@ -66,7 +76,7 @@ impl Storage {
                 Ok(())=>{}, Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{}, Err(e)=>return Err(e.into())
             }
             crate::storage::sync_directory(&self.directory.join("spool"))?;
-            sqlx::query("INSERT OR IGNORE INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?)")
+            sqlx::query("INSERT INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET retained=1,received_at_ms=excluded.received_at_ms")
                 .bind(&hash).bind(&hash).bind(i64::try_from(size)?).bind(auth::now_ms()).execute(&self.writer).await?;
             Ok::<_,anyhow::Error>(hash)
         }.await;
@@ -82,6 +92,20 @@ impl Storage {
         filename: Option<&str>,
         parameters: &Value,
     ) -> Result<String> {
+        let _files = self.spool_operations.read().await;
+        if let Some(file_id) = file_id {
+            let retained: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM source_files WHERE id=? AND retained=1)",
+            )
+            .bind(file_id)
+            .fetch_one(&self.writer)
+            .await?;
+            if !retained {
+                return Err(AppError::Conflict(
+                    "Source file was released. Upload it again to start another import.".into(),
+                ));
+            }
+        }
         let id = db::new_id();
         let inserted=sqlx::query("INSERT INTO jobs(id,kind,file_id,filename,parameters_json,state,created_at_ms,updated_at_ms) SELECT ?,?,?,?,?,'queued',?,? FROM archive_state WHERE singleton=1 AND maintenance=0")
             .bind(&id).bind(kind).bind(file_id).bind(filename).bind(parameters.to_string()).bind(auth::now_ms()).bind(auth::now_ms()).execute(&self.writer).await?;
@@ -130,8 +154,16 @@ impl Storage {
         Ok(())
     }
     pub async fn retry(&self, id: &str) -> Result<()> {
+        let _files = self.spool_operations.read().await;
         let mut tx = self.writer.begin().await?;
         sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
+        let released: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_files f JOIN jobs j ON j.id=? WHERE f.retained=0 AND (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id)))")
+            .bind(id).fetch_one(&mut *tx).await?;
+        if released {
+            return Err(AppError::Conflict(
+                "Source file was released. Upload it again to retry.".into(),
+            ));
+        }
         let another_calendar: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs target WHERE target.id=? AND target.kind='calendar' AND EXISTS(SELECT 1 FROM jobs other WHERE other.id!=target.id AND other.kind='calendar' AND other.state IN ('queued','running','waiting')))").bind(id).fetch_one(&mut *tx).await?;
         if another_calendar {
             return Err(AppError::Conflict(
@@ -143,7 +175,7 @@ impl Storage {
         tx.commit().await?;
         Ok(())
     }
-    /// Rows must be a contiguous checkpoint interval. Invalid/skipped originals are retained too.
+    /// Rows must be a contiguous checkpoint interval. Invalid/skipped fingerprints and reasons persist too.
     /// If parsing fails, omit this call: no progress is acknowledged.
     pub async fn commit_batch(
         &self,

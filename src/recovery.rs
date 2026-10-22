@@ -8,7 +8,7 @@ use anyhow::{Context, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
+use sqlx::{Connection, Row, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{
     collections::BTreeMap,
     fs::File,
@@ -169,6 +169,24 @@ pub async fn validate_database(
             .fetch_one(&mut *conn)
             .await?;
         counts.insert("original_payloads".into(), n);
+        let compact = sqlx::query("PRAGMA table_info(original_payloads)")
+            .fetch_all(&mut *conn)
+            .await?
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "fingerprint");
+        let pending: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM settings WHERE key='compact_retention_pending')",
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        if compact && !pending {
+            let invalid: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM original_payloads WHERE raw_json!='null' OR fingerprint IS NULL OR length(fingerprint)!=64 OR fingerprint GLOB '*[^0-9a-f]*'")
+                .fetch_one(&mut *conn).await?;
+            ensure!(invalid == 0, "Invalid compact source fingerprints");
+            let unavailable: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_files f WHERE retained=0 AND EXISTS(SELECT 1 FROM jobs j WHERE (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id)) AND (j.state!='completed' OR COALESCE(j.outcome,'complete') NOT IN ('complete','no_music'))))")
+                .fetch_one(&mut *conn).await?;
+            ensure!(!unavailable, "Unfinished import source was released");
+        }
     }
     let invalid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM listens l LEFT JOIN observations o ON o.listen_id=l.id WHERE o.id IS NULL OR (l.duration_kind='unknown')!=(l.listened_ms IS NULL)").fetch_one(&mut *conn).await?;
     ensure!(invalid == 0, "Invalid original observations or durations");
@@ -230,14 +248,14 @@ pub async fn create_backup(
     work: &Path,
     output: &Path,
 ) -> anyhow::Result<Manifest> {
+    // Pin the frozen database's file inventory through ZIP publication. Imports
+    // can still commit while their completed source deletion waits for this copy.
+    let _files = store.spool_operations.read().await;
     let snapshot = work.join("archive.db");
     freeze(store, &snapshot).await?;
     let manifest = sanitized_manifest(&snapshot).await?;
     let mut conn = connect(&snapshot, true).await?;
-    let files: Vec<(String, i64)> =
-        sqlx::query_as("SELECT content_hash,size_bytes FROM source_files ORDER BY content_hash")
-            .fetch_all(&mut conn)
-            .await?;
+    let files = crate::retention::files(&mut conn).await?;
     conn.close().await?;
     let directory = store.directory.clone();
     let work = work.to_owned();
@@ -445,10 +463,7 @@ async fn check_package(
             .fetch_one(&mut conn)
             .await?;
     ensure!(version == manifest.schema_version, "Backup schema mismatch");
-    let files: Vec<(String, i64)> =
-        sqlx::query_as("SELECT content_hash,size_bytes FROM source_files")
-            .fetch_all(&mut conn)
-            .await?;
+    let files = crate::retention::files(&mut conn).await?;
     ensure!(
         files.len() + 1 == manifest.files.len(),
         "Backup file inventory mismatch"
@@ -468,6 +483,7 @@ async fn check_package(
     storage::ARCHIVE_MIGRATOR
         .run_direct(None, &mut conn, false)
         .await?;
+    crate::retention::compact_payloads(&mut conn).await?;
     storage::compact_original_payloads(&mut conn).await?;
     validate_database(&mut conn).await?;
     conn.close().await?;
@@ -586,7 +602,7 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
         freeze(store, &snapshot).await?;
         phase(store, &job.id, "writing_export").await?;
         let count = crate::exports::write(&snapshot, &output, &asset.format, &selection).await?;
-        Some(json!({"selection":selection,"listens":count,"format_version":1}).to_string())
+        Some(json!({"selection":selection,"listens":count,"format_version":crate::exports::FORMAT_VERSION}).to_string())
     };
     let path = asset_path(store, &asset)?;
     if path.exists() {
@@ -929,7 +945,12 @@ pub async fn recover_upgrade(
             .as_u64()
             .context("Missing received file size")?;
         let target = destination.join("spool").join(hash);
-        std::fs::copy(directory.join("spool").join(hash), &target)?;
+        let spool = if manifest["spool"] == "snapshot" {
+            source.join("spool")
+        } else {
+            directory.join("spool")
+        };
+        std::fs::copy(spool.join(hash), &target)?;
         let actual = hash_file(&target)?;
         ensure!(
             actual == (hash.to_owned(), size),

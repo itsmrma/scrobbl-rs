@@ -22,9 +22,9 @@ verify its mounts; startup cannot reliably classify every host/container filesys
 | Path under `SCROBBL_DATA_DIR` | Purpose |
 | --- | --- |
 | `instance.lock` | OS-held process lock; the empty file may remain after shutdown |
-| `archive.db` and SQLite sidecars | Music, original observations, preferences, jobs, reports, revisions |
+| `archive.db` and SQLite sidecars | Music, normalized source observations/fingerprints, preferences, jobs, reports, revisions |
 | `private/auth.db` and sidecars | Owner password verifier, sessions, OAuth state, Spotify credentials/tokens, key digests |
-| `spool/<sha256>` | Fully received immutable files, addressed by content |
+| `spool/<sha256>` | Retained immutable files needed by unfinished/partial jobs, addressed by content |
 | `spool/incoming/` | Unpublished uploads; interrupted sends are never queued |
 | `snapshots/` | Expiring internal coherent copies; never serve these database files to clients |
 | `cache/` | Reserved reconstructible assets |
@@ -43,7 +43,7 @@ Release schemas use `release-migrations/` and `private-migrations/`. Do not edit
 Before an upgrade, startup creates both database copies using `VACUUM INTO`, verifies their integrity
 and checks referenced spool files before publishing `complete.json`. A copy failure prevents migration.
 The manifest identifies schema/app versions and immutable spool references. These startup copies are
-not portable user backups: they depend on the same preserved spool. The [user-facing backup
+not portable user backups: new copies retain their own immutable spool snapshot, while older copies still pin the live spool. The [user-facing backup
 format](recovery.md) excludes private authentication storage and carries its own received files.
 Recovery jobs and the React interface implement creation, isolated verification and replacement.
 

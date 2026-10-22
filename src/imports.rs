@@ -224,6 +224,9 @@ pub async fn upload(
     Ok(Json(ImportResponse { job_id: id }))
 }
 async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -> Result<()> {
+    // Publication and job attachment form one file lease, including reuploads of
+    // an existing hash. Cleanup cannot unlink it in the gap before job_inputs.
+    let _files = state.storage.spool_operations.read().await;
     let mut total = 0u64;
     let mut ordinal = 0usize;
     while let Some(field)=multipart.next_field().await.map_err(|_|AppError::BadRequest("Upload incomplete or request byte limit exceeded. Send the entire ZIP or selection again.".into()))? {
@@ -231,7 +234,7 @@ async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -
         if ordinal>state.config.import_limits.files {return Err(AppError::BadRequest("Configured file-count limit exceeded.".into()));}
         let filename=field.file_name().unwrap_or("history.json").rsplit(['/', '\\']).next().unwrap_or("history.json").chars().filter(|c|!c.is_control()).take(200).collect::<String>();
         let mut reader=tokio_util::io::StreamReader::new(field.map_err(std::io::Error::other));
-        let file_id=state.storage.receive(&mut reader,state.config.import_limits.upload_bytes.saturating_sub(total)).await.map_err(|_|AppError::BadRequest("Upload incomplete, configured upload byte limit exceeded, or server storage unavailable. Check storage and send the complete upload again.".into()))?;
+        let file_id=state.storage.receive_locked(&mut reader,state.config.import_limits.upload_bytes.saturating_sub(total)).await.map_err(|_|AppError::BadRequest("Upload incomplete, configured upload byte limit exceeded, or server storage unavailable. Check storage and send the complete upload again.".into()))?;
         let size:i64=sqlx::query_scalar("SELECT size_bytes FROM source_files WHERE id=?").bind(&file_id).fetch_one(&state.db).await?;
         total+=size as u64;
         sqlx::query("INSERT INTO job_inputs(job_id,ordinal,file_id,filename) VALUES(?,?,?,?)").bind(id).bind(ordinal as i64).bind(&file_id).bind(&filename).execute(&state.db).await?;

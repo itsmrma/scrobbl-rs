@@ -9,6 +9,8 @@ use std::{
     path::Path,
 };
 
+pub const FORMAT_VERSION: i64 = 2;
+
 #[derive(Default, Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 pub struct ExportSelection {
     pub from: Option<String>,
@@ -59,7 +61,7 @@ pub async fn write(
             .fetch_one(&mut conn)
             .await?;
     let mut query = crate::web::selection(&mut conn, &selection.filters()).await?;
-    query.push("SELECT s.*,c.timezone,c.week_start,c.rules_version,t.duration_ms AS track_duration_ms, (SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artists, (SELECT json_group_array(json_object('id',o.id,'source',o.source,'source_key',o.source_key,'identity_version',o.identity_version,'source_timestamp_ms',o.source_timestamp_ms,'raw',json((SELECT raw_json FROM original_payloads WHERE id=o.payload_id)),'variants',json((SELECT json_group_array(json_object('id',v.id,'raw',json((SELECT raw_json FROM original_payloads WHERE id=v.payload_id)),'played_at_ms',v.played_at_ms,'listened_ms',v.listened_ms,'duration_kind',v.duration_kind,'counted',json(CASE v.counted WHEN 1 THEN 'true' ELSE 'false' END),'policy_version',v.policy_version,'occurrences',json((SELECT json_group_array(json_object('job_id',p.job_id,'file_id',p.file_id,'member',p.member,'row_number',p.row_number)) FROM source_occurrences p WHERE p.variant_id=v.id)))) FROM observation_variants v WHERE v.observation_id=o.id)))) FROM observations o WHERE o.listen_id=s.id) AS observations FROM selected s JOIN calendars c ON c.id=s.calendar_id JOIN tracks t ON t.id=s.track_id ORDER BY s.played_at_ms,s.id");
+    query.push("SELECT s.*,c.timezone,c.week_start,c.rules_version,t.duration_ms AS track_duration_ms, (SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artists, (SELECT json_group_array(json_object('id',o.id,'source',o.source,'source_key',o.source_key,'identity_version',o.identity_version,'source_timestamp_ms',o.source_timestamp_ms,'raw',json('null'),'raw_available',json('false'),'raw_fingerprint',(SELECT fingerprint FROM original_payloads WHERE id=o.payload_id),'variants',json((SELECT json_group_array(json_object('id',v.id,'raw',json('null'),'raw_available',json('false'),'raw_fingerprint',v.fingerprint,'played_at_ms',v.played_at_ms,'listened_ms',v.listened_ms,'duration_kind',v.duration_kind,'counted',json(CASE v.counted WHEN 1 THEN 'true' ELSE 'false' END),'policy_version',v.policy_version,'occurrences',json((SELECT json_group_array(json_object('job_id',p.job_id,'file_id',p.file_id,'member',p.member,'row_number',p.row_number,'raw_fingerprint',(SELECT fingerprint FROM original_payloads WHERE id=p.payload_id),'source_retained',json(CASE WHEN EXISTS(SELECT 1 FROM source_files f WHERE f.id=p.file_id AND f.retained=1) THEN 'true' ELSE 'false' END))) FROM source_occurrences p WHERE p.variant_id=v.id)))) FROM observation_variants v WHERE v.observation_id=o.id)))) FROM observations o WHERE o.listen_id=s.id) AS observations FROM selected s JOIN calendars c ON c.id=s.calendar_id JOIN tracks t ON t.id=s.track_id ORDER BY s.played_at_ms,s.id");
     let mut file = BufWriter::new(
         std::fs::OpenOptions::new()
             .write(true)
@@ -67,7 +69,7 @@ pub async fn write(
             .open(destination)?,
     );
     if format == "json" {
-        let meta = json!({"format":"scrobbl-export","format_version":1,"app_version":env!("CARGO_PKG_VERSION"),"instance_id":identity.0,"generation":identity.1,"revision":identity.2,"selection":selection,"timestamp_unit":"UTC milliseconds since Unix epoch","duration_unit":"milliseconds"});
+        let meta = json!({"format":"scrobbl-export","format_version":FORMAT_VERSION,"original_retention":"compact","app_version":env!("CARGO_PKG_VERSION"),"instance_id":identity.0,"generation":identity.1,"revision":identity.2,"selection":selection,"timestamp_unit":"UTC milliseconds since Unix epoch","duration_unit":"milliseconds"});
         let text = serde_json::to_string(&meta)?;
         write!(file, "{},\"listens\":[", &text[..text.len() - 1])?;
     } else {

@@ -215,7 +215,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
         2
     );
     let originals: Vec<String> =
-        sqlx::query_scalar("SELECT p.raw_json FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
+        sqlx::query_scalar("SELECT p.fingerprint FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&state.read_db)
             .await
             .unwrap();
@@ -284,7 +284,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
     );
     assert_eq!(
         originals,
-        sqlx::query_scalar::<_, String>("SELECT p.raw_json FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
+        sqlx::query_scalar::<_, String>("SELECT p.fingerprint FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&resumed.read_db)
             .await
             .unwrap()
@@ -454,14 +454,13 @@ async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
             .await
             .unwrap();
     assert_eq!((total, counted, actual), (2, 1, 190000));
-    let raw: String = sqlx::query_scalar("SELECT p.raw_json FROM observations o JOIN original_payloads p ON p.id=o.payload_id LIMIT 1")
+    let (raw, fingerprint): (String, String) = sqlx::query_as("SELECT p.raw_json,p.fingerprint FROM observations o JOIN original_payloads p ON p.id=o.payload_id WHERE o.source_key=?")
+        .bind(&events[0].source_key)
         .fetch_one(&state.db)
         .await
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&raw).unwrap()["ts"],
-        "2025-06-01T12:03:00Z"
-    );
+    assert_eq!(raw, "null");
+    assert_eq!(fingerprint, db::payload_fingerprint(&events[0].raw));
 }
 
 #[tokio::test]

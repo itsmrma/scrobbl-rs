@@ -79,10 +79,10 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
       )}
       <h3>Export listening history</h3>
       <p>
-        JSON includes original observations and provenance. CSV has one row per
-        listen. These portable exports are for other tools; use a backup to
-        restore this instance. By default, export includes all history and short
-        listens.
+        JSON includes normalized observations, fingerprints and provenance. Raw
+        source JSON is not retained. CSV has one row per listen. These portable
+        exports are for other tools; use a backup to restore this instance. By
+        default, export includes all history and short listens.
       </p>
       <form
         onSubmit={(e) => {
@@ -97,7 +97,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
           <label>
             Export format
             <select value={format} onChange={(e) => setFormat(e.target.value)}>
-              <option value="json">JSON — original details</option>
+              <option value="json">JSON — observations and provenance</option>
               <option value="csv">CSV — one row per listen</option>
             </select>
           </label>
@@ -161,9 +161,11 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
       </form>
       <h3>Manual backup</h3>
       <p>
-        Backups preserve the archive, original data, server preferences, reports
-        and received import files. Passwords, sessions, Spotify credentials and
-        API keys are excluded. Browser preferences and network, Compose, DNS and
+        Backups preserve normalized history, fingerprints, provenance, server
+        preferences and reports. Source files are kept for unfinished or partial
+        imports and released after successful completion. To import them again,
+        upload them again. Passwords, sessions, Spotify credentials and API keys
+        are excluded. Browser preferences and network, Compose, DNS and
         certificate configuration are separate.
       </p>
       <p>

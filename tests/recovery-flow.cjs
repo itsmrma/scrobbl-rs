@@ -32,6 +32,8 @@ module.exports = async function recoveryFlow(page) {
   );
   const exported = await exportResponse.json();
   expect(exported.format).toBe("scrobbl-export");
+  expect(exported.format_version).toBe(2);
+  expect(exported.original_retention).toBe("compact");
   expect(exported.selection.from).toBe("2026-01-01");
   expect(Array.isArray(exported.listens)).toBe(true);
   await page
