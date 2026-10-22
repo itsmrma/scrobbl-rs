@@ -2,6 +2,8 @@
 
 A self-hosted, single-owner listening archive written in Rust, initially focused on Spotify.
 
+This is first and foremost a personal passion project, and it is under very active development.
+
 Heavily inspired by [Maloja](https://github.com/krateng/maloja) by krateng.
 
 Run locally or install the prebuilt linux/amd64 Docker image with a persistent data directory.
