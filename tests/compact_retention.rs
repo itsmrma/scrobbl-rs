@@ -36,6 +36,12 @@ async fn completed_import_releases_sources_and_reupload_preserves_identity_and_p
     let store = storage::open(dir.path()).await.unwrap();
     let bytes = source();
     let file = store.receive(&mut bytes.as_bytes(), 10000).await.unwrap();
+    let first_received: i64 =
+        sqlx::query_scalar("SELECT received_at_ms FROM source_files WHERE id=?")
+            .bind(&file)
+            .fetch_one(&store.readers)
+            .await
+            .unwrap();
     imported(&store, &file).await;
     retention::cleanup(&store).await.unwrap();
     assert!(!dir.path().join("spool").join(&file).exists());
@@ -67,6 +73,14 @@ async fn completed_import_releases_sources_and_reupload_preserves_identity_and_p
 
     let again = store.receive(&mut bytes.as_bytes(), 10000).await.unwrap();
     assert_eq!(again, file);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT received_at_ms FROM source_files WHERE id=?")
+            .bind(&again)
+            .fetch_one(&store.readers)
+            .await
+            .unwrap(),
+        first_received
+    );
     imported(&store, &again).await;
     retention::cleanup(&store).await.unwrap();
     let totals: (i64,i64,i64,i64) = sqlx::query_as("SELECT (SELECT COUNT(*) FROM listens),(SELECT COUNT(*) FROM observations),(SELECT COUNT(*) FROM observation_variants),(SELECT COUNT(*) FROM source_occurrences)")

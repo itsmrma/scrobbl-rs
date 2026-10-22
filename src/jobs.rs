@@ -76,7 +76,7 @@ impl Storage {
                 Ok(())=>{}, Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{}, Err(e)=>return Err(e.into())
             }
             crate::storage::sync_directory(&self.directory.join("spool"))?;
-            sqlx::query("INSERT INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET retained=1,received_at_ms=excluded.received_at_ms")
+            sqlx::query("INSERT INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET retained=1")
                 .bind(&hash).bind(&hash).bind(i64::try_from(size)?).bind(auth::now_ms()).execute(&self.writer).await?;
             Ok::<_,anyhow::Error>(hash)
         }.await;
