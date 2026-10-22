@@ -730,7 +730,9 @@ function EntityFilter({
         <input
           type="search"
           aria-label={kind === "artists" ? "Find artist" : "Find album"}
-          placeholder={chosen.data?.name || `Find ${kind}`}
+          placeholder={
+            id ? chosen.data?.name || "Selected identity" : `Find ${kind}`
+          }
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -754,7 +756,7 @@ function EntityFilter({
           </button>
         </span>
       )}
-      <ErrorText>{options.error || chosen.error}</ErrorText>
+      <ErrorText>{options.error || (id ? chosen.error : "")}</ErrorText>
       {!id && search && options.data && (
         <ul className="entity-options" aria-label={`${kind} matches`}>
           {options.data.map((item) => (
