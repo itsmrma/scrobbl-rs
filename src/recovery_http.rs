@@ -118,7 +118,7 @@ pub async fn action(
             Ok(Json(json!({"job_id":job})))
         }
         "delete" => {
-            let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE id=? AND state IN ('queued','running','waiting'))").bind(&asset.job_id).fetch_one(&state.read_db).await?;
+            let active:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE state IN ('queued','running','waiting') AND (id=? OR (kind='recovery_verify' AND json_extract(parameters_json,'$.asset_id')=?)))").bind(&asset.job_id).bind(&asset.id).fetch_one(&state.read_db).await?;
             if active {
                 return Err(AppError::Conflict(
                     "Wait for this operation to finish before deleting its file.".into(),

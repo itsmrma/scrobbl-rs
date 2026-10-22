@@ -9,6 +9,7 @@ pub mod error;
 pub mod exports;
 pub mod import_worker;
 pub mod imports;
+mod ingest;
 pub mod jobs;
 pub mod preferences;
 pub mod recovery;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub config: Config,
     pub spotify: spotify::Spotify,
     pub login_attempts: Arc<Mutex<VecDeque<Instant>>>,
+    pub(crate) dashboard_cache: Arc<Mutex<VecDeque<(String, serde_json::Value)>>>,
 }
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
@@ -42,6 +44,7 @@ impl AppState {
             config,
             spotify: spotify::Spotify::new(),
             login_attempts: Default::default(),
+            dashboard_cache: Default::default(),
         }
     }
 }

@@ -371,7 +371,7 @@ fn parse(
                 }
                 batch_bytes += bytes;
                 batch.push(parse_row(row));
-                if batch.len() == 250 {
+                if batch.len() == 1000 {
                     let size = batch.len() as i64;
                     send(
                         &tx,

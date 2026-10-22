@@ -86,6 +86,15 @@ Firefox on PC/Mac and Safari on physical iPhone/iPad, live Spotify, HTTPS and se
 remain release acceptance checks. An automated WebKit/Firefox run is additional coverage,
 not evidence of tests on those physical devices.
 
+## Overview responsiveness
+
+Overview keeps the current selection visible when returning to it or refreshing;
+changing the selection still clears the previous result. The server aggregates listens
+once by track before joining ranking metadata. At most sixteen absolute-selection
+responses are cached by archive identity/generation/revision, preferences and filters.
+Relative periods are recalculated because their meaning depends on the current time.
+No original payloads or complete history are held in this cache.
+
 ## Third-party assets
 
 The bundled Material Icons Outlined font is distributed under Apache License 2.0.

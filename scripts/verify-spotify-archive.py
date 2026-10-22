@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -24,6 +25,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('zip', type=Path)
     parser.add_argument('--binary', type=Path, default=Path('target/debug/scrobbl-rs.exe' if os.name == 'nt' else 'target/debug/scrobbl-rs'))
+    parser.add_argument('--benchmark', action='store_true', help='Uninterrupted import and Overview latency, retaining the isolated archive')
+    parser.add_argument('--max-import-seconds', type=float, default=20)
+    parser.add_argument('--max-dashboard-ms', type=float, default=100)
     args = parser.parse_args()
     source = args.zip.resolve(strict=True)
     binary = args.binary.resolve(strict=True)
@@ -33,11 +37,14 @@ def main():
             return hashlib.file_digest(stream, 'sha256').hexdigest()
     before_hash = digest()
     directory = Path(tempfile.mkdtemp(prefix='scrobbl-spotify-acceptance-'))
+    # Pin the tested executable; rebuilding must not change/lock the running trial.
+    runner = directory / binary.name
+    shutil.copy2(binary, runner)
     with socket.socket() as reserved:
         reserved.bind(('127.0.0.1', 0))
         port = reserved.getsockname()[1]
     origin = f'http://127.0.0.1:{port}'
-    env = dict(os.environ, SCROBBL_DATA_DIR=str(directory), SCROBBL_PORT=str(port), SPOTIFY_CLIENT_ID='', SPOTIFY_CLIENT_SECRET='')
+    env = dict(os.environ, SCROBBL_DATA_DIR=str(directory), SCROBBL_PORT=str(port), SCROBBL_BIND='127.0.0.1', SCROBBL_EXTERNAL_ORIGIN=origin, SPOTIFY_CLIENT_ID='', SPOTIFY_CLIENT_SECRET='')
     process = None
     log = (directory / 'server.log').open('ab')
     cookie = None
@@ -51,7 +58,7 @@ def main():
         return urllib.request.urlopen(request, timeout=30)
     def start():
         nonlocal process
-        process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        process = subprocess.Popen([str(runner)], env=env, stdout=log, stderr=log, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         for _ in range(300):
             if process.poll() is not None: raise RuntimeError('Isolated server failed; inspect the private server log')
             try:
@@ -108,10 +115,28 @@ def main():
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         began = time.monotonic()
-        first = wait(upload(), interrupt=True)
+        first = wait(upload(), interrupt=not args.benchmark)
         first_seconds = time.monotonic()-began
         initial = totals()
         (directory / 'first-report.json').write_text(json.dumps(first,indent=2), encoding='utf-8')
+        if args.benchmark:
+            assert first['activity']['state'] == 'completed', 'Import did not complete'
+            dashboard_ms = []
+            for _ in range(5):
+                began = time.monotonic()
+                with api('/api/dashboard') as response: overview = json.load(response)
+                dashboard_ms.append(round((time.monotonic()-began)*1000,3))
+                assert overview['totals']['records'] == initial['listens']
+            assert before_hash == digest() and metadata.st_size == source.stat().st_size and metadata.st_mtime_ns == source.stat().st_mtime_ns, 'Source changed during the trial'
+            summary = {'source_bytes':metadata.st_size, 'source_unchanged':True,
+                       'first_seconds':round(first_seconds,3), 'dashboard_ms':dashboard_ms,
+                       'initial_totals':initial,
+                       'processed':first['activity']['processed'], 'invalid':first['activity']['invalid']}
+            (directory / 'benchmark.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
+            print(json.dumps(summary,indent=2),flush=True)
+            assert first_seconds <= args.max_import_seconds, 'Import exceeds the requested time budget'
+            assert max(dashboard_ms) <= args.max_dashboard_ms, 'Overview exceeds the latency budget'
+            return
         began = time.monotonic()
         second = wait(upload())
         retry_seconds = time.monotonic()-began

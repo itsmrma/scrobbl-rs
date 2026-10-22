@@ -32,6 +32,9 @@ with doubled quotes and JSON in `artists_json`. Text beginning with spreadsheet
 formula characters gets an apostrophe prefix for safe spreadsheet opening. Use
 JSON for exact original text and provenance. Export is for other tools: it does
 not reconstruct an instance or add a generic import of native exports.
+For example, a title `+44` is written as `'+44` in the CSV text field; JSON
+preserves `+44`. This does not alter stored metadata. Artist names inside
+`artists_json` remain unchanged because the cell starts with `[`.
 
 ## Manual portable backups
 
@@ -83,6 +86,14 @@ Limits: 2 GiB compressed, 8 GiB expanded, 100,002 ZIP entries and a 16 MiB manif
 Unexpected/duplicate entries, traversal paths, symlinks, incompatible versions,
 checksum mismatches, broken relationships and migration failures are refused.
 Allow space for the archive, output, temporary copies and retained old data.
+Creation removes its frozen database after compression, before extracting the
+creation-check trial. Extra file space is approximately the greater of
+`snapshot database + ZIP` and `expanded package + ZIP`, rather than their sum.
+At the accepted 2 GiB/8 GiB limits, those package files can approach 10 GiB;
+leave additional headroom for SQLite journals/migrations, the live archive/WAL,
+retained previous states, existing copies and other operations. The format limits
+are not a reservation or a maximum for the whole data volume. Compression and
+verification run serially with bounded file buffers, but consume CPU and disk I/O.
 Configure reverse-proxy upload limits/timeouts for the entire upload; the server
 accepts bytes before queuing persistent inspection.
 
@@ -94,6 +105,8 @@ accepts bytes before queuing persistent inspection.
    date, versions, revision and count. Run **Verify backup** if desired.
 3. Choose **Restore…**, review the summary, enter/repeat a **new owner password**
    and explicitly confirm replacement. The operation replaces; it does not merge.
+   Confirmation commits to activation at the next restart; there is no cancellation
+   after preparation. Close the confirmation dialog beforehand to leave it unchanged.
 4. Preparation repeats isolated restoration/migrations, creates fresh private
    storage containing only the new password verifier, changes generation and
    publishes a recovery journal. New writes stop and the UI reports restart
@@ -113,6 +126,8 @@ Durable per-resource renames plus `recovery.pending` let startup finish interrup
 activation. Filesystem errors keep startup in controlled recovery, never public setup.
 
 Before journal publication, failed preparation leaves the live archive usable.
+The current failed attempt's staging is removed to avoid accumulating extracted
+archives across retries; published preparations and retained previous data are kept.
 After publication, retry that same restart rather than preparing a second restore.
 If activation cannot complete, stop every app process and preserve the complete
 directory. Inspect the marker and matching `new/`/`previous/` trees. Never combine
@@ -170,3 +185,17 @@ interruption, original data, received files, retained old state and explicit
 resumption. Local or isolated verification does not establish server acceptance.
 Physical disk exhaustion, abrupt machine power loss and device-specific acceptance
 must be recorded separately from deterministic I/O failures and process restarts.
+
+Local follow-up on 2026-10-22: all 65 Rust tests and seven Chromium scenarios passed.
+The dedicated browser trial submits confirmation on an isolated instance, checks the
+restart banner across reload, restarts the process, rejects the old session, signs in
+with the new password and explicitly resumes pending work. Repeated failed preparation
+after database opening releases staging; queued/running/waiting verification prevents
+deletion. CSV testing includes legitimate `+44` text and exact JSON preservation.
+
+The explicit release resource fixture (100,000 observations and 124,396,022 spool bytes)
+created and checked a backup in 17.961 seconds. The saved ZIP was 86,153,634 bytes;
+the sampled peak under `backups/` was 840,289,176 bytes (about 801 MiB), excluding
+the live archive/spool/WAL. This is a synthetic local result, not a maximum or a
+TrueNAS acceptance test. The owner retained mandatory restart and stopped further
+performance tuning after accepting the local results.

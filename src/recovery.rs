@@ -523,6 +523,9 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
     let manifest = if job.kind == "recovery_backup" {
         phase(store, &job.id, "creating_backup").await?;
         let manifest = create_backup(store, work, &output).await?;
+        // The package owns the frozen bytes now. Release this extra database before
+        // extracting a complete trial, so two expanded databases do not overlap.
+        std::fs::remove_file(work.join("archive.db"))?;
         phase(store, &job.id, "checking_backup").await?;
         let check = work.join("creation-check");
         std::fs::create_dir(&check)?;
@@ -601,6 +604,22 @@ pub async fn worker(store: Storage) {
     }
 }
 
+struct RestorePreparation {
+    path: PathBuf,
+    published: bool,
+}
+impl Drop for RestorePreparation {
+    fn drop(&mut self) {
+        if !self.published {
+            // Only the directory created for this attempt, never retained previous data.
+            if std::fs::remove_dir_all(&self.path).is_err() {
+                eprintln!(
+                    "Could not remove an unpublished restore preparation; check storage permissions before retrying."
+                );
+            }
+        }
+    }
+}
 /// Confirmation is authenticated by the destination owner. A fresh verifier is prepared
 /// before the journal is published, so recovery never opens unauthenticated setup.
 pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> anyhow::Result<()> {
@@ -621,6 +640,10 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     let stage_id = db::new_id();
     let stage = store.directory.join(format!("recovery-{stage_id}"));
     std::fs::create_dir(&stage)?;
+    let mut preparation = RestorePreparation {
+        path: stage.clone(),
+        published: false,
+    };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -628,8 +651,8 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     }
     let new = stage.join("new");
     std::fs::create_dir(&new)?;
-    // Failures leave the live databases untouched. The generated preparation remains available
-    // for diagnosis; it is never interpreted as an activation without recovery.pending.
+    // Until journal publication, failure or cancellation releases this attempt's staging.
+    // The live databases remain untouched.
     trial_restore(&asset_path(store, &asset)?, &new).await?;
     let mut conn = connect(&new.join("archive.db"), false).await?;
     sqlx::query("UPDATE archive_state SET maintenance=0,generation=?,retained_from=revision")
@@ -706,6 +729,8 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     file.sync_all()?;
     drop(file);
     std::fs::rename(&marker, store.directory.join("recovery.pending"))?;
+    // Once published, preserve the resources even if a later sync/barrier fails.
+    preparation.published = true;
     storage::sync_directory(&stage)?;
     storage::sync_directory(&store.directory)?;
     // From here startup can finish even if the process dies before the barrier commits.

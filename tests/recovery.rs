@@ -163,6 +163,10 @@ async fn exports_use_one_row_per_listen_preserve_unknown_time_and_share_assigned
     let store = storage::open(directory.path()).await.unwrap();
     seed(&store).await;
     // A second source for one event must enrich a JSON record rather than multiply CSV rows.
+    sqlx::query("UPDATE tracks SET title='+44' WHERE title='Repeated'")
+        .execute(&store.writer)
+        .await
+        .unwrap();
     sqlx::query("INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,raw_json) SELECT 'extra','listenbrainz','extra',id,played_at_ms,'{}' FROM listens ORDER BY played_at_ms LIMIT 1").execute(&store.writer).await.unwrap();
     sqlx::query("UPDATE listens SET listened_ms=NULL,duration_kind='unknown' WHERE played_at_ms=(SELECT MAX(played_at_ms) FROM listens)").execute(&store.writer).await.unwrap();
     let work = tempfile::tempdir().unwrap();
@@ -185,6 +189,7 @@ async fn exports_use_one_row_per_listen_preserve_unknown_time_and_share_assigned
         1
     );
     assert_eq!(data["listens"][2]["listened_ms"], Value::Null);
+    assert_eq!(data["listens"][1]["title"], "+44");
     assert_eq!(data["listens"][0]["calendar"]["timezone"], "Europe/Rome");
     let csv = work.path().join("all.csv");
     exports::write(&frozen, &csv, "csv", &ExportSelection::default())
@@ -193,6 +198,7 @@ async fn exports_use_one_row_per_listen_preserve_unknown_time_and_share_assigned
     let csv = std::fs::read_to_string(csv).unwrap();
     assert_eq!(csv.lines().count(), 4);
     assert!(csv.contains("\"'=short\""));
+    assert!(csv.contains("\"'+44\""));
     assert!(csv.contains(",,unknown,"));
     let filtered = ExportSelection {
         from: Some("2026-01-02".into()),
@@ -326,6 +332,69 @@ async fn damaged_or_incompatible_backup_never_replaces_the_destination() {
             .is_err()
     );
     assert!(!directory.path().join("recovery.pending").exists());
+    assert!(
+        std::fs::read_dir(directory.path()).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("recovery-")
+        }),
+        "failed preparation must release its staging space"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
+            .fetch_one(&store.readers)
+            .await
+            .unwrap(),
+        3
+    );
+    store.close().await;
+}
+
+#[tokio::test]
+async fn failed_restore_after_database_open_releases_staging_on_repeated_attempts() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = storage::open(directory.path()).await.unwrap();
+    seed(&store).await;
+    let (_work, package, mut manifest) = backup(&store).await;
+    *manifest.counts.get_mut("listens").unwrap() += 1;
+    let bad = tempfile::tempdir().unwrap();
+    let output = bad.path().join("bad-counts.zip");
+    let mut source = zip::ZipArchive::new(std::fs::File::open(package).unwrap()).unwrap();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&output).unwrap());
+    for i in 0..source.len() {
+        let mut member = source.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        zip.start_file(&name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        if name == "manifest.json" {
+            zip.write_all(&serde_json::to_vec(&manifest).unwrap())
+                .unwrap();
+        } else {
+            std::io::copy(&mut member, &mut zip).unwrap();
+        }
+    }
+    zip.finish().unwrap();
+    let id = register(&store, &output, &manifest).await;
+    for _ in 0..3 {
+        assert!(
+            recovery::prepare_restore(&store, &id, "a completely new password".into())
+                .await
+                .is_err()
+        );
+        assert!(!directory.path().join("recovery.pending").exists());
+        assert!(
+            std::fs::read_dir(directory.path()).unwrap().all(|entry| {
+                !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("recovery-")
+            }),
+            "failed preparation must not accumulate extracted databases"
+        );
+    }
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
             .fetch_one(&store.readers)
@@ -429,7 +498,7 @@ async fn failed_migration_keeps_a_complete_offline_recoverable_previous_copy() {
     let store = storage::open(directory.path()).await.unwrap();
     seed(&store).await;
     // A schema-4 installation with an object conflicting with the new table fails migration.
-    sqlx::query("DELETE FROM _sqlx_migrations WHERE version=5")
+    sqlx::query("DROP INDEX listens_overview; DELETE FROM _sqlx_migrations WHERE version>=5")
         .execute(&store.writer)
         .await
         .unwrap();
@@ -548,6 +617,44 @@ async fn recovery_http_requires_owner_csrf_and_explicit_confirmation() {
         .await
         .unwrap();
     let cookie = format!("scrobbl_session={token}");
+    let (_work, package, manifest) = backup(&store).await;
+    let asset_id = register(&store, &package, &manifest).await;
+    let verification = recovery::enqueue(&store, "recovery_verify", json!({"asset_id":asset_id}))
+        .await
+        .unwrap();
+    for job_state in ["queued", "running", "waiting", "completed"] {
+        sqlx::query("UPDATE jobs SET state=? WHERE id=?")
+            .bind(job_state)
+            .bind(&verification)
+            .execute(&store.writer)
+            .await
+            .unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/v1/recovery/{asset_id}"))
+                    .header("host", "127.0.0.1:3210")
+                    .header("origin", "http://127.0.0.1:3210")
+                    .header("cookie", &cookie)
+                    .header("x-csrf-token", "test-csrf")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({"action":"delete"}).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if job_state == "completed" {
+                StatusCode::OK
+            } else {
+                StatusCode::CONFLICT
+            },
+            "verification {job_state}"
+        );
+    }
     for (method, path, authenticated, csrf, body, expected) in [
         (
             "GET",

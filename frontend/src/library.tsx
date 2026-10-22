@@ -31,9 +31,13 @@ function useLoad<T>(
 ) {
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState("");
+  const dataKey = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    setData(null);
+    if (dataKey.current !== key) {
+      setData(null);
+      dataKey.current = key;
+    }
     setError("");
     let active = true,
       busy = false;

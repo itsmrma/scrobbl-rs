@@ -346,6 +346,10 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
             Collection and pending jobs stay paused until you review Settings
             and explicitly resume.
           </p>
+          <p>
+            After confirmation, preparation cannot be cancelled. The next
+            restart activates the replacement.
+          </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();

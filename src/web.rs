@@ -214,7 +214,7 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     );
     response
 }
-#[derive(Default, Deserialize, Clone)]
+#[derive(Default, Deserialize, serde::Serialize, Clone)]
 pub struct Filters {
     pub period: Option<String>,
     pub from: Option<String>,
@@ -299,9 +299,22 @@ pub(crate) async fn selection(
     conn: &mut sqlx::SqliteConnection,
     filters: &Filters,
 ) -> Result<QueryBuilder<Sqlite>> {
-    let mut b = QueryBuilder::new(
-        "WITH selected AS (SELECT l.*, t.title, t.album_id, t.spotify_url, a.name AS album, a.cover_url FROM listens l JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id WHERE l.trashed_at_ms IS NULL",
-    );
+    selection_projection(conn, filters, true).await
+}
+async fn selection_projection(
+    conn: &mut sqlx::SqliteConnection,
+    filters: &Filters,
+    metadata: bool,
+) -> Result<QueryBuilder<Sqlite>> {
+    let mut b = QueryBuilder::new("WITH selected AS (SELECT l.*");
+    if metadata {
+        b.push(", t.title, t.album_id, t.spotify_url, a.name AS album, a.cover_url");
+    }
+    b.push(" FROM listens l");
+    if metadata || filters.q.as_deref().is_some_and(|q| !q.trim().is_empty()) {
+        b.push(" JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id");
+    }
+    b.push(" WHERE l.trashed_at_ms IS NULL");
     let parse = |s: &Option<String>| -> Result<Option<NaiveDate>> {
         s.as_deref()
             .filter(|s| !s.is_empty())
@@ -409,36 +422,35 @@ pub async fn dashboard(
     Query(filters): Query<Filters>,
 ) -> Result<Json<crate::dto::Dashboard>> {
     auth::session(&state, &headers).await?;
+    let mut cache = state.dashboard_cache.lock().await;
     let mut view = state.storage.read_view().await?;
-    let mut query = selection(&mut view.transaction, &filters).await?;
-    query.push("SELECT COUNT(*) AS records, COALESCE(SUM(counted),0) AS listens, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms ELSE 0 END),0) AS actual_ms, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms ELSE 0 END),0) AS estimated_ms, COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='unknown' THEN 1 ELSE 0 END),0) AS unknown_durations, COUNT(DISTINCT CASE WHEN counted=1 THEN track_id END) AS tracks FROM selected");
-    let r = query.build().fetch_one(&mut *view.transaction).await?;
-    let totals = json!({"records":r.get::<i64,_>("records"),"listens":r.get::<i64,_>("listens"),"tracks":r.get::<i64,_>("tracks"),"actual_ms":r.get::<i64,_>("actual_ms"),"estimated_ms":r.get::<i64,_>("estimated_ms"),"unknown_durations":r.get::<i64,_>("unknown_durations")});
+    let preferences = crate::preferences::read(&mut view.transaction).await?;
+    // Absolute selections remain valid until archive identity/revision or preferences
+    // change. Relative periods depend on the clock and are always recalculated.
+    let cacheable = matches!(filters.period.as_deref().unwrap_or("all"), "all" | "custom")
+        || filters.from.as_deref().is_some_and(|s| !s.is_empty())
+        || filters.to.as_deref().is_some_and(|s| !s.is_empty());
+    let key = serde_json::to_string(&(&view.identity, &preferences, &filters))
+        .map_err(|_| AppError::Internal)?;
+    if cacheable && let Some((_, value)) = cache.iter().find(|(stored, _)| stored == &key) {
+        return Ok(Json(
+            serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?,
+        ));
+    }
     let order = match filters.sort.as_deref().unwrap_or("plays") {
         "plays" => "plays DESC, name COLLATE NOCASE",
         "time" => "listened_ms DESC, name COLLATE NOCASE",
         _ => return Err(AppError::BadRequest("Unknown ranking order.".into())),
     };
-    let mut rankings = serde_json::Map::new();
-    for (kind, sql) in [
-        (
-            "artists",
-            "SELECT ar.id AS entity_id, ar.name AS name, NULL AS subtitle, NULL AS cover_url, COUNT(*) AS plays, COALESCE(SUM(s.listened_ms),0) AS listened_ms FROM selected s JOIN track_artists ta ON ta.track_id=s.track_id JOIN artists ar ON ar.id=ta.artist_id WHERE s.counted=1 GROUP BY ar.id",
-        ),
-        (
-            "albums",
-            "SELECT s.album_id AS entity_id, s.album AS name, NULL AS subtitle, MAX(s.cover_url) AS cover_url, COUNT(*) AS plays, COALESCE(SUM(s.listened_ms),0) AS listened_ms FROM selected s WHERE s.counted=1 AND s.album_id IS NOT NULL GROUP BY s.album_id",
-        ),
-        (
-            "tracks",
-            "SELECT s.track_id AS entity_id, s.title AS name, s.album AS subtitle, MAX(s.cover_url) AS cover_url, COUNT(*) AS plays, COALESCE(SUM(s.listened_ms),0) AS listened_ms FROM selected s WHERE s.counted=1 GROUP BY s.track_id",
-        ),
-    ] {
-        let mut q = selection(&mut view.transaction, &filters).await?;
-        q.push(sql).push(" ORDER BY ").push(order).push(" LIMIT 5");
-        let items:Vec<_> = q.build().fetch_all(&mut *view.transaction).await?.into_iter().map(|r|json!({"id":r.get::<String,_>("entity_id"),"name":r.get::<String,_>("name"),"subtitle":r.get::<Option<String>,_>("subtitle"),"cover_url":r.get::<Option<String>,_>("cover_url"),"plays":r.get::<i64,_>("plays"),"listened_ms":r.get::<i64,_>("listened_ms")})).collect();
-        rankings.insert(kind.into(), json!(items));
-    }
+    let mut query = selection_projection(&mut view.transaction, &filters, false).await?;
+    query.push(include_str!("dashboard.sql").replace("/*ORDER*/", order));
+    let aggregates: String = query
+        .build_query_scalar()
+        .fetch_one(&mut *view.transaction)
+        .await?;
+    let aggregates: Value = serde_json::from_str(&aggregates).map_err(|_| AppError::Internal)?;
+    let totals = &aggregates["totals"];
+    let rankings = &aggregates["rankings"];
     let mut recent = selection(&mut view.transaction, &filters).await?;
     recent
         .push(LISTEN_COLUMNS)
@@ -450,7 +462,14 @@ pub async fn dashboard(
         .into_iter()
         .map(listen_json)
         .collect();
-    Ok(Json(
-        serde_json::from_value(json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":crate::preferences::read(&mut view.transaction).await?.timezone})).map_err(|_| AppError::Internal)?,
-    ))
+    let value = json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":preferences.timezone});
+    let response = serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?;
+    if cacheable {
+        // At most sixteen small response projections; no originals or complete history.
+        if cache.len() == 16 {
+            cache.pop_front();
+        }
+        cache.push_back((key, value));
+    }
+    Ok(Json(response))
 }

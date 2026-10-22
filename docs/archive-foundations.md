@@ -8,7 +8,11 @@ Product decisions remain in the issue's linked contracts; this document describe
 `storage::open` owns the OS file lock for a data directory. Keep the returned `Storage` alive;
 drain requests and workers before `Storage::close`. A second process is rejected, including after
 resolving a directory alias. SQLite uses a single writer, four read-only connections, foreign keys,
-WAL, FULL synchronous durability and an 8 MiB page cache per connection. The private database has
+WAL and FULL synchronous durability. The writer page cache is capped at 128 MiB;
+readers and private storage use 8 MiB per connection. The archive writer requests a
+checkpoint after about 64 MiB of WAL (16,384 pages at the usual 4 KiB page size).
+This threshold is not a hard WAL disk limit; active readers can postpone checkpointing.
+The private database has
 its own single connection. The pool sizes are ceilings, not eagerly opened connections.
 
 Use local storage on the machine running the process. SMB/NFS storage is unsupported for the
@@ -81,6 +85,19 @@ with independent member row numbers for ZIP members. Batches are capped at 1,000
 network operations happen outside the writer transaction. Refresh the job after every successful
 batch: checkpoint and attempt fence stale writes. `record_member` persists inventory, including
 unreadable/excluded members and unknown row counts.
+
+`ingest` executes each bounded batch through rusqlite while holding SQLx's exclusive
+SQLite handle lock, inside the existing caller-owned transaction. It never opens a
+second writer or commits independently. This removes a thread/channel crossing per
+small statement. The borrowed connection and its bounded statement cache are dropped
+before releasing the handle. Both wrappers share `libsqlite3-sys` 0.37; keep those
+versions compatible. Tokio can service other tasks while the synchronous batch runs.
+
+New archive entity/listen/observation/variant IDs retain their opaque 64-hex shape
+and do not encode source metadata or listen time. A random process prefix and counter
+give adjacent inserts locality in B-trees; a 128-bit random suffix preserves uniqueness
+and unpredictability. Existing IDs remain valid and are never rewritten. Authentication
+secrets still use independent 256-bit OS randomness.
 
 Music, original/variant/known-row counters, provenance and checkpoints commit atomically. Exceptions
 roll back the whole batch. Cancellation preserves confirmed work and prevents automatic restart;

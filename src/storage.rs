@@ -78,7 +78,16 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         "Incomplete data directory: recover the missing archive/private database before starting"
     );
     let options = options(&archive_path);
-    let writer = pool(options.clone(), 1).await?;
+    // A bounded import batch touches several indexes. Keep its working pages in
+    // one modest writer cache and checkpoint less often; FULL durability stays on.
+    let writer = pool(
+        options
+            .clone()
+            .pragma("cache_size", "-131072")
+            .pragma("wal_autocheckpoint", "16384"),
+        1,
+    )
+    .await?;
     let private = match pool(options_for_private(&private_path), 1).await {
         Ok(pool) => pool,
         Err(error) => {

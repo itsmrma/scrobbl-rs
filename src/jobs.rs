@@ -203,8 +203,6 @@ impl Storage {
                 _ => None,
             })
             .collect();
-        let mut report = db::ingest(tx, &events).await?;
-        db::review_spotify_imports(tx, &events).await?;
         let below_threshold = events.iter().filter(|e| !e.counted).count() as i64;
         let file_id: Option<String> =
             sqlx::query_scalar("SELECT file_id FROM job_members WHERE job_id=? AND member=?")
@@ -213,25 +211,18 @@ impl Storage {
                 .fetch_one(&mut **tx)
                 .await?;
         let file_id = file_id.or_else(|| lease.file_id.clone());
-        for (index, row) in rows.iter().enumerate() {
-            let (raw, variant, outcome, reason) = match row {
-                SourceRow::Event(event) => {
-                    let variant:String=sqlx::query_scalar("SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?")
-                        .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut **tx).await?;
-                    (event.raw.clone(), Some(variant), "accepted", None)
-                }
-                SourceRow::Invalid { raw, reason } => {
-                    report.invalid += 1;
-                    (raw.clone(), None, "invalid", Some(reason.as_str()))
-                }
-                SourceRow::Skipped { raw, reason } => {
-                    report.skipped += 1;
-                    (raw.clone(), None, "skipped", Some(reason.as_str()))
-                }
-            };
-            sqlx::query("INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,raw_json,outcome,reason) VALUES(?,?,?,?,?,?,?,?)")
-                .bind(&lease.id).bind(&file_id).bind(member).bind(first_row+index as i64).bind(variant).bind(raw.to_string()).bind(outcome).bind(reason).execute(&mut **tx).await?;
-        }
+        let report = crate::ingest::with_connection(tx, |conn| {
+            crate::ingest::import_rows(
+                conn,
+                &events,
+                &lease.id,
+                file_id.as_deref(),
+                member,
+                first_row,
+                rows,
+            )
+        })
+        .await?;
         sqlx::query("UPDATE job_members SET processed=processed+? WHERE job_id=? AND member=?")
             .bind(rows.len() as i64)
             .bind(&lease.id)

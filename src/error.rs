@@ -21,6 +21,8 @@ pub enum AppError {
     Spotify(String),
     #[error("The local database operation failed.")]
     Database(#[from] sqlx::Error),
+    #[error("The local database operation failed.")]
+    BatchDatabase(#[from] rusqlite::Error),
     #[error("An internal operation failed.")]
     Internal,
 }
@@ -34,7 +36,9 @@ impl IntoResponse for AppError {
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             Self::Spotify(_) => StatusCode::BAD_GATEWAY,
-            Self::Database(_) | Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Database(_) | Self::BatchDatabase(_) | Self::Internal => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             eprintln!("A local operation failed ({}).", status.as_u16());

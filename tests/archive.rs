@@ -463,6 +463,41 @@ async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
         "2025-06-01T12:03:00Z"
     );
 }
+
+#[tokio::test]
+async fn overview_cache_tracks_revisions_selections_and_assigned_calendar_preferences() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, _csrf) = sign_in(&app).await;
+    let first = recent(1748865600000);
+    save(&state, std::slice::from_ref(&first)).await;
+    let path = "/api/dashboard?period=all";
+    let (_, initial, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    let (_, cached, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(initial, cached);
+    assert_eq!(cached["totals"]["records"], 1);
+    save(&state, &[recent(first.played_at_ms + 180000)]).await;
+    let (_, updated, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(updated["totals"]["records"], 2);
+    state
+        .storage
+        .change_calendar("Asia/Tokyo", 6, false)
+        .await
+        .unwrap();
+    let (_, preferences, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(preferences["timezone"], "Asia/Tokyo");
+    let (_, empty, _) = request(
+        &app,
+        "GET",
+        "/api/dashboard?from=2020-01-01&to=2020-01-01",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(empty["totals"]["records"], 0);
+    state.storage.close().await;
+}
 #[tokio::test]
 async fn actual_duration_wins_in_both_orders_and_repeats_remain_separate() {
     for api_first in [true, false] {
