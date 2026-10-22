@@ -200,7 +200,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(page.locator("#history-total")).toHaveText("2 records");
     await page.getByLabel("Find album").fill("Consultation album 010");
     await page
-      .getByRole("button", { name: "Consultation album 010", exact: true })
+      .getByRole("button", {
+        name: "Consultation album 010 · Consultation track 010",
+        exact: true,
+      })
       .click();
     await expect(page.locator("#history-total")).toHaveText("2 records");
     await page.locator("#history-list .listen-album a").first().click();

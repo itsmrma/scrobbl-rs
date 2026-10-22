@@ -39,6 +39,46 @@ fn kind_table(kind: &str) -> Result<&'static str> {
         )),
     }
 }
+/// History choices include identities with only below-threshold listens.
+/// A typeahead is bounded independently of the paginated result lists.
+pub async fn choices(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(kind): Path<String>,
+    Query(filters): Query<Filters>,
+) -> Result<Json<Vec<EntityChoice>>> {
+    auth::session(&state, &headers).await?;
+    let q = filters.q.as_deref().unwrap_or("").trim();
+    if q.len() > 500 {
+        return Err(AppError::BadRequest(
+            "Search is limited to 500 bytes.".into(),
+        ));
+    }
+    let pattern = format!(
+        "%{}%",
+        q.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    let join = match kind.as_str() {
+        "artists" => {
+            "artists e JOIN track_artists ta ON ta.artist_id=e.id JOIN tracks t ON t.id=ta.track_id"
+        }
+        "albums" => "albums e JOIN tracks t ON t.album_id=e.id",
+        _ => return Err(AppError::BadRequest("Choose artists or albums.".into())),
+    };
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT e.id,e.name,CASE WHEN COUNT(DISTINCT t.id)=1 THEN MIN(t.title) ELSE CAST(COUNT(DISTINCT t.id) AS TEXT)||' tracks' END AS subtitle FROM ",
+    );
+    query.push(join).push(" WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND (e.name LIKE ").push_bind(pattern.clone()).push(" ESCAPE '\\' OR t.title LIKE ").push_bind(pattern).push(" ESCAPE '\\') GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 50");
+    let mut view = state.storage.read_view().await?;
+    Ok(Json(
+        query
+            .build_query_as()
+            .fetch_all(&mut *view.transaction)
+            .await?,
+    ))
+}
 pub async fn rankings(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -364,8 +364,17 @@ function RankingsPanel({
     `${query}:${kind}:${version}`,
     visible,
   );
-  const update = (patch: Record<string, string>) => {
+  const update = (patch: Record<string, string>, resetPages = true) => {
     const next = new URLSearchParams(location.search);
+    if (resetPages)
+      for (const key of [
+        "page",
+        "history_page",
+        "artists_page",
+        "albums_page",
+        "tracks_page",
+      ])
+        next.set(key, "1");
     for (const [key, value] of Object.entries(patch)) {
       if (value) next.set(key, value);
       else next.delete(key);
@@ -439,7 +448,7 @@ function RankingsPanel({
             total={result.data.total}
             page={result.data.page}
             pageSize={result.data.page_size}
-            change={(n) => update({ [pageKey]: String(n) })}
+            change={(n) => update({ [pageKey]: String(n) }, false)}
           />
         </>
       ) : (
@@ -705,8 +714,7 @@ function EntityFilter({
 }) {
   const [search, setSearch] = useState("");
   const options = useLoad(
-    () =>
-      api.rankings(kind, new URLSearchParams({ q: search, page_size: "10" })),
+    () => api.choices(kind, search),
     `${kind}:${search}`,
     !!search && !id,
   );
@@ -749,7 +757,7 @@ function EntityFilter({
       <ErrorText>{options.error || chosen.error}</ErrorText>
       {!id && search && options.data && (
         <ul className="entity-options" aria-label={`${kind} matches`}>
-          {options.data.items.map((item) => (
+          {options.data.map((item) => (
             <li key={item.id}>
               <button
                 type="button"
@@ -764,7 +772,12 @@ function EntityFilter({
               </button>
             </li>
           ))}
-          {!options.data.items.length && <li>No matches</li>}
+          {!options.data.length && <li>No matches</li>}
+          {options.data.length === 50 && (
+            <li>
+              Showing 50 matches. Refine your search to narrow the choices.
+            </li>
+          )}
         </ul>
       )}
     </div>

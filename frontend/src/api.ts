@@ -3,6 +3,7 @@ import type {
   ActivityDetail,
   Dashboard,
   RankingPage,
+  EntityChoice,
   MusicPage,
   ActivityChart,
   History,
@@ -73,6 +74,10 @@ export const api = {
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>
     request<History>(`/api/history?${params}`),
+  choices: (kind: string, q: string) =>
+    request<EntityChoice[]>(
+      `/api/v1/consultation/choices/${kind}?${new URLSearchParams({ q })}`,
+    ),
   rankings: (kind: string, params: URLSearchParams) =>
     request<RankingPage>(`/api/v1/consultation/rankings/${kind}?${params}`),
   music: (kind: string, id: string, params: URLSearchParams) =>

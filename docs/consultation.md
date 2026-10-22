@@ -40,7 +40,9 @@ segments can overlap in calendar dates; each listen still appears in exactly one
 ## History and listening time
 
 History combines metadata search, period, artist, album and source filters. Search
-for an artist or album, then select a matching identity. History initially hides
+for an artist or album, then select a matching identity, including identities with
+only below-threshold listens. The typeahead shows up to 50 matches; narrow the search
+when more match. History initially hides
 actual playback below 30 seconds. **Show listens below threshold too** exposes those
 archived rows without making them count in statistics. Estimated or unknown duration
 alone does not prove a below-threshold play. Further selections expose actual,
@@ -72,7 +74,8 @@ most 12,000 segments; larger requests ask for a coarser grouping or shorter inte
 The owner-only projections use `/api/v1/consultation/rankings/{kind}`,
 `/api/v1/consultation/music/{kind}/{id}` and `/api/v1/consultation/activity`, alongside
 the existing dashboard/history endpoints. Kinds are artists, albums and tracks.
-They require the owner session. Source originals and private configuration are not
+The history typeahead uses `/api/v1/consultation/choices/{kind}` for artists/albums.
+All these routes require the owner session. Source originals and private configuration are not
 returned. This is not the external read API/key contract tracked in the separate
 integration work. The canonical predicates in `src/consultation/selection.rs` are
 also used by frozen exports; the history default does not change export's default

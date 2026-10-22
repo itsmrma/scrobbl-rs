@@ -91,6 +91,12 @@ pub struct Dashboard {
     pub recent: Vec<Listen>,
     pub timezone: String,
 }
+#[derive(Serialize, Deserialize, sqlx::FromRow, TS)]
+pub struct EntityChoice {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+}
 #[derive(Serialize, Deserialize, TS)]
 pub struct RankingPage {
     pub items: Vec<Ranking>,
@@ -260,6 +266,7 @@ mod tests {
             Ranking::decl(&config),
             Rankings::decl(&config),
             Dashboard::decl(&config),
+            EntityChoice::decl(&config),
             RankingPage::decl(&config),
             MusicPage::decl(&config),
             ActivityBucket::decl(&config),

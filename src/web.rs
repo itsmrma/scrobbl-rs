@@ -34,6 +34,10 @@ pub fn router(state: AppState) -> Router {
         .route("/dashboard", get(index))
         .route("/history", get(index))
         .route("/rankings/{kind}", get(index))
+        .route(
+            "/api/v1/consultation/choices/{kind}",
+            get(crate::browse::choices),
+        )
         .route("/music/{kind}/{id}", get(index))
         .route(
             "/api/v1/consultation/rankings/{kind}",

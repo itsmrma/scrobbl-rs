@@ -12,6 +12,7 @@ export type Totals = { records: number, listens: number, tracks: number, actual_
 export type Ranking = { id: string, name: string, subtitle: string | null, cover_url: string | null, plays: number, listened_ms: number, position: number, actual_ms: number, estimated_ms: number, unknown_durations: number, };
 export type Rankings = { artists: Array<Ranking>, albums: Array<Ranking>, tracks: Array<Ranking>, };
 export type Dashboard = { totals: Totals, rankings: Rankings, recent: Array<Listen>, timezone: string, };
+export type EntityChoice = { id: string, name: string, subtitle: string, };
 export type RankingPage = { items: Array<Ranking>, total: number, page: number, page_size: number, };
 export type MusicPage = { id: string, name: string, kind: string, cover_url: string | null, album_id: string | null, album: string | null, artists: Array<Artist>, totals: Totals, };
 export type ActivityBucket = { start: string, through: string, listens: number, actual_ms: number, estimated_ms: number, unknown_durations: number, partial: boolean, };

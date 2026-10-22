@@ -554,3 +554,77 @@ async fn competition_positions_use_only_the_primary_measure_and_names_break_comp
     assert_eq!(time["items"][3]["name"], "Last");
     state.storage.close().await;
 }
+
+#[tokio::test]
+async fn history_typeahead_can_select_identities_with_only_short_listens_and_excludes_trash() {
+    let (_dir, state, token) = setup().await;
+    let row = event(
+        1,
+        at("2025-01-01T12:00:00Z"),
+        Some(29000),
+        DurationKind::Actual,
+        &[("short", "Only short % artist")],
+    );
+    save(&state.storage, &[row]).await;
+    assert_eq!(
+        json_get(&state, &token, "/api/v1/consultation/rankings/artists").await["total"],
+        0
+    );
+    let choices = json_get(&state, &token, "/api/v1/consultation/choices/artists?q=%25").await;
+    assert_eq!(choices.as_array().unwrap().len(), 1);
+    let artist = choices[0]["id"].as_str().unwrap();
+    assert_eq!(
+        json_get(&state, &token, &format!("/api/history?artist={artist}")).await["total"],
+        0
+    );
+    assert_eq!(
+        json_get(
+            &state,
+            &token,
+            &format!("/api/history?artist={artist}&status=all")
+        )
+        .await["total"],
+        1
+    );
+    let album = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/choices/albums?q=Album%20001",
+    )
+    .await;
+    assert_eq!(album.as_array().unwrap().len(), 1);
+    assert_eq!(
+        get(
+            &state,
+            "missing",
+            "/api/v1/consultation/choices/artists?q=a"
+        )
+        .await
+        .0,
+        401
+    );
+    assert_eq!(
+        get(&state, &token, "/api/v1/consultation/choices/tracks?q=a")
+            .await
+            .0,
+        400
+    );
+    let id: String = sqlx::query_scalar("SELECT id FROM listens")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    db::set_trashed(&mut tx, &[id], Some(auth::now_ms()))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        json_get(&state, &token, "/api/v1/consultation/choices/artists?q=%25")
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    state.storage.close().await;
+}
