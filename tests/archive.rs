@@ -215,7 +215,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
         2
     );
     let originals: Vec<String> =
-        sqlx::query_scalar("SELECT raw_json FROM observation_variants ORDER BY id")
+        sqlx::query_scalar("SELECT p.raw_json FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&state.read_db)
             .await
             .unwrap();
@@ -284,7 +284,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
     );
     assert_eq!(
         originals,
-        sqlx::query_scalar::<_, String>("SELECT raw_json FROM observation_variants ORDER BY id")
+        sqlx::query_scalar::<_, String>("SELECT p.raw_json FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&resumed.read_db)
             .await
             .unwrap()
@@ -454,7 +454,7 @@ async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
             .await
             .unwrap();
     assert_eq!((total, counted, actual), (2, 1, 190000));
-    let raw: String = sqlx::query_scalar("SELECT raw_json FROM observations LIMIT 1")
+    let raw: String = sqlx::query_scalar("SELECT p.raw_json FROM observations o JOIN original_payloads p ON p.id=o.payload_id LIMIT 1")
         .fetch_one(&state.db)
         .await
         .unwrap();

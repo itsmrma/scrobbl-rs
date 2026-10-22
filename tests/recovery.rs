@@ -96,6 +96,17 @@ async fn portable_backup_restores_originals_pending_jobs_and_files_without_any_a
     let (_work, package, manifest) = backup(&store).await;
     assert_eq!(manifest.counts["listens"], 3);
     assert_eq!(manifest.files.len(), 2);
+    let check = tempfile::tempdir().unwrap();
+    recovery::check_backup(&package, check.path())
+        .await
+        .unwrap();
+    assert!(check.path().join("archive.db").is_file());
+    assert_eq!(
+        std::fs::read_dir(check.path().join("spool"))
+            .unwrap()
+            .count(),
+        0
+    );
     let trial = tempfile::tempdir().unwrap();
     recovery::trial_restore(&package, trial.path())
         .await
@@ -167,7 +178,7 @@ async fn exports_use_one_row_per_listen_preserve_unknown_time_and_share_assigned
         .execute(&store.writer)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,raw_json) SELECT 'extra','listenbrainz','extra',id,played_at_ms,'{}' FROM listens ORDER BY played_at_ms LIMIT 1").execute(&store.writer).await.unwrap();
+    sqlx::query("INSERT INTO original_payloads(id,raw_json) VALUES(-1,'{}'); INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,payload_id) SELECT 'extra','listenbrainz','extra',id,played_at_ms,-1 FROM listens ORDER BY played_at_ms LIMIT 1").execute(&store.writer).await.unwrap();
     sqlx::query("UPDATE listens SET listened_ms=NULL,duration_kind='unknown' WHERE played_at_ms=(SELECT MAX(played_at_ms) FROM listens)").execute(&store.writer).await.unwrap();
     let work = tempfile::tempdir().unwrap();
     let frozen = work.path().join("frozen.db");
@@ -292,6 +303,44 @@ async fn replacement_requires_new_access_rotates_generation_and_pauses_jobs_unti
     let again = storage::open(directory.path()).await.unwrap();
     assert!(recovery::paused(&again).await);
     again.close().await;
+}
+
+#[tokio::test]
+async fn creation_check_rejects_damaged_spool_without_extracting_it() {
+    use std::io::Read;
+    let directory = tempfile::tempdir().unwrap();
+    let store = storage::open(directory.path()).await.unwrap();
+    seed(&store).await;
+    let (_work, package, _) = backup(&store).await;
+    let bad = tempfile::tempdir().unwrap();
+    let output = bad.path().join("damaged-spool.zip");
+    let mut source = zip::ZipArchive::new(std::fs::File::open(package).unwrap()).unwrap();
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&output).unwrap());
+    for i in 0..source.len() {
+        let mut member = source.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        zip.start_file(&name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        if name.starts_with("spool/") {
+            bytes[0] ^= 1;
+        }
+        zip.write_all(&bytes).unwrap();
+    }
+    zip.finish().unwrap();
+    let check = tempfile::tempdir().unwrap();
+    let error = recovery::check_backup(&output, check.path())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("checksum mismatch"), "{error:#}");
+    assert_eq!(
+        std::fs::read_dir(check.path().join("spool"))
+            .unwrap()
+            .count(),
+        0
+    );
+    store.close().await;
 }
 
 #[tokio::test]

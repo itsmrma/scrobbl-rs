@@ -84,6 +84,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         options
             .clone()
             .pragma("cache_size", "-131072")
+            .pragma("journal_size_limit", "8388608")
             .pragma("wal_autocheckpoint", "16384"),
         1,
     )
@@ -110,6 +111,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
             pre_upgrade_copy(&directory, &writer, &private).await?;
         }
         ARCHIVE_MIGRATOR.run(&writer).await?;
+        compact_original_payloads(&mut *writer.acquire().await?).await?;
         PRIVATE_MIGRATOR.run(&private).await?;
         sqlx::query("INSERT INTO settings(key,value) VALUES('app_build',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development")}).to_string()).execute(&writer).await?;
         recover_access(&writer, &private).await?;
@@ -156,6 +158,28 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         requests: Default::default(),
         recovery_operations: Default::default(),
     })
+}
+
+/// Release the old wide rows' free pages once, before starting any readers/workers.
+/// Keep the marker until VACUUM succeeds so an interrupted upgrade retries it.
+pub(crate) async fn compact_original_payloads(
+    conn: &mut sqlx::SqliteConnection,
+) -> anyhow::Result<()> {
+    let pending: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key='original_payload_compaction_pending')",
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if pending {
+        sqlx::query("VACUUM").execute(&mut *conn).await?;
+        sqlx::query("DELETE FROM settings WHERE key='original_payload_compaction_pending'")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut *conn)
+            .await?;
+    }
+    Ok(())
 }
 
 fn options(path: &Path) -> SqliteConnectOptions {

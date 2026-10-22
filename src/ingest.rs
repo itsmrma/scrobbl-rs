@@ -347,6 +347,7 @@ pub(crate) fn ingest(
                 "Duration category and value disagree.".into(),
             ));
         }
+        let payload_id = payload(conn, &event.raw)?;
         let mut new_listen = false;
         let (observation_id, listen_id) = if let Some((observation, listen, _)) = existing {
             report.variants += 1;
@@ -454,26 +455,26 @@ pub(crate) fn ingest(
             let observation = archive_id();
             execute(
                 conn,
-                "INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,raw_json) VALUES(?,?,?,?,?,?)",
+                "INSERT INTO observations(id,source,source_key,listen_id,source_timestamp_ms,payload_id) VALUES(?,?,?,?,?,?)",
                 params![
                     observation,
                     event.source,
                     event.source_key,
                     listen_id,
                     event.source_timestamp_ms,
-                    event.raw.to_string()
+                    payload_id
                 ],
             )?;
             (observation, listen_id)
         };
         execute(
             conn,
-            "INSERT INTO observation_variants(id,observation_id,fingerprint,raw_json,played_at_ms,listened_ms,duration_kind,counted,policy_version) VALUES(?,?,?,?,?,?,?,?,1)",
+            "INSERT INTO observation_variants(id,observation_id,fingerprint,payload_id,played_at_ms,listened_ms,duration_kind,counted,policy_version) VALUES(?,?,?,?,?,?,?,?,1)",
             params![
                 archive_id(),
                 observation_id,
                 fingerprint,
-                event.raw.to_string(),
+                payload_id,
                 event.played_at_ms,
                 event.listened_ms,
                 kind,
@@ -543,42 +544,48 @@ pub(crate) fn import_rows(
     let mut report = ingest(conn, events, crate::auth::now_ms())?;
     review_spotify_imports(conn, events)?;
     for (index, row) in source_rows.iter().enumerate() {
-        let (raw, variant, outcome, reason) = match row {
+        let (payload_id, variant, outcome, reason) = match row {
             SourceRow::Event(event) => {
-                let variant: String = one(
-                    conn,
-                    "SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?",
-                    params![
+                let (variant, payload_id): (String, i64) = conn.prepare_cached(
+                    "SELECT v.id,v.payload_id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?",
+                )?.query_row(params![
                         event.source,
                         event.source_key,
                         db::payload_fingerprint(&event.raw)
-                    ],
-                )?;
-                (&event.raw, Some(variant), "accepted", None)
+                    ], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                (payload_id, Some(variant), "accepted", None)
             }
             SourceRow::Invalid { raw, reason } => {
                 report.invalid += 1;
-                (raw, None, "invalid", Some(reason.as_str()))
+                (payload(conn, raw)?, None, "invalid", Some(reason.as_str()))
             }
             SourceRow::Skipped { raw, reason } => {
                 report.skipped += 1;
-                (raw, None, "skipped", Some(reason.as_str()))
+                (payload(conn, raw)?, None, "skipped", Some(reason.as_str()))
             }
         };
         execute(
             conn,
-            "INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,raw_json,outcome,reason) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,payload_id,outcome,reason) VALUES(?,?,?,?,?,?,?,?)",
             params![
                 job_id,
                 file_id,
                 member,
                 first_row + index as i64,
                 variant,
-                raw.to_string(),
+                payload_id,
                 outcome,
                 reason
             ],
         )?;
     }
     Ok(report)
+}
+
+fn payload(conn: &Connection, raw: &serde_json::Value) -> Result<i64> {
+    one(
+        conn,
+        "INSERT INTO original_payloads(raw_json) VALUES(?) RETURNING id",
+        [raw.to_string()],
+    )
 }

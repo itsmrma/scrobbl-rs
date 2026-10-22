@@ -181,6 +181,9 @@ The final process sample recorded 40 CPU seconds, a 232,017,920-byte peak workin
 1.99 GiB, including SQLite WAL; executable excluded). The WAL checkpoint threshold
 is not a hard file-size bound. The harness kills its isolated process, so these files
 can retain uncheckpointed WAL; keep database and sidecars together.
+These measurements precede the [disk-use follow-up](recovery.md#disk-use-follow-up-2026-10-22),
+which shares original payloads and reduces reusable WAL allocation. That follow-up
+uses synthetic fixtures and does not replace the personal-ZIP timing evidence above.
 
 A separate final run killed the process after 2,000 confirmed rows. It completed on
 attempt 2 in 28.384 seconds. Reimport completed in 16.588 seconds, added no musical

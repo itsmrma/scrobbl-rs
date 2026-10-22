@@ -69,7 +69,9 @@ verification result, with **Download** and **Delete saved file** actions. Techni
 upgrade copies described below are deliberately absent from downloadable copies.
 
 Creation checks integrity, relationships, inventory and checksums before marking
-a package ready. Incomplete/failed output is not downloadable as complete.
+a package ready. It extracts the frozen database for SQLite checks and streams
+every received file through SHA-256/ZIP checks without writing another spool copy.
+Incomplete/failed output is not downloadable as complete.
 Interrupted production runs again from the beginning after restart; previously
 completed copies remain intact. After a reported failure, start a new operation.
 Progress, phase and outcome remain in Activities.
@@ -87,8 +89,10 @@ Unexpected/duplicate entries, traversal paths, symlinks, incompatible versions,
 checksum mismatches, broken relationships and migration failures are refused.
 Allow space for the archive, output, temporary copies and retained old data.
 Creation removes its frozen database after compression, before extracting the
-creation-check trial. Extra file space is approximately the greater of
-`snapshot database + ZIP` and `expanded package + ZIP`, rather than their sum.
+database for the creation check. Extra package file space is approximately
+`snapshot database + ZIP`; source files are read from the live immutable spool
+and then checked from the ZIP without another extracted copy. Explicit verification
+and restore preparation still need `expanded package + ZIP` for complete extraction.
 At the accepted 2 GiB/8 GiB limits, those package files can approach 10 GiB;
 leave additional headroom for SQLite journals/migrations, the live archive/WAL,
 retained previous states, existing copies and other operations. The format limits
@@ -193,9 +197,54 @@ with the new password and explicitly resumes pending work. Repeated failed prepa
 after database opening releases staging; queued/running/waiting verification prevents
 deletion. CSV testing includes legitimate `+44` text and exact JSON preservation.
 
-The explicit release resource fixture (100,000 observations and 124,396,022 spool bytes)
-created and checked a backup in 17.961 seconds. The saved ZIP was 86,153,634 bytes;
-the sampled peak under `backups/` was 840,289,176 bytes (about 801 MiB), excluding
-the live archive/spool/WAL. This is a synthetic local result, not a maximum or a
-TrueNAS acceptance test. The owner retained mandatory restart and stopped further
-performance tuning after accepting the local results.
+The owner retained mandatory restart and accepted the loading/import timings;
+the subsequent work below specifically addresses disk use.
+
+## Disk use follow-up, 2026-10-22
+
+Schema 0007 stores each variant's original JSON once in `original_payloads`.
+Observations and accepted source occurrences reference those same bytes. Reimport
+still adds a separate occurrence/report, but does not repeat that payload. Changed
+variants, the first observation's original, invalid/skipped input and legacy rows
+whose payload differs from their linked variant are preserved exactly. JSON export
+keeps the same external structure; original received files remain immutable.
+
+Existing release archives receive the verified pre-upgrade copy first. The migration
+rebuilds provenance tables in a transaction; startup then compacts freed pages before
+readers/workers start. A persistent marker retries compaction after interruption.
+This update needs temporary headroom for the old database, new tables, SQLite WAL
+and compaction, in addition to the retained pre-upgrade copy: a smaller final archive
+does not mean an upgrade can run on an already full volume. A failed update retains
+the offline recovery route described above. Earlier schema-6 portable backups remain
+restorable and are migrated/compacted in isolation.
+
+The writer retains at most 8 MiB of reusable WAL allocation after a successful
+checkpoint/reset. This is a retention target, not a cap during writes or while old
+read transactions prevent reset; see [SQLite journal_size_limit](https://www.sqlite.org/pragma.html#pragma_journal_size_limit).
+Never manually delete an active WAL.
+
+The same Windows release fixture (`cargo test --locked --release --test foundations
+foundation_load -- --ignored --nocapture`) produced:
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Live archive after calendar/snapshot workload and checkpoint | 662,130,688 B | 511,246,336 B (-22.8%) |
+| Sampled peak under `backups/` | 840,289,182 B | 477,627,188 B (-43.2%) |
+| Saved ZIP | 86,153,640 B | 83,374,900 B (-3.2%) |
+| Backup creation including checks | 18.929 s | 14.276 s |
+
+Both runs used 100,000 observations, 5,000 tracks and 124,396,022 source-file bytes.
+Backup-directory sampling excludes the live archive, spool, WAL, consultation
+snapshots and retained upgrade/recovery states; it is not a volume-wide maximum.
+The database measurement includes the same later calendar/snapshot workload in both
+runs. In a focused regression (256 observations imported three times, 768 occurrences,
+8 KiB original padding per observation), compact database size fell from 12,091,392
+to 3,424,256 bytes (-71.7%). Savings depend on payload size and reimport history.
+These synthetic local results do not establish TrueNAS acceptance or personal-archive
+sizes. Import/loading algorithms were not tuned further in this follow-up.
+
+Saved backups/exports, pre-upgrade copies and `recovery-*/previous/` are deliberately
+retained. Updating does not automatically reclaim them or the owner's existing test
+directories. Download/verify saved backups before deleting them via the existing UI;
+retain technical recovery states until the update/restore has been accepted. No
+personal archive or server directory was changed for these measurements.

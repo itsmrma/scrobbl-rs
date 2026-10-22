@@ -161,6 +161,15 @@ pub async fn validate_database(
         let n: i64 = query.build_query_scalar().fetch_one(&mut *conn).await?;
         counts.insert(name.into(), n);
     }
+    // Older portable packages are validated before their supported migrations.
+    let shared: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='original_payloads')")
+        .fetch_one(&mut *conn).await?;
+    if shared {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM original_payloads")
+            .fetch_one(&mut *conn)
+            .await?;
+        counts.insert("original_payloads".into(), n);
+    }
     let invalid:i64=sqlx::query_scalar("SELECT COUNT(*) FROM listens l LEFT JOIN observations o ON o.listen_id=l.id WHERE o.id IS NULL OR (l.duration_kind='unknown')!=(l.listened_ms IS NULL)").fetch_one(&mut *conn).await?;
     ensure!(invalid == 0, "Invalid original observations or durations");
     let _: (String, String, i64) = sqlx::query_as(
@@ -280,7 +289,7 @@ pub async fn create_backup(
 }
 
 /// Extract only inventoried flat content-addressed files. Never trust ZIP paths or sizes.
-fn unpack(package: &Path, work: &Path) -> anyhow::Result<Manifest> {
+fn unpack(package: &Path, work: &Path, materialize_spool: bool) -> anyhow::Result<Manifest> {
     ensure!(
         std::fs::metadata(package)?.len() <= PACKED_LIMIT,
         "Backup exceeds 2 GiB upload limit"
@@ -346,17 +355,39 @@ fn unpack(package: &Path, work: &Path) -> anyhow::Result<Manifest> {
             member.size() == expected.size_bytes && !member.is_dir() && !member.is_symlink(),
             "Invalid backup member type or size"
         );
-        let path = work.join(&expected.name);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        let size = std::io::copy(&mut (&mut member).take(expected.size_bytes + 1), &mut file)?;
+        let mut file = if materialize_spool || name == "archive.db" {
+            Some(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(work.join(&expected.name))?,
+            )
+        } else {
+            None
+        };
+        // Read every uncompressed byte (including ZIP CRC verification), but
+        // creation does not need a second disk copy of immutable source files.
+        let mut reader = (&mut member).take(expected.size_bytes + 1);
+        let mut hash = Sha256::new();
+        let mut size = 0;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let n = reader.read(&mut buffer)?;
+            if n == 0 {
+                break;
+            }
+            size += n as u64;
+            hash.update(&buffer[..n]);
+            if let Some(file) = &mut file {
+                file.write_all(&buffer[..n])?;
+            }
+        }
         ensure!(size == expected.size_bytes, "Backup member length mismatch");
-        file.sync_all()?;
-        drop(file);
+        if let Some(file) = file {
+            file.sync_all()?;
+        }
         ensure!(
-            hash_file(&path)?.0 == expected.sha256,
+            format!("{:x}", hash.finalize()) == expected.sha256,
             "Backup checksum mismatch"
         );
         if let Some(hash) = expected.name.strip_prefix("spool/") {
@@ -371,9 +402,25 @@ fn unpack(package: &Path, work: &Path) -> anyhow::Result<Manifest> {
 /// This is a real isolated restore: extraction, SQLite checks, migrations and file relationships.
 /// No AppState, authentication store, workers or network clients are created here.
 pub async fn trial_restore(package: &Path, work: &Path) -> anyhow::Result<Manifest> {
+    check_package(package, work, true).await
+}
+
+/// Creation validates the entire package while only materializing its database.
+/// Explicit Verify backup and preparation still exercise complete extraction.
+pub async fn check_backup(package: &Path, work: &Path) -> anyhow::Result<Manifest> {
+    check_package(package, work, false).await
+}
+
+async fn check_package(
+    package: &Path,
+    work: &Path,
+    materialize_spool: bool,
+) -> anyhow::Result<Manifest> {
     let input = package.to_owned();
     let destination = work.to_owned();
-    let manifest = tokio::task::spawn_blocking(move || unpack(&input, &destination)).await??;
+    let manifest =
+        tokio::task::spawn_blocking(move || unpack(&input, &destination, materialize_spool))
+            .await??;
     let mut conn = connect(&work.join("archive.db"), false).await?;
     let counts = validate_database(&mut conn).await?;
     ensure!(
@@ -421,6 +468,7 @@ pub async fn trial_restore(package: &Path, work: &Path) -> anyhow::Result<Manife
     storage::ARCHIVE_MIGRATOR
         .run_direct(None, &mut conn, false)
         .await?;
+    storage::compact_original_payloads(&mut conn).await?;
     validate_database(&mut conn).await?;
     conn.close().await?;
     Ok(manifest)
@@ -529,7 +577,7 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
         phase(store, &job.id, "checking_backup").await?;
         let check = work.join("creation-check");
         std::fs::create_dir(&check)?;
-        trial_restore(&output, &check).await?;
+        check_backup(&output, &check).await?;
         Some(serde_json::to_string(&manifest)?)
     } else {
         phase(store, &job.id, "freezing_archive").await?;
