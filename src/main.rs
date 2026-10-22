@@ -19,6 +19,20 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let config = Config::from_env()?;
+    if std::env::args().nth(1).as_deref() == Some("--recover-upgrade") {
+        let args: Vec<String> = std::env::args().collect();
+        anyhow::ensure!(
+            args.len() == 5 && args[3] == "--to",
+            "Usage: scrobbl-rs --recover-upgrade pre-upgrade-ID --to NEW_DIRECTORY"
+        );
+        scrobbl_rs::recovery::recover_upgrade(
+            &config.data_dir,
+            &args[2],
+            std::path::Path::new(&args[4]),
+        )
+        .await?;
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("--healthcheck") {
         let ip = if config.bind_ip.is_unspecified() {
             if config.bind_ip.is_ipv4() {
@@ -47,6 +61,8 @@ async fn main() -> anyhow::Result<()> {
     let worker = tokio::spawn(spotify::worker(state.clone()));
     let calendar_worker = tokio::spawn(scrobbl_rs::calendar::worker(state.storage.clone()));
     let import_worker = tokio::spawn(scrobbl_rs::import_worker::worker(state.storage.clone()));
+    let recovery_worker = tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone()));
+    let retention_worker = tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone()));
     println!("scrobbl.rs is running at {}", config.origin());
     println!("Data: {}", config.data_dir.canonicalize()?.display());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
@@ -59,6 +75,10 @@ async fn main() -> anyhow::Result<()> {
     let _ = calendar_worker.await;
     import_worker.abort();
     let _ = import_worker.await;
+    recovery_worker.abort();
+    let _ = recovery_worker.await;
+    retention_worker.abort();
+    let _ = retention_worker.await;
     state.storage.close().await;
     result?;
     Ok(())

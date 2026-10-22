@@ -840,6 +840,100 @@ async fn foundation_load() {
     assert_eq!(totals.0, 100000);
     drop(view);
     let read_ms = read_start.elapsed().as_secs_f64() * 1000.;
+    // Exercise the real owner HTTP queries, not just a cheap aggregate over listens.
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    let config = scrobbl_rs::config::Config {
+        port: 3210,
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        data_dir: dir.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let app = scrobbl_rs::web::router(scrobbl_rs::AppState::new(store.clone(), config));
+    let token = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'load-csrf',9999999999999)")
+        .bind(auth::digest(&token))
+        .execute(&store.private)
+        .await
+        .unwrap();
+    for path in ["/api/history", "/api/history?page=1000", "/api/dashboard"] {
+        for attempt in 1..=3 {
+            let query_start = Instant::now();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("host", "127.0.0.1:3210")
+                        .header("cookie", format!("scrobbl_session={token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 200);
+            let body = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            let _: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            println!(
+                "LOAD HTTP path={path} attempt={attempt} ms={:.3}",
+                query_start.elapsed().as_secs_f64() * 1000.
+            );
+        }
+    }
+    // Use the complete production worker: compression, creation-check, publication and cleanup.
+    fn work_bytes(root: &std::path::Path) -> u64 {
+        std::fs::read_dir(root)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    work_bytes(&path)
+                } else {
+                    path.metadata().unwrap().len()
+                }
+            })
+            .sum()
+    }
+    let backup_start = Instant::now();
+    let asset_id = scrobbl_rs::recovery::enqueue_asset(&store, "backup", "zip", json!({}))
+        .await
+        .unwrap();
+    let worker = tokio::spawn(scrobbl_rs::recovery::worker(store.clone()));
+    let mut peak_work_bytes = 0;
+    loop {
+        peak_work_bytes = peak_work_bytes.max(work_bytes(&dir.path().join("backups")));
+        let asset = scrobbl_rs::recovery::asset(&store, &asset_id)
+            .await
+            .unwrap();
+        assert_ne!(asset.state, "failed", "{:?}", asset.error);
+        if asset.state == "ready" {
+            println!(
+                "LOAD BACKUP seconds={:.3} output_bytes={} peak_backup_directory_bytes={peak_work_bytes}",
+                backup_start.elapsed().as_secs_f64(),
+                asset.size_bytes.unwrap()
+            );
+            break;
+        }
+        assert!(backup_start.elapsed() < Duration::from_secs(300));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // Wait for cleanup/completion before stopping the worker.
+    let asset = scrobbl_rs::recovery::asset(&store, &asset_id)
+        .await
+        .unwrap();
+    while store.job(&asset.job_id).await.unwrap().state != "completed" {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    worker.abort();
+    let _ = worker.await;
     let calendar_start = Instant::now();
     let id = store
         .change_calendar("America/New_York", 6, true)

@@ -215,7 +215,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
         2
     );
     let originals: Vec<String> =
-        sqlx::query_scalar("SELECT raw_json FROM observation_variants ORDER BY id")
+        sqlx::query_scalar("SELECT p.fingerprint FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&state.read_db)
             .await
             .unwrap();
@@ -284,7 +284,7 @@ async fn preferences_api_preserves_calendars_and_queues_atomic_history_changes()
     );
     assert_eq!(
         originals,
-        sqlx::query_scalar::<_, String>("SELECT raw_json FROM observation_variants ORDER BY id")
+        sqlx::query_scalar::<_, String>("SELECT p.fingerprint FROM observation_variants v JOIN original_payloads p ON p.id=v.payload_id ORDER BY v.id")
             .fetch_all(&resumed.read_db)
             .await
             .unwrap()
@@ -454,14 +454,48 @@ async fn import_is_idempotent_preserves_short_plays_and_filters_non_music() {
             .await
             .unwrap();
     assert_eq!((total, counted, actual), (2, 1, 190000));
-    let raw: String = sqlx::query_scalar("SELECT raw_json FROM observations LIMIT 1")
+    let (raw, fingerprint): (String, String) = sqlx::query_as("SELECT p.raw_json,p.fingerprint FROM observations o JOIN original_payloads p ON p.id=o.payload_id WHERE o.source_key=?")
+        .bind(&events[0].source_key)
         .fetch_one(&state.db)
         .await
         .unwrap();
-    assert_eq!(
-        serde_json::from_str::<Value>(&raw).unwrap()["ts"],
-        "2025-06-01T12:03:00Z"
-    );
+    assert_eq!(raw, "null");
+    assert_eq!(fingerprint, db::payload_fingerprint(&events[0].raw));
+}
+
+#[tokio::test]
+async fn overview_cache_tracks_revisions_selections_and_assigned_calendar_preferences() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, _csrf) = sign_in(&app).await;
+    let first = recent(1748865600000);
+    save(&state, std::slice::from_ref(&first)).await;
+    let path = "/api/dashboard?period=all";
+    let (_, initial, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    let (_, cached, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(initial, cached);
+    assert_eq!(cached["totals"]["records"], 1);
+    save(&state, &[recent(first.played_at_ms + 180000)]).await;
+    let (_, updated, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(updated["totals"]["records"], 2);
+    state
+        .storage
+        .change_calendar("Asia/Tokyo", 6, false)
+        .await
+        .unwrap();
+    let (_, preferences, _) = request(&app, "GET", path, json!(null), Some(&cookie), None).await;
+    assert_eq!(preferences["timezone"], "Asia/Tokyo");
+    let (_, empty, _) = request(
+        &app,
+        "GET",
+        "/api/dashboard?from=2020-01-01&to=2020-01-01",
+        json!(null),
+        Some(&cookie),
+        None,
+    )
+    .await;
+    assert_eq!(empty["totals"]["records"], 0);
+    state.storage.close().await;
 }
 #[tokio::test]
 async fn actual_duration_wins_in_both_orders_and_repeats_remain_separate() {

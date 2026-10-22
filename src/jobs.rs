@@ -47,6 +47,16 @@ impl Storage {
         reader: &mut R,
         max_bytes: u64,
     ) -> anyhow::Result<String> {
+        let _files = self.spool_operations.read().await;
+        self.receive_locked(reader, max_bytes).await
+    }
+
+    /// The caller holds the file gate through publication AND attachment to a job.
+    pub(crate) async fn receive_locked<R: AsyncRead + Unpin>(
+        &self,
+        reader: &mut R,
+        max_bytes: u64,
+    ) -> anyhow::Result<String> {
         let incoming = self.directory.join("spool/incoming").join(db::new_id());
         let result=async {
             let mut file=tokio::fs::OpenOptions::new().write(true).create_new(true).open(&incoming).await?;
@@ -66,7 +76,7 @@ impl Storage {
                 Ok(())=>{}, Err(e) if e.kind()==std::io::ErrorKind::AlreadyExists=>{}, Err(e)=>return Err(e.into())
             }
             crate::storage::sync_directory(&self.directory.join("spool"))?;
-            sqlx::query("INSERT OR IGNORE INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?)")
+            sqlx::query("INSERT INTO source_files(id,content_hash,size_bytes,received_at_ms) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET retained=1")
                 .bind(&hash).bind(&hash).bind(i64::try_from(size)?).bind(auth::now_ms()).execute(&self.writer).await?;
             Ok::<_,anyhow::Error>(hash)
         }.await;
@@ -82,6 +92,20 @@ impl Storage {
         filename: Option<&str>,
         parameters: &Value,
     ) -> Result<String> {
+        let _files = self.spool_operations.read().await;
+        if let Some(file_id) = file_id {
+            let retained: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM source_files WHERE id=? AND retained=1)",
+            )
+            .bind(file_id)
+            .fetch_one(&self.writer)
+            .await?;
+            if !retained {
+                return Err(AppError::Conflict(
+                    "Source file was released. Upload it again to start another import.".into(),
+                ));
+            }
+        }
         let id = db::new_id();
         let inserted=sqlx::query("INSERT INTO jobs(id,kind,file_id,filename,parameters_json,state,created_at_ms,updated_at_ms) SELECT ?,?,?,?,?,'queued',?,? FROM archive_state WHERE singleton=1 AND maintenance=0")
             .bind(&id).bind(kind).bind(file_id).bind(filename).bind(parameters.to_string()).bind(auth::now_ms()).bind(auth::now_ms()).execute(&self.writer).await?;
@@ -107,6 +131,11 @@ impl Storage {
     }
     /// Atomic claim and attempt fencing. Each worker claims only kinds it can execute.
     pub async fn claim(&self, kind: &str) -> Result<Option<Job>> {
+        if self.directory.join("recovery.pending").exists()
+            || (!kind.starts_with("recovery_") && crate::recovery::paused(self).await)
+        {
+            return Ok(None);
+        }
         Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
             .bind(auth::now_ms()).bind(kind).bind(auth::now_ms()).fetch_optional(&self.writer).await?)
     }
@@ -125,8 +154,16 @@ impl Storage {
         Ok(())
     }
     pub async fn retry(&self, id: &str) -> Result<()> {
+        let _files = self.spool_operations.read().await;
         let mut tx = self.writer.begin().await?;
         sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
+        let released: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM source_files f JOIN jobs j ON j.id=? WHERE f.retained=0 AND (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id)))")
+            .bind(id).fetch_one(&mut *tx).await?;
+        if released {
+            return Err(AppError::Conflict(
+                "Source file was released. Upload it again to retry.".into(),
+            ));
+        }
         let another_calendar: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs target WHERE target.id=? AND target.kind='calendar' AND EXISTS(SELECT 1 FROM jobs other WHERE other.id!=target.id AND other.kind='calendar' AND other.state IN ('queued','running','waiting')))").bind(id).fetch_one(&mut *tx).await?;
         if another_calendar {
             return Err(AppError::Conflict(
@@ -138,7 +175,7 @@ impl Storage {
         tx.commit().await?;
         Ok(())
     }
-    /// Rows must be a contiguous checkpoint interval. Invalid/skipped originals are retained too.
+    /// Rows must be a contiguous checkpoint interval. Invalid/skipped fingerprints and reasons persist too.
     /// If parsing fails, omit this call: no progress is acknowledged.
     pub async fn commit_batch(
         &self,
@@ -198,8 +235,6 @@ impl Storage {
                 _ => None,
             })
             .collect();
-        let mut report = db::ingest(tx, &events).await?;
-        db::review_spotify_imports(tx, &events).await?;
         let below_threshold = events.iter().filter(|e| !e.counted).count() as i64;
         let file_id: Option<String> =
             sqlx::query_scalar("SELECT file_id FROM job_members WHERE job_id=? AND member=?")
@@ -208,25 +243,18 @@ impl Storage {
                 .fetch_one(&mut **tx)
                 .await?;
         let file_id = file_id.or_else(|| lease.file_id.clone());
-        for (index, row) in rows.iter().enumerate() {
-            let (raw, variant, outcome, reason) = match row {
-                SourceRow::Event(event) => {
-                    let variant:String=sqlx::query_scalar("SELECT v.id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?")
-                        .bind(event.source).bind(&event.source_key).bind(db::payload_fingerprint(&event.raw)).fetch_one(&mut **tx).await?;
-                    (event.raw.clone(), Some(variant), "accepted", None)
-                }
-                SourceRow::Invalid { raw, reason } => {
-                    report.invalid += 1;
-                    (raw.clone(), None, "invalid", Some(reason.as_str()))
-                }
-                SourceRow::Skipped { raw, reason } => {
-                    report.skipped += 1;
-                    (raw.clone(), None, "skipped", Some(reason.as_str()))
-                }
-            };
-            sqlx::query("INSERT INTO source_occurrences(job_id,file_id,member,row_number,variant_id,raw_json,outcome,reason) VALUES(?,?,?,?,?,?,?,?)")
-                .bind(&lease.id).bind(&file_id).bind(member).bind(first_row+index as i64).bind(variant).bind(raw.to_string()).bind(outcome).bind(reason).execute(&mut **tx).await?;
-        }
+        let report = crate::ingest::with_connection(tx, |conn| {
+            crate::ingest::import_rows(
+                conn,
+                &events,
+                &lease.id,
+                file_id.as_deref(),
+                member,
+                first_row,
+                rows,
+            )
+        })
+        .await?;
         sqlx::query("UPDATE job_members SET processed=processed+? WHERE job_id=? AND member=?")
             .bind(rows.len() as i64)
             .bind(&lease.id)

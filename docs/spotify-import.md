@@ -21,10 +21,13 @@ An unreadable ZIP directory or entry-count limit reports incomplete inventory.
 
 Content identifies extended history, including JSON arrays stored under unexpected names.
 The parser validates each array before acquisition, then streams source rows through a
-bounded channel. Batches stop at 250 rows or about 1 MiB of encoded data, with one larger row
+bounded channel. Batches stop at 1,000 rows or about 1 MiB of encoded data, with one larger row
 permitted up to the row limit. Parsing, decompression and network I/O stay outside archive
-transactions. Original bytes remain in the spool; accepted, invalid and excluded musical-source
-rows retain their source positions and reasons.
+transactions. Normalized observations, variant fingerprints and row provenance are
+retained without raw JSON. Source bytes remain while an import is unfinished, partial,
+failed or cancelled, and are released after successful completion once no other job
+or backup still needs them. Accepted, invalid and excluded musical-source rows
+retain their fingerprints, source positions and reasons.
 
 Each batch commits observations, variants, occurrences, counters and checkpoint together.
 Startup requeues interrupted work; replay scans the immutable source and skips confirmed rows.
@@ -43,8 +46,10 @@ adjacent separators and whitespace. There is no 200,000-row ceiling and no split
 
 Expanded-size checks include excluded members. Actual member reads are bounded too. Write
 failures preserve confirmed transactions; free server storage before retrying a storage failure.
-Spool and database disk usage grow with retained originals and source occurrences, including
-reimport provenance. This block does not add automatic retention or garbage collection.
+Database disk usage grows with normalized history and source occurrences, including
+reimport provenance. Compact retention releases successfully processed source files,
+but never deletes saved backups or previous recovery states. Keep your own original
+ZIP for future reimports; see [retention, compatibility and measurements](recovery.md#compact-retention-2026-10-22).
 
 Activities distinguishes receiving/inventory/processing/finished and complete/partial/error/
 no-music outcomes. It exposes per-file classification and counters, unknown row counts as null,
@@ -161,5 +166,46 @@ work. The tests above do not claim those results or real API/export reconciliati
 Final automated checks: 47 Rust tests passed; the separate ZIP load test passed explicitly.
 The unrelated foundation load benchmark remains ignored. Four browser scenarios passed on each
 of Chromium, Firefox and WebKit on Windows (12 total); device acceptance remains separate.
+
+## Performance and recovery evidence, 2026-10-22
+
+The owner requested a local PC trial of the same original ZIP, then accepted the
+approximately 25-second result and explicitly stopped further tuning. The original
+10–20-second aspiration was not reached. These are Windows release-build observations,
+not server or hardware-independent throughput guarantees.
+
+Uninterrupted import fell from 216.798 seconds in the initial trial to 24.577 seconds;
+a final confirmation alongside local checks took 26.762 seconds. Both retained the
+same 159,560 source rows, 158,576 listens/observations, 158,975 variants and zero invalid
+rows. Source bytes/hash/mtime were unchanged. Overview fell from 2.2–16.4 seconds in
+the initial trial to 135–158 ms cold and about 1–23 ms for subsequent absolute-selection
+requests. Returning to the same selection keeps the visible result while refreshing.
+
+The final process sample recorded 40 CPU seconds, a 232,017,920-byte peak working set
+(about 221 MiB), and 2,135,176,534 bytes at peak in the isolated data directory (about
+1.99 GiB, including SQLite WAL; executable excluded). The WAL checkpoint threshold
+is not a hard file-size bound. The harness kills its isolated process, so these files
+can retain uncheckpointed WAL; keep database and sidecars together.
+These measurements precede the [disk-use follow-up](recovery.md#disk-use-follow-up-2026-10-22),
+which shares original payloads and reduces reusable WAL allocation. That follow-up
+uses synthetic fixtures and does not replace the personal-ZIP timing evidence above.
+
+A separate final run killed the process after 2,000 confirmed rows. It completed on
+attempt 2 in 28.384 seconds. Reimport completed in 16.588 seconds, added no musical
+data, and correctly retained 319,120 occurrences for the two upload reports. Source
+content was unchanged. Detailed personal reports stay in private temporary directories.
+
+To repeat an owner-approved timing trial without the interruption/reimport steps:
+
+```sh
+cargo build --release --locked
+python scripts/verify-spotify-archive.py /path/to/owner-approved-history.zip \
+  --binary target/release/scrobbl-rs --benchmark \
+  --max-import-seconds 30 --max-dashboard-ms 300
+```
+
+On Windows the binary has an `.exe` suffix. Timing budgets are explicit CLI inputs;
+the summary records actual durations even when a budget assertion fails. Omit
+`--benchmark` to test forced interruption, restart and idempotent reimport instead.
 Synthetic report screenshots: [desktop](screenshots/spotify-import-desktop.png),
 [mobile](screenshots/spotify-import-mobile.png).

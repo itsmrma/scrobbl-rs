@@ -22,7 +22,7 @@ use tokio::sync::{Mutex, Notify};
 pub struct Spotify {
     client: Client,
     pub gate: Arc<Mutex<()>>,
-    collection_gate: Arc<Mutex<()>>,
+    pub(crate) collection_gate: Arc<Mutex<()>>,
     now_gate: Arc<Mutex<()>>,
     wake: Arc<Notify>,
     cache: Arc<Mutex<Option<(i64, Value)>>>,
@@ -36,6 +36,9 @@ impl Default for Spotify {
     }
 }
 impl Spotify {
+    pub(crate) fn wake_collection(&self) {
+        self.wake.notify_one();
+    }
     pub fn new() -> Self {
         Self {
             client: Client::builder()
@@ -612,8 +615,16 @@ pub fn parse_track(row: &Value) -> Result<Track> {
     })
 }
 pub async fn sync(state: &AppState) -> Result<Value> {
-    let intervals = intervals(state).await?;
     let _collection = state.spotify.collection_gate.lock().await;
+    if state.storage.directory.join("recovery.pending").exists()
+        || crate::recovery::paused(&state.storage).await
+    {
+        return Err(AppError::Conflict(
+            "Collection is paused after restore. Review Settings, then resume in Data & recovery."
+                .into(),
+        ));
+    }
+    let intervals = intervals(state).await?;
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='spotify_collection' AND state IN ('queued','waiting'))").fetch_one(&state.db).await?;
     if !pending {
         state
@@ -765,6 +776,11 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
 }
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
+    if state.storage.directory.join("recovery.pending").exists()
+        || crate::recovery::paused(&state.storage).await
+    {
+        return Ok(Json(Value::Null));
+    }
     let requested_at_ms = auth::now_ms();
     let _now = state.spotify.now_gate.lock().await;
     let interval = intervals(&state).await?.now_playing_seconds as i64 * 1000;
@@ -836,7 +852,11 @@ pub async fn worker(state: AppState) {
                 .fetch_one(&state.private_db)
                 .await
                 .unwrap_or(false);
-        if connected && let Err(error) = sync(&state).await {
+        if connected
+            && !crate::recovery::paused(&state.storage).await
+            && !state.storage.directory.join("recovery.pending").exists()
+            && let Err(error) = sync(&state).await
+        {
             let _ = diagnostic(&state, "spotify_error", &error.to_string()).await;
         }
         let seconds = intervals(&state)

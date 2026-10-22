@@ -228,6 +228,10 @@ mod tests {
             RowIssue::decl(&config),
             crate::imports::ImportLimits::decl(&config),
             crate::imports::ImportResponse::decl(&config),
+            crate::exports::ExportSelection::decl(&config),
+            crate::recovery::InventoryFile::decl(&config),
+            crate::recovery::Manifest::decl(&config),
+            crate::recovery::Asset::decl(&config),
         ];
         let content = format!(
             "// Generated from Rust DTOs. Run UPDATE_BROWSER_TYPES=1 cargo test browser_contract_is_current.\n{}\n",

@@ -31,9 +31,13 @@ function useLoad<T>(
 ) {
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState("");
+  const dataKey = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled) return;
-    setData(null);
+    if (dataKey.current !== key) {
+      setData(null);
+      dataKey.current = key;
+    }
     setError("");
     let active = true,
       busy = false;
@@ -410,7 +414,7 @@ export function HistoryPage({
   return (
     <>
       <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
-        Search the archive, including short plays and original source records.
+        Search the archive, including short plays and source observations.
       </Heading>
       <form
         className="filters"
@@ -680,10 +684,12 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
             restart. Reports remain in Activities.
           </p>
           <p>
-            Originals, variants and source positions are preserved. Reimporting
-            renamed or reformatted files does not multiply listens. Podcast and
-            audiobook rows are excluded. Music below 30 seconds remains in the
-            archive and stays outside valid-listen statistics.
+            Normalized observations, variant fingerprints and source positions
+            are preserved. Raw JSON is discarded; source files are released
+            after successful import. Keep your own ZIP for future reimports.
+            Reimporting renamed or reformatted files does not multiply listens.
+            Podcast and audiobook rows are excluded. Music below 30 seconds
+            remains in the archive and stays outside valid-listen statistics.
           </p>
           <Link to="/activities">View persistent activities</Link>
         </aside>

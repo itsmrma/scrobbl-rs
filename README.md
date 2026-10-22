@@ -62,13 +62,18 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
   Material Icons Outlined and image placeholders.
 - Connections separates saved/verified authorization, collection status and now playing,
   including last attempt/success, zero-result syncs, action required and request limits.
+- Data & recovery offers JSON/CSV exports, manual portable backups, isolated restore
+  verification, protected replacement and offline upgrade recovery. See [backup and
+  recovery](docs/recovery.md) for formats, excluded credentials and restart steps.
 
 ## Data rules
 
 Spotify export `ts` is the end timestamp. Imported start time is inferred as `ts - ms_played`;
 pauses, seeking and offline records can make this approximate. API `played_at` is retained as
-provided and treated as a start timestamp for reconciliation. All source timestamps and original
-record payloads are preserved separately, so this interpretation can be revised after live testing.
+provided and treated as a start timestamp for reconciliation. Source timestamps, normalized
+observations, variant fingerprints and provenance are preserved. Compact retention discards raw
+JSON and releases successfully imported files; keep your own original ZIP for future reimports.
+Unfinished, partial, failed and cancelled imports retain their source material for retry.
 Instants are stored as UTC milliseconds. Date filters use the calendar assigned at first acquisition
 (initially Europe/Rome), including daylight saving. Settings → General can change the calendar
 for future acquisitions (including old listens first imported later), or recalculate the whole archive.
@@ -81,7 +86,7 @@ duration is marked unknown. Now playing itself never creates a listen.
 
 Exact reimports preserve source occurrences without multiplying listens or original variants.
 For a known Spotify track, equal export time and listened duration identify one observation;
-changed metadata becomes a preserved original variant. Uncertain identities remain separate and
+changed source metadata is identified by a distinct preserved variant fingerprint. Uncertain identities remain separate and
 reviewable. Cross-source reconciliation
 requires the same Spotify track URI, start times within two seconds and exactly one eligible
 counterpart. A listen has at most one observation per source. Actual duration replaces the API
@@ -97,7 +102,7 @@ Extended history usually supplies only the album artist string; it is preserved 
 without guessing how to split names or featuring credits. A track seen through the API gains its
 structured artists, album and available cover. Imported-only metadata uses provisional identities;
 rankings may initially separate imported and API artist/album entries until identity resolution is
-expanded. Original imported metadata remains in the source record.
+expanded. Unmodeled raw metadata cannot be reconstructed after compact retention.
 
 ## Configuration and persistence
 
@@ -126,19 +131,20 @@ environment defaults. See [refresh interval settings](docs/spotify-setup.md#refr
 | `SPOTIFY_CLIENT_ID` | unset | Optional Spotify app ID, paired with the secret |
 | `SPOTIFY_CLIENT_SECRET` | unset | Optional Spotify app secret, paired with the ID |
 
-`data/archive.db` contains music, original source records, preferences and persistent job/revision
+`data/archive.db` contains music, normalized source records/fingerprints, provenance, preferences and persistent job/revision
 state. `data/private/auth.db` separately contains the owner verifier, sessions and Spotify secrets.
 `data/`, local `.env` files and SQLite files are
 excluded from Git. On Unix, newly created data directories and database files have private filesystem
 permissions. Credentials and tokens are not returned by status/history endpoints or logged.
 
 For a manual local copy, stop the process cleanly and copy the whole data directory; keep any `.env`
-with the copy if you use one. Start with that directory to use the copy. Automated backups and a
-restore interface are not implemented yet.
+with the copy if you use one. Start with that directory to use the copy. For a portable backup
+without credentials, use **Settings → Data & recovery**; see [backup and recovery](docs/recovery.md)
+for verification, transfer, replacement and new access after restart. Scheduled backups remain deferred.
 
 Release upgrades make verified technical safety copies before schema changes. These protected
-copies include authentication storage and depend on the preserved spool; they are distinct from
-the planned portable application backup. Details and offline rollback guidance are in
+copies include authentication storage and their own immutable spool snapshot; older technical
+copies still depend on the preserved live spool. They are distinct from portable application backups. Details and offline rollback guidance are in
 [archive foundations](docs/archive-foundations.md).
 
 ## Checks
@@ -180,8 +186,8 @@ collection and now playing. An interrupted recovery does not advance the durable
 
 Generic Docker and private LAN/VPN/HTTPS configuration are implemented; live server/browser,
 Spotify and certificate-renewal acceptance still require recorded evidence. Public hosting, integration API keys,
-`spotify_analysis`, other import sources, entity pages, charts, editing/merging, custom images,
-exports and scheduled backups are outside this implementation.
+`spotify_analysis`, other import sources, entity pages, charts, editing/merging, custom images
+and scheduled backups are outside this implementation.
 
 ## License
 

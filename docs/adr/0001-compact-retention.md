@@ -1,0 +1,5 @@
+# Conservazione compatta degli ascolti
+
+Il proprietario ha scelto di ridurre spazio e scritture conservando dati normalizzati, impronte, varianti e provenienza, rinunciando alla ricostruzione esatta dei payload grezzi. I file ricevuti rimangono durante lavori pendenti, falliti o parziali; dopo il completamento riuscito si rilasciano solo quando nessun altro lavoro o backup in corso ne ha bisogno. La decisione sostituisce la precedente conservazione integrale: [contratto import aggiornato](https://github.com/itsmrma/scrobbl-rs/issues/16#issuecomment-6340572257) e [contratto recupero aggiornato](https://github.com/itsmrma/scrobbl-rs/issues/12#issuecomment-6340572663).
+
+Gli aggiornamenti mantengono una copia preventiva verificata. Le nuove copie tecniche conservano autonomamente i file necessari, così la pulizia dello spool attivo non invalida il recupero; le vecchie copie che dipendono dallo spool continuano a proteggerlo. Backup salvati e stati precedenti del ripristino non vengono eliminati automaticamente. L’export JSON dichiara la conservazione compatta e l’assenza dei payload; un nuovo import richiede di caricare di nuovo il file.

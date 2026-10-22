@@ -82,6 +82,31 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await expect(page.locator("#history-total")).toHaveText("4 records");
+  // Returning to the same selection must retain its data while refreshing,
+  // even when the network response is delayed.
+  let releaseOverview;
+  const overviewResponse = new Promise((resolve) => {
+    releaseOverview = resolve;
+  });
+  await page.route("**/api/dashboard?*", async (route) => {
+    await overviewResponse;
+    await route.continue();
+  });
+  try {
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page.locator("#total-listens")).toHaveText("3", {
+      timeout: 1000,
+    });
+    await expect(
+      page.getByRole("status").filter({ hasText: "Loading your archive" }),
+    ).toHaveCount(0);
+  } finally {
+    releaseOverview();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+  await page
+    .getByRole("link", { name: "Listening history", exact: true })
+    .click();
   await page.locator("#history-status").selectOption("short");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.locator("#history-total")).toHaveText("1 records");

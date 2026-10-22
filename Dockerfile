@@ -15,10 +15,11 @@ WORKDIR /work
 COPY . .
 COPY --from=frontend /work/static/dist ./static/dist
 COPY --from=frontend /work/node_modules ./node_modules
+ARG VCS_REF=unknown
+ENV SCROBBL_BUILD_REF=$VCS_REF
 RUN cargo build --locked --release
 # Keep exact dependency source, native licenses and build inputs alongside every binary.
 RUN mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
-ARG VCS_REF=unknown
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime

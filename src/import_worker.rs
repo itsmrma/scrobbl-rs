@@ -371,7 +371,7 @@ fn parse(
                 }
                 batch_bytes += bytes;
                 batch.push(parse_row(row));
-                if batch.len() == 250 {
+                if batch.len() == 1000 {
                     let size = batch.len() as i64;
                     send(
                         &tx,
@@ -505,7 +505,11 @@ pub async fn worker(storage: Storage) {
                 let id = job.id.clone();
                 let attempt = job.attempt;
                 match run(&storage, job).await {
-                    Ok(()) => {}
+                    Ok(()) => {
+                        // Cleanup failure must not relabel a committed import as failed.
+                        // The retention worker retries it independently.
+                        let _ = crate::retention::cleanup(&storage).await;
+                    }
                     Err(AppError::Conflict(_)) => {
                         // Maintenance also fences a running lease. Make its confirmed
                         // checkpoint takeable again without resurrecting cancelled work.
