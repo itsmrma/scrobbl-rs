@@ -282,6 +282,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
           name: "How we calculate listening time",
           exact: true,
         });
+        // Touch devices can synthesize mouseover before delivering a click.
+        // Opening content on that compatibility event can consume Safari's first tap.
+        await info.dispatchEvent("mouseover", { bubbles: true });
+        await expect(info).toHaveAttribute("aria-expanded", "false");
         await info.tap();
         await expect(info).toHaveAttribute("aria-expanded", "true");
         await info.tap();

@@ -35,8 +35,8 @@ function TimeHelp() {
   return (
     <span
       className="time-help"
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      onPointerEnter={(event) => setHover(event.pointerType === "mouse")}
+      onPointerLeave={() => setHover(false)}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           setPinned(false);
