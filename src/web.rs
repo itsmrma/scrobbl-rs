@@ -64,6 +64,18 @@ pub fn router(state: AppState) -> Router {
             get(crate::preferences::get).post(crate::preferences::save),
         )
         .route("/api/v1/activities", get(crate::activities::list))
+        .route("/api/v1/info", get(crate::read_api::info))
+        .route("/api/v1/listens", get(crate::read_api::listens))
+        .route("/api/v1/changes", get(crate::read_api::changes))
+        .route(
+            "/api/v1/api-keys",
+            get(crate::api_keys::list).post(crate::api_keys::create),
+        )
+        .route(
+            "/api/v1/api-keys/{id}/revoke",
+            post(crate::api_keys::revoke),
+        )
+        .route("/api/v1/api-keys/cors", post(crate::api_keys::save_origins))
         .route(
             "/api/v1/recovery",
             get(crate::recovery_http::list).post(crate::recovery_http::start),
@@ -163,7 +175,7 @@ async fn icons_font() -> impl IntoResponse {
     )
 }
 async fn security(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
-    if request.uri().path().starts_with("/api/v1/recovery")
+    if !crate::read_api::is_external(request.uri().path())
         && request.headers().contains_key(header::AUTHORIZATION)
     {
         return AppError::Forbidden.into_response();
@@ -201,6 +213,9 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
         != Some(expected_host.as_str())
     {
         return AppError::Forbidden.into_response();
+    }
+    if crate::read_api::is_external(request.uri().path()) {
+        return crate::read_api::security(state, request, next).await;
     }
     if request.method() != Method::GET && request.method() != Method::HEAD {
         if request

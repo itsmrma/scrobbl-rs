@@ -7,6 +7,7 @@ import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
 import { Link } from "./navigation";
 import { Recovery } from "./recovery";
+import { ApiKeys } from "./api-keys";
 
 export function General({
   preferences,
@@ -930,14 +931,7 @@ export function Settings({
         <DataRecovery status={status} preferences={preferences} />
       </div>
       <div hidden={section !== "api-keys"}>
-        <article className="panel padded">
-          <h2>API keys</h2>
-          <p>Read-only access for your applications.</p>
-          <p>
-            Key creation and revocation will be available with the read API.
-            Owner access does not expose an integration key.
-          </p>
-        </article>
+        {section === "api-keys" && <ApiKeys preferences={preferences} />}
       </div>
     </>
   );

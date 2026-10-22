@@ -8,7 +8,7 @@ use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use sqlx::{FromRow, Sqlite, Transaction};
 use std::{path::Path, time::Duration};
 
-#[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, FromRow, PartialEq, Eq)]
 pub struct Identity {
     pub instance_id: String,
     pub generation: String,
@@ -55,6 +55,7 @@ pub struct Snapshot {
     pub revision: i64,
     pub expires_at_ms: i64,
 }
+#[derive(Clone)]
 pub struct SnapshotLimits {
     pub max_copies: usize,
     pub max_total_bytes: u64,

@@ -18,6 +18,9 @@ import type {
   SpotifyIntervals,
   Asset,
   ExportSelection,
+  ApiKeySettings,
+  CreateApiKey,
+  CreatedApiKey,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -90,6 +93,13 @@ export type ConnectOutcome = {
   message: string | null;
 };
 export const api = {
+  apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),
+  createApiKey: (form: CreateApiKey) =>
+    post<CreatedApiKey>("/api/v1/api-keys", form),
+  revokeApiKey: (id: string) =>
+    post(`/api/v1/api-keys/${encodeURIComponent(id)}/revoke`),
+  saveApiOrigins: (origins: string[]) =>
+    post("/api/v1/api-keys/cors", { origins }),
   session: () => request<Session>("/api/session"),
   login: (password: string, setup: boolean) =>
     post<{ csrf: string }>(setup ? "/api/setup" : "/api/login", { password }),

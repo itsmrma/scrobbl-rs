@@ -109,6 +109,20 @@ pub(crate) async fn publish(conn: &mut SqliteConnection, ids: &BTreeSet<String>)
             .execute(&mut *conn)
             .await?;
     }
+    prune_revision_log(conn, revision).await?;
+    Ok(())
+}
+
+pub(crate) async fn prune_revision_log(conn: &mut SqliteConnection, revision: i64) -> Result<()> {
+    let through = revision.saturating_sub(10000);
+    sqlx::query("UPDATE archive_state SET retained_from=MAX(retained_from,?) WHERE singleton=1")
+        .bind(through)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM changes WHERE revision<=?")
+        .bind(through)
+        .execute(conn)
+        .await?;
     Ok(())
 }
 

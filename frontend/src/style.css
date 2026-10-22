@@ -75,7 +75,8 @@ a {
 }
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 button,
@@ -97,7 +98,15 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
-:is(button, a, input, select, summary, [role="separator"]):focus-visible {
+:is(
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  summary,
+  [role="separator"]
+):focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
@@ -120,7 +129,8 @@ button:disabled {
   color: var(--error);
 }
 input,
-select {
+select,
+textarea {
   color: var(--text);
   background: var(--bg);
   border: 1px solid var(--border);
@@ -133,6 +143,15 @@ select {
 input[type="color"] {
   width: 100px;
   padding: 4px;
+}
+.api-keys-panel .job {
+  overflow-wrap: anywhere;
+}
+.api-secret {
+  margin: 24px 0;
+  padding: 18px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
 }
 input[type="radio"] {
   width: auto;

@@ -53,6 +53,10 @@ pub struct Session {
     pub csrf: String,
 }
 pub async fn session(state: &AppState, headers: &HeaderMap) -> Result<Session> {
+    // Integration authorization can never fall back to an owner cookie.
+    if headers.contains_key(header::AUTHORIZATION) {
+        return Err(AppError::Forbidden);
+    }
     let token = session_cookie(headers).ok_or(AppError::Unauthorized)?;
     if token.len() != 64 {
         return Err(AppError::Unauthorized);

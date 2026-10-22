@@ -56,6 +56,7 @@ async fn setup() -> (tempfile::TempDir, AppState, String) {
         sync_seconds: 120,
         now_playing_seconds: 30,
         import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
         env_client_id: None,
         env_client_secret: None,
     };
