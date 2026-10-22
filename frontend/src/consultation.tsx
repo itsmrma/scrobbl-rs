@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type {
   Dashboard,
   History,
@@ -28,10 +28,54 @@ type Selection = ReturnType<typeof useSelection>;
 
 function TimeHelp() {
   const id = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  const [position, setPosition] = useState<Style>();
   const [pinned, setPinned] = useState(false),
     [hover, setHover] = useState(false),
     [focus, setFocus] = useState(false);
   const open = pinned || hover || focus;
+  useLayoutEffect(() => {
+    if (!open) return;
+    function place() {
+      if (!button.current) return;
+      const rect = button.current.getBoundingClientRect();
+      const margin = 16,
+        gap = 8;
+      const width = Math.min(360, window.innerWidth - margin * 2);
+      const above = Math.max(
+        0,
+        Math.min(rect.top, window.innerHeight) - margin,
+      );
+      const below = Math.max(
+        0,
+        window.innerHeight - Math.max(0, rect.bottom) - margin,
+      );
+      // Keep the panel beside its trigger, so it cannot intercept a closing tap.
+      setPosition({
+        left: Math.max(
+          margin,
+          Math.min(rect.left, window.innerWidth - width - margin),
+        ),
+        width,
+        maxHeight: Math.max(0, Math.max(above, below) - gap),
+        ...(below >= above
+          ? { top: Math.max(0, rect.bottom) + gap }
+          : {
+              bottom:
+                window.innerHeight -
+                Math.min(rect.top, window.innerHeight) +
+                gap,
+            }),
+      });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
   return (
     <span
       className="time-help"
@@ -46,6 +90,7 @@ function TimeHelp() {
       }}
     >
       <button
+        ref={button}
         type="button"
         className="info-button"
         aria-label="How we calculate listening time"
@@ -67,6 +112,7 @@ function TimeHelp() {
           role="region"
           aria-label="How we calculate listening time"
           className="time-explanation"
+          style={position}
         >
           <strong>How we calculate listening time</strong>
           <span>

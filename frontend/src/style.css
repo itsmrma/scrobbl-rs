@@ -1163,11 +1163,8 @@ footer {
   font-size: 17px;
 }
 .time-explanation {
-  position: absolute;
+  position: fixed;
   z-index: 8;
-  top: 34px;
-  left: min(0px, calc(250px - 50vw));
-  width: min(360px, calc(100vw - 64px));
   padding: 18px;
   background: var(--surface-raised);
   color: var(--text);
@@ -1176,6 +1173,8 @@ footer {
   box-shadow: 0 12px 36px #0005;
   font-size: 13px;
   font-weight: 400;
+  overflow-y: auto;
+  text-align: left;
 }
 .time-explanation > span {
   display: block;
@@ -1415,15 +1414,6 @@ footer {
   .pagination {
     flex-wrap: wrap;
   }
-}
-.time-explanation {
-  position: fixed;
-  inset: auto 24px 24px;
-  width: auto;
-  max-width: 500px;
-  max-height: 60vh;
-  overflow-y: auto;
-  text-align: left;
 }
 .rankings-grid .ranking-row {
   display: grid;

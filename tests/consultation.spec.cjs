@@ -277,19 +277,58 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       });
       try {
         const touchPage = await touch.newPage();
-        await touchPage.goto("/dashboard");
-        const info = touchPage.getByRole("button", {
-          name: "How we calculate listening time",
-          exact: true,
-        });
-        // Touch devices can synthesize mouseover before delivering a click.
-        // Opening content on that compatibility event can consume Safari's first tap.
-        await info.dispatchEvent("mouseover", { bubbles: true });
-        await expect(info).toHaveAttribute("aria-expanded", "false");
-        await info.tap();
-        await expect(info).toHaveAttribute("aria-expanded", "true");
-        await info.tap();
-        await expect(info).toHaveAttribute("aria-expanded", "false");
+        async function expectHelpAccessible(info) {
+          await expect
+            .poll(() =>
+              info.evaluate((button) => {
+                const panel = document.getElementById(
+                  button.getAttribute("aria-controls"),
+                );
+                if (!panel) return false;
+                const b = button.getBoundingClientRect();
+                const p = panel.getBoundingClientRect();
+                return (
+                  (p.bottom <= b.top || p.top >= b.bottom) &&
+                  p.top >= 0 &&
+                  p.bottom <= innerHeight &&
+                  p.left >= 0 &&
+                  p.right <= innerWidth &&
+                  document.elementFromPoint(
+                    b.x + b.width / 2,
+                    b.y + b.height / 2,
+                  ) === button
+                );
+              }),
+            )
+            .toBe(true);
+        }
+        for (const height of [600, 844]) {
+          await touchPage.setViewportSize({ width: 390, height });
+          await touchPage.goto("/dashboard");
+          const info = touchPage.getByRole("button", {
+            name: "How we calculate listening time",
+            exact: true,
+          });
+          // Touch devices can synthesize mouseover before delivering a click.
+          await info.dispatchEvent("mouseover", { bubbles: true });
+          await expect(info).toHaveAttribute("aria-expanded", "false");
+          await info.tap();
+          await expect(info).toHaveAttribute("aria-expanded", "true");
+          // A fixed bottom panel covered the trigger on short WebKit viewports.
+          await expectHelpAccessible(info);
+          await info.tap();
+          await expect(info).toHaveAttribute("aria-expanded", "false");
+          await info.tap();
+          await touchPage.setViewportSize({
+            width: 390,
+            height: height === 600 ? 844 : 600,
+          });
+          await expectHelpAccessible(info);
+          await touchPage.evaluate(() => window.scrollBy(0, 80));
+          await expectHelpAccessible(info);
+          await info.tap();
+          await expect(info).toHaveAttribute("aria-expanded", "false");
+        }
       } finally {
         await touch.close();
       }
