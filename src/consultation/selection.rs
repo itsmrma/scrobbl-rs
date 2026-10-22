@@ -36,7 +36,10 @@ pub(crate) async fn selection_at(
     metadata: bool,
     now: i64,
 ) -> Result<QueryBuilder<Sqlite>> {
-    let mut b = QueryBuilder::new("WITH selected AS (SELECT l.*");
+    let mut b = QueryBuilder::new(format!(
+        "{}, selected AS (SELECT l.*",
+        crate::library::METADATA
+    ));
     if metadata {
         b.push(", t.title, t.album_id, t.spotify_url, a.name AS album, a.cover_url");
     }

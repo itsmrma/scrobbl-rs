@@ -9,6 +9,15 @@ export function Icon({ children }: { children: string }) {
     </span>
   );
 }
+export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
+  return name === "scrobbl.rs" ? (
+    <span className="wordmark">
+      scrobbl<span className="wordmark-suffix">.rs</span>
+    </span>
+  ) : (
+    <span className="wordmark">{name}</span>
+  );
+}
 export function Cover({
   url,
   large = false,
@@ -17,11 +26,30 @@ export function Cover({
   large?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [revision, setRevision] = useState(0);
   useEffect(() => setFailed(false), [url]);
-  return url?.startsWith("https://i.scdn.co/") && !failed ? (
+  useEffect(() => {
+    const changed = (event: Event) => {
+      const { kind, id } = (event as CustomEvent<{ kind: string; id: string }>)
+        .detail;
+      if (url?.split("?")[0] === `/api/v1/artwork/${kind}/${id}`) {
+        setFailed(false);
+        setRevision((v) => v + 1);
+      }
+    };
+    window.addEventListener("artwork-updated", changed);
+    return () => window.removeEventListener("artwork-updated", changed);
+  }, [url]);
+  return (url?.startsWith("https://i.scdn.co/") ||
+    url?.startsWith("/api/v1/artwork/")) &&
+    !failed ? (
     <img
       className={`cover ${large ? "large" : ""}`}
-      src={url}
+      src={
+        url?.startsWith("/api/v1/artwork/")
+          ? `${url}${url.includes("?") ? "&" : "?"}image_revision=${revision}`
+          : url
+      }
       alt=""
       loading="lazy"
       referrerPolicy="no-referrer"
@@ -74,7 +102,6 @@ export function date(ms: number | null, preferences: Preferences) {
       }).format(ms);
 }
 export function Heading({
-  eyebrow,
   title,
   children,
 }: {
@@ -85,7 +112,6 @@ export function Heading({
   return (
     <div className="page-heading">
       <div>
-        {eyebrow && <p className="eyebrow">{eyebrow}</p>}
         <h1>
           {title}
           <span className="accent">.</span>

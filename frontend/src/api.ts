@@ -21,6 +21,9 @@ import type {
   ApiKeySettings,
   CreateApiKey,
   CreatedApiKey,
+  Limits,
+  Details,
+  Edit,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -51,7 +54,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   pendingRequests.add(controller);
   try {
     const headers = new Headers(options.headers);
-    if (options.body && !(options.body instanceof FormData))
+    if (
+      options.body &&
+      !(options.body instanceof FormData) &&
+      !(options.body instanceof Blob)
+    )
       headers.set("Content-Type", "application/json");
     if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
     const response = await fetch(path, {
@@ -93,6 +100,23 @@ export type ConnectOutcome = {
   message: string | null;
 };
 export const api = {
+  listenBrainzLimits: () => request<Limits>("/api/v1/listenbrainz/limits"),
+  importListenBrainz: (form: FormData) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/upload", form),
+  fetchListenBrainz: (form: { username: string; from: string; to: string }) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/fetch", form),
+  libraryDetails: (kind: string, id: string) =>
+    request<Details>(`/api/v1/library/${kind}/${encodeURIComponent(id)}`),
+  editMusic: (kind: string, id: string, form: Edit) =>
+    post(`/api/v1/library/${kind}/${encodeURIComponent(id)}`, form),
+  uploadArtwork: (kind: string, id: string, file: File) =>
+    request(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}/upload`, {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    }),
+  artworkUrl: (kind: string, id: string, url: string | null) =>
+    post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, { url }),
   apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),
   createApiKey: (form: CreateApiKey) =>
     post<CreatedApiKey>("/api/v1/api-keys", form),

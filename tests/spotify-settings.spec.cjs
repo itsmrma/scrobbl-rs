@@ -6,6 +6,13 @@ async function openSpotify(page) {
   await expect(card).toBeVisible();
   if (!(await card.evaluate((element) => element.open)))
     await card.locator("summary").first().click();
+  const intervals = card
+    .locator(".connection-monitor")
+    .filter({
+      has: page.locator("summary").filter({ hasText: /^Refresh intervals$/ }),
+    });
+  if (!(await intervals.evaluate((element) => element.open)))
+    await intervals.locator("summary").click();
 }
 
 test("Spotify intervals save on the server, survive reload and are shared; API keys belongs to Settings", async ({

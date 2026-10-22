@@ -11,6 +11,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Now } from "./library";
+import { MusicActions } from "./music-edit";
 import { Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
@@ -1088,6 +1089,7 @@ export function MusicPage({
               )}
             </Heading>
           </div>
+          <MusicActions kind={kind} id={id} />
           <Stats totals={result.data.totals} />
           <Chart
             params={params}

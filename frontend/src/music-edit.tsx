@@ -1,0 +1,348 @@
+import { useEffect, useRef, useState } from "react";
+import { api } from "./api";
+import type { Details } from "./generated";
+import { useLoad } from "./load";
+import { Link, navigate } from "./navigation";
+import { Cover, ErrorText, Heading, Icon, useToast } from "./ui";
+import type { Kind } from "./selection";
+
+function Stars({
+  value,
+  change,
+  disabled = false,
+}: {
+  value: number | null;
+  change: (value: number | null) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <fieldset className="rating-control" disabled={disabled}>
+      <legend>Your rating</legend>
+      <div className="rating-stars" aria-label="Star rating">
+        {[1, 2, 3, 4, 5].map((star) => (
+          <button
+            key={star}
+            type="button"
+            className="star-button"
+            aria-label={`Rate ${star} stars; left half selects ${Math.max(1, star - 0.5)}`}
+            onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              change(
+                event.detail > 0 && event.clientX - rect.left < rect.width / 2
+                  ? Math.max(1, star - 0.5)
+                  : star,
+              );
+            }}
+          >
+            <Icon>
+              {(value || 0) >= star
+                ? "star"
+                : (value || 0) >= star - 0.5
+                  ? "star_half"
+                  : "star_outline"}
+            </Icon>
+          </button>
+        ))}
+      </div>
+      <div className="rating-input">
+        <label>
+          Rating in stars
+          <select
+            aria-label="Rating in stars"
+            value={value ?? ""}
+            onChange={(e) =>
+              change(e.target.value ? Number(e.target.value) : null)
+            }
+          >
+            <option value="">Not rated</option>
+            {Array.from({ length: 9 }, (_, i) => 1 + i / 2).map((rating) => (
+              <option key={rating} value={rating}>
+                {rating} / 5
+              </option>
+            ))}
+          </select>
+        </label>
+        {value !== null && (
+          <button
+            className="secondary"
+            type="button"
+            onClick={() => change(null)}
+          >
+            Clear rating
+          </button>
+        )}
+      </div>
+    </fieldset>
+  );
+}
+export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
+  const [version, setVersion] = useState(0);
+  const details = useLoad<Details>(
+    () => api.libraryDetails(kind, id),
+    `${kind}:${id}:${version}`,
+  );
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const toast = useToast();
+  return (
+    <div className="music-personal">
+      <Link className="button secondary" to={`/music/${kind}/${id}/edit`}>
+        <Icon>edit</Icon>Edit details{kind !== "tracks" && " & image"}
+      </Link>
+      {details.data && (
+        <Stars
+          value={details.data.rating}
+          disabled={busy}
+          change={async (rating) => {
+            setBusy(true);
+            setError("");
+            try {
+              await api.editMusic(kind, id, {
+                name:
+                  details.data!.name === details.data!.original_name
+                    ? null
+                    : details.data!.name,
+                rating,
+              });
+              setVersion((v) => v + 1);
+              toast(
+                rating === null
+                  ? "Rating cleared."
+                  : `Rated ${rating} out of 5 stars.`,
+              );
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+      )}
+      {details.data?.spotify_url && (
+        <a
+          className="spotify-attribution"
+          href={details.data.spotify_url}
+          target="_blank"
+          rel="noreferrer"
+        >
+          View on Spotify<Icon>open_in_new</Icon>
+        </a>
+      )}
+      <ErrorText>{error || details.error}</ErrorText>
+    </div>
+  );
+}
+
+export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
+  const [version, setVersion] = useState(0);
+  const details = useLoad<Details>(
+    () => api.libraryDetails(kind, id),
+    `${kind}:${id}:${version}`,
+  );
+  const [name, setName] = useState(""),
+    [rating, setRating] = useState<number | null>(null);
+  const [file, setFile] = useState<File | null>(null),
+    [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const [preview, setPreview] = useState("");
+  const initialized = useRef("");
+  const toast = useToast();
+  const back = `/music/${kind}/${id}`;
+  useEffect(() => {
+    if (details.data && initialized.current !== `${kind}:${id}`) {
+      initialized.current = `${kind}:${id}`;
+      setName(details.data.name);
+      setRating(details.data.rating);
+    }
+  }, [details.data]);
+  useEffect(() => {
+    const objectUrl = file ? URL.createObjectURL(file) : "";
+    setPreview(objectUrl);
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
+  return (
+    <>
+      <Link to={back} className="back-link">
+        <Icon>arrow_back</Icon>Back to{" "}
+        {kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}
+      </Link>
+      <Heading
+        title={`Edit ${kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}`}
+      >
+        Personal corrections are kept across future imports and Spotify updates.
+      </Heading>
+      <ErrorText>{details.error}</ErrorText>
+      {details.data ? (
+        <div className="edit-layout">
+          <article className="panel padded">
+            <h2>Details &amp; rating</h2>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError("");
+                try {
+                  await api.editMusic(kind, id, {
+                    name: name === details.data!.original_name ? null : name,
+                    rating,
+                  });
+                  toast("Details saved.");
+                  navigate(back);
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <label>
+                {kind === "artists" ? "Artist name" : "Title"}
+                <input
+                  required
+                  maxLength={300}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={busy}
+                />
+              </label>
+              <p className="original-value">
+                From your sources: <strong>{details.data.original_name}</strong>
+              </p>
+              <button
+                className="secondary"
+                type="button"
+                disabled={busy || name === details.data.original_name}
+                onClick={() => setName(details.data!.original_name)}
+              >
+                <Icon>restart_alt</Icon>Use original name
+              </button>
+              <Stars value={rating} change={setRating} disabled={busy} />
+              <ErrorText>{error}</ErrorText>
+              <div className="connection-actions">
+                <button className="primary" disabled={busy}>
+                  {busy ? "Saving…" : "Save details"}
+                </button>
+                <Link className="button secondary" to={back}>
+                  Cancel
+                </Link>
+              </div>
+            </form>
+          </article>
+          {kind !== "tracks" && (
+            <article className="panel padded artwork-editor">
+              <h2>{kind === "artists" ? "Artist image" : "Album artwork"}</h2>
+              <p>
+                Upload a file or paste a direct image link. Your choice replaces
+                Spotify artwork until you reset it.
+              </p>
+              {preview ? (
+                <img
+                  className="artwork-preview"
+                  src={preview}
+                  alt="Selected image preview"
+                />
+              ) : (
+                <Cover
+                  url={`/api/v1/artwork/${kind}/${id}?v=${version}`}
+                  large
+                />
+              )}
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  setError("");
+                  try {
+                    if (file) await api.uploadArtwork(kind, id, file);
+                    else await api.artworkUrl(kind, id, url);
+                    setFile(null);
+                    setUrl("");
+                    setVersion((v) => v + 1);
+                    window.dispatchEvent(
+                      new CustomEvent("artwork-updated", {
+                        detail: { kind, id },
+                      }),
+                    );
+                    toast("Image saved locally.");
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <label>
+                  Upload an image
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    disabled={busy}
+                    onChange={(e) => {
+                      setFile(e.target.files?.[0] || null);
+                      setUrl("");
+                    }}
+                  />
+                </label>
+                <p className="subtle">
+                  PNG, JPEG or WebP · up to 5 MB. Images are stored on your
+                  server.
+                </p>
+                <label>
+                  Or paste an image URL
+                  <input
+                    type="url"
+                    placeholder="https://…"
+                    value={url}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setUrl(e.target.value);
+                      setFile(null);
+                    }}
+                  />
+                </label>
+                <button className="primary" disabled={busy || (!file && !url)}>
+                  {busy ? "Saving image…" : "Save image"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy || !details.data.custom_image}
+                  onClick={async () => {
+                    setBusy(true);
+                    setError("");
+                    try {
+                      await api.artworkUrl(kind, id, null);
+                      setFile(null);
+                      setUrl("");
+                      setVersion((v) => v + 1);
+                      window.dispatchEvent(
+                        new CustomEvent("artwork-updated", {
+                          detail: { kind, id },
+                        }),
+                      );
+                      toast(
+                        "Custom image removed. Spotify artwork will be used when available.",
+                      );
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : String(e));
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <Icon>restart_alt</Icon>Use Spotify image
+                </button>
+              </form>
+              <ErrorText>{error}</ErrorText>
+            </article>
+          )}
+        </div>
+      ) : (
+        !details.error && <p role="status">Loading details…</p>
+      )}
+    </>
+  );
+}

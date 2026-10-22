@@ -13,6 +13,8 @@ pub mod import_worker;
 pub mod imports;
 mod ingest;
 pub mod jobs;
+pub mod library;
+pub mod listenbrainz;
 pub mod preferences;
 pub mod read_api;
 pub mod recovery;
@@ -35,6 +37,9 @@ pub struct AppState {
     pub storage: storage::Storage,
     pub config: Config,
     pub spotify: spotify::Spotify,
+    pub(crate) artwork_gate:
+        Arc<Mutex<std::collections::HashMap<String, std::sync::Weak<Mutex<()>>>>>,
+    pub(crate) artwork_fetches: Arc<tokio::sync::Semaphore>,
     pub login_attempts: Arc<Mutex<VecDeque<Instant>>>,
     pub(crate) dashboard_cache: Arc<Mutex<VecDeque<(String, serde_json::Value)>>>,
 }
@@ -48,6 +53,8 @@ impl AppState {
             config,
             spotify: spotify::Spotify::new(),
             login_attempts: Default::default(),
+            artwork_gate: Default::default(),
+            artwork_fetches: Arc::new(tokio::sync::Semaphore::new(4)),
             dashboard_cache: Default::default(),
         }
     }

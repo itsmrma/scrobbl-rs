@@ -55,12 +55,14 @@ async fn main() -> anyhow::Result<()> {
             .error_for_status()?;
         return Ok(());
     }
+    scrobbl_rs::listenbrainz::Limits::from_env()?;
     let pool = db::open(&config.data_dir).await?;
     let state = AppState::new(pool, config.clone());
     let listener = tokio::net::TcpListener::bind(config.address()).await?;
     let worker = tokio::spawn(spotify::worker(state.clone()));
     let calendar_worker = tokio::spawn(scrobbl_rs::calendar::worker(state.storage.clone()));
     let import_worker = tokio::spawn(scrobbl_rs::import_worker::worker(state.storage.clone()));
+    let listenbrainz_worker = tokio::spawn(scrobbl_rs::listenbrainz::worker(state.storage.clone()));
     let recovery_worker = tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone()));
     let retention_worker = tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone()));
     println!("scrobbl.rs is running at {}", config.origin());
@@ -79,6 +81,8 @@ async fn main() -> anyhow::Result<()> {
     let _ = recovery_worker.await;
     retention_worker.abort();
     let _ = retention_worker.await;
+    listenbrainz_worker.abort();
+    let _ = listenbrainz_worker.await;
     state.storage.close().await;
     result?;
     Ok(())

@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import type { ReactNode } from "react";
 import type {
   ActivityDetail,
   ImportLimits,
@@ -11,19 +19,27 @@ import {
   duration,
   ErrorText,
   Heading,
+  Icon,
   number,
   SpotifyLink,
   useToast,
 } from "./ui";
 import { useLoad } from "./load";
 import { Link } from "./navigation";
+import { ListenBrainzImport } from "./listenbrainz";
 
-export function Now({
-  visible,
+const NowContext = createContext<{
+  data: NowPlaying | null;
+  error: string;
+  browserTiming: number | null;
+  browserCommit: number | null;
+}>({ data: null, error: "", browserTiming: null, browserCommit: null });
+export function NowPlayingProvider({
   status,
+  children,
 }: {
-  visible: boolean;
   status: SpotifyStatus | null;
+  children: ReactNode;
 }) {
   const [browserTiming, setBrowserTiming] = useState<number | null>(null);
   const [browserCommit, setBrowserCommit] = useState<number | null>(null);
@@ -37,12 +53,66 @@ export function Now({
       return sample;
     },
     "now",
-    visible,
+    !!status?.connected,
     (status?.now_playing_seconds || 30) * 1000,
   );
   useLayoutEffect(() => {
     if (data) setBrowserCommit(performance.now() - requestStart.current);
   }, [data]);
+  return (
+    <NowContext
+      value={{
+        data: status?.connected ? data : null,
+        error: status?.connected ? error : "",
+        browserTiming,
+        browserCommit,
+      }}
+    >
+      {children}
+    </NowContext>
+  );
+}
+export function Now({
+  status,
+  compact = false,
+}: {
+  visible?: boolean;
+  status: SpotifyStatus | null;
+  compact?: boolean;
+}) {
+  const { data, error, browserTiming, browserCommit } = useContext(NowContext);
+  if (compact)
+    return (
+      <div className="sidebar-now" aria-label="Now playing">
+        <Cover url={data?.cover_url} />
+        <div className="nav-copy">
+          <small>
+            {error
+              ? "Playback unavailable"
+              : data
+                ? "Now playing · Spotify"
+                : "Now playing"}
+          </small>
+          {data ? (
+            <>
+              <SpotifyLink url={data.spotify_url}>{data.title}</SpotifyLink>
+              <span>{data.artists.map((a) => a.name).join(", ")}</span>
+            </>
+          ) : (
+            <span>
+              {status?.connected
+                ? "Nothing playing"
+                : "Connect Spotify in Settings"}
+            </span>
+          )}
+        </div>
+        <span className="collapsed-label">
+          {data
+            ? `${data.title} · ${data.artists.map((a) => a.name).join(", ")}`
+            : "Nothing playing"}
+        </span>
+      </div>
+    );
   return (
     <article className="panel now-panel">
       <p className="eyebrow">
@@ -70,7 +140,7 @@ export function Now({
         {error ||
           (data
             ? `${duration(data.progress_ms)} / ${duration(data.duration_ms)} · From Spotify`
-            : "Live while this page is open")}
+            : "Live while your archive is open")}
       </p>
       {data && (
         <details>
@@ -110,7 +180,9 @@ export function Now({
   );
 }
 export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
-  const [files, setFiles] = useState<FileList | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState("");
   const [error, setError] = useState("");
@@ -125,6 +197,27 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
   const toast = useToast();
   const job = report.data?.activity;
   const lastState = useRef("");
+  function selectFiles(selection: File[]) {
+    if (busy) return;
+    if (selection.some((file) => !/\.(zip|json)$/i.test(file.name))) {
+      setError(
+        "Choose a Spotify history ZIP or JSON files. Other file types cannot be imported.",
+      );
+      return;
+    }
+    if (
+      limits.data &&
+      selection.reduce((size, file) => size + file.size, 0) >
+        limits.data.upload_bytes
+    ) {
+      setError(
+        "This selection exceeds the server upload limit. Choose fewer files or a smaller ZIP.",
+      );
+      return;
+    }
+    setFiles(selection);
+    setError("");
+  }
   useEffect(() => {
     if (!job) return;
     const state = `${job.id}:${job.state}:${job.outcome}`;
@@ -146,7 +239,7 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
         title="Import your listening history"
         eyebrow="BRING YOUR PAST WITH YOU"
       >
-        Add your Spotify Extended Streaming History ZIP or JSON files.
+        Add your Spotify Extended Streaming History or ListenBrainz archive.
       </Heading>
       <div className="two-column">
         <article className="panel padded">
@@ -176,27 +269,101 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
               }
             }}
           >
-            <label>
-              History ZIP or JSON files
+            <div
+              id="spotify-dropzone"
+              className={`upload-dropzone ${dragging ? "dragging" : ""}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!busy) {
+                  e.dataTransfer.dropEffect = "copy";
+                  setDragging(true);
+                }
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+                  setDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                selectFiles(Array.from(e.dataTransfer.files));
+              }}
+              aria-busy={busy}
+            >
+              <Icon>upload_file</Icon>
+              <h2>Drop your Spotify history here</h2>
+              <p>
+                One ZIP, or several JSON files. Your files stay on your server.
+              </p>
+              <button
+                type="button"
+                className="secondary"
+                disabled={busy}
+                onClick={() => input.current?.click()}
+              >
+                <Icon>folder_open</Icon>Choose files
+              </button>
               <input
+                ref={input}
                 id="import-files"
+                className="visually-hidden"
+                tabIndex={-1}
+                aria-label="History ZIP or JSON files"
                 type="file"
                 accept=".zip,.json,application/json,application/zip"
                 multiple
-                required
-                onChange={(e) => setFiles(e.target.files)}
+                disabled={busy}
+                onChange={(e) => selectFiles(Array.from(e.target.files || []))}
               />
-            </label>
+            </div>
+            {files.length > 0 && (
+              <div className="upload-selection" role="status">
+                <strong>
+                  {files.length} {files.length === 1 ? "file" : "files"} ready ·{" "}
+                  {number.format(
+                    Math.ceil(
+                      files.reduce((size, file) => size + file.size, 0) / 1024,
+                    ),
+                  )}{" "}
+                  KB
+                </strong>
+                <ul>
+                  {files.map((file, i) => (
+                    <li key={`${file.name}:${i}`}>
+                      <Icon>description</Icon>
+                      <span>{file.name}</span>
+                      <small>
+                        {number.format(Math.ceil(file.size / 1024))} KB
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setFiles([]);
+                    if (input.current) input.current.value = "";
+                  }}
+                >
+                  Clear selection
+                </button>
+              </div>
+            )}
             {limits.data ? (
-              <p>
-                Upload limit: {number.format(limits.data.upload_bytes)} bytes
-                per selection. Expanded limit:{" "}
-                {number.format(limits.data.expanded_bytes)} bytes; per file:{" "}
-                {number.format(limits.data.member_bytes)} bytes; per JSON row:{" "}
-                {number.format(limits.data.row_bytes)} bytes; at most{" "}
-                {number.format(limits.data.files)} files. Limits are configured
-                on the server.
-              </p>
+              <details className="upload-limits">
+                <summary>Server limits and accepted files</summary>
+                <p>
+                  Upload limit: {number.format(limits.data.upload_bytes)} bytes
+                  per selection. Expanded limit:{" "}
+                  {number.format(limits.data.expanded_bytes)} bytes; per file:{" "}
+                  {number.format(limits.data.member_bytes)} bytes; per JSON row:{" "}
+                  {number.format(limits.data.row_bytes)} bytes; at most{" "}
+                  {number.format(limits.data.files)} files. Limits are
+                  configured on the server.
+                </p>
+              </details>
             ) : (
               <p>Loading server limits...</p>
             )}
@@ -282,6 +449,7 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
           <Link to="/activities">View persistent activities</Link>
         </aside>
       </div>
+      <ListenBrainzImport refresh={refresh} />
     </>
   );
 }

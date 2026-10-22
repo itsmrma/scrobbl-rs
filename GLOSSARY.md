@@ -51,6 +51,9 @@ Un artista, album o brano identificato con informazioni incomplete, in attesa di
 **Correzione locale**:
 Una modifica dell'utente ai metadati della propria libreria, distinta dai valori ricevuti dalle fonti.
 
+**Voto personale**:
+La valutazione dell'utente per un artista, un album o un brano, da una a cinque stelle con passi di mezza stella. È distinta dal numero degli ascolti e dalla posizione in classifica; l'assenza di voto non equivale a zero stelle.
+
 **Regola di pulizia**:
 Un criterio scelto dall'utente per uniformare metadati o interpretare nomi e featuring nei dati importati.
 

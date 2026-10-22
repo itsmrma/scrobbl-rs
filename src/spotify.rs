@@ -507,7 +507,11 @@ async fn access_token(state: &AppState, force_refresh: bool) -> Result<String> {
         .ok_or(AppError::Internal)?
         .into())
 }
-async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Result<Value> {
+pub(crate) async fn api_get(
+    state: &AppState,
+    path: &str,
+    params: &[(&str, String)],
+) -> Result<Value> {
     let _gate = state.spotify.gate.lock().await;
     api_get_locked(state, path, params)
         .await
@@ -545,10 +549,29 @@ async fn api_get_locked(
                 AppError::Spotify("Could not reach Spotify. Collection will retry.".into())
             })?;
     }
+    // Artwork enrichment is optional. An app lacking a catalogue endpoint must
+    // not turn a healthy collection authorization into an action-required state.
+    if (path.starts_with("/artists/")
+        || path.starts_with("/albums/")
+        || path.starts_with("/tracks/"))
+        && matches!(
+            response.status(),
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+        )
+    {
+        return Err(AppError::Spotify(
+            "Spotify artwork is unavailable for this item or app.".into(),
+        ));
+    }
     let value = checked_json(state, response).await?;
     let response_received_at_ms = auth::now_ms();
-    diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
-    diagnostic(state, "spotify_action_required", "").await?;
+    if !(path.starts_with("/artists/")
+        || path.starts_with("/albums/")
+        || path.starts_with("/tracks/"))
+    {
+        diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
+        diagnostic(state, "spotify_action_required", "").await?;
+    }
     Ok((value, source_requested_at_ms, response_received_at_ms))
 }
 pub fn parse_track(row: &Value) -> Result<Track> {
@@ -1673,5 +1696,55 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         handle.abort();
+    }
+    #[tokio::test]
+    async fn optional_artwork_does_not_change_collection_health_or_clear_action_required() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/artists/0000000000000000000001",
+                    status: StatusCode::FORBIDDEN,
+                    body: json!({}),
+                    retry: None,
+                },
+                reply("/v1/albums/0000000000000000000002", json!({"images":[]})),
+            ],
+            false,
+        )
+        .await;
+        diagnostic(
+            &state,
+            "spotify_action_required",
+            "collection permission needs review",
+        )
+        .await
+        .unwrap();
+        diagnostic(&state, "spotify_verified_at_ms", "123")
+            .await
+            .unwrap();
+        assert!(
+            api_get(&state, "/artists/0000000000000000000001", &[])
+                .await
+                .is_err()
+        );
+        api_get(&state, "/albums/0000000000000000000002", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            db::setting(&state.db, "spotify_action_required")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("collection permission needs review")
+        );
+        assert_eq!(
+            db::setting(&state.db, "spotify_verified_at_ms")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("123")
+        );
+        handle.abort();
+        state.storage.close().await;
     }
 }

@@ -51,6 +51,15 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/consultation/activity",
             get(crate::browse::activity),
         )
+        .route("/music/{kind}/{id}/edit", get(index))
+        .route(
+            "/api/v1/library/{kind}/{id}",
+            get(crate::library::details).post(crate::library::edit),
+        )
+        .route(
+            "/api/v1/artwork/{kind}/{id}",
+            get(crate::library::artwork).post(crate::library::image_url),
+        )
         .route("/import", get(index))
         .route("/activities", get(index))
         .route("/activities/{id}", get(index))
@@ -62,6 +71,22 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/preferences",
             get(crate::preferences::get).post(crate::preferences::save),
+        )
+        .route(
+            "/api/v1/listenbrainz/limits",
+            get(crate::listenbrainz::limits),
+        )
+        .route(
+            "/api/v1/listenbrainz/fetch",
+            post(crate::listenbrainz::fetch),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/originals",
+            get(crate::listenbrainz::originals),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/files/{file_id}",
+            get(crate::listenbrainz::original_file),
         )
         .route("/api/v1/activities", get(crate::activities::list))
         .route("/api/v1/info", get(crate::read_api::info))
@@ -123,10 +148,18 @@ pub fn router(state: AppState) -> Router {
             )),
         )
         .route(
+            "/api/v1/artwork/{kind}/{id}/upload",
+            post(crate::library::upload_image).layer(DefaultBodyLimit::max(5 * 1024 * 1024)),
+        )
+        .route(
             "/api/import/spotify",
             post(imports::upload).layer(DefaultBodyLimit::max(
                 upload_limit.saturating_add(state.config.import_limits.files.saturating_mul(1024)),
             )),
+        )
+        .route(
+            "/api/v1/listenbrainz/upload",
+            post(crate::listenbrainz::upload).layer(DefaultBodyLimit::disable()),
         )
         .fallback(|| async {
             (

@@ -429,8 +429,44 @@ pub(crate) fn ingest(
                     ],
                 )?;
             }
-            let ambiguous = candidates.len() > 1 || reverse_ambiguous;
-            let listen_id = if candidates.len() == 1 && !ambiguous {
+            let identity_base = event
+                .source_key
+                .rsplit_once(':')
+                .filter(|(_, slot)| slot.parse::<u64>().is_ok())
+                .map(|(key, _)| key)
+                .unwrap_or(&event.source_key);
+            let repeated_identity = format!("{identity_base}:%");
+            let uncertain = if event.source == "listenbrainz"
+                || event.source.starts_with("spotify_")
+            {
+                ids(
+                    conn,
+                    "SELECT DISTINCT l.id FROM listens l JOIN tracks t ON t.id=l.track_id WHERE l.played_at_ms>=? AND l.played_at_ms<? AND l.trashed_at_ms IS NULL AND EXISTS(SELECT 1 FROM observations o WHERE o.listen_id=l.id AND (o.source='listenbrainz' OR ?='listenbrainz')) AND NOT EXISTS(SELECT 1 FROM observations o WHERE o.listen_id=l.id AND o.source='listenbrainz' AND o.source_key LIKE ?) AND (l.track_id=? OR (t.title=? AND EXISTS(SELECT 1 FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=t.id AND a.name=?)))",
+                    params![
+                        event.played_at_ms.div_euclid(1000) * 1000,
+                        event.played_at_ms.div_euclid(1000) * 1000 + 1000,
+                        event.source,
+                        repeated_identity,
+                        track_id,
+                        event.track.title,
+                        event
+                            .track
+                            .artists
+                            .first()
+                            .map(|a| a.name.as_str())
+                            .unwrap_or("")
+                    ],
+                )?
+            } else {
+                vec![]
+            };
+            for id in &uncertain {
+                execute(conn, "UPDATE listens SET needs_review=1 WHERE id=?", [id])?;
+            }
+            affected.extend(uncertain.iter().cloned());
+            let pairing_ambiguous = candidates.len() > 1 || reverse_ambiguous;
+            let ambiguous = pairing_ambiguous || !uncertain.is_empty();
+            let listen_id = if candidates.len() == 1 && !pairing_ambiguous {
                 report.reconciled += 1;
                 candidates[0].0.clone()
             } else {
@@ -554,9 +590,11 @@ pub(crate) fn import_rows(
     use crate::jobs::SourceRow;
     let mut report = ingest(conn, events, crate::auth::now_ms())?;
     review_spotify_imports(conn, events)?;
+    let mut accepted = events.iter();
     for (index, row) in source_rows.iter().enumerate() {
         let (payload_id, variant, outcome, reason) = match row {
-            SourceRow::Event(event) => {
+            SourceRow::Event(_) => {
+                let event = accepted.next().ok_or(AppError::Internal)?;
                 let (variant, payload_id): (String, i64) = conn.prepare_cached(
                     "SELECT v.id,v.payload_id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?",
                 )?.query_row(params![
@@ -564,15 +602,24 @@ pub(crate) fn import_rows(
                         event.source_key,
                         db::payload_fingerprint(&event.raw)
                     ], |r| Ok((r.get(0)?, r.get(1)?)))?;
-                (payload_id, Some(variant), "accepted", None)
+                (
+                    payload_id,
+                    Some(variant),
+                    "accepted",
+                    if event.source == "listenbrainz" {
+                        crate::listenbrainz::duration_warning(&event.raw)
+                    } else {
+                        None
+                    },
+                )
             }
             SourceRow::Invalid { raw, reason } => {
                 report.invalid += 1;
-                (payload(conn, raw)?, None, "invalid", Some(reason.as_str()))
+                (payload(conn, raw)?, None, "invalid", Some(reason.clone()))
             }
             SourceRow::Skipped { raw, reason } => {
                 report.skipped += 1;
-                (payload(conn, raw)?, None, "skipped", Some(reason.as_str()))
+                (payload(conn, raw)?, None, "skipped", Some(reason.clone()))
             }
         };
         execute(

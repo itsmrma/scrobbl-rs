@@ -67,9 +67,10 @@ pub async fn choices(
         "albums" => "albums e JOIN tracks t ON t.album_id=e.id",
         _ => return Err(AppError::BadRequest("Choose artists or albums.".into())),
     };
-    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT e.id,e.name,CASE WHEN COUNT(DISTINCT t.id)=1 THEN MIN(t.title) ELSE CAST(COUNT(DISTINCT t.id) AS TEXT)||' tracks' END AS subtitle FROM ",
-    );
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+        "{}SELECT e.id,e.name,CASE WHEN COUNT(DISTINCT t.id)=1 THEN MIN(t.title) ELSE CAST(COUNT(DISTINCT t.id) AS TEXT)||' tracks' END AS subtitle FROM ",
+        crate::library::METADATA
+    ));
     query.push(join).push(" WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND (e.name LIKE ").push_bind(pattern.clone()).push(" ESCAPE '\\' OR t.title LIKE ").push_bind(pattern).push(" ESCAPE '\\') GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 50");
     let mut view = state.storage.read_view().await?;
     Ok(Json(
@@ -134,7 +135,7 @@ pub async fn music(
     let sql = match kind.as_str() {
         "artists" => {
             filters.artist = Some(id.clone());
-            "SELECT id,name,NULL AS cover_url,NULL AS album_id,NULL AS album FROM artists WHERE id=?"
+            "SELECT id,name,'/api/v1/artwork/artists/'||id AS cover_url,NULL AS album_id,NULL AS album FROM artists WHERE id=?"
         }
         "albums" => {
             filters.album = Some(id.clone());
@@ -150,13 +151,16 @@ pub async fn music(
             ));
         }
     };
-    let row = sqlx::query(sql)
-        .bind(&id)
-        .fetch_optional(&mut *conn)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{}{sql}",
+        crate::library::METADATA
+    )))
+    .bind(&id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or(AppError::NotFound)?;
     let artists = if kind == "tracks" {
-        sqlx::query("SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.ordinal").bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
+        sqlx::query(sqlx::AssertSqlSafe(format!("{}SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.ordinal",crate::library::METADATA))).bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
     } else {
         Vec::new()
     };

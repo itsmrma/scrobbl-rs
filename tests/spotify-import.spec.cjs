@@ -8,6 +8,9 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page
+    .getByText("Server limits and accepted files", { exact: true })
+    .click();
   await expect(page.getByText("Upload limit:")).toBeVisible();
   await page
     .locator("#import-files")
@@ -65,11 +68,11 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
   expect(after.activity.added).toBe(1);
   expect(after.activity.duplicates).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   await page.screenshot({
     path: "test-results/spotify-import-mobile.png",
     fullPage: true,

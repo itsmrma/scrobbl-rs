@@ -621,209 +621,269 @@ export function Connections({
           )}
         </summary>
         <div className="spotify-details">
-          <dl className="diagnostics">
-            <dt>Authorization last verified</dt>
-            <dd>{date(status.verified_at_ms, preferences)}</dd>
-            <dt>Last collection attempt</dt>
-            <dd>{date(status.last_attempt_ms, preferences)}</dd>
-            <dt>Last successful collection</dt>
-            <dd>{date(status.last_sync_ms, preferences)}</dd>
-            <dt>New listens in last successful collection</dt>
-            <dd>
-              {status.last_added === null
-                ? "Not yet known"
-                : status.last_added === 0
-                  ? "0 — successful, no new listens"
-                  : status.last_added}
-            </dd>
-            <dt>Collection interval</dt>
-            <dd>Every {status.sync_seconds} seconds</dd>
-            <dt>Next attempt / request limit</dt>
-            <dd>
-              {status.retry_at_ms && status.retry_at_ms > Date.now()
-                ? date(status.retry_at_ms, preferences)
-                : status.connected && status.last_attempt_ms
-                  ? date(
-                      Math.max(
-                        Date.now(),
-                        status.last_attempt_ms + status.sync_seconds * 1000,
-                      ),
-                      preferences,
-                    )
-                  : "After authorization"}
-            </dd>
-          </dl>
-          {status.now_playing_timing && (
-            <details>
-              <summary>Last now-playing sample timing</summary>
-              <p>
-                Request:{" "}
-                {date(
-                  status.now_playing_timing.source_requested_at_ms,
-                  preferences,
+          <ol
+            className="connection-steps"
+            aria-label="Spotify connection steps"
+          >
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">1</span>
+                <div>
+                  <h3>Prepare your private address</h3>
+                  <p>
+                    On a server, use trusted HTTPS over LAN or VPN. Local
+                    127.0.0.1 works directly.
+                  </p>
+                </div>
+              </div>
+              <HttpsGuide />
+            </li>
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">2</span>
+                <div>
+                  <h3>Set up your Spotify app</h3>
+                  <p>
+                    {status.configured
+                      ? "App credentials saved. Open the setup guide to review or replace them."
+                      : "Register the redirect URI, save it in Spotify, then save your app credentials here."}
+                  </p>
+                </div>
+              </div>
+              <details className="guide" open={!status.configured}>
+                <summary>Create or configure your Spotify app</summary>
+                <p>
+                  Complete these steps in order. Keep the Developer Dashboard
+                  open alongside scrobbl.rs.
+                </p>
+                <ol>
+                  <li>
+                    Open the{" "}
+                    <a
+                      href="https://developer.spotify.com/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Spotify Developer Dashboard
+                    </a>{" "}
+                    and create an app for your listening archive, selecting Web
+                    API.
+                  </li>
+                  <li>
+                    Register this exact redirect URI:
+                    <code id="redirect-uri">{status.redirect_uri}</code>
+                    <button
+                      className="secondary"
+                      onClick={() =>
+                        void action(async () => {
+                          await navigator.clipboard.writeText(
+                            status.redirect_uri,
+                          );
+                          return "Redirect URI copied.";
+                        })
+                      }
+                    >
+                      Copy redirect URI
+                    </button>
+                  </li>
+                  <li>
+                    Click <strong>Save</strong> in the Spotify Developer
+                    Dashboard after adding the redirect URI. Unsaved changes
+                    cause ?redirect_uri: Not matching configuration?. Check app
+                    eligibility and permitted users, then copy the Client ID and
+                    Client Secret into the fields below.
+                  </li>
+                </ol>
+                {status.credentials_from_env ? (
+                  <p>
+                    Spotify app credentials are managed by the server
+                    environment. Change both values there and restart the
+                    server.
+                  </p>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void action(async () => {
+                        await api.credentials(client, secret);
+                        setClient("");
+                        setSecret("");
+                        return "Spotify app saved. Choose Connect Spotify to authorize your account.";
+                      });
+                    }}
+                  >
+                    <label>
+                      Client ID
+                      <input
+                        value={client}
+                        required
+                        maxLength={256}
+                        autoComplete="off"
+                        onChange={(e) => setClient(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Client Secret
+                      <input
+                        type="password"
+                        value={secret}
+                        required
+                        maxLength={256}
+                        autoComplete="off"
+                        onChange={(e) => setSecret(e.target.value)}
+                      />
+                    </label>
+                    <p className="subtle">
+                      Stored on the server. Saved credentials are never returned
+                      to the browser.
+                    </p>
+                    <button className="secondary" disabled={busy}>
+                      Save Spotify app
+                    </button>
+                  </form>
                 )}
-                . Response:{" "}
-                {date(
-                  status.now_playing_timing.response_received_at_ms,
-                  preferences,
-                )}
-                .
-              </p>
-              <p>
-                Server queue:{" "}
-                {status.now_playing_timing.source_requested_at_ms -
-                  status.now_playing_timing.requested_at_ms}{" "}
-                ms. Provider request:{" "}
-                {status.now_playing_timing.response_received_at_ms -
-                  status.now_playing_timing.source_requested_at_ms}{" "}
-                ms.
-              </p>
-              <p>
-                Source playback-state change:{" "}
-                {date(
-                  status.now_playing_timing.source_timestamp_ms,
-                  preferences,
-                )}
-                . This source timestamp does not measure propagation delay. Now
-                playing never creates listens.
-              </p>
-            </details>
-          )}
-          <Link to="/activities">Collection and import reports</Link>
-          {status.coverage_warning && (
-            <p className="warning">{status.coverage_warning}</p>
-          )}
-          {status.review_count > 0 && (
-            <p className="warning">
-              {status.review_count} records need review. Use Possible duplicates
-              in <Link to="/history">Listening history</Link>.
-            </p>
-          )}
-          <ErrorText>{error}</ErrorText>
-          <div className="connection-actions">
-            <SpotifyConnectButton
-              connected={status.connected}
-              disabled={busy || !status.configured}
-              refresh={refresh}
-            />
-            <button
-              className="secondary"
-              disabled={
-                busy ||
-                !status.connected ||
-                (!!status.retry_at_ms && status.retry_at_ms > Date.now())
-              }
-              onClick={() =>
-                void action(async () => {
-                  const result = await api.sync();
-                  return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
-                })
-              }
-            >
-              Verify & sync now
-            </button>
-            <button
-              className="secondary danger"
-              disabled={busy || !status.connected}
-              onClick={() =>
-                void action(async () => {
-                  await api.disconnect();
-                  return "Spotify disconnected. Your listening archive is kept.";
-                })
-              }
-            >
-              Disconnect
-            </button>
-          </div>
-          <p className="subtle">
-            Saved credentials alone do not prove the connection is healthy.
-            Verification reports the last successful request. Now playing has
-            its own status and never proves background collection.
-          </p>
-          <RefreshIntervals status={status} refresh={refresh} />
-          <HttpsGuide />
-          <details className="guide" open={!status.configured}>
-            <summary>Create or configure your Spotify app</summary>
-            <ol>
-              <li>
-                Open the{" "}
-                <a
-                  href="https://developer.spotify.com/dashboard"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Spotify Developer Dashboard
-                </a>{" "}
-                and create an app for your listening archive, selecting Web API.
-              </li>
-              <li>
-                Register this exact redirect URI:
-                <code id="redirect-uri">{status.redirect_uri}</code>
+              </details>
+            </li>
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">3</span>
+                <div>
+                  <h3>Authorize your account</h3>
+                  <p>
+                    {status.connected
+                      ? "Authorization is saved. Review collection status below, or reconnect when needed."
+                      : status.configured
+                        ? "Ready to connect. Spotify opens in a separate tab; this page shows the result."
+                        : "Save your app credentials in step 2 to enable Connect Spotify."}
+                  </p>
+                </div>
+              </div>
+              <ErrorText>{error}</ErrorText>
+              <div className="connection-actions">
+                <SpotifyConnectButton
+                  connected={status.connected}
+                  disabled={busy || !status.configured}
+                  refresh={refresh}
+                />
                 <button
                   className="secondary"
+                  disabled={
+                    busy ||
+                    !status.connected ||
+                    (!!status.retry_at_ms && status.retry_at_ms > Date.now())
+                  }
                   onClick={() =>
                     void action(async () => {
-                      await navigator.clipboard.writeText(status.redirect_uri);
-                      return "Redirect URI copied.";
+                      const result = await api.sync();
+                      return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
                     })
                   }
                 >
-                  Copy redirect URI
+                  Verify & sync now
                 </button>
-              </li>
-              <li>
-                Save the app. Check current Spotify eligibility and permitted
-                users for your app. Enter the Client ID and Client Secret, save,
-                then Connect Spotify and grant access.
-              </li>
-            </ol>
-            {status.credentials_from_env ? (
-              <p>
-                Spotify app credentials are managed by the server environment.
-                Change both values there and restart the server.
-              </p>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void action(async () => {
-                    await api.credentials(client, secret);
-                    setClient("");
-                    setSecret("");
-                    return "Spotify app saved. Choose Connect Spotify to authorize your account.";
-                  });
-                }}
-              >
-                <label>
-                  Client ID
-                  <input
-                    value={client}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setClient(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Client Secret
-                  <input
-                    type="password"
-                    value={secret}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </label>
-                <p className="subtle">
-                  Stored on the server. Saved credentials are never returned to
-                  the browser.
+                <button
+                  className="secondary danger"
+                  disabled={busy || !status.connected}
+                  onClick={() =>
+                    void action(async () => {
+                      await api.disconnect();
+                      return "Spotify disconnected. Your listening archive is kept.";
+                    })
+                  }
+                >
+                  Disconnect
+                </button>
+              </div>
+            </li>
+          </ol>
+          <details className="connection-monitor" open={status.connected}>
+            <summary>Collection status &amp; diagnostics</summary>
+            <p>
+              Authorization and collection are separate. A saved authorization
+              is not a continuous health check.
+            </p>
+            <dl className="diagnostics">
+              <dt>Authorization last verified</dt>
+              <dd>{date(status.verified_at_ms, preferences)}</dd>
+              <dt>Last collection attempt</dt>
+              <dd>{date(status.last_attempt_ms, preferences)}</dd>
+              <dt>Last successful collection</dt>
+              <dd>{date(status.last_sync_ms, preferences)}</dd>
+              <dt>New listens in last successful collection</dt>
+              <dd>
+                {status.last_added === null
+                  ? "Not yet known"
+                  : status.last_added === 0
+                    ? "0 — successful, no new listens"
+                    : status.last_added}
+              </dd>
+              <dt>Collection interval</dt>
+              <dd>Every {status.sync_seconds} seconds</dd>
+              <dt>Next attempt / request limit</dt>
+              <dd>
+                {status.retry_at_ms && status.retry_at_ms > Date.now()
+                  ? date(status.retry_at_ms, preferences)
+                  : status.connected && status.last_attempt_ms
+                    ? date(
+                        Math.max(
+                          Date.now(),
+                          status.last_attempt_ms + status.sync_seconds * 1000,
+                        ),
+                        preferences,
+                      )
+                    : "After authorization"}
+              </dd>
+            </dl>
+            {status.now_playing_timing && (
+              <details>
+                <summary>Last now-playing sample timing</summary>
+                <p>
+                  Request:{" "}
+                  {date(
+                    status.now_playing_timing.source_requested_at_ms,
+                    preferences,
+                  )}
+                  . Response:{" "}
+                  {date(
+                    status.now_playing_timing.response_received_at_ms,
+                    preferences,
+                  )}
+                  .
                 </p>
-                <button className="secondary" disabled={busy}>
-                  Save Spotify app
-                </button>
-              </form>
+                <p>
+                  Server queue:{" "}
+                  {status.now_playing_timing.source_requested_at_ms -
+                    status.now_playing_timing.requested_at_ms}{" "}
+                  ms. Provider request:{" "}
+                  {status.now_playing_timing.response_received_at_ms -
+                    status.now_playing_timing.source_requested_at_ms}{" "}
+                  ms.
+                </p>
+                <p>
+                  Source playback-state change:{" "}
+                  {date(
+                    status.now_playing_timing.source_timestamp_ms,
+                    preferences,
+                  )}
+                  . This source timestamp does not measure propagation delay.
+                  Now playing never creates listens.
+                </p>
+              </details>
             )}
+            <Link to="/activities">Collection and import reports</Link>
+            {status.coverage_warning && (
+              <p className="warning">{status.coverage_warning}</p>
+            )}
+            {status.review_count > 0 && (
+              <p className="warning">
+                {status.review_count} records need review. Use Possible
+                duplicates in <Link to="/history">Listening history</Link>.
+              </p>
+            )}
+          </details>
+          <details className="connection-monitor">
+            <summary>Refresh intervals</summary>
+            <RefreshIntervals status={status} refresh={refresh} />
           </details>
           <p>
             You can also revoke access in your Spotify account’s Apps settings.

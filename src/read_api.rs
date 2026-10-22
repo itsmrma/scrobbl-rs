@@ -487,9 +487,10 @@ async fn page(
         )
     };
     // The outer row set includes changed IDs outside the selection so they become removals.
-    let mut query = sqlx::QueryBuilder::new(
-        "SELECT l.*, t.title,t.album_id,t.duration_ms AS track_duration_ms,a.name AS album,(SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT ar.id,ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=l.track_id ORDER BY ta.ordinal,ar.id)) AS artists,(SELECT json_group_array(source) FROM (SELECT DISTINCT source FROM observations WHERE listen_id=l.id ORDER BY source)) AS sources",
-    );
+    let mut query = sqlx::QueryBuilder::new(format!(
+        "{}SELECT l.*, t.title,t.album_id,t.duration_ms AS track_duration_ms,a.name AS album,(SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT ar.id,ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=l.track_id ORDER BY ta.ordinal,ar.id)) AS artists,(SELECT json_group_array(source) FROM (SELECT DISTINCT source FROM observations WHERE listen_id=l.id ORDER BY source)) AS sources",
+        crate::library::METADATA
+    ));
     match cursor.mode {
         Mode::Full => {
             query.push(", l.id AS changed_id, NULL AS replacement_id FROM listens l JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id WHERE l.trashed_at_ms IS NULL");
