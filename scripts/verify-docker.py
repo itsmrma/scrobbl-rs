@@ -5,6 +5,7 @@ import http.cookiejar
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -101,7 +102,13 @@ def main():
                 raise RuntimeError("Background import failed")
             container = stack("ps", "-q", "scrobbl", capture=True)
             docker("exec", container, "scrobbl-rs", "--healthcheck")
-            print(docker("exec", container, "scrobbl-rs", "--version", capture=True))
+            version = docker("exec", container, "scrobbl-rs", "--version", capture=True)
+            print(version)
+            sqlite = re.search(r"^SQLite (\d+)\.(\d+)\.(\d+)$", version, re.MULTILINE)
+            assert sqlite and tuple(map(int, sqlite.groups())) >= (3, 51, 3), version
+            assert re.search(r"^SQLite source \d{4}-\d{2}-\d{2} .+ [0-9a-f]{64}$", version, re.MULTILINE), version
+            labels = json.loads(docker("image", "inspect", args.image, capture=True))[0]["Config"]["Labels"]
+            assert labels["org.opencontainers.image.revision"] == args.revision
             # Recreate, not just restart: authentication, preferences, archive and jobs must survive.
             stack("up", "-d", "--force-recreate", "--pull", "never")
             assert ready()["authenticated"]

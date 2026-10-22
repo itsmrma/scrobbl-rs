@@ -1,2 +1,6 @@
-/frontend/index.html text eol=lf
-/static/dist/index.html text eol=lf
+# Vite retains source HTML line endings. Keep committed web builds identical on Windows/Linux.
+frontend/index.html text eol=lf
+static/dist/*.html text eol=lf
+static/dist/*.js text eol=lf
+static/dist/*.css text eol=lf
+static/dist/*.txt text eol=lf
