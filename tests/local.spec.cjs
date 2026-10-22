@@ -81,7 +81,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
-  await expect(page.locator("#history-total")).toHaveText("4 records");
+  await expect(page.locator("#history-total")).toHaveText("3 records");
   // Returning to the same selection must retain its data while refreshing,
   // even when the network response is delayed.
   let releaseOverview;

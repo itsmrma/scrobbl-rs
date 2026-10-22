@@ -45,7 +45,7 @@ pub async fn start(
             }
             // Validate the shared selection before accepting a persistent job.
             let mut conn = state.read_db.acquire().await?;
-            crate::web::selection(&mut conn, &form.selection.filters()).await?;
+            crate::consultation::selection(&mut conn, &form.selection.filters()).await?;
             (
                 "export",
                 format,

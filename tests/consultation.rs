@@ -1,0 +1,630 @@
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use http_body_util::BodyExt;
+use scrobbl_rs::{
+    AppState, auth, browse,
+    config::Config,
+    db::{self, DurationKind, Event},
+    spotify::parse_track,
+    storage::Storage,
+    web::{self, Filters},
+};
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+use tower::ServiceExt;
+
+fn at(s: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .unwrap()
+        .timestamp_millis()
+}
+fn event(
+    index: usize,
+    when: i64,
+    ms: Option<i64>,
+    kind: DurationKind,
+    artists: &[(&str, &str)],
+) -> Event {
+    let raw = json!({"uri":format!("spotify:track:{index:022}"),"type":"track","name":format!("Track {index:03}"),"duration_ms":240000,"album":{"id":format!("album{index}"),"name":format!("Album {index:03}"),"images":[]},"artists":artists.iter().map(|(id,name)|json!({"id":id,"name":name})).collect::<Vec<_>>()});
+    Event {
+        source: "spotify_api",
+        source_key: format!("{index}:{when}"),
+        source_timestamp_ms: when,
+        played_at_ms: when,
+        listened_ms: ms,
+        duration_kind: kind,
+        counted: kind != DurationKind::Actual || ms.unwrap_or(0) >= 30000,
+        track: parse_track(&raw).unwrap(),
+        raw,
+    }
+}
+async fn save(store: &Storage, events: &[Event]) {
+    let mut tx = store.writer.begin().await.unwrap();
+    db::ingest(&mut tx, events).await.unwrap();
+    tx.commit().await.unwrap();
+}
+async fn setup() -> (tempfile::TempDir, AppState, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let config = Config {
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        port: 3210,
+        data_dir: dir.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let token = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'test-csrf',9999999999999)")
+        .bind(auth::digest(&token))
+        .execute(&storage.private)
+        .await
+        .unwrap();
+    (dir, AppState::new(storage, config), token)
+}
+async fn get(state: &AppState, token: &str, path: &str) -> (StatusCode, Value) {
+    let response = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header("host", "127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+async fn json_get(state: &AppState, token: &str, path: &str) -> Value {
+    let (status, value) = get(state, token, path).await;
+    assert_eq!(status, StatusCode::OK, "{path}: {value}");
+    value
+}
+
+#[tokio::test]
+async fn rankings_keep_primary_ties_across_pages_secondary_order_precision_and_full_attribution() {
+    let (_dir, state, token) = setup().await;
+    let mut events = Vec::new();
+    let base = at("2025-01-01T12:00:00Z");
+    for i in 0..105 {
+        for n in 0..if i < 9 {
+            3
+        } else if i < 11 {
+            2
+        } else {
+            1
+        } {
+            events.push(event(
+                i,
+                base + n * 300000,
+                Some(60000 + i as i64),
+                DurationKind::Actual,
+                &[("one", "Shared artist"), ("two", "Other artist")],
+            ));
+        }
+    }
+    save(&state.storage, &events).await;
+    let first = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?page_size=10",
+    )
+    .await;
+    let second = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?page_size=10&page=2",
+    )
+    .await;
+    assert_eq!(first["total"], 105);
+    assert_eq!(first["items"][9]["position"], 10);
+    assert_eq!(second["items"][0]["position"], 10);
+    assert_eq!(second["items"][1]["position"], 12);
+    // Secondary precise milliseconds order rows without breaking the primary tie.
+    assert_eq!(first["items"][9]["name"], "Track 010");
+    assert_eq!(second["items"][0]["name"], "Track 009");
+    let mut identities = BTreeSet::new();
+    for size in [10, 25, 50, 100] {
+        identities.clear();
+        for page in 1..=((105 + size - 1) / size) {
+            let data = json_get(
+                &state,
+                &token,
+                &format!("/api/v1/consultation/rankings/tracks?page_size={size}&page={page}"),
+            )
+            .await;
+            for item in data["items"].as_array().unwrap() {
+                assert!(identities.insert(item["id"].as_str().unwrap().to_owned()));
+            }
+        }
+        assert_eq!(identities.len(), 105);
+    }
+    let timed = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?sort=time",
+    )
+    .await;
+    assert_eq!(timed["items"][0]["name"], "Track 008");
+    assert_eq!(timed["items"][0]["position"], 1);
+    assert_eq!(timed["items"][1]["position"], 2);
+    let dashboard = json_get(&state, &token, "/api/dashboard").await;
+    let artists = json_get(&state, &token, "/api/v1/consultation/rankings/artists").await;
+    for artist in artists["items"].as_array().unwrap() {
+        assert_eq!(artist["plays"], dashboard["totals"]["listens"]);
+        assert_eq!(artist["actual_ms"], dashboard["totals"]["actual_ms"]);
+    }
+    assert_eq!(dashboard["rankings"]["tracks"][0], first["items"][0]);
+    assert_eq!(
+        get(
+            &state,
+            &token,
+            "/api/v1/consultation/rankings/tracks?page_size=11"
+        )
+        .await
+        .0,
+        400
+    );
+    assert_eq!(
+        get(&state, &token, "/api/v1/consultation/rankings/nope")
+            .await
+            .0,
+        400
+    );
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_time() {
+    let (_dir, state, token) = setup().await;
+    let base = at("2025-06-01T22:30:00Z");
+    let a = event(
+        1,
+        base,
+        Some(240000),
+        DurationKind::Actual,
+        &[("one", "Artist One"), ("two", "Artist Two")],
+    );
+    let mut unknown = event(
+        2,
+        base + 86400000,
+        None,
+        DurationKind::Unknown,
+        &[("one", "Artist One")],
+    );
+    unknown.source = "listenbrainz";
+    let estimated = event(
+        3,
+        base + 2 * 86400000,
+        Some(10000),
+        DurationKind::Estimated,
+        &[("one", "Artist One")],
+    );
+    let short = event(
+        4,
+        base + 3 * 86400000,
+        Some(29000),
+        DurationKind::Actual,
+        &[("one", "Artist One")],
+    );
+    let counted = event(
+        5,
+        base + 3 * 86400000,
+        Some(30000),
+        DurationKind::Actual,
+        &[("one", "Artist One")],
+    );
+    save(&state.storage, &[a, unknown, estimated, short, counted]).await;
+    let history = json_get(&state, &token, "/api/history").await;
+    assert_eq!(history["total"], 4);
+    assert_eq!(
+        json_get(&state, &token, "/api/history?status=all").await["total"],
+        5
+    );
+    assert_eq!(
+        json_get(&state, &token, "/api/history?status=short").await["total"],
+        1
+    );
+    let dashboard = json_get(&state, &token, "/api/dashboard").await;
+    assert_eq!(dashboard["totals"]["listens"], 4);
+    assert_eq!(dashboard["totals"]["actual_ms"], 270000);
+    assert_eq!(dashboard["totals"]["estimated_ms"], 10000);
+    assert_eq!(dashboard["totals"]["unknown_durations"], 1);
+    let listen = &history["items"][3];
+    assert_eq!(listen["timezone"], "Europe/Rome");
+    assert_eq!(listen["local_date"], "2025-06-02");
+    let artist = listen["artists"][0]["id"].as_str().unwrap();
+    let album = listen["album_id"].as_str().unwrap();
+    let track = listen["track_id"].as_str().unwrap();
+    let filtered=json_get(&state,&token,&format!("/api/history?from=2025-06-02&to=2025-06-02&artist={artist}&album={album}&q=Track&source=spotify_api")).await;
+    assert_eq!(filtered["total"], 1);
+    assert_eq!(
+        json_get(
+            &state,
+            &token,
+            &format!("/api/history?artist={artist}&source=listenbrainz")
+        )
+        .await["total"],
+        1
+    );
+    for (kind, id) in [("artists", artist), ("albums", album), ("tracks", track)] {
+        let page = json_get(
+            &state,
+            &token,
+            &format!("/api/v1/consultation/music/{kind}/{id}"),
+        )
+        .await;
+        assert!(page["totals"]["listens"].as_i64().unwrap() > 0);
+        if kind == "tracks" {
+            assert_eq!(page["artists"].as_array().unwrap().len(), 2);
+            assert_eq!(page["album_id"], album);
+        }
+    }
+    let charts = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/activity?period=custom&from=2025-06-01&to=2025-06-07&grain=day",
+    )
+    .await;
+    let buckets = charts["buckets"].as_array().unwrap();
+    assert_eq!(buckets.len(), 7);
+    assert_eq!(buckets[0]["listens"], 0);
+    assert_eq!(buckets[1]["actual_ms"], 240000);
+    assert_eq!(buckets[2]["unknown_durations"], 1);
+    assert_eq!(buckets[2]["actual_ms"], 0);
+    assert_eq!(
+        buckets
+            .iter()
+            .map(|b| b["listens"].as_i64().unwrap())
+            .sum::<i64>(),
+        4
+    );
+    for grain in ["day", "week", "month", "year"] {
+        let chart = json_get(
+            &state,
+            &token,
+            &format!("/api/v1/consultation/activity?grain={grain}&artist={artist}"),
+        )
+        .await;
+        let mut seen = BTreeSet::new();
+        for bucket in chart["buckets"].as_array().unwrap() {
+            let start = bucket["start"].as_str().unwrap();
+            let page = json_get(
+                &state,
+                &token,
+                &format!("/api/history?artist={artist}&bucket={grain}&bucket_start={start}"),
+            )
+            .await;
+            assert_eq!(page["total"], bucket["listens"], "{grain} {start}");
+            for item in page["items"].as_array().unwrap() {
+                assert!(seen.insert(item["id"].as_str().unwrap().to_owned()));
+            }
+        }
+        assert_eq!(seen.len(), 4);
+    }
+    let empty = json_get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/rankings/albums?artist={artist}&from=2020-01-01&to=2020-01-01"
+        ),
+    )
+    .await;
+    assert_eq!(empty["total"], 0);
+    assert_eq!(
+        get(&state, &token, "/api/v1/consultation/music/tracks/missing")
+            .await
+            .0,
+        404
+    );
+    assert_eq!(
+        get(&state, "invalid", "/api/v1/consultation/activity")
+            .await
+            .0,
+        401
+    );
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn assigned_calendars_rolling_dst_current_periods_and_recalculation_stay_coherent() {
+    let (_dir, state, token) = setup().await;
+    let now = at("2025-03-30T10:00:00Z"); // European DST changes during the rolling window.
+    let artists = &[("one", "One")];
+    save(
+        &state.storage,
+        &[
+            event(
+                1,
+                now - 7 * 86400000 - 1,
+                Some(60000),
+                DurationKind::Actual,
+                artists,
+            ),
+            event(
+                2,
+                now - 7 * 86400000,
+                Some(60000),
+                DurationKind::Actual,
+                artists,
+            ),
+            event(
+                3,
+                at("2025-03-29T23:30:00Z"),
+                Some(60000),
+                DurationKind::Actual,
+                artists,
+            ),
+            event(4, now + 1, Some(60000), DurationKind::Actual, artists),
+        ],
+    )
+    .await;
+    state
+        .storage
+        .change_calendar("UTC", 6, false)
+        .await
+        .unwrap();
+    save(
+        &state.storage,
+        &[event(
+            5,
+            at("2025-03-29T23:30:00Z"),
+            Some(60000),
+            DurationKind::Actual,
+            artists,
+        )],
+    )
+    .await;
+    let mut conn = state.storage.read_view().await.unwrap();
+    let rolling = Filters {
+        period: Some("7d".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        browse::ranking_page(&mut conn.transaction, "tracks", &rolling, now)
+            .await
+            .unwrap()
+            .total,
+        3
+    );
+    let today = Filters {
+        period: Some("today".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        browse::ranking_page(&mut conn.transaction, "tracks", &today, now)
+            .await
+            .unwrap()
+            .total,
+        1
+    ); // Rome listen, not UTC yesterday or a future instant.
+    let custom = Filters {
+        period: Some("custom".into()),
+        from: Some("2025-03-30".into()),
+        to: Some("2025-03-30".into()),
+        grain: Some("day".into()),
+        ..Default::default()
+    };
+    let chart = browse::activity_chart(&mut conn.transaction, &custom, now)
+        .await
+        .unwrap();
+    assert_eq!(chart.buckets[0].listens, 2); // Whole inclusive date includes the future fixture.
+    let weeks = Filters {
+        grain: Some("week".into()),
+        ..Default::default()
+    };
+    let chart = browse::activity_chart(&mut conn.transaction, &weeks, now)
+        .await
+        .unwrap();
+    assert!(chart.mixed_week_starts);
+    assert_eq!(chart.buckets.iter().map(|b| b.listens).sum::<i64>(), 5);
+    let current = browse::activity_chart(&mut conn.transaction, &today, now)
+        .await
+        .unwrap();
+    assert!(current.partial);
+    assert!(current.buckets[0].partial);
+    drop(conn);
+    // A weekly bar drills into the stored week_date, never a blanket current-calendar UTC range.
+    for bucket in chart.buckets {
+        let history = json_get(
+            &state,
+            &token,
+            &format!("/api/history?bucket=week&bucket_start={}", bucket.start),
+        )
+        .await;
+        assert_eq!(history["total"], bucket.listens);
+    }
+    let job = state
+        .storage
+        .change_calendar("UTC", 0, true)
+        .await
+        .unwrap()
+        .unwrap();
+    let lease = state.storage.claim("calendar").await.unwrap().unwrap();
+    assert_eq!(job, lease.id);
+    while !state.storage.calendar_step(&lease).await.unwrap() {}
+    let mut view = state.storage.read_view().await.unwrap();
+    let after = browse::activity_chart(&mut view.transaction, &weeks, now)
+        .await
+        .unwrap();
+    assert!(!after.mixed_week_starts);
+    assert_eq!(after.buckets.iter().map(|b| b.listens).sum::<i64>(), 5);
+    assert_eq!(
+        browse::ranking_page(&mut view.transaction, "tracks", &today, now)
+            .await
+            .unwrap()
+            .total,
+        0
+    );
+    drop(view);
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn empty_buckets_partial_edges_and_chart_limits_are_explicit() {
+    let (_dir, state, token) = setup().await;
+    let chart = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/activity?from=2025-01-02&to=2025-02-02&grain=month",
+    )
+    .await;
+    assert_eq!(chart["buckets"].as_array().unwrap().len(), 2);
+    assert_eq!(chart["buckets"][0]["listens"], 0);
+    assert_eq!(chart["buckets"][0]["partial"], true);
+    assert_eq!(chart["buckets"][1]["partial"], true);
+    assert_eq!(
+        get(
+            &state,
+            &token,
+            "/api/v1/consultation/activity?from=1900-01-01&to=2025-01-01&grain=day"
+        )
+        .await
+        .0,
+        400
+    );
+    for path in [
+        "/api/v1/consultation/activity?grain=nonsense",
+        "/api/history?bucket=month&bucket_start=2025-01-02",
+        "/api/history?bucket=week",
+        "/api/history?from=2025-02-01&to=2025-01-01",
+    ] {
+        assert_eq!(get(&state, &token, path).await.0, 400, "{path}");
+    }
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn competition_positions_use_only_the_primary_measure_and_names_break_complete_ties() {
+    let (_dir, state, token) = setup().await;
+    let base = at("2025-02-01T12:00:00Z");
+    let mut rows = Vec::new();
+    for (index, plays, ms, name) in [
+        (0, 3, 120000, "Lead"),
+        (1, 2, 120000, "Beta"),
+        (2, 2, 120000, "Alpha"),
+        (3, 1, 240000, "Last"),
+    ] {
+        for n in 0..plays {
+            let mut row = event(
+                index,
+                base + n * 500000,
+                Some(ms),
+                DurationKind::Actual,
+                &[("one", "One")],
+            );
+            row.track.title = name.into();
+            rows.push(row);
+        }
+    }
+    save(&state.storage, &rows).await;
+    let plays = json_get(&state, &token, "/api/v1/consultation/rankings/tracks").await;
+    assert_eq!(
+        plays["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["position"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 2, 2, 4]
+    );
+    assert_eq!(plays["items"][1]["name"], "Alpha");
+    assert_eq!(plays["items"][2]["name"], "Beta");
+    let time = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?sort=time",
+    )
+    .await;
+    assert_eq!(
+        time["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["position"].as_i64().unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 2, 2, 2]
+    );
+    assert_eq!(time["items"][1]["name"], "Alpha");
+    assert_eq!(time["items"][3]["name"], "Last");
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn history_typeahead_can_select_identities_with_only_short_listens_and_excludes_trash() {
+    let (_dir, state, token) = setup().await;
+    let row = event(
+        1,
+        at("2025-01-01T12:00:00Z"),
+        Some(29000),
+        DurationKind::Actual,
+        &[("short", "Only short % artist")],
+    );
+    save(&state.storage, &[row]).await;
+    assert_eq!(
+        json_get(&state, &token, "/api/v1/consultation/rankings/artists").await["total"],
+        0
+    );
+    let choices = json_get(&state, &token, "/api/v1/consultation/choices/artists?q=%25").await;
+    assert_eq!(choices.as_array().unwrap().len(), 1);
+    let artist = choices[0]["id"].as_str().unwrap();
+    assert_eq!(
+        json_get(&state, &token, &format!("/api/history?artist={artist}")).await["total"],
+        0
+    );
+    assert_eq!(
+        json_get(
+            &state,
+            &token,
+            &format!("/api/history?artist={artist}&status=all")
+        )
+        .await["total"],
+        1
+    );
+    let album = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/choices/albums?q=Album%20001",
+    )
+    .await;
+    assert_eq!(album.as_array().unwrap().len(), 1);
+    assert_eq!(
+        get(
+            &state,
+            "missing",
+            "/api/v1/consultation/choices/artists?q=a"
+        )
+        .await
+        .0,
+        401
+    );
+    assert_eq!(
+        get(&state, &token, "/api/v1/consultation/choices/tracks?q=a")
+            .await
+            .0,
+        400
+    );
+    let id: String = sqlx::query_scalar("SELECT id FROM listens")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    db::set_trashed(&mut tx, &[id], Some(auth::now_ms()))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(
+        json_get(&state, &token, "/api/v1/consultation/choices/artists?q=%25")
+            .await
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    state.storage.close().await;
+}

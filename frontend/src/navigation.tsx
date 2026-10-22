@@ -1,8 +1,31 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 
+const selections = new Map<string, string>();
+const isConsultation = (path: string) =>
+  path === "/" ||
+  path === "/dashboard" ||
+  path === "/history" ||
+  path.startsWith("/rankings/") ||
+  path.startsWith("/music/");
+function rememberSelection() {
+  if (isConsultation(location.pathname))
+    selections.set(
+      location.pathname === "/" ? "/dashboard" : location.pathname,
+      (location.pathname === "/" ? "/dashboard" : location.pathname) +
+        location.search,
+    );
+}
+function destination(path: string) {
+  return !path.includes("?") && isConsultation(path)
+    ? selections.get(path) || path
+    : path;
+}
+rememberSelection();
+window.addEventListener("popstate", rememberSelection);
 export function navigate(path: string) {
-  history.pushState(null, "", path);
+  rememberSelection();
+  history.pushState(null, "", destination(path));
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 export function Link({
@@ -19,7 +42,7 @@ export function Link({
 }) {
   return (
     <a
-      href={to}
+      href={destination(to)}
       {...props}
       onClick={(event: MouseEvent<HTMLAnchorElement>) => {
         props.onClick?.();
@@ -56,4 +79,14 @@ export function useLocation() {
     return () => window.removeEventListener("popstate", update);
   }, []);
   return path;
+}
+
+export function useSearch() {
+  const [search, setSearch] = useState(location.search);
+  useEffect(() => {
+    const update = () => setSearch(location.search);
+    window.addEventListener("popstate", update);
+    return () => window.removeEventListener("popstate", update);
+  }, []);
+  return search;
 }

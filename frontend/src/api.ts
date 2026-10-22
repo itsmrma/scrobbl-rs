@@ -2,6 +2,10 @@ import type {
   Activity,
   ActivityDetail,
   Dashboard,
+  RankingPage,
+  EntityChoice,
+  MusicPage,
+  ActivityChart,
   History,
   ImportResponse,
   ImportLimits,
@@ -21,27 +25,54 @@ let csrf: string | null = null;
 export function setCsrf(value: string | null) {
   csrf = value;
 }
+// Explicit cancellation before document teardown avoids WebKit reporting pending
+// same-origin reads as access-control errors when the old document disappears.
+const pendingRequests = new Set<AbortController>();
+let leavingDocument = false;
+function leaveDocument() {
+  leavingDocument = true;
+  for (const controller of pendingRequests) controller.abort();
+}
+window.addEventListener("beforeunload", leaveDocument);
+window.addEventListener("pagehide", leaveDocument);
+window.addEventListener("pageshow", () => {
+  leavingDocument = false;
+});
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const headers = new Headers(options.headers);
-  if (options.body && !(options.body instanceof FormData))
-    headers.set("Content-Type", "application/json");
-  if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
-  const response = await fetch(path, {
-    ...options,
-    headers,
-    credentials: "same-origin",
-  });
-  const data = await response
-    .json()
-    .catch(() => ({ error: "The server returned an unreadable response." }));
-  if (response.status === 401 && path !== "/api/login") {
-    setCsrf(null);
-    window.dispatchEvent(new Event("session-expired"));
-    throw new SessionExpired("Your session expired. Sign in again.");
+  if (leavingDocument)
+    throw new DOMException("The page is being left.", "AbortError");
+  const controller = new AbortController();
+  const cancel = () => controller.abort(options.signal?.reason);
+  if (options.signal?.aborted) cancel();
+  else options.signal?.addEventListener("abort", cancel, { once: true });
+  pendingRequests.add(controller);
+  try {
+    const headers = new Headers(options.headers);
+    if (options.body && !(options.body instanceof FormData))
+      headers.set("Content-Type", "application/json");
+    if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
+    const response = await fetch(path, {
+      ...options,
+      signal: controller.signal,
+      headers,
+      credentials: "same-origin",
+    });
+    const data = await response.json().catch((error) => {
+      if (controller.signal.aborted) throw error;
+      throw new Error("The server returned an unreadable response.");
+    });
+    if (response.status === 401 && path !== "/api/login") {
+      setCsrf(null);
+      window.dispatchEvent(new Event("session-expired"));
+      throw new SessionExpired("Your session expired. Sign in again.");
+    }
+    if (!response.ok)
+      throw new Error(data.error || `Request failed (${response.status}).`);
+    return data;
+  } finally {
+    pendingRequests.delete(controller);
+    options.signal?.removeEventListener("abort", cancel);
   }
-  if (!response.ok)
-    throw new Error(data.error || `Request failed (${response.status}).`);
-  return data;
 }
 const post = <T>(path: string, body: unknown = {}, signal?: AbortSignal) =>
   request<T>(path, {
@@ -70,6 +101,18 @@ export const api = {
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>
     request<History>(`/api/history?${params}`),
+  choices: (kind: string, q: string) =>
+    request<EntityChoice[]>(
+      `/api/v1/consultation/choices/${kind}?${new URLSearchParams({ q })}`,
+    ),
+  rankings: (kind: string, params: URLSearchParams) =>
+    request<RankingPage>(`/api/v1/consultation/rankings/${kind}?${params}`),
+  music: (kind: string, id: string, params: URLSearchParams) =>
+    request<MusicPage>(
+      `/api/v1/consultation/music/${kind}/${encodeURIComponent(id)}?${params}`,
+    ),
+  chart: (params: URLSearchParams) =>
+    request<ActivityChart>(`/api/v1/consultation/activity?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

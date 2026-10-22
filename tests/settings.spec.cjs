@@ -135,6 +135,7 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.getByLabel("Period", { exact: true })).toHaveValue("all");
   await require("./recovery-flow.cjs")(page);
+  await require("./navigation-flow.cjs")(page);
   expect(errors).toEqual([]);
 });
 

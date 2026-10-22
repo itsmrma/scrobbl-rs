@@ -4,7 +4,10 @@ import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
 import { Activities, activityName, isActive } from "./activities";
-import { HistoryPage, ImportPage, Overview } from "./library";
+import { ImportPage } from "./library";
+import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
+import { kinds } from "./selection";
+import type { Kind } from "./selection";
 import { Link, navigate, useLocation } from "./navigation";
 import {
   isBool,
@@ -270,6 +273,8 @@ function Shell({ logout }: { logout: () => void }) {
         import: "Import history",
         settings: settingsSection === "api-keys" ? "API keys" : "Settings",
         activities: "Activities",
+        rankings: "Rankings",
+        music: "Music",
       } as Record<string, string>
     )[page] || "Page not found";
   useEffect(() => {
@@ -291,6 +296,7 @@ function Shell({ logout }: { logout: () => void }) {
   const nav = [
     ["/dashboard", "dashboard", "Overview", "space_dashboard"],
     ["/history", "history", "Listening history", "history"],
+    ["/rankings/artists", "rankings", "Rankings", "leaderboard"],
     ["/import", "import", "Import history", "file_upload"],
     ["/settings/general", "settings", "Settings", "settings"],
   ];
@@ -524,7 +530,27 @@ function Shell({ logout }: { logout: () => void }) {
               refresh={refresh}
             />
           </section>
+          {page === "rankings" &&
+            kinds.includes(path.split("/")[2] as Kind) && (
+              <RankingsPage
+                preferences={preferences}
+                kind={path.split("/")[2] as Kind}
+                key={path}
+              />
+            )}
+          {page === "music" &&
+            kinds.includes(path.split("/")[2] as Kind) &&
+            path.split("/")[3] && (
+              <MusicPage
+                preferences={preferences}
+                kind={path.split("/")[2] as Kind}
+                id={decodeURIComponent(path.split("/")[3])}
+                key={path}
+              />
+            )}
           {![
+            "rankings",
+            "music",
             "dashboard",
             "history",
             "import",

@@ -236,3 +236,7 @@ async fn snapshot_metadata(path: &Path) -> anyhow::Result<Snapshot> {
     conn.close().await?;
     Ok(serde_json::from_str(&metadata)?)
 }
+
+mod selection;
+pub(crate) use selection::selection_at;
+pub use selection::{Filters, selection};
