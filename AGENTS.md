@@ -11,6 +11,11 @@ for requirements, confirmed choices, prototype status and open decisions.
 Track issues and specs in GitHub Issues for `itsmrma/scrobbl-rs`.
 For ticket operations, read `docs/agents/issue-tracker.md`.
 
+### Pull requests
+
+Create PRs ready for review, without `--draft`. Before calling a PR ready to
+merge, verify that required checks pass and GitHub reports no merge blockers.
+
 ### Triage labels
 
 Use the five default triage labels.
