@@ -201,7 +201,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     .click();
   await expect(page.getByRole("progressbar")).not.toHaveAttribute("value");
   await expect(
-    page.getByText("12 processed · total not yet known"),
+    page
+      .locator(".activity-detail")
+      .getByText("12 processed · total not yet known"),
   ).toBeVisible();
   await page.reload();
   await expect(

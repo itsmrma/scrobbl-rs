@@ -9,10 +9,15 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password 7!");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page
-    .getByText("Server limits and accepted files", { exact: true })
-    .click();
-  await expect(page.getByText("Upload limit:")).toBeVisible();
+  await page.getByText("Which files can I upload?", { exact: true }).click();
+  await expect(
+    page.getByText("Leave ZIP files zipped", { exact: false }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/gui-sixth-import-help.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   await page
     .locator("#import-files")
     .setInputFiles(path.join(__dirname, "fixtures/spotify-history.zip"));

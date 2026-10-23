@@ -387,7 +387,7 @@ test("release routes fit phone and tablet viewports in both orientations", async
   expect(errors).toEqual([]);
 });
 
-test("overview and sidebar share a single playback sample across navigation", async ({
+test("sidebar retains one playback sample while overview omits the duplicate", async ({
   page,
 }) => {
   await page.route("**/api/spotify/status", async (route) => {
@@ -423,12 +423,12 @@ test("overview and sidebar share a single playback sample across navigation", as
   });
   await login(page);
   await expect(page.locator(".sidebar-now")).toContainText("Shared playback");
-  await expect(page.locator(".now-panel")).toContainText("Shared playback");
+  await expect(page.locator(".now-panel")).toHaveCount(0);
   expect(requests).toBe(1);
   await page.getByRole("link", { name: "Import history", exact: true }).click();
   await expect(page.locator(".sidebar-now")).toContainText("Shared playback");
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(page.locator(".now-panel")).toContainText("Shared playback");
+  await expect(page.locator(".now-panel")).toHaveCount(0);
   expect(requests).toBe(1);
 });
 
@@ -1451,4 +1451,209 @@ test("now playing opens the archived track locally and handles tracks awaiting c
     (await (await page.request.get("/api/dashboard?period=all")).json()).totals
       .records,
   ).toBe(archive.totals.records);
+});
+test("music header and history disclosure keep their geometry", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const kind of ["albums", "tracks"]) {
+    await page.goto(
+      `/music/${kind}/${archive.rankings[kind][0].id}?period=all`,
+    );
+    await expect(page.locator(".music-heading h1")).toBeVisible();
+    const row = page.locator(`.listen-context-${kind}`).first();
+    const arrow = row.locator("summary");
+    await arrow.scrollIntoViewIfNeeded();
+    const before = await arrow.boundingBox();
+    await arrow.click();
+    await expect(row.locator("details")).toHaveAttribute("open");
+    const after = await arrow.boundingBox();
+    expect(Math.abs(after.x - before.x)).toBeLessThan(1);
+    expect(Math.abs(after.y - before.y)).toBeLessThan(1);
+    await page.mouse.click(
+      before.x + before.width / 2,
+      before.y + before.height / 2,
+    );
+    await expect(row.locator("details")).not.toHaveAttribute("open");
+    const heading = page.locator(".music-heading");
+    await heading.scrollIntoViewIfNeeded();
+    const cover = await heading.locator(":scope > .cover").boundingBox();
+    const title = await heading.locator(".page-heading").boundingBox();
+    const filters = await heading.locator(".music-period").boundingBox();
+    expect(Math.abs(cover.y - title.y)).toBeLessThan(1);
+    expect(
+      Math.abs(cover.y + cover.height - filters.y - filters.height),
+    ).toBeLessThan(1);
+    await page.screenshot({
+      path: "test-results/gui-sixth-" + kind + ".png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await arrow.scrollIntoViewIfNeeded();
+    const mobile = await arrow.boundingBox();
+    await arrow.click();
+    const expanded = await arrow.boundingBox();
+    expect(Math.abs(expanded.x - mobile.x)).toBeLessThan(1);
+    expect(Math.abs(expanded.y - mobile.y)).toBeLessThan(1);
+    await arrow.click();
+    await page.setViewportSize({ width: 1280, height: 900 });
+  }
+  await page.goto("/activities");
+  await expect(page.locator(".activity-link")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+});
+
+test("overview charts and activity reports have compact responsive layouts", async ({
+  page,
+  browserName,
+}) => {
+  const running = {
+    id: "demo-import",
+    kind: "spotify_import",
+    filename: "Streaming history · October",
+    state: "running",
+    phase: "processing",
+    attempt: 1,
+    processed: 1250,
+    expected_rows: 5000,
+    added: 1040,
+    duplicates: 210,
+    reconciled: 0,
+    invalid: 0,
+    skipped: 0,
+    ambiguous: 0,
+    originals: 1250,
+    variants: 0,
+    below_threshold: 0,
+    outcome: null,
+    inventory_complete: true,
+    retry_at_ms: null,
+    error_code: null,
+    target_timezone: null,
+    target_week_start: null,
+  };
+  await page.route("**/api/v1/activities", async (route) => {
+    const existing = await (await route.fetch()).json();
+    return route.fulfill({ json: [running, ...existing] });
+  });
+  await page.route("**/api/v1/activities/demo-import", (route) =>
+    route.fulfill({
+      json: {
+        activity: running,
+        source_parameters: { account: "Your Spotify account" },
+        members: [],
+        issues: [],
+      },
+    }),
+  );
+  await page.route("**/api/dashboard?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    for (const kind of ["artists", "albums", "tracks"]) {
+      const first = data.rankings[kind][0];
+      data.rankings[kind] = ["First", "Second", "Third", "Fourth", "Fifth"].map(
+        (label, i) => ({
+          ...first,
+          id: first.id + "-" + i,
+          name: label + " " + kind.slice(0, -1),
+          position: i + 1,
+          plays: 50 - i * 9,
+          actual_ms: 0,
+          listened_ms: (5 - i) * 180000,
+          estimated_ms: (5 - i) * 180000,
+        }),
+      );
+    }
+    return route.fulfill({ json: data });
+  });
+  await login(page);
+  await expect(page.locator(".now-panel")).toHaveCount(0);
+  await expect(page.locator(".ranking-meter")).toHaveCount(15);
+  const first = page.locator(".overview-rankings article").first();
+  const title = await first.locator(".panel-title").boundingBox();
+  const item = await first.locator(".ranking-row").first().boundingBox();
+  expect(item.y - title.y - title.height).toBeGreaterThanOrEqual(12);
+  const bars = first.locator(".ranking-meter > span");
+  await expect(bars.last()).toHaveAttribute("style", "width: 28%;");
+  await page
+    .getByRole("combobox", { name: "Rank by", exact: true })
+    .selectOption("time");
+  await expect(bars.last()).toHaveAttribute("style", "width: 20%;");
+  await page
+    .getByRole("combobox", { name: "Rank by", exact: true })
+    .selectOption("plays");
+  await first.locator(".ranking-row").first().hover();
+  await page.screenshot({
+    path: "test-results/gui-sixth-overview-" + browserName + ".png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto("/activities");
+  await expect(page.locator(".activity-link")).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.locator(".activity-link")).toHaveCSS(
+    "background-color",
+    await page
+      .locator(".sidebar nav a")
+      .first()
+      .evaluate((node) => {
+        const probe = document.createElement("span");
+        probe.style.backgroundColor = "var(--accent)";
+        node.append(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      }),
+  );
+  await expect(
+    page.locator(".sidebar-job").first().getByRole("progressbar"),
+  ).toHaveAttribute("value", "1250");
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.locator(".activity-row").first()).toContainText(
+      "Streaming history",
+    );
+    await page.screenshot({
+      path:
+        "test-results/gui-sixth-activities-" +
+        width +
+        "-" +
+        browserName +
+        ".png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.locator(".activity-row-heading a").first().click();
+    await expect(page.locator(".activity-detail")).toBeVisible();
+    await expect(
+      page.locator(".activity-detail .activity-progress progress"),
+    ).toHaveAttribute("value", "1250");
+    await expect(page.locator(".activity-results")).toContainText("1,040");
+    await expect(page.locator(".activity-diagnostics")).not.toHaveAttribute(
+      "open",
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path:
+        "test-results/gui-sixth-activity-detail-" +
+        width +
+        "-" +
+        browserName +
+        ".png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page
+      .getByRole("link", { name: "All activities", exact: true })
+      .click();
+  }
 });

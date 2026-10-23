@@ -77,6 +77,12 @@ export function ListenList({
                 <small className="warning">Possible duplicate</small>
               )}
             </div>
+            {context && (
+              <div className="listen-archive">
+                <small>Added to archive</small>
+                {date(item.first_acquired_at_ms, preferences)}
+              </div>
+            )}
             <div className="listen-duration">
               {context && <small>Time listened</small>}
               {item.duration_kind === "estimated" && "≈ "}
@@ -94,7 +100,7 @@ export function ListenList({
             {context && (
               <details className="listen-details">
                 <summary>
-                  <Icon>info_outline</Icon>
+                  <Icon>expand_more</Icon>
                   <span className="visually-hidden">Listen details</span>
                 </summary>
                 <dl>

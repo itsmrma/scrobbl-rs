@@ -134,6 +134,19 @@ export function Progress({ job }: { job: Activity }) {
     </div>
   );
 }
+export function SidebarActivity({ job }: { job: Activity }) {
+  return (
+    <Link to={"/activities/" + job.id} className="sidebar-job">
+      <span className="sidebar-job-heading">
+        <Icon>{job.state === "waiting" ? "schedule" : "sync"}</Icon>
+        <strong>{activityName(job)}</strong>
+        <Icon>chevron_right</Icon>
+      </span>
+      <small>{phaseLabel(job)}</small>
+      <Progress job={job} />
+    </Link>
+  );
+}
 export function Activities({
   jobs,
   error,
@@ -176,10 +189,12 @@ export function Activities({
   const job = detail.data?.activity;
   return (
     <>
-      <Heading eyebrow="YOUR ARCHIVE AT WORK" title="Activities">
-        Progress and saved outcomes remain available across pages and browser
-        visits.
-      </Heading>
+      {!id && (
+        <Heading eyebrow="YOUR ARCHIVE AT WORK" title="Activities">
+          Your imports, collection and calendar updates. Follow the progress or
+          open a saved report.
+        </Heading>
+      )}
       <ErrorText>{error}</ErrorText>
       {id ? (
         <>
@@ -189,14 +204,22 @@ export function Activities({
           <ErrorText>{detail.error}</ErrorText>
           <ErrorText>{actionError}</ErrorText>
           {job && (
-            <article className="panel padded">
-              <h2>{activityName(job)}</h2>
+            <article className="panel padded activity-detail">
+              <header className="activity-detail-heading">
+                <div>
+                  <p className="eyebrow">ACTIVITY REPORT</p>
+                  <h1>{activityName(job)}</h1>
+                </div>
+                <span role="status">
+                  <StateBadge job={job} />
+                </span>
+              </header>
               <div className="activity-detail-status" role="status">
-                <StateBadge job={job} />
                 <span>
                   {phaseLabel(job)} · Attempt {job.attempt}
                 </span>
               </div>
+              <Progress job={job} />
               <div className="activity-results">
                 <div>
                   <strong>{number.format(job.added)}</strong>
@@ -231,63 +254,76 @@ export function Activities({
                   }
                 </p>
               )}
-              <Progress job={job} />
-              <SourceInterval params={detail.data?.source_parameters} />
-              {job.kind === "spotify_import" && (
-                <p>
-                  {job.inventory_complete
-                    ? "Inventory complete"
-                    : "Inventory not yet complete"}
-                  . Saved rows remain available after errors or cancellation.
-                  Row counts and original counts are not totals of new listens.
-                </p>
+              {!!(
+                detail.data?.source_parameters ||
+                job.kind === "spotify_import" ||
+                job.error_code ||
+                job.retry_at_ms
+              ) && (
+                <section className="activity-context">
+                  <h3>About this activity</h3>
+                  <SourceInterval params={detail.data?.source_parameters} />
+                  {job.kind === "spotify_import" && (
+                    <p>
+                      {job.inventory_complete
+                        ? "Inventory complete"
+                        : "Inventory not yet complete"}
+                      . Saved rows remain available after errors or
+                      cancellation. Row counts and original counts are not
+                      totals of new listens.
+                    </p>
+                  )}
+                  {job.error_code && (
+                    <p className="form-error">
+                      {job.error_code === "calendar_recalculation_failed"
+                        ? "Calendar recalculation failed. The previous calendar is still active. Check server storage and retry."
+                        : job.kind.startsWith("listenbrainz_")
+                          ? jobMessage(job.error_code)
+                          : `Activity reported: ${job.error_code}`}
+                    </p>
+                  )}
+                  {job.retry_at_ms && (
+                    <p>Next attempt: {date(job.retry_at_ms, preferences)}</p>
+                  )}
+                </section>
               )}
-              {job.error_code && (
-                <p className="form-error">
-                  {job.error_code === "calendar_recalculation_failed"
-                    ? "Calendar recalculation failed. The previous calendar is still active. Check server storage and retry."
-                    : job.kind.startsWith("listenbrainz_")
-                      ? jobMessage(job.error_code)
-                      : `Activity reported: ${job.error_code}`}
-                </p>
-              )}
-              {job.retry_at_ms && (
-                <p>Next attempt: {date(job.retry_at_ms, preferences)}</p>
-              )}
-              <dl className="diagnostics">
-                {(
-                  [
-                    "originals",
-                    "variants",
-                    "below_threshold",
-                    "added",
-                    "reconciled",
-                    "duplicates",
-                    "invalid",
-                    "skipped",
-                    "ambiguous",
-                  ] as const
-                ).map((key) => (
-                  <div key={key}>
-                    <dt>
-                      {
+              <details className="activity-diagnostics">
+                <summary>Detailed counts</summary>
+                <dl className="diagnostics">
+                  {(
+                    [
+                      "originals",
+                      "variants",
+                      "below_threshold",
+                      "added",
+                      "reconciled",
+                      "duplicates",
+                      "invalid",
+                      "skipped",
+                      "ambiguous",
+                    ] as const
+                  ).map((key) => (
+                    <div key={key}>
+                      <dt>
                         {
-                          originals: "New original observations",
-                          variants: "New original variants",
-                          below_threshold: "Below-threshold music rows",
-                          added: "New listens",
-                          reconciled: "Reconciliations",
-                          duplicates: "Known source rows",
-                          invalid: "Invalid source rows",
-                          skipped: "Non-musical source rows",
-                          ambiguous: "Ambiguous matches",
-                        }[key]
-                      }
-                    </dt>
-                    <dd>{job[key]}</dd>
-                  </div>
-                ))}
-              </dl>
+                          {
+                            originals: "New original observations",
+                            variants: "New original variants",
+                            below_threshold: "Below-threshold music rows",
+                            added: "New listens",
+                            reconciled: "Reconciliations",
+                            duplicates: "Known source rows",
+                            invalid: "Invalid source rows",
+                            skipped: "Non-musical source rows",
+                            ambiguous: "Ambiguous matches",
+                          }[key]
+                        }
+                      </dt>
+                      <dd>{job[key]}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
               {[
                 "calendar",
                 "spotify_import",
@@ -369,38 +405,41 @@ export function Activities({
                   ))}
                 </div>
               )}
-              {detail.data && (
-                <p>
-                  Files discovered:{" "}
-                  {
-                    detail.data.members.filter((m) => m.kind !== "directory")
-                      .length
-                  }
-                  . Processed:{" "}
-                  {
-                    detail.data.members.filter((m) =>
-                      ["completed", "partial"].includes(m.state),
-                    ).length
-                  }
-                  . Excluded:{" "}
-                  {
-                    detail.data.members.filter(
-                      (m) => m.state === "excluded" && m.kind !== "directory",
-                    ).length
-                  }
-                  . Failed:{" "}
-                  {
-                    detail.data.members.filter((m) => m.state === "failed")
-                      .length
-                  }
-                  . Still to process:{" "}
-                  {
-                    detail.data.members.filter((m) =>
-                      ["pending", "received", "processing"].includes(m.state),
-                    ).length
-                  }
-                  .
-                </p>
+              {detail.data && detail.data.members.length > 0 && (
+                <section className="activity-files">
+                  <h3>Files in this activity</h3>
+                  <p>
+                    Files discovered:{" "}
+                    {
+                      detail.data.members.filter((m) => m.kind !== "directory")
+                        .length
+                    }
+                    . Processed:{" "}
+                    {
+                      detail.data.members.filter((m) =>
+                        ["completed", "partial"].includes(m.state),
+                      ).length
+                    }
+                    . Excluded:{" "}
+                    {
+                      detail.data.members.filter(
+                        (m) => m.state === "excluded" && m.kind !== "directory",
+                      ).length
+                    }
+                    . Failed:{" "}
+                    {
+                      detail.data.members.filter((m) => m.state === "failed")
+                        .length
+                    }
+                    . Still to process:{" "}
+                    {
+                      detail.data.members.filter((m) =>
+                        ["pending", "received", "processing"].includes(m.state),
+                      ).length
+                    }
+                    .
+                  </p>
+                </section>
               )}
               {detail.data?.members.map((member) => (
                 <div className="job" key={member.member}>
@@ -431,7 +470,7 @@ export function Activities({
           )}
         </>
       ) : (
-        <div className="panel padded activities-panel">
+        <div className="activities-panel">
           <div className="activities-summary">
             <div>
               <Icon>pending_actions</Icon>
@@ -454,48 +493,39 @@ export function Activities({
               results and recovery actions.
             </p>
           </div>
-          <label>
-            Activity type
-            <select
-              value={kind}
-              onChange={(e) => {
-                setKind(e.target.value);
-                setListPage(0);
-              }}
-            >
-              <option value="">All activities</option>
-              <option value="spotify_import">Spotify imports</option>
-              <option value="spotify_collection">Spotify collection</option>
-              <option value="listenbrainz_file">
-                ListenBrainz file imports
-              </option>
-              <option value="listenbrainz_fetch">
-                ListenBrainz public fetches
-              </option>
-              <option value="calendar">Calendar</option>
-            </select>
-          </label>
-          <ErrorText>{history.error}</ErrorText>
-          <div className="connection-actions">
-            <button
-              className="secondary"
-              disabled={listPage === 0}
-              onClick={() => setListPage((p) => p - 1)}
-            >
-              Previous activities
-            </button>
-            <span>Page {listPage + 1}</span>
-            <button
-              className="secondary"
-              disabled={visibleJobs.length < 100}
-              onClick={() => setListPage((p) => p + 1)}
-            >
-              Next activities
-            </button>
+          <div className="activities-toolbar">
+            <h2>Activity history</h2>
+            <label>
+              Activity type
+              <select
+                value={kind}
+                onChange={(e) => {
+                  setKind(e.target.value);
+                  setListPage(0);
+                }}
+              >
+                <option value="">All activities</option>
+                <option value="spotify_import">Spotify imports</option>
+                <option value="spotify_collection">Spotify collection</option>
+                <option value="listenbrainz_file">
+                  ListenBrainz file imports
+                </option>
+                <option value="listenbrainz_fetch">
+                  ListenBrainz public fetches
+                </option>
+                <option value="calendar">Calendar</option>
+              </select>
+            </label>
           </div>
+          <ErrorText>{history.error}</ErrorText>
           {visibleJobs.length ? (
             visibleJobs.map((job) => (
-              <article className="activity-row" key={job.id}>
+              <article
+                className={
+                  "activity-row panel " + (isActive(job) ? "is-active" : "")
+                }
+                key={job.id}
+              >
                 <div className="activity-symbol">
                   <Icon>
                     {job.kind === "calendar"
@@ -552,6 +582,23 @@ export function Activities({
               </Link>
             </div>
           )}
+          <div className="connection-actions">
+            <button
+              className="secondary"
+              disabled={listPage === 0}
+              onClick={() => setListPage((p) => p - 1)}
+            >
+              Previous activities
+            </button>
+            <span>Page {listPage + 1}</span>
+            <button
+              className="secondary"
+              disabled={visibleJobs.length < 100}
+              onClick={() => setListPage((p) => p + 1)}
+            >
+              Next activities
+            </button>
+          </div>
         </div>
       )}
     </>

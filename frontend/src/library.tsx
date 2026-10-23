@@ -156,7 +156,7 @@ export function Now({
         aria-label="Now playing"
       >
         <Cover url={data?.cover_url} />
-        <div className="nav-copy">
+        <div className="nav-copy playback-copy">
           <small>
             {error
               ? "Playback unavailable"
@@ -456,19 +456,31 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
             )}
             {limits.data ? (
               <details className="upload-limits">
-                <summary>Server limits and accepted files</summary>
+                <summary>Which files can I upload?</summary>
                 <p>
-                  Upload limit: {number.format(limits.data.upload_bytes)} bytes
-                  per selection. Expanded limit:{" "}
-                  {number.format(limits.data.expanded_bytes)} bytes; per file:{" "}
-                  {number.format(limits.data.member_bytes)} bytes; per JSON row:{" "}
-                  {number.format(limits.data.row_bytes)} bytes; at most{" "}
-                  {number.format(limits.data.files)} files. Limits are
-                  configured on the server.
+                  Choose the ZIP from Spotify, or the JSON history files inside
+                  it. You can upload up to {number.format(limits.data.files)}{" "}
+                  files together, totalling{" "}
+                  {number.format(
+                    Math.floor(limits.data.upload_bytes / 1024 / 1024),
+                  )}{" "}
+                  MB. Leave ZIP files zipped — we open them for you.
+                </p>
+                <p>
+                  For large archives, the files inside the ZIP can total up to{" "}
+                  {number.format(
+                    Math.floor(limits.data.expanded_bytes / 1024 / 1024),
+                  )}{" "}
+                  MB, with no single file larger than{" "}
+                  {number.format(
+                    Math.floor(limits.data.member_bytes / 1024 / 1024),
+                  )}{" "}
+                  MB. If your selection is too large, upload fewer files at a
+                  time.
                 </p>
               </details>
             ) : (
-              <p>Loading server limits...</p>
+              <p>Checking upload availability...</p>
             )}
             <ErrorText>{limits.error}</ErrorText>
             <button

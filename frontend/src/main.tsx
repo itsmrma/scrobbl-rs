@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
-import { Activities, activityName, isActive } from "./activities";
+import { Activities, SidebarActivity, isActive } from "./activities";
 import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
@@ -288,7 +288,10 @@ function Shell({ logout }: { logout: () => void }) {
             <div className="sidebar-activities">
               <Link
                 to="/activities"
-                className="activity-link"
+                className={
+                  "activity-link " + (page === "activities" ? "active" : "")
+                }
+                aria-current={page === "activities" ? "page" : undefined}
                 aria-label={`Activities: ${activeJobs.length} active`}
               >
                 <Icon>pending_actions</Icon>
@@ -311,17 +314,8 @@ function Shell({ logout }: { logout: () => void }) {
                       ? `${activeJobs.length} in progress`
                       : "No activities running")}
                 </p>
-                {activeJobs.slice(0, 3).map((job) => (
-                  <Link
-                    to={`/activities/${job.id}`}
-                    key={job.id}
-                    className="sidebar-job"
-                  >
-                    <strong>{activityName(job)}</strong>
-                    <small>
-                      {job.state} · {job.processed} processed
-                    </small>
-                  </Link>
+                {activeJobs.slice(0, 2).map((job) => (
+                  <SidebarActivity key={job.id} job={job} />
                 ))}
                 {jobs.some((j) => j.state === "failed") && (
                   <Link to="/activities" className="warning">

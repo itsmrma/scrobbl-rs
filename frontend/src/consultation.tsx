@@ -11,7 +11,6 @@ import type {
 import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
-import { Now } from "./library";
 import { Collage } from "./collage";
 import { MusicActions } from "./music-edit";
 import { Link, navigate, useSearch } from "./navigation";
@@ -355,13 +354,18 @@ function RankingRows({
   params,
   grid = false,
   cardSize = 140,
+  bars = false,
 }: {
   items: Ranking[];
   kind: Kind;
   params: URLSearchParams;
   grid?: boolean;
   cardSize?: number;
+  bars?: boolean;
 }) {
+  const metric = (row: Ranking) =>
+    params.get("sort") === "time" ? row.listened_ms : row.plays;
+  const maximum = Math.max(1, ...items.map(metric));
   return items.length ? (
     <ol
       className={`${grid ? "music-grid" : "ranking-list"} category-${kind}`}
@@ -396,6 +400,15 @@ function RankingRows({
                 : item.subtitle || (kind === "albums" ? "Album" : "Track")}
             </small>
           </div>
+          {bars && (
+            <span className="ranking-meter" aria-hidden="true">
+              <span
+                style={{
+                  width: (100 * metric(item)) / maximum + "%",
+                }}
+              />
+            </span>
+          )}
           <div className="rank-value">
             <strong className="rank-plays">
               {number.format(item.plays)} <small>listens</small>
@@ -822,19 +835,20 @@ export function Overview({
   if (!visible) return null;
   return (
     <>
-      <Heading
-        eyebrow="YOUR PERSONAL LISTENING ARCHIVE"
-        title="Your listening, at a glance"
-      >
-        The songs, the repeats, the moments. All yours.
-      </Heading>
-      <PeriodFilters selection={selection} />
+      <div className="overview-heading">
+        <Heading
+          eyebrow="YOUR PERSONAL LISTENING ARCHIVE"
+          title="Your listening, at a glance"
+        >
+          The songs, the repeats, the moments. All yours.
+        </Heading>
+        <PeriodFilters selection={selection} />
+      </div>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
           <Stats totals={result.data.totals} ids />
-          <Now visible={visible} status={status} />
-          <div className="rankings-grid">
+          <div className="rankings-grid overview-rankings">
             {kinds.map((kind) => (
               <article className="panel padded" key={kind}>
                 <div className="panel-title">
@@ -844,6 +858,7 @@ export function Overview({
                   </Link>
                 </div>
                 <RankingRows
+                  bars
                   items={result.data!.rankings[kind]}
                   kind={kind}
                   params={params}
@@ -1429,34 +1444,40 @@ export function MusicPage({
         <>
           <div className="music-heading">
             <Cover url={result.data.cover_url} large />
-            <Heading
-              title={result.data.name}
-              eyebrow={kind.slice(0, -1).toUpperCase()}
-            >
-              {kind === "albums"
-                ? "Album by "
-                : kind === "tracks"
-                  ? "Track by "
-                  : ""}
-              {result.data.artists.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && ", "}
-                  <Link to={musicLink("artists", a.id, params)}>{a.name}</Link>
-                </span>
-              ))}
-              {result.data.album_id && (
-                <>
-                  {" "}
-                  ·{" "}
-                  <Link to={musicLink("albums", result.data.album_id, params)}>
-                    {result.data.album}
-                  </Link>
-                </>
-              )}
-            </Heading>
-            <MusicActions kind={kind} id={id} />
-            <div className="music-period">
-              <PeriodFilters selection={selection} />
+            <div className="music-header-content">
+              <Heading
+                title={result.data.name}
+                eyebrow={kind.slice(0, -1).toUpperCase()}
+              >
+                {kind === "albums"
+                  ? "Album by "
+                  : kind === "tracks"
+                    ? "Track by "
+                    : ""}
+                {result.data.artists.map((a, i) => (
+                  <span key={a.id}>
+                    {i > 0 && ", "}
+                    <Link to={musicLink("artists", a.id, params)}>
+                      {a.name}
+                    </Link>
+                  </span>
+                ))}
+                {result.data.album_id && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link
+                      to={musicLink("albums", result.data.album_id, params)}
+                    >
+                      {result.data.album}
+                    </Link>
+                  </>
+                )}
+              </Heading>
+              <MusicActions kind={kind} id={id} />
+              <div className="music-period">
+                <PeriodFilters selection={selection} />
+              </div>
             </div>
           </div>
           <Stats totals={result.data.totals} />
