@@ -741,12 +741,9 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
         .run_direct(None, &mut private, false)
         .await?;
     let hash = tokio::task::spawn_blocking(move || {
-        use argon2::{
-            Argon2, PasswordHasher,
-            password_hash::{SaltString, rand_core::OsRng},
-        };
+        use argon2::{Argon2, PasswordHasher};
         Argon2::default()
-            .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(password.as_bytes())
             .map(|v| v.to_string())
             .map_err(|_| anyhow::anyhow!("Password preparation failed"))
     })
