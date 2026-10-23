@@ -9,7 +9,6 @@ use rusqlite::{Connection, OptionalExtension, Params, Row, params, types::FromSq
 use std::collections::{BTreeMap, BTreeSet};
 
 fn archive_id() -> String {
-    use rand::RngCore;
     use std::sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
@@ -18,13 +17,13 @@ fn archive_id() -> String {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let prefix = PREFIX.get_or_init(|| {
         let mut bytes = [0u8; 8];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::fill(&mut bytes);
         bytes
     });
     let mut bytes = [0u8; 32];
     bytes[..8].copy_from_slice(prefix);
     bytes[8..16].copy_from_slice(&SEQUENCE.fetch_add(1, Ordering::Relaxed).to_be_bytes());
-    rand::thread_rng().fill_bytes(&mut bytes[16..]);
+    rand::fill(&mut bytes[16..]);
     // Opaque IDs retain 128 random suffix bits and the existing wire shape, while
     // adjacent archive inserts share B-tree pages. No source/listen time is encoded.
     crate::auth::encode_hex(&bytes)

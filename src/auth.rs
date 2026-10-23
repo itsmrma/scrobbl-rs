@@ -9,7 +9,6 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use rand::RngCore;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -21,7 +20,7 @@ pub fn now_ms() -> i64 {
 }
 pub fn random_secret() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::fill(&mut bytes);
     encode_hex(&bytes)
 }
 pub(crate) fn encode_hex(bytes: &[u8]) -> String {
