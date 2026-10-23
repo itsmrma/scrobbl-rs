@@ -206,6 +206,9 @@ test("ListenBrainz upload runs in background, preserves compact provenance and p
   expect(reimport.duplicates).toBe(4);
   // Large public requests are rejected locally with the ZIP action, before any API call.
   await page.goto("/import");
+  await page
+    .getByRole("button", { name: "Fetch public listens", exact: true })
+    .click();
   await page.getByLabel("Public ListenBrainz username").fill("browser-sample");
   await page.getByLabel("ListenBrainz start date").fill("2020-01-01");
   await page

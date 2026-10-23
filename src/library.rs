@@ -481,7 +481,26 @@ pub async fn artwork(
         return Err(AppError::NotFound);
     }
     exists(&state, &kind, &id).await?;
-    // Coalesce per identity. A cold thumbnail cannot hold up cached artwork.
+    let unavailable = || {
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [
+                (header::CACHE_CONTROL, "no-store"),
+                (header::RETRY_AFTER, "60"),
+            ],
+        )
+            .into_response()
+    };
+    let cached=sqlx::query("SELECT bytes,mime FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    if let Some(row) = cached {
+        let bytes: Option<Vec<u8>> = row.get("bytes");
+        let bytes = bytes.ok_or(AppError::NotFound)?;
+        // A restored database is untrusted input too: derive the response type
+        // from the image bytes, never from an editable MIME string in SQLite.
+        return Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response());
+    }
+    // Never queue optional downloads on browser HTTP connections. Cached and
+    // personal artwork remain available while the provider slot is busy.
     let entity_gate = {
         let mut locks = state.artwork_gate.lock().await;
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -494,15 +513,9 @@ pub async fn artwork(
             lock
         }
     };
-    let _gate = entity_gate.lock().await;
-    let cached=sqlx::query("SELECT bytes,mime FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
-    if let Some(row) = cached {
-        let bytes: Option<Vec<u8>> = row.get("bytes");
-        let bytes = bytes.ok_or(AppError::NotFound)?;
-        // A restored database is untrusted input too: derive the response type
-        // from the image bytes, never from an editable MIME string in SQLite.
-        return Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response());
-    }
+    let Ok(_gate) = entity_gate.try_lock() else {
+        return Ok(unavailable());
+    };
     writable(&state).await?;
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
@@ -510,23 +523,11 @@ pub async fn artwork(
     if !connected {
         return Err(AppError::NotFound);
     }
-    let _capacity = state
-        .artwork_fetches
-        .acquire()
-        .await
-        .map_err(|_| AppError::Internal)?;
+    let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
+        return Ok(unavailable());
+    };
     // A provider failure is not evidence that this entity has no image.
     // Respect the shared request limit without poisoning the negative cache.
-    let unavailable = || {
-        (
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            [
-                (header::CACHE_CONTROL, "no-store"),
-                (header::RETRY_AFTER, "60"),
-            ],
-        )
-            .into_response()
-    };
     let bytes = match spotify_image(&state, &kind, &id).await {
         Ok(Some(url)) => match download(&url).await {
             Ok(bytes) => Some(bytes),
@@ -543,6 +544,91 @@ pub async fn artwork(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cold_artwork_does_not_queue_http_requests_behind_provider_downloads() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = crate::storage::open(directory.path()).await.unwrap();
+        let config = crate::config::Config {
+            port: 3210,
+            bind_ip: "127.0.0.1".parse().unwrap(),
+            external_origin: None,
+            data_dir: directory.path().into(),
+            sync_seconds: 120,
+            now_playing_seconds: 30,
+            import_limits: Default::default(),
+            api_snapshot_limits: Default::default(),
+            env_client_id: None,
+            env_client_secret: None,
+        };
+        let state = AppState::new(storage, config);
+        let token = auth::random_secret();
+        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
+            .bind(auth::digest(&token))
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'unused','unused',9999999999999)")
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artists(id,name,metadata_rank) VALUES('source','Artist',1)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO name_groups VALUES('group','artists','artist','source')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO name_group_members VALUES('artists','source','group','group')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let id: String =
+            sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE entity_id='source'")
+                .fetch_one(&state.read_db)
+                .await
+                .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "cookie",
+            format!("scrobbl_session={token}").parse().unwrap(),
+        );
+        // Simulate a slow download occupying the single optional catalogue slot.
+        let _download = state.artwork_fetches.acquire().await.unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            artwork(
+                State(state.clone()),
+                headers.clone(),
+                Path(("artists".into(), id.clone())),
+            ),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "queued artwork holds browser HTTP connections while waiting for the provider"
+        );
+        assert_eq!(
+            result.unwrap().unwrap().status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+        assert_eq!(cached, 0, "a busy provider must not cache a missing image");
+        save_image(&state, "artists", &id, "custom", Some(b"\x89PNG\r\n\x1a\n"))
+            .await
+            .unwrap();
+        let cached = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            artwork(State(state.clone()), headers, Path(("artists".into(), id))),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(cached.status(), axum::http::StatusCode::OK);
+    }
     #[test]
     fn image_url_blocks_private_special_and_mapped_addresses() {
         for ip in [

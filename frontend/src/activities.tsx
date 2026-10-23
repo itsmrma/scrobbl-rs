@@ -183,7 +183,9 @@ export function Activities({
       <ErrorText>{error}</ErrorText>
       {id ? (
         <>
-          <Link to="/activities">All activities</Link>
+          <Link to="/activities" className="back-link button secondary">
+            <Icon>arrow_back</Icon>All activities
+          </Link>
           <ErrorText>{detail.error}</ErrorText>
           <ErrorText>{actionError}</ErrorText>
           {job && (

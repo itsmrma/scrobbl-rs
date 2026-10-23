@@ -11,6 +11,7 @@ export function ListenBrainzImport({
 }) {
   const limits = useLoad(api.listenBrainzLimits, "listenbrainz-limits");
   const preferences = useLoad(api.preferences, "listenbrainz-calendar");
+  const [method, setMethod] = useState("upload");
   const [files, setFiles] = useState<File[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -50,20 +51,56 @@ export function ListenBrainzImport({
   }
   return (
     <article className="panel padded listenbrainz-import">
-      <h2>ListenBrainz</h2>
+      <div className="panel-title">
+        <h2>ListenBrainz</h2>
+        <span className="pill">History import</span>
+      </div>
       <p>
-        Import an official ZIP, JSONL files, a JSON array or an API history
-        response. Normalized observations and saved reports stay in the archive.
-        Keep your original ZIP; compact storage releases successfully imported
-        files.
+        Bring your listening history into your archive. Use an export for your
+        full history, or fetch a short public interval.
       </p>
-      <div className="two-column">
+      <div
+        className="import-methods"
+        role="group"
+        aria-label="ListenBrainz import method"
+      >
+        <button
+          type="button"
+          className="secondary"
+          aria-pressed={method === "upload"}
+          onClick={() => setMethod("upload")}
+        >
+          <Icon>upload_file</Icon>Import files
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          aria-pressed={method === "fetch"}
+          onClick={() => setMethod("fetch")}
+        >
+          <Icon>cloud_download</Icon>Fetch public listens
+        </button>
+      </div>
+      <div className="listenbrainz-method">
         <form
+          hidden={method !== "upload"}
           onSubmit={(e) => {
             e.preventDefault();
             void submit("upload");
           }}
         >
+          <h3>Import your export</h3>
+          <p>
+            Upload the official ZIP, JSON or JSONL files. For a full history,{" "}
+            <a
+              href="https://listenbrainz.org/settings/export/"
+              target="_blank"
+              rel="noreferrer"
+            >
+              download your ListenBrainz export
+            </a>
+            .
+          </p>
           <label>
             ListenBrainz username for files (optional)
             <input
@@ -72,12 +109,15 @@ export function ListenBrainzImport({
               maxLength={64}
             />
           </label>
-          <p>
-            The official ZIP and API responses identify their account
-            automatically. For standalone files, enter the same account to
-            recognize reimports across formats. Without an account, uncertain
-            matches stay separate and are flagged for review.
-          </p>
+          <details className="import-help">
+            <summary>When do I need a username?</summary>
+            <p>
+              The official ZIP and API responses identify their account
+              automatically. For standalone files, enter the same account to
+              recognize reimports across formats. Without an account, uncertain
+              matches stay separate and are flagged for review.
+            </p>
+          </details>
           <div
             className={`upload-dropzone ${dragging ? "dragging" : ""}`}
             onDragOver={(e) => {
@@ -120,15 +160,20 @@ export function ListenBrainzImport({
             )}
           </div>
           {limits.data && (
-            <p>
-              Up to 50 files per upload;{" "}
-              {Math.floor(limits.data.upload_bytes / 1048576)} MiB per file,{" "}
-              {Math.floor(limits.data.expanded_bytes / 1048576)} MiB expanded,{" "}
-              {limits.data.members} ZIP members and{" "}
-              {Math.floor(limits.data.row_bytes / 1024)} KiB per row or JSON
-              metadata section. Oversized parts are reported; originals are
-              retained for unfinished or partial imports.
-            </p>
+            <details className="import-help">
+              <summary>File limits &amp; storage</summary>
+              <p>
+                Up to 50 files per upload;{" "}
+                {Math.floor(limits.data.upload_bytes / 1048576)} MiB per file,{" "}
+                {Math.floor(limits.data.expanded_bytes / 1048576)} MiB expanded,{" "}
+                {limits.data.members} ZIP members and{" "}
+                {Math.floor(limits.data.row_bytes / 1024)} KiB per row or JSON
+                metadata section. Oversized parts are reported; originals are
+                retained for unfinished or partial imports. Keep your original
+                export: successfully imported files are released from server
+                storage.
+              </p>
+            </details>
           )}
           <ErrorText>{limits.error}</ErrorText>
           <button className="primary" disabled={!!busy || !files?.length}>
@@ -138,12 +183,17 @@ export function ListenBrainzImport({
           </button>
         </form>
         <form
+          hidden={method !== "fetch"}
           onSubmit={(e) => {
             e.preventDefault();
             void submit("fetch");
           }}
         >
-          <h3>Fetch a recent public interval</h3>
+          <h3>Fetch recent public listens</h3>
+          <p>
+            No token needed. Up to 31 days and ten pages per fetch. Use a file
+            export for a complete history.
+          </p>
           <label>
             Public ListenBrainz username
             <input
@@ -153,42 +203,47 @@ export function ListenBrainzImport({
               maxLength={64}
             />
           </label>
-          <label>
-            ListenBrainz start date
-            <input
-              type="date"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-          </label>
-          <label>
-            ListenBrainz end date
-            <input
-              type="date"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
-          </label>
-          <p>
-            Dates include the whole selected day in{" "}
-            {preferences.data?.timezone || "the instance time zone"}. Without a
-            start date: the last 14 days of the interval. Without an end date:
-            stop at the moment you start. The saved interval stays fixed during
-            retries.
-          </p>
-          <p>
-            No token required. For months, years or a complete history, download
-            your ZIP from{" "}
-            <a
-              href="https://listenbrainz.org/settings/export/"
-              target="_blank"
-              rel="noreferrer"
-            >
-              ListenBrainz Settings → Export
-            </a>{" "}
-            and upload it here. Public fetches are limited to 31 days and ten
-            pages; uncertain coverage is reported with the ZIP action.
-          </p>
+          <div className="listenbrainz-dates">
+            <label>
+              ListenBrainz start date
+              <input
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+            </label>
+            <label>
+              ListenBrainz end date
+              <input
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+              />
+            </label>
+          </div>
+          <details className="import-help">
+            <summary>Dates, retries &amp; coverage</summary>
+            <p>
+              Dates include the whole selected day in{" "}
+              {preferences.data?.timezone || "the instance time zone"}. Without
+              a start date: the last 14 days of the interval. Without an end
+              date: stop at the moment you start. The saved interval stays fixed
+              during retries.
+            </p>
+            <p>
+              No token required. For months, years or a complete history,
+              download your ZIP from{" "}
+              <a
+                href="https://listenbrainz.org/settings/export/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                ListenBrainz Settings → Export
+              </a>{" "}
+              and upload it here. Public fetches are limited to 31 days and ten
+              pages; uncertain coverage is reported with the ZIP action.
+            </p>
+          </details>
           <button className="secondary" disabled={!!busy || !username.trim()}>
             {busy === "fetch"
               ? "Saving activity…"
@@ -210,12 +265,15 @@ export function ListenBrainzImport({
           ))}
         </div>
       )}
-      <p>
-        Actual listening time, estimates and unknown durations remain separate.
-        Plays below 30 seconds of actual listening are retained and excluded
-        from valid statistics. Matches based only on names or nearby times stay
-        separate.
-      </p>
+      <details className="import-help">
+        <summary>How imported listens are counted and matched</summary>
+        <p>
+          Actual listening time, estimates and unknown durations remain
+          separate. Plays below 30 seconds of actual listening are retained and
+          excluded from valid statistics. Matches based only on names or nearby
+          times stay separate.
+        </p>
+      </details>
     </article>
   );
 }

@@ -126,6 +126,7 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
+  await page.locator(".history-filter-disclosure > summary").click();
   await page.getByLabel("Search", { exact: true }).fill("Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();

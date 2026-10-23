@@ -89,3 +89,34 @@ Verification after these changes: 114 Rust tests pass, four opt-in cases remain 
 
 
 [Updated yearly activity chart](screenshots/gui-activity-refined.png). Separating a single source entry also restores any older source-specific correction or custom image, retaining the group display choices as a fallback. A regression covers migration of a personal correction, separation, and backup/restore of that decision.
+
+## Second local feedback pass — PR #47
+
+The owner supplied eleven further findings in [GUI #26](https://github.com/itsmrma/scrobbl-rs/issues/26). The earlier source scan and overflow checks had not detected these alignment and loading problems.
+
+- The activity report now has a padded return action with a back arrow and a 44 px target.
+- Connections uses an explicit grid for title, status and collection. Removed the old blanket styles that changed nested icon spacing and font sizes. Native selects now use the same 44 px control treatment in Chromium and WebKit.
+- History filters start collapsed, show the active selection, and remember their disclosure state in the browser. Closing them preserves filters, results and the URL.
+- Artist, album and track headers share larger artwork (180 px desktop, 160 px tablet, 112 px phone), a title column and aligned edit/rating/provider actions.
+- Track history omits repeated music metadata. Album history retains track and artist, without repeating the album. Both expose original UTC playback timestamp, assigned day/week, statistics eligibility, acquisition date and duration evidence. The album header also includes its artists.
+- ListenBrainz presents separate file-import and public-fetch views, preserving entered values between them. Detailed account, storage, date and matching explanations use disclosures.
+
+### Loading diagnosis and regression evidence
+
+`cargo test --lib cold_artwork_does_not_queue -- --nocapture` initially failed after 500 ms: a cold artwork request remained queued behind the occupied provider slot. Slow image responses can consume the browser's available HTTP connections and delay subsequent data requests. The handler now returns a retryable, non-cacheable response immediately when a download or an identity is busy; cached/personal images bypass those download gates. The test passes and also checks that a busy slot creates no missing-image cache entry and does not block saved artwork.
+
+The browser also queues visible or nearby artwork before starting its HTTP requests, releases cancelled cards, and starts the next image as soon as the current one finishes. This preserves sequential image progress without forcing every queued picture into the server's retry delay. `visible artwork waits in the client while music data remains available` failed with two concurrent cold image requests before the client queue; it now verifies one pending request while the chart is already visible.
+
+The browser test `music charts start independently and back navigation restores the visited page while refreshing` initially failed with the album header deliberately held: the activity chart had not started. It now loads independently. Consultation keeps at most 64 reads for 60 seconds in session memory, immediately displays a recently visited selection and refreshes it in the background. Writes and session changes invalidate saved reads; responses started before invalidation cannot repopulate the cache. A delayed album response verifies browser Back restores the visited header and chart within the test's 500 ms limit.
+
+On an isolated copy of the local archive, concurrent HTTP reads for music headers, activity and history took 20–329 ms in one sample, without Spotify credentials or provider requests. Direct activity queries measured about 10–212 ms when idle and up to 1.4 seconds during concurrent builds/browser runs. These observations do not certify a production latency threshold or reproduce the complete reported twenty-second live-provider wait. The opt-in read-only measurement is:
+
+```sh
+SCROBBL_BROWSE_BENCH_DB=/path/to/archive.db cargo test --test consultation music_browse_latency -- --ignored --nocapture
+```
+
+The full automated suite passes 115 Rust tests with five opt-in cases skipped (including that measurement), plus the separately executed read-only measurement. Chromium and WebKit each pass 23 browser scenarios. Focused layout/navigation checks are repeated after the final native-select refinement. TypeScript/Vite, release build, Clippy with warnings denied, rustfmt, Prettier and diff checks pass. Firefox's previously recorded local profile limitation remains; no new Firefox pass is claimed.
+
+Synthetic screenshot evidence: [track](screenshots/gui-music-track-refined.png), [album](screenshots/gui-music-album-refined.png), [artist](screenshots/gui-music-artist-refined.png), [Connections](screenshots/gui-connections-aligned.png), [activity return action](screenshots/gui-activity-return.png), [ListenBrainz files](screenshots/gui-listenbrainz-files.png), [ListenBrainz public fetch](screenshots/gui-listenbrainz-public.png).
+
+The remaining live-provider cold/warm-cache timing and physical PC/Mac/iOS scenarios are consolidated in [final release validation #31](https://github.com/itsmrma/scrobbl-rs/issues/31). GUI #26 remains open for owner visual acceptance; the GitHub CI rerun is monitored by the owner after handoff.

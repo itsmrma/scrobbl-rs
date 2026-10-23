@@ -246,6 +246,12 @@ async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_t
     let track = listen["track_id"].as_str().unwrap();
     let filtered=json_get(&state,&token,&format!("/api/history?from=2025-06-02&to=2025-06-02&artist={artist}&album={album}&q=Track&source=spotify_api")).await;
     assert_eq!(filtered["total"], 1);
+    assert!(
+        filtered["items"][0]["first_acquired_at_ms"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
     assert_eq!(
         json_get(
             &state,
@@ -263,8 +269,10 @@ async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_t
         )
         .await;
         assert!(page["totals"]["listens"].as_i64().unwrap() > 0);
-        if kind == "tracks" {
+        if kind != "artists" {
             assert_eq!(page["artists"].as_array().unwrap().len(), 2);
+        }
+        if kind == "tracks" {
             assert_eq!(page["album_id"], album);
         }
     }
@@ -628,4 +636,54 @@ async fn history_typeahead_can_select_identities_with_only_short_listens_and_exc
         0
     );
     state.storage.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires SCROBBL_BROWSE_BENCH_DB pointing to a read-only archive"]
+async fn music_browse_latency() {
+    use sqlx::{Connection, Row};
+    let path = std::env::var("SCROBBL_BROWSE_BENCH_DB").expect("archive path");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .pragma("query_only", "ON");
+    let mut conn = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    let row = sqlx::query(
+        "SELECT track_id FROM listens GROUP BY track_id ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let track: String = row.get("track_id");
+    let album: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='albums' AND entity_id=(SELECT album_id FROM main.tracks WHERE id=?)").bind(&track).fetch_one(&mut conn).await.unwrap();
+    let artist: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=(SELECT artist_id FROM main.track_artists WHERE track_id=? LIMIT 1)").bind(&track).fetch_one(&mut conn).await.unwrap();
+    for filters in [
+        Filters {
+            track: Some(track),
+            ..Default::default()
+        },
+        Filters {
+            album: Some(album),
+            ..Default::default()
+        },
+        Filters {
+            artist: Some(artist),
+            ..Default::default()
+        },
+    ] {
+        let start = std::time::Instant::now();
+        let chart = browse::activity_chart(&mut conn, &filters, auth::now_ms())
+            .await
+            .unwrap();
+        eprintln!(
+            "activity: {:?}, {} buckets",
+            start.elapsed(),
+            chart.buckets.len()
+        );
+        // This opt-in benchmark reports host-dependent timings; the deterministic
+        // provider-queue and delayed-navigation regressions enforce responsiveness.
+        assert!(!chart.buckets.is_empty());
+    }
 }

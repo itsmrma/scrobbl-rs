@@ -651,3 +651,165 @@ test("yearly activity labels and full details remain readable without clipped to
     animations: "disabled",
   });
 });
+
+test("music charts start independently and back navigation restores the visited page while refreshing", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const album = archive.rankings.albums[0];
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let hold = true;
+  await page.route("**/api/v1/consultation/music/albums/*", async (route) => {
+    if (hold) await gate;
+    await route.continue();
+  });
+  try {
+    await page.goto(`/music/albums/${album.id}`);
+    await expect(page.locator(".chart-bars")).toBeVisible({ timeout: 1000 });
+  } finally {
+    hold = false;
+    release();
+  }
+  await expect(page.locator(".music-heading h1")).toContainText(album.name);
+  await page.locator(".music-heading .page-heading a").first().click();
+  await expect(page.locator(".music-heading h1")).toContainText("Seed artist");
+  await page.unroute("**/api/v1/consultation/music/albums/*");
+  await page.route("**/api/v1/consultation/music/albums/*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  await page.goBack();
+  await expect(page.locator(".music-heading h1")).toContainText(album.name, {
+    timeout: 500,
+  });
+  await expect(page.locator(".chart-bars")).toBeVisible({ timeout: 500 });
+});
+
+test("history filters collapse without clearing the selection and music history keeps listen details", async ({
+  page,
+  browserName,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.addInitScript(() =>
+    localStorage.setItem("scrobbl:accent", JSON.stringify("#c5a3ee")),
+  );
+  await login(page, "/history?period=all&source=spotify_import");
+  const disclosure = page.locator(".history-filter-disclosure");
+  await expect(disclosure).not.toHaveAttribute("open");
+  await disclosure.locator(":scope > summary").click();
+  await expect(page.getByLabel("Source", { exact: true })).toHaveValue(
+    "spotify_import",
+  );
+  await disclosure.locator(":scope > summary").click();
+  await expect(page.getByLabel("Source", { exact: true })).toBeHidden();
+  await expect(page).toHaveURL(/source=spotify_import/);
+  await page.reload();
+  await expect(disclosure).not.toHaveAttribute("open");
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const kind of ["tracks", "albums", "artists"]) {
+    const item = archive.rankings[kind][0];
+    await page.goto(`/music/${kind}/${item.id}?period=all`);
+    await expect(page.locator(".music-heading h1")).toContainText(item.name);
+    await expect(page.locator(".listen-row").first()).toBeVisible();
+    if (kind !== "artists") {
+      const row = page.locator(`.listen-context-${kind}`).first();
+      await expect(row.locator(".listen-album")).toHaveCount(0);
+      await expect(row.locator(".listen-title")).toHaveCount(
+        kind === "tracks" ? 0 : 1,
+      );
+      if (kind === "albums")
+        await expect(row.locator(".listen-title")).toContainText("Seed artist");
+      await row.locator("summary").click();
+      await expect(row).toContainText("Playback timestamp (UTC)");
+      await expect(row).toContainText("Archived on");
+      await expect(row).toContainText("Counted listen");
+    }
+    for (const control of await page.locator("#main select:visible").all()) {
+      expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    }
+    const cover = await page.locator(".music-heading > .cover").boundingBox();
+    expect(cover.width).toBeGreaterThanOrEqual(160);
+    await page.screenshot({
+      path: `test-results/gui-feedback-${kind}-${browserName}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+  await page.goto("/import");
+  await expect(
+    page.getByRole("heading", { name: "Import your export" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Public ListenBrainz username")).toBeHidden();
+  await page.screenshot({
+    path: `test-results/gui-feedback-listenbrainz-upload-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("button", { name: "Fetch public listens", exact: true })
+    .click();
+  await page.getByLabel("Public ListenBrainz username").fill("public-listener");
+  await page.getByRole("button", { name: "Import files", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Fetch public listens", exact: true })
+    .click();
+  await expect(page.getByLabel("Public ListenBrainz username")).toHaveValue(
+    "public-listener",
+  );
+  await page.screenshot({
+    path: `test-results/gui-feedback-listenbrainz-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto("/activities");
+  await page.locator(".activity-row-heading a").first().click();
+  const back = page.getByRole("link", { name: "All activities", exact: true });
+  await expect(back).toBeVisible();
+  expect((await back.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await page.screenshot({
+    path: `test-results/gui-feedback-activity-detail-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await back.click();
+  await expect(page.locator(".activity-row").first()).toBeVisible();
+});
+
+test("visible artwork waits in the client while music data remains available", async ({
+  page,
+}) => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let requests = 0;
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    requests++;
+    await gate;
+    await route.fulfill({ status: 404, body: "" });
+  });
+  try {
+    await login(page);
+    await expect(page.locator(".chart-bars")).toBeVisible();
+    await expect.poll(() => requests).toBeGreaterThan(0);
+    await page.waitForTimeout(150);
+    expect(
+      requests,
+      "cold images must not occupy all browser HTTP connections",
+    ).toBe(1);
+  } finally {
+    release();
+  }
+  await page.getByRole("link", { name: "Import history", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Import your export" }),
+  ).toBeVisible();
+});

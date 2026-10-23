@@ -41,6 +41,7 @@ pub struct Listen {
     pub cover_url: Option<String>,
     pub spotify_url: Option<String>,
     pub played_at_ms: i64,
+    pub first_acquired_at_ms: i64,
     pub listened_ms: Option<i64>,
     pub duration_kind: DurationKind,
     pub counted: bool,

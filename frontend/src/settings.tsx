@@ -638,7 +638,9 @@ export function Connections({
               ? "Connected · verified on last request"
               : connection}
           </span>
-          <span>Collection: {collection}</span>
+          <span className="connection-collection">
+            Collection: {collection}
+          </span>
           <Icon>expand_more</Icon>
           {needsAction && (
             <span>Review the details and the available actions.</span>

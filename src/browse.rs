@@ -162,6 +162,8 @@ pub async fn music(
     .ok_or(AppError::NotFound)?;
     let artists = if kind == "tracks" {
         sqlx::query(sqlx::AssertSqlSafe(format!("{}SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.ordinal",crate::library::METADATA))).bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
+    } else if kind == "albums" {
+        sqlx::query(sqlx::AssertSqlSafe(format!("{}SELECT a.id,a.name FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists a ON a.id=ta.artist_id WHERE t.album_id=? GROUP BY a.id ORDER BY MIN(ta.ordinal),a.name,a.id",crate::library::METADATA))).bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
     } else {
         Vec::new()
     };

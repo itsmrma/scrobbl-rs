@@ -23,6 +23,36 @@ export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
     <span className="wordmark">{name}</span>
   );
 }
+// Queue cold image work before it reaches the browser's HTTP connection pool.
+// Cancelling a card releases its place; visible data reads stay independent.
+let artworkBusy = false;
+const artworkQueue: (() => void)[] = [];
+function pumpArtwork() {
+  if (!artworkBusy) artworkQueue.shift()?.();
+}
+function queueArtwork(start: (done: () => void) => void) {
+  let started = false,
+    finished = false;
+  const done = () => {
+    if (finished) return;
+    finished = true;
+    if (started) {
+      artworkBusy = false;
+      pumpArtwork();
+    }
+  };
+  artworkQueue.push(() => {
+    if (finished) {
+      pumpArtwork();
+      return;
+    }
+    started = true;
+    artworkBusy = true;
+    start(done);
+  });
+  pumpArtwork();
+  return done;
+}
 export function Cover({
   url,
   large = false,
@@ -32,6 +62,37 @@ export function Cover({
 }) {
   const [failed, setFailed] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [readySource, setReadySource] = useState("");
+  const marker = useRef<HTMLElement | null>(null);
+  const release = useRef<{ source: string; done: () => void } | null>(null);
+  const local = !!url?.startsWith("/api/v1/artwork/");
+  const source = local
+    ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
+    : url;
+  useEffect(() => {
+    if (!local || !source || !marker.current) return;
+    let cancel = () => {};
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        cancel = queueArtwork((done) => {
+          release.current = { source, done };
+          setReadySource(source);
+        });
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(marker.current);
+    return () => {
+      observer.disconnect();
+      cancel();
+    };
+  }, [local, source]);
+  const finish = () => {
+    const current = release.current;
+    if (current && current.source === source) current.done();
+  };
   const artwork = useContext(ArtworkContext);
   useEffect(() => setFailed(false), [url]);
   useEffect(() => {
@@ -68,23 +129,31 @@ export function Cover({
     window.addEventListener("artwork-updated", changed);
     return () => window.removeEventListener("artwork-updated", changed);
   }, [url]);
-  return (url?.startsWith("https://i.scdn.co/") ||
-    url?.startsWith("/api/v1/artwork/")) &&
-    !failed ? (
+  return (url?.startsWith("https://i.scdn.co/") || local) &&
+    !failed &&
+    (!local || readySource === source) ? (
     <img
+      ref={(node) => {
+        marker.current = node;
+      }}
       className={`cover ${large ? "large" : ""}`}
-      src={
-        url?.startsWith("/api/v1/artwork/")
-          ? `${url}${url.includes("?") ? "&" : "?"}image_revision=${revision}`
-          : url
-      }
+      src={source || undefined}
       alt=""
-      loading="lazy"
+      loading={local ? "eager" : "lazy"}
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      onLoad={finish}
+      onError={() => {
+        finish();
+        setFailed(true);
+      }}
     />
   ) : (
-    <span className={`cover placeholder ${large ? "large" : ""}`}>
+    <span
+      ref={(node) => {
+        marker.current = node;
+      }}
+      className={`cover placeholder ${large ? "large" : ""}`}
+    >
       <Icon>music_note</Icon>
     </span>
   );

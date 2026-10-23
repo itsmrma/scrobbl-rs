@@ -31,6 +31,7 @@ export class SessionExpired extends Error {}
 let csrf: string | null = null;
 export function setCsrf(value: string | null) {
   csrf = value;
+  if (value === null) window.dispatchEvent(new Event("read-cache-cleared"));
 }
 // Explicit cancellation before document teardown avoids WebKit reporting pending
 // same-origin reads as access-control errors when the old document disappears.
@@ -79,6 +80,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     if (!response.ok)
       throw new Error(data.error || `Request failed (${response.status}).`);
+    if (options.method === "POST")
+      window.dispatchEvent(new Event("read-data-changed"));
     return data;
   } finally {
     pendingRequests.delete(controller);

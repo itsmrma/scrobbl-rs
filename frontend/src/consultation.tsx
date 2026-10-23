@@ -16,7 +16,7 @@ import { MusicActions } from "./music-edit";
 import { Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
-import { periods } from "./preferences";
+import { periods, isBool, useBrowserPreference } from "./preferences";
 import {
   context,
   kinds,
@@ -421,8 +421,10 @@ function RankingsPanel({
   query.set("page_size", String(list.size));
   const result = useLoad(
     () => api.rankings(kind, query),
-    `${query}:${kind}:${version}`,
+    `rankings:${query}:${kind}:${version}`,
     visible,
+    undefined,
+    true,
   );
   const update = (patch: Record<string, string>, resetPages = true) => {
     const next = new URLSearchParams(location.search);
@@ -565,8 +567,10 @@ function Chart({
 }) {
   const result = useLoad(
     () => api.chart(params),
-    `${params}:${version}`,
+    `chart:${params}:${version}`,
     visible,
+    undefined,
+    true,
   );
   const [inspected, setInspected] = useState<string | null>(null);
   const byTime = params.get("sort") === "time";
@@ -957,15 +961,22 @@ export function HistoryPage({
   visible,
   params: override,
   embedded = false,
+  musicKind,
 }: {
   preferences: Preferences;
   visible: boolean;
   params?: URLSearchParams;
   embedded?: boolean;
+  musicKind?: Kind;
 }) {
   const selection = useSelection(visible),
     list = useListPreferences();
   const params = new URLSearchParams(override || selection.params);
+  const [filtersOpen, setFiltersOpen] = useBrowserPreference(
+    "history-filters-open",
+    false,
+    isBool,
+  );
   const [draft, setDraft] = useState(params.get("q") || "");
   const search = useSearch();
   useEffect(() => {
@@ -975,8 +986,10 @@ export function HistoryPage({
   if (embedded) params.set("page", params.get("history_page") || "1");
   const result = useLoad<History>(
     () => api.history(params),
-    `${params}:${preferences.version}`,
+    `history:${params}:${preferences.version}`,
     visible,
+    undefined,
+    true,
   );
   const change = (patch: Record<string, string>) =>
     selection.update({
@@ -1000,118 +1013,150 @@ export function HistoryPage({
           clear={() => change({ track: "" })}
         />
       )}
-      <form
-        className="history-filters panel padded"
-        aria-label="Listening history filters"
-        onSubmit={(e) => {
-          e.preventDefault();
-          change({ q: draft });
-        }}
+      <details
+        className="history-filter-disclosure panel"
+        open={filtersOpen}
+        onToggle={(e) => setFiltersOpen(e.currentTarget.open)}
       >
-        <div className="history-filter-heading">
-          <h2>Find your listens</h2>
-          <span>Combine filters to narrow your history</span>
-        </div>
-        {!embedded && <PeriodFilters selection={selection} sort={false} />}
-        <div className="history-filter-grid">
-          <label className="history-search">
-            Search
-            <input
-              id="history-q"
-              value={draft}
-              placeholder="Artist, album or track"
-              maxLength={500}
-              onChange={(e) => setDraft(e.target.value)}
-            />
-          </label>
-          {!embedded && (
-            <>
-              <EntityFilter
-                kind="artists"
-                id={params.get("artist") || ""}
-                change={(id) => change({ artist: id })}
-              />
-              <EntityFilter
-                kind="albums"
-                id={params.get("album") || ""}
-                change={(id) => change({ album: id })}
-              />
-            </>
-          )}
-          <label>
-            Source
-            <select
-              aria-label="Source"
-              value={params.get("source") || ""}
-              onChange={(e) => change({ source: e.target.value })}
-            >
-              <option value="">All sources</option>
-              <option value="spotify_import">Spotify import</option>
-              <option value="spotify_api">Spotify collection</option>
-              <option value="listenbrainz">ListenBrainz</option>
-            </select>
-          </label>
-          <label>
-            Include
-            <select
-              id={embedded ? undefined : "history-status"}
-              value={params.get("status") || "counted"}
-              onChange={(e) => change({ status: e.target.value })}
-            >
+        <summary>
+          <Icon>tune</Icon>
+          <span>
+            <strong>Filters</strong>
+            <small>
               {[
-                ["counted", "Counted listens"],
-                ["all", "All records"],
-                ["short", "Below threshold"],
-                ["actual", "Actual time"],
-                ["estimated", "Estimated / unknown time"],
-                ["review", "Possible duplicates"],
-              ].map(([v, t]) => (
-                <option key={v} value={v}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="checkbox-label">
-            <input
-              type="checkbox"
-              checked={params.get("status") === "all"}
-              onChange={(e) =>
-                change({ status: e.target.checked ? "all" : "counted" })
-              }
-            />
-            Show listens below threshold too
-          </label>
-          <PageSize list={list} changed={() => change({})} />
-        </div>
-        <div className="history-filter-actions">
-          <button className="primary">
-            <Icon>search</Icon>Search
-          </button>
-          <button
-            type="button"
-            className="secondary"
-            onClick={() => {
-              setDraft("");
-              change({
-                q: "",
-                source: "",
-                status: "",
-                artist: "",
-                album: "",
-                track: "",
-                bucket: "",
-                bucket_start: "",
-                from: "",
-                to: "",
-                period: "all",
-              });
-            }}
-          >
-            Reset
-          </button>
-        </div>
-      </form>
+                params.get("period") && params.get("period") !== "all"
+                  ? params.get("period")
+                  : "All time",
+                params.get("q"),
+                params.get("source")?.replaceAll("_", " "),
+                params.get("artist") ? "Artist selected" : "",
+                params.get("album") ? "Album selected" : "",
+                params.get("status") && params.get("status") !== "counted"
+                  ? params.get("status")
+                  : "Counted listens",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </small>
+          </span>
+          <span className="filter-toggle-label">
+            {filtersOpen ? "Hide filters" : "Show filters"}
+          </span>
+          <Icon>expand_more</Icon>
+        </summary>
+        <form
+          className="history-filters padded"
+          aria-label="Listening history filters"
+          onSubmit={(e) => {
+            e.preventDefault();
+            change({ q: draft });
+          }}
+        >
+          <div className="history-filter-heading">
+            <h2>Find your listens</h2>
+            <span>Combine filters to narrow your history</span>
+          </div>
+          {!embedded && <PeriodFilters selection={selection} sort={false} />}
+          <div className="history-filter-grid">
+            <label className="history-search">
+              Search
+              <input
+                id="history-q"
+                value={draft}
+                placeholder="Artist, album or track"
+                maxLength={500}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            </label>
+            {!embedded && (
+              <>
+                <EntityFilter
+                  kind="artists"
+                  id={params.get("artist") || ""}
+                  change={(id) => change({ artist: id })}
+                />
+                <EntityFilter
+                  kind="albums"
+                  id={params.get("album") || ""}
+                  change={(id) => change({ album: id })}
+                />
+              </>
+            )}
+            <label>
+              Source
+              <select
+                aria-label="Source"
+                value={params.get("source") || ""}
+                onChange={(e) => change({ source: e.target.value })}
+              >
+                <option value="">All sources</option>
+                <option value="spotify_import">Spotify import</option>
+                <option value="spotify_api">Spotify collection</option>
+                <option value="listenbrainz">ListenBrainz</option>
+              </select>
+            </label>
+            <label>
+              Include
+              <select
+                id={embedded ? undefined : "history-status"}
+                value={params.get("status") || "counted"}
+                onChange={(e) => change({ status: e.target.value })}
+              >
+                {[
+                  ["counted", "Counted listens"],
+                  ["all", "All records"],
+                  ["short", "Below threshold"],
+                  ["actual", "Actual time"],
+                  ["estimated", "Estimated / unknown time"],
+                  ["review", "Possible duplicates"],
+                ].map(([v, t]) => (
+                  <option key={v} value={v}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={params.get("status") === "all"}
+                onChange={(e) =>
+                  change({ status: e.target.checked ? "all" : "counted" })
+                }
+              />
+              Show listens below threshold too
+            </label>
+            <PageSize list={list} changed={() => change({})} />
+          </div>
+          <div className="history-filter-actions">
+            <button className="primary">
+              <Icon>search</Icon>Search
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setDraft("");
+                change({
+                  q: "",
+                  source: "",
+                  status: "",
+                  artist: "",
+                  album: "",
+                  track: "",
+                  bucket: "",
+                  bucket_start: "",
+                  from: "",
+                  to: "",
+                  period: "all",
+                });
+              }}
+            >
+              Reset
+            </button>
+          </div>
+        </form>
+      </details>
       {params.get("bucket") && (
         <div className="segment-filter">
           <Icon>date_range</Icon>
@@ -1151,6 +1196,7 @@ export function HistoryPage({
             id={embedded ? undefined : "history-list"}
             items={result.data.items}
             preferences={preferences}
+            context={musicKind}
           />
           <Pager
             total={result.data.total}
@@ -1183,7 +1229,10 @@ export function MusicPage({
     params = scoped(selection.params, kind, id);
   const result = useLoad(
     () => api.music(kind, id, params),
-    `${kind}:${id}:${params}:${preferences.version}`,
+    `music:${kind}:${id}:${params}:${preferences.version}`,
+    true,
+    undefined,
+    true,
   );
   return (
     <>
@@ -1213,42 +1262,43 @@ export function MusicPage({
                 </>
               )}
             </Heading>
+            <MusicActions kind={kind} id={id} />
           </div>
-          <MusicActions kind={kind} id={id} />
           <Stats totals={result.data.totals} />
-          <Chart
-            params={params}
-            update={selection.update}
-            version={preferences.version}
-          />
-          {kind === "artists" && (
-            <RankingsPanel
-              kind="albums"
-              params={params}
-              showView={false}
-              version={preferences.version}
-              title="Albums in this period"
-            />
-          )}
-          {kind !== "tracks" && (
-            <RankingsPanel
-              kind="tracks"
-              params={params}
-              title="Tracks in this period"
-              version={preferences.version}
-            />
-          )}
-          <h2>Listening history</h2>
-          <HistoryPage
-            preferences={preferences}
-            visible
-            params={params}
-            embedded
-          />
         </>
       ) : (
         !result.error && <p role="status">Loading music page…</p>
       )}
+      <Chart
+        params={params}
+        update={selection.update}
+        version={preferences.version}
+      />
+      {kind === "artists" && (
+        <RankingsPanel
+          kind="albums"
+          params={params}
+          showView={false}
+          version={preferences.version}
+          title="Albums in this period"
+        />
+      )}
+      {kind !== "tracks" && (
+        <RankingsPanel
+          kind="tracks"
+          params={params}
+          title="Tracks in this period"
+          version={preferences.version}
+        />
+      )}
+      <h2>Listening history</h2>
+      <HistoryPage
+        preferences={preferences}
+        visible
+        params={params}
+        embedded
+        musicKind={kind}
+      />
     </>
   );
 }
