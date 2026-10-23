@@ -238,7 +238,24 @@ fn public_ip(ip: IpAddr) -> bool {
             }),
     }
 }
-async fn download(url: &str) -> Result<Vec<u8>> {
+fn image_retry_at(value: Option<&str>, now: i64) -> i64 {
+    value
+        .and_then(|value| {
+            value
+                .parse::<i64>()
+                .ok()
+                .filter(|seconds| *seconds >= 0)
+                .map(|seconds| now.saturating_add(seconds.saturating_mul(1000)))
+                .or_else(|| {
+                    chrono::DateTime::parse_from_rfc2822(value)
+                        .ok()
+                        .map(|date| date.timestamp_millis())
+                })
+        })
+        .unwrap_or_else(|| now.saturating_add(60_000))
+        .max(now.saturating_add(1000))
+}
+async fn download(url: &str, state: Option<&AppState>) -> Result<Vec<u8>> {
     let url = url::Url::parse(url)
         .map_err(|_| AppError::BadRequest("Enter a valid public HTTPS image URL.".into()))?;
     if url.scheme() != "https"
@@ -274,6 +291,28 @@ async fn download(url: &str) -> Result<Vec<u8>> {
             "Could not download the image. Try a direct image link or upload a file.".into(),
         )
     })?;
+    if matches!(
+        response.status(),
+        reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE
+    ) && let Some(state) = state
+    {
+        let retry = image_retry_at(
+            response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            auth::now_ms(),
+        );
+        db::set_setting(
+            &mut *state.db.acquire().await?,
+            "artwork_retry_at_ms",
+            &retry.to_string(),
+        )
+        .await?;
+        return Err(AppError::Spotify(
+            "The image provider requested a pause. Artwork will resume automatically.".into(),
+        ));
+    }
     if !response.status().is_success()
         || response
             .content_length()
@@ -311,6 +350,7 @@ async fn save_image(
     // absence expires, so the provider can be checked again later.
     let expires = (source == "spotify" && data.is_none()).then_some(now + DAY);
     let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
     sqlx::query(
         "DELETE FROM artwork WHERE source='spotify' AND bytes IS NULL AND expires_at_ms<=?",
     )
@@ -361,7 +401,7 @@ pub async fn image_url(
     }
     exists(&state, &kind, &id).await?;
     if let Some(url) = form.url {
-        let bytes = download(&url).await?;
+        let bytes = download(&url, None).await?;
         save_image(&state, &kind, &id, "custom", Some(&bytes)).await?;
     } else {
         sqlx::query("DELETE FROM artwork WHERE kind=? AND entity_id=? AND source='custom'")
@@ -374,7 +414,7 @@ pub async fn image_url(
 }
 async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<String>> {
     let singular = if kind == "artists" { "artist" } else { "album" };
-    let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links WHERE entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
+    let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links INDEXED BY entity_links_entity WHERE entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
     let external = external.and_then(|s| {
         s.strip_prefix(&format!("spotify:{singular}:"))
             .filter(|v| valid_spotify_id(v))
@@ -385,9 +425,9 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
     } else {
         // Extended exports have track IDs, but do not contain album/artist IDs.
         let query = if kind == "albums" {
-            "SELECT e.external_id FROM entity_links e JOIN tracks t ON t.id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND t.album_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
+            "SELECT e.external_id FROM entity_links e INDEXED BY entity_links_entity JOIN tracks t ON t.id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND t.album_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
         } else {
-            "SELECT e.external_id FROM entity_links e JOIN track_artists ta ON ta.track_id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND ta.artist_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
+            "SELECT e.external_id FROM entity_links e INDEXED BY entity_links_entity JOIN track_artists ta ON ta.track_id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND ta.artist_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
         };
         let track: Option<String> = sqlx::query_scalar(query)
             .bind(id)
@@ -472,8 +512,34 @@ pub async fn artwork(
         )
             .into_response());
     }
-    // Never queue optional downloads on browser HTTP connections. Cached and
-    // personal artwork remain available while the provider slot is busy.
+    match ensure_artwork(&state, &kind, &id).await {
+        Ok(ArtworkFetch::Busy) => Ok(unavailable()),
+        Ok(ArtworkFetch::Missing) | Err(AppError::Unauthorized) => Err(AppError::NotFound),
+        Ok(ArtworkFetch::Saved | ArtworkFetch::Cached) => {
+            let bytes: Vec<u8> = sqlx::query_scalar("SELECT bytes FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).fetch_one(&state.read_db).await?;
+            Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response())
+        }
+        Err(_) => Ok(unavailable()),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum ArtworkFetch {
+    Cached,
+    Saved,
+    Missing,
+    Busy,
+}
+
+pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
+    let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    if let Some(saved) = cached {
+        return Ok(if saved {
+            ArtworkFetch::Cached
+        } else {
+            ArtworkFetch::Missing
+        });
+    }
     let entity_gate = {
         let mut locks = state.artwork_gate.lock().await;
         locks.retain(|_, lock| lock.strong_count() > 0);
@@ -487,31 +553,52 @@ pub async fn artwork(
         }
     };
     let Ok(_gate) = entity_gate.try_lock() else {
-        return Ok(unavailable());
+        return Ok(ArtworkFetch::Busy);
     };
-    writable(&state).await?;
+    // A browser/worker may have completed while this request acquired its lock.
+    let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    if let Some(saved) = cached {
+        return Ok(if saved {
+            ArtworkFetch::Cached
+        } else {
+            ArtworkFetch::Missing
+        });
+    }
+    writable(state).await?;
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
         .await?;
     if !connected {
-        return Err(AppError::NotFound);
+        return Err(AppError::Unauthorized);
+    }
+    if db::setting(&state.db, "artwork_retry_at_ms")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok())
+        .is_some_and(|at| at > auth::now_ms())
+    {
+        return Err(AppError::Spotify(
+            "Waiting for the image provider's request limit to reset.".into(),
+        ));
     }
     let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
-        return Ok(unavailable());
+        return Ok(ArtworkFetch::Busy);
     };
     // A provider failure is not evidence that this entity has no image.
     // Respect the shared request limit without poisoning the negative cache.
-    let bytes = match spotify_image(&state, &kind, &id).await {
-        Ok(Some(url)) => match download(&url).await {
+    let bytes = match spotify_image(state, kind, id).await {
+        Ok(Some(url)) => match download(&url, Some(state)).await {
             Ok(bytes) => Some(bytes),
-            Err(_) => return Ok(unavailable()),
+            Err(error) => return Err(error),
         },
         Ok(None) | Err(AppError::NotFound) => None,
-        Err(_) => return Ok(unavailable()),
+        Err(error) => return Err(error),
     };
-    save_image(&state, &kind, &id, "spotify", bytes.as_deref()).await?;
-    let bytes = bytes.ok_or(AppError::NotFound)?;
-    Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response())
+    save_image(state, kind, id, "spotify", bytes.as_deref()).await?;
+    Ok(if bytes.is_some() {
+        ArtworkFetch::Saved
+    } else {
+        ArtworkFetch::Missing
+    })
 }
 
 #[cfg(test)]
@@ -607,6 +694,17 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(cached.status(), axum::http::StatusCode::OK);
+    }
+    #[test]
+    fn image_retry_after_accepts_seconds_dates_and_a_conservative_fallback() {
+        let now = 1_000_000;
+        assert_eq!(image_retry_at(Some("1200"), now), now + 1_200_000);
+        assert_eq!(
+            image_retry_at(Some("Thu, 01 Jan 1970 01:00:00 GMT"), now),
+            3_600_000
+        );
+        assert_eq!(image_retry_at(Some("invalid"), now), now + 60_000);
+        assert_eq!(image_retry_at(Some("-1"), now), now + 60_000);
     }
     #[test]
     fn image_url_blocks_private_special_and_mapped_addresses() {

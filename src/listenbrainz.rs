@@ -618,6 +618,7 @@ async fn finish(storage: &Storage, lease: &Job, code: Option<&str>) -> Result<()
     let mut tx = storage.writer.begin().await?;
     crate::jobs::validate_lease(&mut tx, lease).await?;
     sqlx::query("UPDATE jobs SET state='completed',phase='finished',outcome=CASE WHEN ? IS NULL THEN 'complete' ELSE 'partial' END,error_code=?,retry_at_ms=NULL,updated_at_ms=? WHERE id=?").bind(code).bind(code).bind(auth::now_ms()).bind(&lease.id).execute(&mut *tx).await?;
+    crate::artwork::enqueue_missing(&mut tx).await?;
     tx.commit().await?;
     Ok(())
 }

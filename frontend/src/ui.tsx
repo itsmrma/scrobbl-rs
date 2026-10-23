@@ -181,6 +181,15 @@ export function Cover({
     };
   }, [failed, artwork.connected, artwork.retryAt, url]);
   useEffect(() => {
+    if (!failed || !local) return;
+    const changed = () => {
+      setFailed(false);
+      setRevision((v) => v + 1);
+    };
+    window.addEventListener("artwork-cache-changed", changed);
+    return () => window.removeEventListener("artwork-cache-changed", changed);
+  }, [failed, local]);
+  useEffect(() => {
     const changed = (event: Event) => {
       const { kind, id } = (event as CustomEvent<{ kind: string; id: string }>)
         .detail;

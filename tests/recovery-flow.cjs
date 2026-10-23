@@ -1,3 +1,4 @@
+const { chooseOption } = require("./controls.cjs");
 const { expect } = require("@playwright/test");
 
 module.exports = async function recoveryFlow(page) {
@@ -11,7 +12,7 @@ module.exports = async function recoveryFlow(page) {
   expect(denied.status()).toBe(403);
   await page.getByLabel("From date").fill("2026-01-01");
   await page.getByLabel("Through date").fill("2026-12-31");
-  await page.getByLabel("Export format").selectOption("json");
+  await chooseOption(page.getByLabel("Export format"), "json");
   const accepted = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/v1/recovery") &&

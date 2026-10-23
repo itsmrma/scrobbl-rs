@@ -216,6 +216,9 @@ impl Storage {
         if let Some(parameters) = parameters {
             sqlx::query("UPDATE jobs SET parameters_json=?,error_code=?,phase=?,outcome=?,inventory_complete=? WHERE id=?").bind(parameters.to_string()).bind(parameters["_terminal_code"].as_str()).bind(if complete {"finished"}else{"fetching"}).bind(if complete {Some(if parameters["_terminal_code"].is_string(){"partial"}else{"complete"})}else{None}).bind(complete).bind(&lease.id).execute(&mut *tx).await?;
         }
+        if complete && lease.kind.starts_with("listenbrainz_") {
+            crate::artwork::enqueue_missing(&mut tx).await?;
+        }
         tx.commit().await?;
         Ok(report)
     }

@@ -1,4 +1,5 @@
-﻿const { test, expect } = require("@playwright/test");
+const { chooseOption } = require("./controls.cjs");
+const { test, expect } = require("@playwright/test");
 const path = require("node:path");
 test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry survive navigation", async ({
   page,
@@ -89,7 +90,7 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
     fullPage: true,
   });
   await page.getByRole("link", { name: "All activities", exact: true }).click();
-  await page.getByLabel("Activity type").selectOption("spotify_import");
+  await chooseOption(page.getByLabel("Activity type"), "spotify_import");
   await expect(
     page.getByRole("main").locator(`a[href="/activities/${job_id}"]`),
   ).toBeVisible();

@@ -40,6 +40,10 @@ pub fn router(state: AppState) -> Router {
             get(crate::review::list).post(crate::review::decide),
         )
         .route("/api/v1/review/{id}/undo", post(crate::review::undo))
+        .route(
+            "/api/v1/review/automatic",
+            get(crate::review::automatic_preview).post(crate::review::automatic_execute),
+        )
         .route("/rankings/{kind}", get(index))
         .route(
             "/api/v1/consultation/choices/{kind}",

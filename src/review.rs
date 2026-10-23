@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use std::collections::BTreeSet;
 
+mod automatic;
+pub use automatic::{execute as automatic_execute, preview as automatic_preview};
+
 #[derive(Default, Deserialize)]
 pub struct Page {
     #[serde(default)]
@@ -79,7 +82,7 @@ pub async fn list(
     ))
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Decision {
     pub ids: Vec<String>,
@@ -122,52 +125,7 @@ pub async fn decide(
     }
     let now = auth::now_ms();
     let mut tx = state.db.begin().await?;
-    let mut before = Vec::new();
-    for (id, revision) in form.ids.iter().zip(&form.revisions) {
-        let prior =
-            sqlx::query("SELECT needs_review,trashed_at_ms,revision FROM listens WHERE id=?")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .ok_or(AppError::NotFound)?;
-        if !prior.get::<bool, _>("needs_review")
-            || prior.get::<Option<i64>, _>("trashed_at_ms").is_some()
-            || prior.get::<i64, _>("revision") != *revision
-        {
-            return Err(AppError::Conflict(
-                "These records changed. Refresh the comparison before deciding.".into(),
-            ));
-        }
-        before.push(Before {
-            id: id.clone(),
-            needs_review: true,
-            trashed_at_ms: None,
-            conflicts: sqlx::query_scalar(
-                "SELECT id FROM conflicts WHERE listen_id=? AND resolved_at_ms IS NULL",
-            )
-            .bind(id)
-            .fetch_all(&mut *tx)
-            .await?,
-            evidence_fingerprint: evidence_fingerprint(&mut tx, id).await?,
-        });
-        let trash = form
-            .keep_id
-            .as_ref()
-            .filter(|keep| *keep != id)
-            .map(|_| now);
-        sqlx::query("UPDATE listens SET needs_review=0,trashed_at_ms=? WHERE id=?")
-            .bind(trash)
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            "UPDATE conflicts SET resolved_at_ms=? WHERE listen_id=? AND resolved_at_ms IS NULL",
-        )
-        .bind(now)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    }
+    let before = apply_decision(&mut tx, &form, now).await?;
     db::publish(&mut tx, &ids).await?;
     let revision: i64 = sqlx::query_scalar("SELECT revision FROM archive_state WHERE singleton=1")
         .fetch_one(&mut *tx)
@@ -189,6 +147,60 @@ pub async fn decide(
         .await?;
     tx.commit().await?;
     Ok(Json(json!({"decision_id":id,"removed":removed})))
+}
+
+async fn apply_decision(
+    conn: &mut sqlx::SqliteConnection,
+    form: &Decision,
+    now: i64,
+) -> Result<Vec<Before>> {
+    let mut before = Vec::new();
+    for (id, revision) in form.ids.iter().zip(&form.revisions) {
+        let prior =
+            sqlx::query("SELECT needs_review,trashed_at_ms,revision FROM listens WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *conn)
+                .await?
+                .ok_or(AppError::NotFound)?;
+        if !prior.get::<bool, _>("needs_review")
+            || prior.get::<Option<i64>, _>("trashed_at_ms").is_some()
+            || prior.get::<i64, _>("revision") != *revision
+        {
+            return Err(AppError::Conflict(
+                "These records changed. Refresh the comparison before deciding.".into(),
+            ));
+        }
+        before.push(Before {
+            id: id.clone(),
+            needs_review: true,
+            trashed_at_ms: None,
+            conflicts: sqlx::query_scalar(
+                "SELECT id FROM conflicts WHERE listen_id=? AND resolved_at_ms IS NULL",
+            )
+            .bind(id)
+            .fetch_all(&mut *conn)
+            .await?,
+            evidence_fingerprint: evidence_fingerprint(conn, id).await?,
+        });
+        let trash = form
+            .keep_id
+            .as_ref()
+            .filter(|keep| *keep != id)
+            .map(|_| now);
+        sqlx::query("UPDATE listens SET needs_review=0,trashed_at_ms=? WHERE id=?")
+            .bind(trash)
+            .bind(id)
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query(
+            "UPDATE conflicts SET resolved_at_ms=? WHERE listen_id=? AND resolved_at_ms IS NULL",
+        )
+        .bind(now)
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(before)
 }
 
 pub async fn undo(
@@ -224,10 +236,14 @@ pub async fn undo(
         }
         // A name correction, rating or calendar revision is independent of the
         // decision. Preserve those changes; only restore review/trash state.
-        let expected_trash = evidence["keep_id"]
-            .as_str()
-            .filter(|keep| *keep != prior.id)
-            .map(|_| at);
+        let expected_trash = if let Some(keepers) = evidence["keep_ids"].as_array() {
+            (!keepers.iter().any(|keep| keep.as_str() == Some(&prior.id))).then_some(at)
+        } else {
+            evidence["keep_id"]
+                .as_str()
+                .filter(|keep| *keep != prior.id)
+                .map(|_| at)
+        };
         let updated = sqlx::query(
             "UPDATE listens SET needs_review=?,trashed_at_ms=? WHERE id=? AND needs_review=0 AND trashed_at_ms IS ?",
         )

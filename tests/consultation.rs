@@ -424,6 +424,24 @@ async fn assigned_calendars_rolling_dst_current_periods_and_recalculation_stay_c
         .await
         .unwrap();
     assert_eq!(chart.buckets[0].listens, 2); // Whole inclusive date includes the future fixture.
+    // The GUI's automatic scale must never combine overlapping assigned weeks.
+    for (from, to, expected) in [
+        ("2025-03-01", "2025-04-30", "day"),
+        ("2020-01-01", "2025-12-31", "month"),
+        ("1980-01-01", "2025-12-31", "year"),
+    ] {
+        let automatic = Filters {
+            period: Some("custom".into()),
+            from: Some(from.into()),
+            to: Some(to.into()),
+            ..Default::default()
+        };
+        let automatic = browse::activity_chart(&mut conn.transaction, &automatic, now)
+            .await
+            .unwrap();
+        assert_eq!(automatic.grain, expected);
+        assert!(!automatic.mixed_week_starts);
+    }
     let weeks = Filters {
         grain: Some("week".into()),
         ..Default::default()

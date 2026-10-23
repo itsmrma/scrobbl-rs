@@ -109,6 +109,7 @@ function Shell({ logout }: { logout: () => void }) {
   }, [mobileOpen, mobile]);
   const alive = useRef(true);
   const lastCalendar = useRef("");
+  const lastArtwork = useRef("");
   async function refresh() {
     await Promise.all([
       api
@@ -128,6 +129,15 @@ function Shell({ logout }: { logout: () => void }) {
           if (!alive.current) return;
           setJobs(data);
           setJobsError("");
+          const artwork = JSON.stringify(
+            data
+              .filter((job) => job.kind === "artwork")
+              .map((job) => [job.id, job.processed, job.state]),
+          );
+          if (artwork !== lastArtwork.current) {
+            lastArtwork.current = artwork;
+            window.dispatchEvent(new Event("artwork-cache-changed"));
+          }
           const calendar = JSON.stringify(
             data
               .filter((j) => j.kind === "calendar")

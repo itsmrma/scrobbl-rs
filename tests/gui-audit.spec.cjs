@@ -1,3 +1,4 @@
+const { chooseOption } = require("./controls.cjs");
 const { test: base, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
@@ -133,6 +134,333 @@ async function login(page, path = "/dashboard") {
   await expect(page.locator("#main")).toBeVisible();
 }
 
+test("custom dropdowns support keyboard and mobile categories while grid controls stay stable", async ({
+  page,
+  browserName,
+}) => {
+  await login(page, "/settings/appearance");
+  const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+  await theme.focus();
+  await theme.press("Enter");
+  await expect(
+    page.getByRole("listbox", { name: "Theme options" }),
+  ).toBeVisible();
+  await theme.press("End");
+  await theme.press("Enter");
+  await expect(theme).toHaveAttribute("data-value", "dark");
+  await theme.press("Enter");
+  await theme.press("Home");
+  await theme.press("Escape");
+  await expect(theme).toHaveAttribute("data-value", "dark");
+  await expect(theme).toBeFocused();
+  await theme.press("Enter");
+  await page.getByRole("heading", { name: "Appearance", exact: true }).click();
+  await expect(theme).toHaveAttribute("aria-expanded", "false");
+  expect(await page.locator("select").count()).toBe(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const category = page.getByRole("combobox", { name: "Settings section" });
+  await expect(category).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Settings sections" }),
+  ).not.toBeVisible();
+  await chooseOption(category, "connections");
+  await expect(page).toHaveURL(/settings\/connections/);
+  await page.screenshot({
+    path: `test-results/gui-ninth-settings-mobile-${browserName}.png`,
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/rankings/albums?period=all");
+  const panel = page.locator(".rankings-panel").first();
+  const toolbar = page.locator(".ranking-toolbar").first();
+  const before = await toolbar.boundingBox();
+  await page.getByRole("button", { name: "Grid", exact: true }).first().click();
+  const after = await toolbar.boundingBox();
+  expect(Math.abs(before.height - after.height)).toBeLessThan(1);
+  const search = toolbar.getByRole("textbox", { name: "Search rankings" });
+  await expect(search).toBeVisible();
+  const arrow = page.getByRole("button", { name: /Collapse sidebar/ });
+  if (await arrow.count()) {
+    const icon = arrow.locator(".material-icons-outlined"),
+      initial = await icon.boundingBox();
+    await arrow.hover();
+    await expect
+      .poll(async () => Math.abs((await icon.boundingBox()).x - initial.x))
+      .toBeLessThan(0.1);
+  }
+  await page.screenshot({
+    path: `test-results/gui-ninth-grid-${browserName}.png`,
+    fullPage: true,
+  });
+});
+
+test("custom categories and long option lists respond to touch without leaving the viewport", async ({
+  page,
+  browser,
+  browserName,
+  auditApp,
+}) => {
+  await login(page, "/settings/general");
+  const touchContext = await browser.newContext({
+    hasTouch: true,
+    viewport: { width: 390, height: 640 },
+    baseURL: auditApp,
+    storageState: await page.context().storageState(),
+  });
+  try {
+    const touch = await touchContext.newPage();
+    await touch.goto("/settings/general");
+    const category = touch.getByRole("combobox", {
+      name: "Settings section",
+      exact: true,
+    });
+    await category.tap();
+    const options = touch.getByRole("listbox", {
+      name: "Settings section options",
+      exact: true,
+    });
+    await expect(options).toBeVisible();
+    await touch.screenshot({
+      path: `test-results/gui-ninth-dropdown-touch-${browserName}.png`,
+      fullPage: false,
+    });
+    await options
+      .getByRole("option", { name: "Appearance", exact: true })
+      .tap();
+    await expect(touch).toHaveURL(/settings\/appearance/);
+    await expect(category).toHaveAttribute("data-value", "appearance");
+    await category.tap();
+    await touch.getByRole("heading", { name: "Settings & connections." }).tap();
+    await expect(category).toHaveAttribute("aria-expanded", "false");
+    await touch.goto("/settings/general");
+    const zone = touch.getByRole("combobox", {
+      name: "Time zone",
+      exact: true,
+    });
+    await zone.fill("Europe/");
+    await touch
+      .getByRole("listbox", { name: "Time zone options", exact: true })
+      .getByRole("option", { name: "Europe/Rome", exact: true })
+      .tap();
+    await expect(zone).toHaveValue("Europe/Rome");
+    await touch.goto("/dashboard?period=all");
+    const period = touch.getByRole("combobox", { name: "Period", exact: true });
+    await period.tap();
+    const list = touch.getByRole("listbox", {
+      name: "Period options",
+      exact: true,
+    });
+    const bounds = await list.boundingBox();
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(390.01);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(640.01);
+    await list.getByRole("option", { name: "Custom dates", exact: true }).tap();
+    await expect(period).toHaveAttribute("data-value", "custom");
+    expect(
+      await touch.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  } finally {
+    await touchContext.close();
+  }
+});
+
+test("imports queue all missing artwork on the server with persistent progress and controls", async ({
+  page,
+  browser,
+  auditApp,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page, "/activities");
+  let job;
+  await expect
+    .poll(async () => {
+      const jobs = await (await page.request.get("/api/v1/activities")).json();
+      job = jobs.find((item) => item.kind === "artwork");
+      return job?.state;
+    })
+    .toBe("waiting");
+  expect(job.expected_rows).toBe(2);
+  await page.goto(`/activities/${job.id}`);
+  await expect(
+    page.getByRole("heading", {
+      name: "Download library artwork",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".activity-detail")).toContainText(
+    "2 images checked",
+  );
+  await expect(page.locator(".activity-detail")).toContainText(
+    "Album · Seed album",
+  );
+  await expect(page.locator(".activity-detail")).toContainText(
+    "Artist · Seed artist",
+  );
+  await expect(
+    page.getByRole("button", { name: "Cancel downloads", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: `test-results/gui-ninth-artwork-queue-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("button", { name: "Cancel downloads", exact: true })
+    .click();
+  await expect(page.locator(".activity-detail .state-badge")).toContainText(
+    "Cancelled",
+  );
+  await page
+    .getByRole("button", { name: "Resume downloads", exact: true })
+    .click();
+  const state = await page.context().storageState();
+  await page.close();
+  const reopened = await browser.newContext({
+    baseURL: auditApp,
+    storageState: state,
+  });
+  try {
+    const resumed = await reopened.newPage();
+    await resumed.goto(`/activities/${job.id}`);
+    await expect(resumed.locator(".activity-detail")).toContainText(
+      "0 of 2 images checked",
+    );
+    expect(
+      (await (await resumed.request.get(`/api/v1/activities/${job.id}`)).json())
+        .members,
+    ).toHaveLength(2);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test("activity automatically fits dense daily and weekly data without horizontal scrolling", async ({
+  page,
+  browserName,
+}) => {
+  let grain = "day";
+  const make = () =>
+    Array.from({ length: 160 }, (_, i) => {
+      const start = new Date(
+        Date.UTC(2020, 0, 1 + i * (grain === "week" ? 7 : 1)),
+      )
+        .toISOString()
+        .slice(0, 10);
+      return {
+        start,
+        through: start,
+        listens: (i % 7) + 1,
+        actual_ms: ((i % 7) + 1) * 60000,
+        estimated_ms: 0,
+        unknown_durations: 0,
+        partial: false,
+      };
+    });
+  await page.route("**/api/v1/consultation/activity?*", (route) => {
+    expect(new URL(route.request().url()).searchParams.has("grain")).toBe(
+      false,
+    );
+    return route.fulfill({
+      json: {
+        grain,
+        buckets: make(),
+        mixed_week_starts: false,
+        partial: false,
+      },
+    });
+  });
+  await login(page, "/dashboard?period=all&grain=day");
+  await expect(page.getByRole("combobox", { name: "Group by" })).toHaveCount(0);
+  for (const kind of ["day", "week"]) {
+    grain = kind;
+    await page.goto(`/dashboard?period=all&grain=${kind}`);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      const bars = page.locator(".chart-segment");
+      await expect.poll(() => bars.count()).toBeGreaterThan(0);
+      await expect
+        .poll(() => bars.count())
+        .toBeLessThanOrEqual(width === 390 ? 5 : 18);
+      expect(
+        await page
+          .locator(".chart-scroll")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      const total = await page
+        .locator(".chart-bar-value")
+        .evaluateAll((nodes) =>
+          nodes.reduce((sum, node) => sum + Number(node.textContent), 0),
+        );
+      expect(total).toBe(make().reduce((sum, b) => sum + b.listens, 0));
+      if (kind === "week")
+        await expect(bars.first().locator("small").first()).toContainText(
+          /202[0-3]/,
+        );
+    }
+  }
+  await page.screenshot({
+    path: `test-results/gui-ninth-auto-chart-mobile-${browserName}.png`,
+    fullPage: true,
+  });
+});
+
+test("duplicate indicators preserve history density and the primary divider stays anchored", async ({
+  page,
+}) => {
+  await page.route("**/api/history?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    if (data.items.length)
+      data.items = [
+        data.items[0],
+        { ...data.items[0], id: "duplicate-copy", needs_review: true },
+      ];
+    return route.fulfill({ json: data });
+  });
+  await login(page, "/history?period=all");
+  const rows = page.locator(".listen-row");
+  await expect(rows).toHaveCount(2);
+  await expect
+    .poll(async () =>
+      Math.abs(
+        (await rows.nth(0).boundingBox()).height -
+          (await rows.nth(1).boundingBox()).height,
+      ),
+    )
+    .toBeLessThan(1.01);
+  const warning = rows
+    .nth(1)
+    .getByRole("link", { name: "Possible duplicate — review record" });
+  await warning.hover();
+  await expect(
+    page.getByRole("tooltip", { name: "Possible duplicate" }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/gui-ninth-history-warning.png",
+    fullPage: true,
+  });
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto("/music/albums/" + archive.rankings.albums[0].id);
+  const row = page.locator(".listen-context-albums").first();
+  const divider = () =>
+    row.evaluate((el) => {
+      const main = el.querySelector(".listen-main");
+      return (main || el).getBoundingClientRect().bottom + (main ? 10 : 0);
+    });
+  await row.scrollIntoViewIfNeeded();
+  const before = await divider();
+  await row.locator("summary").click();
+  await expect(row.locator("dl")).toBeVisible();
+  await expect
+    .poll(async () => Math.abs((await divider()) - before))
+    .toBeLessThan(1);
+});
+
 test("history artwork and type follow metadata height and shrink again", async ({
   page,
 }) => {
@@ -142,7 +470,7 @@ test("history artwork and type follow metadata height and shrink again", async (
     row.evaluate((el) => ({
       artwork: el.querySelector(".cover").getBoundingClientRect().width,
       type: parseFloat(
-        getComputedStyle(el.querySelector(".listen-title > a")).fontSize,
+        getComputedStyle(el.querySelector(".listen-heading > a")).fontSize,
       ),
     }));
   const compact = await sizes();
@@ -239,14 +567,12 @@ test("monthly charts compact quieter ranges without losing listens or drilldown"
   await expect(page).toHaveURL(new RegExp("from=" + from + ".*to=" + to));
   await page.goto("/dashboard?period=all&grain=month");
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect
-    .poll(() => bars.count())
-    .toBe(buckets.filter((b) => b.listens).length);
+  await expect.poll(() => bars.count()).toBeLessThanOrEqual(5);
   expect(
     await page
       .locator(".chart-scroll")
-      .evaluate((el) => el.scrollWidth > el.clientWidth),
-  ).toBe(true);
+      .evaluate((el) => el.scrollWidth > el.clientWidth + 1),
+  ).toBe(false);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -404,6 +730,20 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
     fullPage: true,
     animations: "disabled",
   });
+  const automatic = page.getByRole("region", {
+    name: "Automatic duplicate review",
+  });
+  await expect(automatic).toContainText("1 matching pair");
+  await automatic
+    .getByRole("button", { name: "Resolve 1 pair automatically", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "All caught up" }),
+  ).toBeVisible();
+  await expect(automatic.getByRole("button")).toBeDisabled();
+  await page.getByText("Review decisions · Undo", { exact: true }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.locator(".review-record")).toHaveCount(2);
   await page
     .getByRole("button", { name: "Keep all as separate listens", exact: true })
     .click();
@@ -993,7 +1333,8 @@ test("history filters collapse without clearing the selection and music history 
   const disclosure = page.locator(".history-filter-disclosure");
   await expect(disclosure).not.toHaveAttribute("open");
   await disclosure.locator(":scope > summary").click();
-  await expect(page.getByLabel("Source", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("Source", { exact: true })).toHaveAttribute(
+    "data-value",
     "spotify_import",
   );
   await disclosure.locator(":scope > summary").click();
@@ -1024,7 +1365,9 @@ test("history filters collapse without clearing the selection and music history 
       await expect(row).toContainText("Archived on");
       await expect(row).toContainText("Counted listen");
     }
-    for (const control of await page.locator("#main select:visible").all()) {
+    for (const control of await page
+      .locator("#main [role=combobox]:visible")
+      .all()) {
       // Gecko can report 43.99988 for a 44 CSS-pixel control. Allow only
       // subpixel layout precision, not a smaller interaction target.
       expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(
@@ -1608,7 +1951,20 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await albums.getByRole("button", { name: "Grid", exact: true }).click();
   const small = (await albums.locator(".music-card").first().boundingBox())
     .width;
-  expect(small).toBeLessThanOrEqual(145);
+  expect(small).toBeGreaterThanOrEqual(140);
+  expect(small).toBeLessThan(180);
+  const gridBox = await albums.locator(".music-grid").boundingBox();
+  const firstRow = await albums.locator(".music-card").evaluateAll((nodes) => {
+    const y = nodes[0].getBoundingClientRect().y;
+    return nodes
+      .map((node) => node.getBoundingClientRect())
+      .filter((box) => Math.abs(box.y - y) < 1)
+      .map((box) => ({ x: box.x, width: box.width }));
+  });
+  const lastCell = firstRow.at(-1);
+  expect(
+    Math.abs(lastCell.x + lastCell.width - gridBox.x - gridBox.width),
+  ).toBeLessThan(1);
   await albums
     .getByRole("button", { name: "Larger cards", exact: true })
     .click();
@@ -1630,6 +1986,7 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   expect(
     parseFloat(await last.evaluate((e) => getComputedStyle(e).paddingBottom)),
   ).toBeGreaterThanOrEqual(10);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: `test-results/gui-${browserName}-music-density.png`,
     fullPage: true,
@@ -1883,13 +2240,15 @@ test("overview charts and activity reports have compact responsive layouts", asy
   expect(item.y - title.y - title.height).toBeGreaterThanOrEqual(12);
   const bars = first.locator(".ranking-meter > span");
   await expect(bars.last()).toHaveAttribute("style", "width: 28%;");
-  await page
-    .getByRole("combobox", { name: "Rank by", exact: true })
-    .selectOption("time");
+  await chooseOption(
+    page.getByRole("combobox", { name: "Rank by", exact: true }),
+    "time",
+  );
   await expect(bars.last()).toHaveAttribute("style", "width: 20%;");
-  await page
-    .getByRole("combobox", { name: "Rank by", exact: true })
-    .selectOption("plays");
+  await chooseOption(
+    page.getByRole("combobox", { name: "Rank by", exact: true }),
+    "plays",
+  );
   await first.locator(".ranking-row").first().hover();
   await page.screenshot({
     path: "test-results/gui-sixth-overview-" + browserName + ".png",
@@ -1966,14 +2325,14 @@ test("period notices do not move controls and music artwork stays square", async
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await login(page);
-  const controls = page.locator(".overview-heading .filters select");
+  const controls = page.locator(".overview-heading .filters [role=combobox]");
   const before = await controls.evaluateAll((nodes) =>
     nodes.map((node) => ({
       x: node.getBoundingClientRect().x,
       y: node.getBoundingClientRect().y,
     })),
   );
-  await controls.first().selectOption("month");
+  await chooseOption(controls.first(), "month");
   const after = await controls.evaluateAll((nodes) =>
     nodes.map((node) => ({
       x: node.getBoundingClientRect().x,
@@ -2219,7 +2578,7 @@ test("weighted collages retain square tiles across sizes and exports", async ({
     exact: true,
   });
   for (const count of [9, 16, 25]) {
-    await collage.getByRole("combobox").selectOption(String(count));
+    await chooseOption(collage.getByRole("combobox"), String(count));
     await expect(collage.locator(".collage-tile")).toHaveCount(count);
     const boxes = await collage.locator(".collage-tile").evaluateAll((nodes) =>
       nodes.map((node) => {

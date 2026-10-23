@@ -1,3 +1,4 @@
+import { Select } from "./select";
 import { useMemo, useRef, useState } from "react";
 import type { Ranking } from "./generated";
 import { Link } from "./navigation";
@@ -224,15 +225,15 @@ export function Collage({
       <div className="collage-controls">
         <label>
           Tiles
-          <select
+          <Select
             aria-label={`Number of ${kind} in collage`}
             value={count}
-            onChange={(event) => setCount(Number(event.target.value))}
+            onChange={(value) => setCount(Number(value))}
           >
             {[9, 16, 25].map((n) => (
               <option key={n}>{n}</option>
             ))}
-          </select>
+          </Select>
         </label>
         <button
           className="secondary"

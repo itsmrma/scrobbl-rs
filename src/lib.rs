@@ -1,5 +1,6 @@
 pub mod activities;
 pub mod api_keys;
+pub mod artwork;
 pub mod auth;
 pub mod browse;
 pub mod calendar;

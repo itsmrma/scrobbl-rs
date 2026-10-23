@@ -288,11 +288,9 @@ pub async fn activity_chart(
         .map(|(f, t, _)| (*t - *f).num_days())
         .max()
         .unwrap_or(0);
-    let grain = filters.grain.as_deref().unwrap_or(if span <= 31 {
+    let grain = filters.grain.as_deref().unwrap_or(if span <= 90 {
         "day"
-    } else if span <= 180 {
-        "week"
-    } else if span <= 1095 {
+    } else if span <= 9125 {
         "month"
     } else {
         "year"

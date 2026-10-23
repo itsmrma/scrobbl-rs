@@ -1,3 +1,4 @@
+const { chooseOption } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const rows = [
   {
@@ -121,7 +122,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await page.locator(".history-filter-disclosure > summary").click();
-  await page.locator("#history-status").selectOption("short");
+  await chooseOption(page.locator("#history-status"), "short");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.locator("#history-total")).toHaveText("1 record");
   await expect(page.locator("#history-list")).toContainText("Short song");
@@ -147,6 +148,9 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(page.locator("#connection-badge")).toContainText(
     "Ready to connect",
   );
+  await expect(page.locator(".credentials-saved")).toContainText(
+    "App credentials saved",
+  );
   await expect(page.getByLabel("Client Secret", { exact: true })).toHaveValue(
     "",
   );
@@ -155,7 +159,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   );
   expect(JSON.stringify(status)).not.toContain("testsecret");
   await page.getByRole("link", { name: "Appearance", exact: true }).click();
-  await page.locator("#theme").selectOption("light");
+  await chooseOption(page.locator("#theme"), "light");
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/theme-light/);
   await page.getByRole("link", { name: "Overview", exact: true }).click();

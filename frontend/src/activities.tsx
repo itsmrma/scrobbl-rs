@@ -1,3 +1,4 @@
+import { Select } from "./select";
 import type { ArtworkActivity } from "./artwork-activity";
 import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
@@ -8,6 +9,11 @@ import { useEffect, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
+    artwork_connection_required:
+      "Connect Spotify in Settings to download the queued artwork. The queue is saved and resumes automatically.",
+    artwork_provider_wait:
+      "Spotify or its image server requested a pause, or could not be reached. Saved images remain available; downloads resume automatically.",
+    artwork_capacity_wait: "Waiting for another artwork download to finish.",
     coverage_uncertain_use_official_zip:
       "Coverage is uncertain. Saved listens are retained. Upload the official ListenBrainz ZIP to complete this interval safely.",
     partial_import_review_report:
@@ -86,15 +92,22 @@ const stateLabel = (job: Activity) =>
     cancelled: "Cancelled",
   })[job.state] || job.state;
 const phaseLabel = (job: Activity) =>
-  ({
-    receiving: "Receiving your files",
-    inventory: "Finding files in the archive",
-    processing: "Adding source rows to your archive",
-    finished: "Report saved",
-    queued: "Waiting for the server to start",
-  })[job.phase] ||
-  job.phase?.replaceAll("_", " ") ||
-  "Server activity";
+  job.kind === "artwork" && job.state === "waiting" && job.error_code
+    ? {
+        artwork_connection_required: "Waiting for Spotify connection",
+        artwork_provider_wait: "Waiting before the next download",
+        artwork_capacity_wait: "Waiting for the download slot",
+      }[job.error_code] || "Waiting to resume artwork"
+    : {
+        receiving: "Receiving your files",
+        inventory: "Finding files in the archive",
+        processing: "Adding source rows to your archive",
+        finished: "Report saved",
+        queued: "Waiting for the server to start",
+        artwork: "Saving missing album and artist images",
+      }[job.phase] ||
+      job.phase?.replaceAll("_", " ") ||
+      "Server activity";
 function StateBadge({ job }: { job: Activity }) {
   return (
     <span className={`state-badge ${job.state}`}>
@@ -131,7 +144,11 @@ export function Progress({ job }: { job: Activity }) {
           }
         />
       )}
-      <small>{text}</small>
+      <small>
+        {job.kind === "artwork"
+          ? `${number.format(job.processed)} of ${number.format(job.expected_rows || 0)} images checked`
+          : text}
+      </small>
     </div>
   );
 }
@@ -281,11 +298,13 @@ export function Activities({
               <header className="activity-detail-heading">
                 <div>
                   <p className="eyebrow">ACTIVITY REPORT</p>
-                  <h1>{activityName(job)}</h1>
+                  <div className="activity-report-title">
+                    <h1>{activityName(job)}</h1>
+                    <span role="status">
+                      <StateBadge job={job} />
+                    </span>
+                  </div>
                 </div>
-                <span role="status">
-                  <StateBadge job={job} />
-                </span>
               </header>
               <div className="activity-detail-status" role="status">
                 <span>
@@ -299,21 +318,59 @@ export function Activities({
               <div className="activity-results">
                 <div>
                   <strong>{number.format(job.added)}</strong>
-                  <span>New listens</span>
+                  <span>
+                    {job.kind === "artwork" ? "Images saved" : "New listens"}
+                  </span>
                 </div>
                 <div>
                   <strong>{number.format(job.duplicates)}</strong>
-                  <span>Already present</span>
+                  <span>
+                    {job.kind === "artwork"
+                      ? "Already cached"
+                      : "Already present"}
+                  </span>
                 </div>
                 <div>
-                  <strong>{number.format(job.reconciled)}</strong>
-                  <span>Reconciled</span>
+                  <strong>
+                    {number.format(
+                      job.kind === "artwork" ? job.skipped : job.reconciled,
+                    )}
+                  </strong>
+                  <span>
+                    {job.kind === "artwork"
+                      ? "No image available"
+                      : "Reconciled"}
+                  </span>
                 </div>
                 <div>
-                  <strong>{number.format(job.invalid)}</strong>
-                  <span>Invalid source rows</span>
+                  <strong>
+                    {number.format(
+                      job.kind === "artwork"
+                        ? Math.max(0, (job.expected_rows || 0) - job.processed)
+                        : job.invalid,
+                    )}
+                  </strong>
+                  <span>
+                    {job.kind === "artwork"
+                      ? "Remaining"
+                      : "Invalid source rows"}
+                  </span>
                 </div>
               </div>
+              {job.kind === "artwork" &&
+                job.error_code === "artwork_connection_required" && (
+                  <Link className="button secondary" to="/settings/connections">
+                    Connect Spotify
+                  </Link>
+                )}
+              {job.kind === "artwork" && (
+                <p>
+                  Artwork is downloaded one image at a time and saved on this
+                  server. Spotify request limits are shared with browsing;
+                  requested pauses are respected. This continues with the
+                  browser closed and resumes after a server restart.
+                </p>
+              )}
               {job.target_timezone && (
                 <p>
                   Requested calendar: {job.target_timezone} · week starts{" "}
@@ -350,10 +407,15 @@ export function Activities({
                     </p>
                   )}
                   {job.error_code && (
-                    <p className="form-error">
+                    <p
+                      className={
+                        job.kind === "artwork" ? "subtle" : "form-error"
+                      }
+                    >
                       {job.error_code === "calendar_recalculation_failed"
                         ? "Calendar recalculation failed. The previous calendar is still active. Check server storage and retry."
-                        : job.kind.startsWith("listenbrainz_")
+                        : job.kind.startsWith("listenbrainz_") ||
+                            job.kind === "artwork"
                           ? jobMessage(job.error_code)
                           : `Activity reported: ${job.error_code}`}
                     </p>
@@ -363,48 +425,51 @@ export function Activities({
                   )}
                 </section>
               )}
-              <details className="activity-diagnostics">
-                <summary>Detailed counts</summary>
-                <dl className="diagnostics">
-                  {(
-                    [
-                      "originals",
-                      "variants",
-                      "below_threshold",
-                      "added",
-                      "reconciled",
-                      "duplicates",
-                      "invalid",
-                      "skipped",
-                      "ambiguous",
-                    ] as const
-                  ).map((key) => (
-                    <div key={key}>
-                      <dt>
-                        {
+              {job.kind !== "artwork" && (
+                <details className="activity-diagnostics">
+                  <summary>Detailed counts</summary>
+                  <dl className="diagnostics">
+                    {(
+                      [
+                        "originals",
+                        "variants",
+                        "below_threshold",
+                        "added",
+                        "reconciled",
+                        "duplicates",
+                        "invalid",
+                        "skipped",
+                        "ambiguous",
+                      ] as const
+                    ).map((key) => (
+                      <div key={key}>
+                        <dt>
                           {
-                            originals: "New original observations",
-                            variants: "New original variants",
-                            below_threshold: "Below-threshold music rows",
-                            added: "New listens",
-                            reconciled: "Reconciliations",
-                            duplicates: "Known source rows",
-                            invalid: "Invalid source rows",
-                            skipped: "Non-musical source rows",
-                            ambiguous: "Ambiguous matches",
-                          }[key]
-                        }
-                      </dt>
-                      <dd>{job[key]}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </details>
+                            {
+                              originals: "New original observations",
+                              variants: "New original variants",
+                              below_threshold: "Below-threshold music rows",
+                              added: "New listens",
+                              reconciled: "Reconciliations",
+                              duplicates: "Known source rows",
+                              invalid: "Invalid source rows",
+                              skipped: "Non-musical source rows",
+                              ambiguous: "Ambiguous matches",
+                            }[key]
+                          }
+                        </dt>
+                        <dd>{job[key]}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </details>
+              )}
               {[
                 "calendar",
                 "spotify_import",
                 "listenbrainz_file",
                 "listenbrainz_fetch",
+                "artwork",
               ].includes(job.kind) &&
                 job.phase !== "receiving" && (
                   <div className="connection-actions">
@@ -445,12 +510,16 @@ export function Activities({
                         }}
                       >
                         {action === "cancel"
-                          ? job.kind === "calendar"
-                            ? "Cancel recalculation"
-                            : "Cancel import"
-                          : job.kind === "calendar"
-                            ? "Retry recalculation"
-                            : "Retry import"}
+                          ? job.kind === "artwork"
+                            ? "Cancel downloads"
+                            : job.kind === "calendar"
+                              ? "Cancel recalculation"
+                              : "Cancel import"
+                          : job.kind === "artwork"
+                            ? "Resume downloads"
+                            : job.kind === "calendar"
+                              ? "Retry recalculation"
+                              : "Retry import"}
                       </button>
                     ))}
                   </div>
@@ -481,59 +550,100 @@ export function Activities({
                   ))}
                 </div>
               )}
-              {detail.data && detail.data.members.length > 0 && (
-                <section className="activity-files">
-                  <h3>Files in this activity</h3>
-                  <p>
-                    Files discovered:{" "}
-                    {
-                      detail.data.members.filter((m) => m.kind !== "directory")
-                        .length
+              {job.kind === "artwork" && (job.expected_rows || 0) > 100 && (
+                <div className="pagination">
+                  <button
+                    className="secondary"
+                    disabled={issuesPage === 0}
+                    onClick={() => setIssuesPage((p) => p - 1)}
+                  >
+                    Previous images
+                  </button>
+                  <span>Page {issuesPage + 1}</span>
+                  <button
+                    className="secondary"
+                    disabled={
+                      (issuesPage + 1) * 100 >= (job.expected_rows || 0)
                     }
-                    . Processed:{" "}
-                    {
-                      detail.data.members.filter((m) =>
-                        ["completed", "partial"].includes(m.state),
-                      ).length
-                    }
-                    . Excluded:{" "}
-                    {
-                      detail.data.members.filter(
-                        (m) => m.state === "excluded" && m.kind !== "directory",
-                      ).length
-                    }
-                    . Failed:{" "}
-                    {
-                      detail.data.members.filter((m) => m.state === "failed")
-                        .length
-                    }
-                    . Still to process:{" "}
-                    {
-                      detail.data.members.filter((m) =>
-                        ["pending", "received", "processing"].includes(m.state),
-                      ).length
-                    }
-                    .
-                  </p>
-                </section>
+                    onClick={() => setIssuesPage((p) => p + 1)}
+                  >
+                    Next images
+                  </button>
+                </div>
               )}
-              {detail.data?.members.map((member) => (
-                <div className="job" key={member.member}>
+              {job.kind !== "artwork" &&
+                detail.data &&
+                detail.data.members.length > 0 && (
+                  <section className="activity-files">
+                    <h3>Files in this activity</h3>
+                    <p>
+                      Files discovered:{" "}
+                      {
+                        detail.data.members.filter(
+                          (m) => m.kind !== "directory",
+                        ).length
+                      }
+                      . Processed:{" "}
+                      {
+                        detail.data.members.filter((m) =>
+                          ["completed", "partial"].includes(m.state),
+                        ).length
+                      }
+                      . Excluded:{" "}
+                      {
+                        detail.data.members.filter(
+                          (m) =>
+                            m.state === "excluded" && m.kind !== "directory",
+                        ).length
+                      }
+                      . Failed:{" "}
+                      {
+                        detail.data.members.filter((m) => m.state === "failed")
+                          .length
+                      }
+                      . Still to process:{" "}
+                      {
+                        detail.data.members.filter((m) =>
+                          ["pending", "received", "processing"].includes(
+                            m.state,
+                          ),
+                        ).length
+                      }
+                      .
+                    </p>
+                  </section>
+                )}
+              {detail.data?.members.map((member, index) => (
+                <div className="job" key={`${index}:${member.member}`}>
                   <strong>{member.member}</strong>
-                  <span>
-                    {member.kind} · {member.state} · {member.processed}{" "}
-                    processed
-                    {member.expected_rows === null
-                      ? " · total unknown"
-                      : ` of ${member.expected_rows}`}
-                  </span>
-                  <p>
-                    {member.originals} new originals | {member.variants} new
-                    variants | {member.duplicates} known rows | {member.added}{" "}
-                    new listens | {member.reconciled} reconciled |{" "}
-                    {member.invalid} invalid | {member.skipped} non-music |{" "}
-                    {member.below_threshold} below threshold
-                  </p>
+                  {job.kind === "artwork" ? (
+                    <span>
+                      {member.state === "pending"
+                        ? "Queued"
+                        : member.skipped
+                          ? "No image available"
+                          : member.duplicates
+                            ? "Already cached"
+                            : "Saved"}
+                    </span>
+                  ) : (
+                    <>
+                      <span>
+                        {member.kind} · {member.state} · {member.processed}{" "}
+                        processed
+                        {member.expected_rows === null
+                          ? " · total unknown"
+                          : ` of ${member.expected_rows}`}
+                      </span>
+                      <p>
+                        {member.originals} new originals | {member.variants} new
+                        variants | {member.duplicates} known rows |{" "}
+                        {member.added} new listens | {member.reconciled}{" "}
+                        reconciled | {member.invalid} invalid | {member.skipped}{" "}
+                        non-music | {member.below_threshold} below threshold
+                      </p>
+                    </>
+                  )}
                   {member.error_code && (
                     <p className="form-error">{member.error_code}</p>
                   )}
@@ -577,10 +687,11 @@ export function Activities({
             <h2>Activity history</h2>
             <label>
               Activity type
-              <select
+              <Select
+                aria-label="Activity type"
                 value={kind}
-                onChange={(e) => {
-                  setKind(e.target.value);
+                onChange={(value) => {
+                  setKind(value);
                   setListPage(0);
                 }}
               >
@@ -594,7 +705,8 @@ export function Activities({
                   ListenBrainz public fetches
                 </option>
                 <option value="calendar">Calendar</option>
-              </select>
+                <option value="artwork">Artwork downloads</option>
+              </Select>
             </label>
           </div>
           <ErrorText>{history.error}</ErrorText>
@@ -608,11 +720,13 @@ export function Activities({
               >
                 <div className="activity-symbol">
                   <Icon>
-                    {job.kind === "calendar"
-                      ? "calendar_month"
-                      : job.kind === "spotify_collection"
-                        ? "sync"
-                        : "file_upload"}
+                    {job.kind === "artwork"
+                      ? "photo_library"
+                      : job.kind === "calendar"
+                        ? "calendar_month"
+                        : job.kind === "spotify_collection"
+                          ? "sync"
+                          : "file_upload"}
                   </Icon>
                 </div>
                 <div className="activity-content">
@@ -624,7 +738,14 @@ export function Activities({
                   </div>
                   <p>{phaseLabel(job)}</p>
                   <Progress job={job} />
-                  {!isActive(job) && (
+                  {!isActive(job) && job.kind === "artwork" && (
+                    <small>
+                      {number.format(job.added)} images saved ·{" "}
+                      {number.format(job.duplicates)} already cached ·{" "}
+                      {number.format(job.skipped)} unavailable
+                    </small>
+                  )}
+                  {!isActive(job) && job.kind !== "artwork" && (
                     <small>
                       {number.format(job.added)} new listens ·{" "}
                       {number.format(job.duplicates)} already present ·{" "}
@@ -633,8 +754,9 @@ export function Activities({
                   )}
                   {job.error_code && (
                     <p className="form-error">
-                      {job.error_code}. Open the report for details and
-                      available actions.
+                      {job.kind === "artwork"
+                        ? jobMessage(job.error_code)
+                        : `${job.error_code}. Open the report for details and available actions.`}
                     </p>
                   )}
                   {job.retry_at_ms && (

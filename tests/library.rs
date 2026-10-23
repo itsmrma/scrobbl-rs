@@ -291,6 +291,234 @@ async fn duplicate_review_is_explicit_recoverable_and_keeps_originals() {
     );
     assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
 }
+async fn review_copy(
+    state: &AppState,
+    source: &'static str,
+    key: &str,
+    at: i64,
+    title: &str,
+    spotify: &str,
+) {
+    let raw = json!({"uri":spotify,"type":"track","name":title,"duration_ms":180000,"album":{"id":"0000000000000000000002","name":"Source album","images":[]},"artists":[{"id":"0000000000000000000003","name":"Source artist"}]});
+    let event = Event {
+        source,
+        source_key: key.into(),
+        source_timestamp_ms: at,
+        played_at_ms: at,
+        listened_ms: None,
+        duration_kind: DurationKind::Unknown,
+        counted: true,
+        track: scrobbl_rs::spotify::parse_track(&raw).unwrap(),
+        raw,
+    };
+    let mut tx = state.db.begin().await.unwrap();
+    db::ingest(&mut tx, &[event]).await.unwrap();
+    tx.commit().await.unwrap();
+    // Fixtures also exercise candidates deliberately left for manual review.
+    sqlx::query("UPDATE listens SET needs_review=1")
+        .execute(&state.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn automatic_review_revalidates_preserves_originals_and_undoes_whole_batch() {
+    let (_dir, state, token) = setup().await;
+    review_copy(
+        &state,
+        "listenbrainz",
+        "auto:one:0",
+        1000000,
+        "Source title",
+        "spotify:track:0000000000000000000001",
+    )
+    .await;
+    review_copy(
+        &state,
+        "spotify_api",
+        "auto:two",
+        2000000,
+        "Source title",
+        "spotify:track:0000000000000000000001",
+    )
+    .await;
+    review_copy(
+        &state,
+        "listenbrainz",
+        "auto:two:0",
+        2000999,
+        "Source title",
+        "spotify:track:0000000000000000000001",
+    )
+    .await;
+    let preview = get(&state, &token, "/api/v1/review/automatic").await;
+    assert_eq!(preview["groups"], 2);
+    assert_eq!(preview["records"], 4);
+    assert_eq!(preview["remaining"], 0);
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 4); // GET never changes anything.
+    let action = serde_json::to_vec(&json!({"token":preview["token"]})).unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review/automatic",
+            action.clone(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let first: String = sqlx::query_scalar("SELECT id FROM listens ORDER BY id LIMIT 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE listens SET revision=revision+1 WHERE id=?")
+        .bind(&first)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review/automatic",
+            action,
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 4);
+    let fresh = get(&state, &token, "/api/v1/review/automatic").await;
+    let before: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,observation_id,fingerprint FROM observation_variants ORDER BY id",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    let (status, body) = call(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/review/automatic",
+        serde_json::to_vec(&json!({"token":fresh["token"]})).unwrap(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["removed"], 2);
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["total"],
+        2
+    );
+    let retained: String = sqlx::query_scalar(
+        "SELECT duration_kind FROM listens WHERE played_at_ms=1000000 AND trashed_at_ms IS NULL",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(retained, "estimated");
+    let after: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,observation_id,fingerprint FROM observation_variants ORDER BY id",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(before, after);
+    seed(&state, "Source title").await; // Replaying originals must not undo the decision.
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    let undo = format!(
+        "/api/v1/review/{}/undo",
+        result["decision_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        call(&state, &token, "POST", &undo, b"{}".to_vec(), true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 4);
+    assert_eq!(
+        call(&state, &token, "POST", &undo, b"{}".to_vec(), true)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+}
+
+#[tokio::test]
+async fn automatic_review_excludes_boundary_repeats_conflicts_and_distinct_identities() {
+    for case in [
+        "one_second",
+        "same_source",
+        "competing",
+        "identity",
+        "evidence",
+        "countability",
+        "actual_duration",
+    ] {
+        let (_dir, state, token) = setup().await;
+        let at = if case == "one_second" {
+            1001000
+        } else {
+            1000000
+        };
+        let source = if case == "same_source" {
+            "spotify_api"
+        } else {
+            "listenbrainz"
+        };
+        let spotify = if case == "identity" {
+            "spotify:track:0000000000000000000009"
+        } else {
+            "spotify:track:0000000000000000000001"
+        };
+        review_copy(
+            &state,
+            source,
+            "excluded:one:0",
+            at,
+            "Source title",
+            spotify,
+        )
+        .await;
+        if case == "competing" {
+            review_copy(
+                &state,
+                "listenbrainz",
+                "excluded:two:0",
+                1000500,
+                "Source title",
+                spotify,
+            )
+            .await;
+        }
+        if case == "evidence" {
+            sqlx::query("INSERT INTO conflicts(id,listen_id,kind,evidence_json) SELECT 'conflict',id,'actual_duration','{}' FROM listens LIMIT 1").execute(&state.db).await.unwrap();
+        }
+        if case == "countability" {
+            sqlx::query("UPDATE listens SET counted=0 WHERE anchor_source='listenbrainz'")
+                .execute(&state.db)
+                .await
+                .unwrap();
+        }
+        if case == "actual_duration" {
+            sqlx::query("UPDATE listens SET duration_kind='actual',listened_ms=CASE WHEN anchor_source='listenbrainz' THEN 90000 ELSE 180000 END").execute(&state.db).await.unwrap();
+        }
+        assert_eq!(
+            get(&state, &token, "/api/v1/review/automatic").await["groups"],
+            0,
+            "{case}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn corrections_overlay_sources_propagate_to_reads_survive_reingest_and_can_be_removed() {
     let (_dir, state, token) = setup().await;

@@ -92,7 +92,23 @@ async fn zip_inventory_rows_variants_provenance_thresholds_and_semantic_reimport
     assert_eq!(result.invalid, 1);
     assert_eq!(result.skipped, 2);
     assert_eq!(result.below_threshold, 4);
-    assert_eq!(count(&storage, "job_members").await, 5);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM job_members WHERE job_id=?")
+            .bind(&id)
+            .fetch_one(&storage.readers)
+            .await
+            .unwrap(),
+        5
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM job_members m JOIN jobs j ON j.id=m.job_id WHERE j.kind='artwork'"
+        )
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap(),
+        2
+    );
     assert_eq!(count(&storage, "source_occurrences").await, 8);
     assert_eq!(count(&storage, "observation_variants").await, 4);
     let null_files: i64 =

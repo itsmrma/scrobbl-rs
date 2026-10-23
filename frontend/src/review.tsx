@@ -136,6 +136,11 @@ export function ReviewPage({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const automatic = useLoad(
+    () => api.automaticReview(),
+    `automatic:${version}`,
+    true,
+  );
   async function action(run: () => Promise<unknown>, message: string) {
     setBusy(true);
     setError("");
@@ -179,6 +184,53 @@ export function ReviewPage({
         )}
       </div>
       <ErrorText>{error || result.error}</ErrorText>
+      <section
+        className="panel padded automatic-review"
+        aria-label="Automatic duplicate review"
+      >
+        <h2>Resolve matching duplicates automatically</h2>
+        <p>
+          Only isolated pairs starting less than one second apart qualify. They
+          must describe the same Spotify track, or have exactly matching title,
+          album and artist credits, and come from different sources. Repeats,
+          competing nearby records, incomplete metadata and conflicting playback
+          evidence stay for manual review.
+        </p>
+        <p>
+          The record with actual playback time takes priority, followed by
+          estimated time. Other records move to trash; every original stays
+          saved. You can undo the whole batch below.
+        </p>
+        <ErrorText>{automatic.error}</ErrorText>
+        {automatic.data ? (
+          <div className="review-actions">
+            <span role="status">
+              <strong>
+                {number.format(automatic.data.groups)} matching{" "}
+                {automatic.data.groups === 1 ? "pair" : "pairs"}
+              </strong>{" "}
+              · {number.format(automatic.data.records)} records ·{" "}
+              {number.format(automatic.data.remaining)} remain for manual review
+            </span>
+            <button
+              className="primary"
+              disabled={busy || !automatic.data.groups}
+              onClick={() =>
+                void action(
+                  () => api.executeAutomaticReview(automatic.data!.token),
+                  "Matching duplicates resolved. Undo below restores the entire batch.",
+                )
+              }
+            >
+              <Icon>done_all</Icon>Resolve{" "}
+              {number.format(automatic.data.groups)}{" "}
+              {automatic.data.groups === 1 ? "pair" : "pairs"} automatically
+            </button>
+          </div>
+        ) : (
+          !automatic.error && <p role="status">Checking automatic matches…</p>
+        )}
+      </section>
       {message && (
         <p className="review-feedback" role="status">
           <Icon>check_circle</Icon>

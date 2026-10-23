@@ -133,6 +133,15 @@ export type ReviewPage = {
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 export const api = {
+  automaticReview: () =>
+    request<{
+      token: string;
+      groups: number;
+      records: number;
+      remaining: number;
+    }>("/api/v1/review/automatic"),
+  executeAutomaticReview: (token: string) =>
+    post<{ removed: number }>("/api/v1/review/automatic", { token }),
   review: (page = 0, decisionsPage = 0) =>
     request<ReviewPage>(
       `/api/v1/review?page=${page}&decisions_page=${decisionsPage}`,

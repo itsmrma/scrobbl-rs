@@ -1,3 +1,4 @@
+import { Select } from "./select";
 import { passwordChecks, PasswordFeedback } from "./account";
 import { useRef, useState } from "react";
 import { api } from "./api";
@@ -97,10 +98,14 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
         <div className="form-grid">
           <label>
             Export format
-            <select value={format} onChange={(e) => setFormat(e.target.value)}>
+            <Select
+              aria-label="Export format"
+              value={format}
+              onChange={(value) => setFormat(value)}
+            >
               <option value="json">JSON — observations and provenance</option>
               <option value="csv">CSV — one row per listen</option>
-            </select>
+            </Select>
           </label>
           <label>
             From date
@@ -134,10 +139,11 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
           </label>
           <label>
             Listen selection
-            <select
+            <Select
+              aria-label="Listen selection"
               value={selection.status || "all"}
-              onChange={(e) =>
-                setSelection((s) => ({ ...s, status: e.target.value }))
+              onChange={(value) =>
+                setSelection((s) => ({ ...s, status: value }))
               }
             >
               <option value="all">All listens, including short</option>
@@ -146,7 +152,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               <option value="actual">Actual listening time</option>
               <option value="estimated">Estimated or unknown time</option>
               <option value="review">Needs review</option>
-            </select>
+            </Select>
           </label>
         </div>
         <p>

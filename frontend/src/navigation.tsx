@@ -38,6 +38,7 @@ export function Link({
   className?: string;
   style?: CSSProperties;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   "aria-current"?: "page";
   onClick?: () => void;
   onMouseEnter?: () => void;

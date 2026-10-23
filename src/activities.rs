@@ -105,7 +105,27 @@ pub async fn detail(
         .fetch_optional(&mut *view.transaction)
         .await?
         .ok_or_else(|| AppError::BadRequest("Unknown activity.".into()))?;
-    let members = sqlx::query_as("SELECT member,kind,state,expected_rows,processed,error_code,originals,variants,duplicates,added,reconciled,invalid,skipped,below_threshold FROM job_members WHERE job_id=? ORDER BY member").bind(&id).fetch_all(&mut *view.transaction).await?;
+    let mut members: Vec<ActivityMember> = sqlx::query_as("SELECT member,kind,state,expected_rows,processed,error_code,originals,variants,duplicates,added,reconciled,invalid,skipped,below_threshold FROM job_members WHERE job_id=? ORDER BY member LIMIT ? OFFSET ?").bind(&id).bind(if job.kind=="artwork" {100i64} else {i64::MAX}).bind(if job.kind=="artwork" {i64::from(query.issues_page)*100} else {0}).fetch_all(&mut *view.transaction).await?;
+    if job.kind == "artwork" {
+        for member in &mut members {
+            let group = member
+                .member
+                .split_once(':')
+                .map(|(_, id)| id)
+                .unwrap_or("");
+            let name: Option<String>=sqlx::query_scalar("SELECT COALESCE(ar.name,al.name) FROM name_groups g LEFT JOIN artists ar ON g.kind='artists' AND ar.id=g.representative_id LEFT JOIN albums al ON g.kind='albums' AND al.id=g.representative_id WHERE g.id=?").bind(group).fetch_optional(&mut *view.transaction).await?.flatten();
+            member.member = format!(
+                "{} · {}",
+                if member.kind == "artists" {
+                    "Artist"
+                } else {
+                    "Album"
+                },
+                name.as_deref().unwrap_or("No longer in the library")
+            );
+        }
+    }
+
     Ok(Json(ActivityDetail {
         source_parameters: if job.kind.starts_with("listenbrainz_") {Some(serde_json::from_str(&job.parameters_json).map_err(|_|AppError::Internal)?)}else{None},
         issues: sqlx::query_as("SELECT member,row_number,reason FROM source_occurrences WHERE job_id=? AND (outcome='invalid' OR (? LIKE 'listenbrainz_%' AND reason IS NOT NULL)) ORDER BY member,row_number LIMIT 100 OFFSET ?").bind(&id).bind(&job.kind).bind(i64::from(query.issues_page)*100).fetch_all(&mut *view.transaction).await?,
@@ -128,7 +148,7 @@ pub async fn action(
     let job = state.storage.job(&id).await?;
     if !matches!(
         job.kind.as_str(),
-        "calendar" | "spotify_import" | "listenbrainz_file" | "listenbrainz_fetch"
+        "calendar" | "spotify_import" | "listenbrainz_file" | "listenbrainz_fetch" | "artwork"
     ) {
         return Err(AppError::BadRequest(
             "Controls for this activity belong to its source workflow.".into(),

@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
     let listenbrainz_worker = tokio::spawn(scrobbl_rs::listenbrainz::worker(state.storage.clone()));
     let recovery_worker = tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone()));
     let retention_worker = tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone()));
+    let artwork_worker = tokio::spawn(scrobbl_rs::artwork::worker(state.clone()));
     println!("scrobbl.rs is running at {}", config.origin());
     println!("Data: {}", config.data_dir.canonicalize()?.display());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
@@ -83,6 +84,8 @@ async fn main() -> anyhow::Result<()> {
     let _ = retention_worker.await;
     listenbrainz_worker.abort();
     let _ = listenbrainz_worker.await;
+    artwork_worker.abort();
+    let _ = artwork_worker.await;
     state.storage.close().await;
     result?;
     Ok(())

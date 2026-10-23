@@ -1,3 +1,4 @@
+import { Select } from "./select";
 import { SpotifyNotice } from "./spotify-status";
 import {
   useEffect,
@@ -224,12 +225,12 @@ function PeriodFilters({
     <div className="filters">
       <label>
         Period
-        <select
+        <Select
           aria-label="Period"
           value={params.get("period") || "all"}
-          onChange={(e) =>
+          onChange={(value) =>
             update({
-              period: e.target.value,
+              period: value,
               from: "",
               to: "",
               bucket: "",
@@ -243,7 +244,7 @@ function PeriodFilters({
             </option>
           ))}
           <option value="custom">Custom dates</option>
-        </select>
+        </Select>
       </label>
       {params.get("period") === "custom" && (
         <>
@@ -272,13 +273,14 @@ function PeriodFilters({
       {sort && (
         <label>
           Rank by
-          <select
+          <Select
+            aria-label="Rank by"
             value={params.get("sort") || "plays"}
-            onChange={(e) => update({ sort: e.target.value })}
+            onChange={(value) => update({ sort: value })}
           >
             <option value="plays">Listens</option>
             <option value="time">Listening time</option>
-          </select>
+          </Select>
         </label>
       )}
       {["today", "week", "month", "year"].includes(
@@ -342,10 +344,11 @@ function PageSize({
   return (
     <label className="page-size">
       Results per page
-      <select
+      <Select
+        aria-label="Results per page"
         value={list.size}
-        onChange={(e) => {
-          list.setSize(Number(e.target.value));
+        onChange={(value) => {
+          list.setSize(Number(value));
           changed();
         }}
       >
@@ -354,7 +357,7 @@ function PageSize({
             {n}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }
@@ -561,37 +564,37 @@ function RankingsPanel({
               </button>
             )}
           </div>
-          {!collage && list.view === "grid" && (
-            <div
-              className="card-size-control"
-              role="group"
-              aria-label="Card size"
+          <div
+            className={`card-size-control ${collage || list.view !== "grid" ? "inactive" : ""}`}
+            aria-hidden={collage || list.view !== "grid"}
+            inert={collage || list.view !== "grid"}
+            role="group"
+            aria-label="Card size"
+          >
+            <button
+              className="icon-button"
+              aria-label="Smaller cards"
+              disabled={cardSize === 140}
+              onClick={() => setCardSize(cardSize - 40)}
             >
-              <button
-                className="icon-button"
-                aria-label="Smaller cards"
-                disabled={cardSize === 140}
-                onClick={() => setCardSize(cardSize - 40)}
-              >
-                <Icon>remove</Icon>
-              </button>
-              <output aria-label="Card size">
-                {cardSize === 140
-                  ? "Small"
-                  : cardSize === 180
-                    ? "Medium"
-                    : "Large"}
-              </output>
-              <button
-                className="icon-button"
-                aria-label="Larger cards"
-                disabled={cardSize === 220}
-                onClick={() => setCardSize(cardSize + 40)}
-              >
-                <Icon>add</Icon>
-              </button>
-            </div>
-          )}
+              <Icon>remove</Icon>
+            </button>
+            <output aria-label="Card size">
+              {cardSize === 140
+                ? "Small"
+                : cardSize === 180
+                  ? "Medium"
+                  : "Large"}
+            </output>
+            <button
+              className="icon-button"
+              aria-label="Larger cards"
+              disabled={cardSize === 220}
+              onClick={() => setCardSize(cardSize + 40)}
+            >
+              <Icon>add</Icon>
+            </button>
+          </div>
         </div>
       )}
       <ErrorText>{result.error}</ErrorText>
@@ -654,12 +657,10 @@ const compactNumber = new Intl.NumberFormat("en-GB", {
 function Chart({
   params,
   visible = true,
-  update,
   version = 0,
 }: {
   params: URLSearchParams;
   visible?: boolean;
-  update: Selection["update"];
   version?: number;
 }) {
   const chart = useRef<HTMLElement>(null);
@@ -668,18 +669,16 @@ function Chart({
     const observer = new ResizeObserver((entries) => {
       const width = entries[0]?.contentRect.width || 0;
       if (!width) return;
-      setBarLimit(
-        matchMedia("(max-width: 600px)").matches
-          ? Number.MAX_SAFE_INTEGER
-          : Math.max(4, Math.min(18, Math.floor(width / 76))),
-      );
+      setBarLimit(Math.max(3, Math.min(18, Math.floor(width / 76))));
     });
     if (chart.current) observer.observe(chart.current);
     return () => observer.disconnect();
   }, []);
+  const chartParams = new URLSearchParams(params);
+  chartParams.delete("grain");
   const result = useLoad(
-    () => api.chart(params),
-    `chart:${params}:${version}`,
+    () => api.chart(chartParams),
+    `chart:${chartParams}:${version}`,
     visible,
     undefined,
     true,
@@ -688,15 +687,20 @@ function Chart({
   const byTime = params.get("sort") === "time";
   const buckets = useMemo(
     () =>
-      result.data?.grain === "month"
+      result.data &&
+      (result.data.grain === "month" || result.data.buckets.length > barLimit)
         ? compactBuckets(result.data.buckets, barLimit)
         : (result.data?.buckets || []).map((b) => ({ ...b, periods: 1 })),
     [result.data, barLimit],
   );
   const grouped = buckets.some((b) => b.periods > 1);
-  const bucketLabel = (b: (typeof buckets)[number], full = false) =>
+  const spansYears =
+    !!buckets.length &&
+    buckets[0].start.slice(0, 4) !==
+      buckets[buckets.length - 1].through.slice(0, 4);
+  const bucketLabel = (b: (typeof buckets)[number], full = spansYears) =>
     b.periods > 1
-      ? `${periodLabel(b.start, "month")} – ${periodLabel(b.through, "month")}`
+      ? `${periodLabel(b.start, result.data!.grain === "week" ? "day" : result.data!.grain, full)} – ${periodLabel(b.through, result.data!.grain === "week" ? "day" : result.data!.grain, full)}`
       : periodLabel(b.start, result.data!.grain, full);
   const max = Math.max(
     1,
@@ -715,32 +719,14 @@ function Chart({
       undefined,
     );
   return (
-    <article
-      className={`panel padded activity-chart ${result.data?.grain === "month" ? "chart-compact" : ""}`}
-      ref={chart}
-    >
+    <article className="panel padded activity-chart chart-compact" ref={chart}>
       <div className="panel-title">
         <h2>Listening activity</h2>
-        <label>
-          Group by
-          <select
-            value={params.get("grain") || result.data?.grain || "day"}
-            onChange={(e) => update({ grain: e.target.value }, false)}
-          >
-            {["day", "week", "month", "year"].map((v) => (
-              <option key={v} value={v}>
-                {v[0].toUpperCase() + v.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
       <p className="subtle">
         Your archived listening over time. Select a bar to explore that period.
-        {result.data?.grain === "month" &&
-          " Months without listens are omitted."}
         {grouped &&
-          " Quieter adjacent months are combined; each bar shows its full range."}
+          " Quieter periods are combined to fit this view; each bar shows its exact date range."}
       </p>
       {inspectedBucket && (
         <div className="chart-readout" aria-live="polite" aria-atomic="true">
@@ -859,10 +845,7 @@ function Chart({
       )}
       {!result.data && !result.error && <p role="status">Loading activity…</p>}
       <p className="subtle">
-        * Partial period.{" "}
-        {result.data?.grain !== "month" &&
-          "Empty bars mean no archived listens. "}
-        Each listen belongs to its assigned date.
+        * Partial period. Each listen belongs to its assigned date.
       </p>
     </article>
   );
@@ -921,7 +904,6 @@ export function Overview({
           <Chart
             params={params}
             visible={visible}
-            update={selection.update}
             version={preferences.version}
           />
           <article className="panel">
@@ -1338,23 +1320,24 @@ export function HistoryPage({
             )}
             <label>
               Source
-              <select
+              <Select
                 aria-label="Source"
                 value={params.get("source") || ""}
-                onChange={(e) => change({ source: e.target.value })}
+                onChange={(value) => change({ source: value })}
               >
                 <option value="">All sources</option>
                 <option value="spotify_import">Spotify import</option>
                 <option value="spotify_api">Spotify collection</option>
                 <option value="listenbrainz">ListenBrainz</option>
-              </select>
+              </Select>
             </label>
             <label>
               Include
-              <select
+              <Select
+                aria-label="Include"
                 id={embedded ? undefined : "history-status"}
                 value={params.get("status") || "counted"}
-                onChange={(e) => change({ status: e.target.value })}
+                onChange={(value) => change({ status: value })}
               >
                 {[
                   ["counted", "Counted listens"],
@@ -1368,7 +1351,7 @@ export function HistoryPage({
                     {t}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="checkbox-label">
               <input
@@ -1567,11 +1550,7 @@ export function MusicPage({
       ) : (
         !result.error && <p role="status">Loading music page…</p>
       )}
-      <Chart
-        params={params}
-        update={selection.update}
-        version={preferences.version}
-      />
+      <Chart params={params} version={preferences.version} />
       {kind !== "tracks" && (
         <div className={kind === "artists" ? "music-collections" : undefined}>
           {kind === "artists" && (

@@ -1,9 +1,26 @@
 import type { Listen, Preferences } from "./generated";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { Cover, date, duration, Icon } from "./ui";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import type { Kind } from "./selection";
+function ReviewIndicator() {
+  const id = useId();
+  return (
+    <span className="review-indicator">
+      <Link
+        to="/review"
+        aria-label="Possible duplicate — review record"
+        aria-describedby={id}
+      >
+        <Icon>warning_amber</Icon>
+      </Link>
+      <span id={id} role="tooltip" aria-label="Possible duplicate">
+        Possible duplicate · Review record
+      </span>
+    </span>
+  );
+}
 export function ListenList({
   items,
   preferences,
@@ -62,76 +79,83 @@ export function ListenList({
             className={`listen-row ${context ? `listen-context listen-context-${context}` : ""}`}
             key={item.id}
           >
-            {context !== "tracks" && (
-              <>
-                <Cover url={item.cover_url} />
-                <div className="listen-title">
-                  <Link to={musicLink("tracks", item.track_id)}>
-                    {item.title}
-                  </Link>
-                  {context !== "albums" && (
-                    <small className="listen-artists">
-                      {item.artists.map((a, i) => (
-                        <span key={a.id}>
-                          {i > 0 && ", "}
-                          <Link to={musicLink("artists", a.id)}>{a.name}</Link>
-                        </span>
-                      ))}
-                      {!item.artists.length && "Unknown artist"}
-                    </small>
+            <div className="listen-main">
+              {context !== "tracks" && (
+                <>
+                  <Cover url={item.cover_url} />
+                  <div className="listen-title">
+                    <span className="listen-heading">
+                      <Link to={musicLink("tracks", item.track_id)}>
+                        {item.title}
+                      </Link>
+                      {item.needs_review && <ReviewIndicator />}
+                    </span>
+                    {context !== "albums" && (
+                      <small className="listen-artists">
+                        {item.artists.map((a, i) => (
+                          <span key={a.id}>
+                            {i > 0 && ", "}
+                            <Link to={musicLink("artists", a.id)}>
+                              {a.name}
+                            </Link>
+                          </span>
+                        ))}
+                        {!item.artists.length && "Unknown artist"}
+                      </small>
+                    )}
+                  </div>
+                </>
+              )}
+              {context !== "tracks" && context !== "albums" && (
+                <div className="listen-album">
+                  {item.album_id ? (
+                    <Link to={musicLink("albums", item.album_id)}>
+                      {item.album}
+                    </Link>
+                  ) : (
+                    "Unknown album"
                   )}
                 </div>
-              </>
-            )}
-            {context !== "tracks" && context !== "albums" && (
-              <div className="listen-album">
-                {item.album_id ? (
-                  <Link to={musicLink("albums", item.album_id)}>
-                    {item.album}
-                  </Link>
-                ) : (
-                  "Unknown album"
-                )}
-              </div>
-            )}
-            <div className="listen-date">
-              {date(item.played_at_ms, {
-                ...preferences,
-                timezone: item.timezone,
-              })}
-              <small>
-                {item.timezone} · {item.local_date}
-              </small>
-              <small>
-                {[...new Set(item.sources)]
-                  .join(" + ")
-                  .replaceAll("spotify_import", "Spotify import")
-                  .replaceAll("spotify_api", "Spotify collection")
-                  .replaceAll("listenbrainz", "ListenBrainz")}
-              </small>
-              {item.needs_review && (
-                <small className="warning">Possible duplicate</small>
               )}
-            </div>
-            {context && (
-              <div className="listen-archive">
-                <small>Added to archive</small>
-                {date(item.first_acquired_at_ms, preferences)}
+              <div className="listen-date">
+                {context === "tracks" && item.needs_review && (
+                  <ReviewIndicator />
+                )}
+                {date(item.played_at_ms, {
+                  ...preferences,
+                  timezone: item.timezone,
+                })}
+                <small>
+                  {item.timezone} · {item.local_date}
+                </small>
+                <small>
+                  {[...new Set(item.sources)]
+                    .join(" + ")
+                    .replaceAll("spotify_import", "Spotify import")
+                    .replaceAll("spotify_api", "Spotify collection")
+                    .replaceAll("listenbrainz", "ListenBrainz")}
+                </small>
               </div>
-            )}
-            <div className="listen-duration">
-              {context && <small>Time listened</small>}
-              {item.duration_kind === "estimated" && "≈ "}
-              {duration(item.listened_ms)}
-              <small>
-                {!item.counted
-                  ? "Below threshold"
-                  : item.duration_kind === "actual"
-                    ? "Actual"
-                    : item.duration_kind === "estimated"
-                      ? "Estimated"
-                      : "Unknown duration"}
-              </small>
+              {context && (
+                <div className="listen-archive">
+                  <small>Added to archive</small>
+                  {date(item.first_acquired_at_ms, preferences)}
+                </div>
+              )}
+              <div className="listen-duration">
+                {context && <small>Time listened</small>}
+                {item.duration_kind === "estimated" && "≈ "}
+                {duration(item.listened_ms)}
+                <small>
+                  {!item.counted
+                    ? "Below threshold"
+                    : item.duration_kind === "actual"
+                      ? "Actual"
+                      : item.duration_kind === "estimated"
+                        ? "Estimated"
+                        : "Unknown duration"}
+                </small>
+              </div>
             </div>
             {context && (
               <details className="listen-details">

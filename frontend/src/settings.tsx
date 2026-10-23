@@ -1,3 +1,4 @@
+import { Select } from "./select";
 import { SpotifyNotice } from "./spotify-status";
 import { useEffect, useState } from "react";
 import type { CalendarScope, Preferences, SpotifyStatus } from "./generated";
@@ -14,7 +15,7 @@ import {
 import { SpotifyConnectButton } from "./spotify-connect";
 import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
-import { Link } from "./navigation";
+import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
 import { ApiKeys } from "./api-keys";
 
@@ -97,47 +98,51 @@ export function General({
         <div className="form-grid">
           <label>
             Initial dashboard period
-            <select
+            <Select
+              aria-label="Initial dashboard period"
               value={draft.initial_period}
-              onChange={(e) => update("initial_period", e.target.value)}
+              onChange={(value) => update("initial_period", value)}
             >
               {periods.map(([value, text]) => (
                 <option key={value} value={value}>
                   {text}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Time format
-            <select
+            <Select
+              aria-label="Time format"
               value={draft.hour_format}
-              onChange={(e) => update("hour_format", e.target.value)}
+              onChange={(value) => update("hour_format", value)}
             >
               <option value="24">24-hour</option>
               <option value="12">12-hour</option>
-            </select>
+            </Select>
           </label>
           <label>
             Time zone
-            <input
+            <Select
+              searchable
+              aria-label="Time zone"
               value={draft.timezone}
-              required
-              list="timezones"
-              onChange={(e) => update("timezone", e.target.value)}
-            />
-            <datalist id="timezones">
-              <option value="UTC" />
+              onChange={(value) => update("timezone", value)}
+            >
+              <option value="UTC">UTC</option>
               {Intl.supportedValuesOf("timeZone").map((zone) => (
-                <option key={zone} value={zone} />
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
               ))}
-            </datalist>
+            </Select>
           </label>
           <label>
             Week starts on
-            <select
+            <Select
+              aria-label="Week starts on"
               value={draft.week_start}
-              onChange={(e) => update("week_start", Number(e.target.value))}
+              onChange={(value) => update("week_start", Number(value))}
             >
               {[
                 "Monday",
@@ -152,7 +157,7 @@ export function General({
                   {day}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
         <p>
@@ -269,16 +274,16 @@ export function Appearance({
       </p>
       <label>
         Theme
-        <select
+        <Select
           aria-label="Theme"
           id="theme"
           value={theme}
-          onChange={(e) => setTheme(e.target.value)}
+          onChange={(value) => setTheme(value)}
         >
           <option value="auto">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
-        </select>
+        </Select>
       </label>
       <fieldset>
         <legend>Accent colour</legend>
@@ -688,9 +693,14 @@ export function Connections({
                 <span className="step-number">2</span>
                 <div>
                   <h3>Set up your Spotify app</h3>
+                  {status.configured && (
+                    <span className="credentials-saved" role="status">
+                      <Icon>check_circle</Icon>App credentials saved
+                    </span>
+                  )}
                   <p>
                     {status.configured
-                      ? "App credentials saved. Open the setup guide to review or replace them."
+                      ? "Open the setup guide to review or replace your saved app credentials."
                       : "Register the redirect URI, save it in Spotify, then save your app credentials here."}
                   </p>
                 </div>
@@ -998,6 +1008,20 @@ export function Settings({
       <Heading eyebrow="MAKE YOURSELF AT HOME" title="Settings & connections">
         Preferences for your instance and this browser.
       </Heading>
+      <label className="settings-section-select">
+        Settings section
+        <Select
+          aria-label="Settings section"
+          value={section}
+          onChange={(value) => navigate(`/settings/${value}`)}
+        >
+          <option value="general">General</option>
+          <option value="appearance">Appearance</option>
+          <option value="connections">Connections</option>
+          <option value="data">Data &amp; recovery</option>
+          <option value="api-keys">API keys</option>
+        </Select>
+      </label>
       <nav className="settings-tabs" aria-label="Settings sections">
         {[
           ["general", "General"],

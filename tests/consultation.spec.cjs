@@ -1,3 +1,4 @@
+const { chooseOption } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
@@ -141,7 +142,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     const ranking = page.locator("article").filter({
       has: page.getByRole("heading", { name: "Your tracks", exact: true }),
     });
-    await ranking.getByLabel("Results per page").selectOption("10");
+    await chooseOption(ranking.getByLabel("Results per page"), "10");
     await expect(ranking.locator(".ranking-row")).toHaveCount(10);
     await expect(ranking.locator(".rank-number").last()).toHaveText("10");
     await ranking.getByRole("button", { name: "Next", exact: true }).click();
@@ -173,15 +174,21 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.getByRole("button", { name: "Grid", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByLabel("Results per page")).toHaveValue("10");
-    await page.getByLabel("Period", { exact: true }).selectOption("custom");
+    await expect(page.getByLabel("Results per page")).toHaveAttribute(
+      "data-value",
+      "10",
+    );
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
     await page.getByLabel("From", { exact: true }).fill("2025-06-02");
     await page.getByLabel("Through", { exact: true }).fill("2025-06-02");
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
     await page.locator(".history-filter-disclosure > summary").click();
     await expect(page.locator("#history-total")).toHaveText("135 records");
-    await expect(page.getByLabel("Results per page")).toHaveValue("10");
+    await expect(page.getByLabel("Results per page")).toHaveAttribute(
+      "data-value",
+      "10",
+    );
     await page.getByLabel("Show listens below threshold too").check();
     await expect(page.locator("#history-total")).toHaveText("136 records");
     await page.getByLabel("Show listens below threshold too").uncheck();
@@ -192,13 +199,15 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
         exact: true,
       })
       .click();
-    await page
-      .getByRole("combobox", { name: "Source", exact: true })
-      .selectOption("spotify_api");
+    await chooseOption(
+      page.getByRole("combobox", { name: "Source", exact: true }),
+      "spotify_api",
+    );
     await expect(page.locator("#history-total")).toHaveText("0 records");
-    await page
-      .getByRole("combobox", { name: "Source", exact: true })
-      .selectOption("spotify_import");
+    await chooseOption(
+      page.getByRole("combobox", { name: "Source", exact: true }),
+      "spotify_import",
+    );
     // The source-name artist now combines all of its imported tracks.
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await page.getByLabel("Find album").fill("Consultation album 010");
@@ -236,10 +245,12 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
         })
         .locator(".music-card"),
     ).toHaveCount(10);
-    await page.getByLabel("Period", { exact: true }).selectOption("custom");
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
     await page.getByLabel("From", { exact: true }).fill("2025-06-01");
     await page.getByLabel("Through", { exact: true }).fill("2025-06-03");
-    await page.getByLabel("Group by").selectOption("day");
+    await expect(page.getByRole("combobox", { name: "Group by" })).toHaveCount(
+      0,
+    );
     await expect(page.locator(".chart-segment:visible")).toHaveCount(3);
     await page.locator(".chart-segment:visible").first().click();
     await expect(page.locator("#history-total")).toHaveText("135 records");
