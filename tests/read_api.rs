@@ -659,24 +659,56 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
     assert_eq!(full["items"][0]["listened_ms"], Value::Null);
     assert_eq!(full["items"][0]["counted"], true);
     assert_eq!(full["items"][0]["sources"], json!(["listenbrainz"]));
-    sqlx::query("UPDATE api_rate_limits SET requests=120")
-        .execute(&state.private_db)
-        .await
-        .unwrap();
-    let (status, headers, body) = request(
-        &state,
-        "GET",
-        "/api/v1/info",
-        None,
-        Some(secret),
-        Some("https://itsmrma.github.io"),
-        Value::Null,
-    )
-    .await;
+    // Earlier reads can belong to the previous minute on a slower runner.
+    // Seed the current window explicitly, retrying only a real clock rollover.
+    let mut same_window = None;
+    for _ in 0..3 {
+        let window = auth::now_ms() / 60000;
+        sqlx::query("UPDATE api_rate_limits SET requests=120,window_ms=?")
+            .bind(window)
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let response = request(
+            &state,
+            "GET",
+            "/api/v1/info",
+            None,
+            Some(secret),
+            Some("https://itsmrma.github.io"),
+            Value::Null,
+        )
+        .await;
+        if auth::now_ms() / 60000 == window {
+            same_window = Some(response);
+            break;
+        }
+    }
+    let (status, headers, body) =
+        same_window.expect("clock crossed three rate-limit windows during one request");
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body["error"]["code"], "rate_limited");
     assert!(headers.contains_key("retry-after"));
     assert!(headers.contains_key("access-control-allow-origin"));
+    // A genuinely older window must reset, regardless of its request count.
+    sqlx::query("UPDATE api_rate_limits SET requests=120,window_ms=-1")
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    assert_eq!(
+        request(
+            &state,
+            "GET",
+            "/api/v1/info",
+            None,
+            Some(secret),
+            None,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
     state.storage.close().await;
 }
 
