@@ -69,7 +69,7 @@ impl Storage {
                 hash.update(&buffer[..count]); file.write_all(&buffer[..count]).await?;
             }
             file.sync_all().await?; drop(file);
-            let hash=format!("{:x}",hash.finalize());
+            let hash = crate::auth::encode_hex(&hash.finalize());
             let destination=self.directory.join("spool").join(&hash);
             // Hard link publishes without replacing an existing immutable file, including on Windows.
             match tokio::fs::hard_link(&incoming,&destination).await {

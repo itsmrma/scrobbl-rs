@@ -107,7 +107,7 @@ pub fn hash_file(path: &Path) -> anyhow::Result<(String, u64)> {
         hash.update(&buffer[..n]);
         size += n as u64;
     }
-    Ok((format!("{:x}", hash.finalize()), size))
+    Ok((crate::auth::encode_hex(&hash.finalize()), size))
 }
 fn valid_member(name: &str) -> bool {
     name == "archive.db"
@@ -405,7 +405,7 @@ fn unpack(package: &Path, work: &Path, materialize_spool: bool) -> anyhow::Resul
             file.sync_all()?;
         }
         ensure!(
-            format!("{:x}", hash.finalize()) == expected.sha256,
+            crate::auth::encode_hex(&hash.finalize()) == expected.sha256,
             "Backup checksum mismatch"
         );
         if let Some(hash) = expected.name.strip_prefix("spool/") {

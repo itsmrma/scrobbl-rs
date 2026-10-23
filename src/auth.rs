@@ -37,7 +37,7 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 pub fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    encode_hex(&Sha256::digest(value.as_bytes()))
 }
 fn session_cookie(headers: &HeaderMap) -> Option<&str> {
     headers
