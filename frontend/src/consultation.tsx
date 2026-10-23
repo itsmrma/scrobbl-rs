@@ -378,7 +378,12 @@ function RankingRows({
           </span>
           <Cover url={item.cover_url} large={grid} />
           <div className="rank-name">
-            <Link to={musicLink(kind, item.id, params)}>{item.name}</Link>
+            <Link
+              className="music-item-link"
+              to={musicLink(kind, item.id, params)}
+            >
+              {item.name}
+            </Link>
             <small>
               {kind === "artists"
                 ? item.subtitle?.endsWith(" tracks")
@@ -1396,21 +1401,23 @@ export function MusicPage({
         update={selection.update}
         version={preferences.version}
       />
-      {kind === "artists" && (
-        <RankingsPanel
-          kind="albums"
-          params={params}
-          version={preferences.version}
-          title="Albums in this period"
-        />
-      )}
       {kind !== "tracks" && (
-        <RankingsPanel
-          kind="tracks"
-          params={params}
-          title="Tracks in this period"
-          version={preferences.version}
-        />
+        <div className={kind === "artists" ? "music-collections" : undefined}>
+          {kind === "artists" && (
+            <RankingsPanel
+              kind="albums"
+              params={params}
+              version={preferences.version}
+              title="Albums in this period"
+            />
+          )}
+          <RankingsPanel
+            kind="tracks"
+            params={params}
+            title="Tracks in this period"
+            version={preferences.version}
+          />
+        </div>
       )}
       <h2>Listening history</h2>
       <HistoryPage

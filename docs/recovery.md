@@ -117,7 +117,7 @@ accepts bytes before queuing persistent inspection.
    configure destination origin/HTTPS/storage and create its owner password.
 2. Upload a ZIP or select a saved backup. Wait for inspection. Review snapshot
    date, versions, revision and count. Run **Verify backup** if desired.
-3. Choose **Restore…**, review the summary, enter/repeat a **new owner password** of at least 15 characters
+3. Choose **Restore…**, review the summary, enter/repeat a **new owner password** of at least 8 characters, including a letter, a number and a special character, without sequences or repeating patterns and different from the username
    and explicitly confirm replacement. The operation replaces; it does not merge.
    Confirmation commits to activation at the next restart; there is no cancellation
    after preparation. Close the confirmation dialog beforehand to leave it unchanged.

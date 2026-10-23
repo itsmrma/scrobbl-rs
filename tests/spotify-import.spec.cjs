@@ -7,7 +7,7 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page
     .getByText("Server limits and accepted files", { exact: true })

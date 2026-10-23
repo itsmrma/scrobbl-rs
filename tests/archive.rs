@@ -97,7 +97,7 @@ async fn sign_in(app: &Router) -> (String, String) {
         app,
         "POST",
         "/api/setup",
-        json!({"username":"owner","password":"a long local test password"}),
+        json!({"username":"owner","password":"a long local test password 7!"}),
         None,
         None,
     )
@@ -587,7 +587,7 @@ async fn authentication_csrf_revocation_and_restart() {
             &app,
             "POST",
             "/api/setup",
-            json!({"username":"owner","password":"another long password"}),
+            json!({"username":"owner","password":"another long password 7!"}),
             None,
             None
         )
@@ -696,7 +696,7 @@ async fn authentication_csrf_revocation_and_restart() {
             &app,
             "POST",
             "/api/login",
-            json!({"username":"owner","password":"a long local test password"}),
+            json!({"username":"owner","password":"a long local test password 7!"}),
             None,
             None
         )
@@ -721,7 +721,7 @@ async fn hostile_origins_hosts_expired_sessions_and_oauth_states_are_rejected() 
             .header("origin", origin)
             .header("content-type", "application/json")
             .body(Body::from(
-                "{\"username\":\"owner\",\"password\":\"a long local test password\"}",
+                "{\"username\":\"owner\",\"password\":\"a long local test password 7!\"}",
             ))
             .unwrap();
         assert_eq!(
@@ -961,7 +961,7 @@ async fn owner_setup_requires_username_and_rejects_guessable_passwords_on_the_se
     let (_dir, state) = state().await;
     let app = web::router(state.clone());
     for body in [
-        json!({"password":"a long local test password"}),
+        json!({"password":"a long local test password 7!"}),
         json!({"username":"owner","password":"short"}),
         json!({"username":"owner","password":"aaaaaaaaaaaaaaa"}),
         json!({"username":"owner","password":"Password123456789!"}),
@@ -992,7 +992,7 @@ async fn owner_setup_requires_username_and_rejects_guessable_passwords_on_the_se
                 &app,
                 "POST",
                 "/api/login",
-                json!({"username":username,"password":"a long local test password"}),
+                json!({"username":username,"password":"a long local test password 7!"}),
                 None,
                 None
             )
@@ -1006,7 +1006,7 @@ async fn owner_setup_requires_username_and_rejects_guessable_passwords_on_the_se
             &app,
             "POST",
             "/api/login",
-            json!({"username":"OWNER","password":"a long local test password"}),
+            json!({"username":"OWNER","password":"a long local test password 7!"}),
             None,
             None
         )
@@ -1054,7 +1054,7 @@ async fn existing_owner_can_add_username_only_with_a_valid_session_and_csrf() {
             &app,
             "POST",
             "/api/login",
-            json!({"password":"a long local test password"}),
+            json!({"password":"a long local test password 7!"}),
             None,
             None
         )
@@ -1086,7 +1086,7 @@ async fn existing_owner_can_add_username_only_with_a_valid_session_and_csrf() {
             &app,
             "POST",
             "/api/login",
-            json!({"password":"a long local test password"}),
+            json!({"password":"a long local test password 7!"}),
             None,
             None
         )
@@ -1099,7 +1099,7 @@ async fn existing_owner_can_add_username_only_with_a_valid_session_and_csrf() {
             &app,
             "POST",
             "/api/login",
-            json!({"username":"listener","password":"a long local test password"}),
+            json!({"username":"listener","password":"a long local test password 7!"}),
             None,
             None
         )
@@ -1356,4 +1356,27 @@ async fn name_group_upgrade_preserves_source_ids_and_existing_personal_data() {
             .unwrap();
     assert_eq!(retained, 1);
     reopened.close().await;
+}
+
+#[test]
+fn password_policy_accepts_eight_characters_and_rejects_sequences_and_account_names() {
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("owner")).is_ok());
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$", Some("owner")).is_err());
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("m7pl9x")).is_err());
+    for password in [
+        "Abc!7mRp",
+        "Zyx!7mRp",
+        "M7!123xy",
+        "M7!321xy",
+        "Qwe!7mRp",
+        "x7!x7!x7!x7!",
+        "LongEnough!",
+        "LongEnough7",
+        "7777777!",
+    ] {
+        assert!(
+            scrobbl_rs::auth::validate_password(password, Some("owner")).is_err(),
+            "{password}"
+        );
+    }
 }

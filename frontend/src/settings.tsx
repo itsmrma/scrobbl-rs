@@ -2,7 +2,15 @@ import { SpotifyNotice } from "./spotify-status";
 import { useEffect, useState } from "react";
 import type { CalendarScope, Preferences, SpotifyStatus } from "./generated";
 import { api } from "./api";
-import { date, ErrorText, Heading, Icon, Modal, useToast } from "./ui";
+import {
+  CopyButton,
+  date,
+  ErrorText,
+  Heading,
+  Icon,
+  Modal,
+  useToast,
+} from "./ui";
 import { SpotifyConnectButton } from "./spotify-connect";
 import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
@@ -706,19 +714,9 @@ export function Connections({
                   <li>
                     Register this exact redirect URI:
                     <code id="redirect-uri">{status.redirect_uri}</code>
-                    <button
-                      className="secondary"
-                      onClick={() =>
-                        void action(async () => {
-                          await navigator.clipboard.writeText(
-                            status.redirect_uri,
-                          );
-                          return "Redirect URI copied.";
-                        })
-                      }
-                    >
+                    <CopyButton value={status.redirect_uri} disabled={busy}>
                       Copy redirect URI
-                    </button>
+                    </CopyButton>
                   </li>
                   <li>
                     Click <strong>Save</strong> in the Spotify Developer

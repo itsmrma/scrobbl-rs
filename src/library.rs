@@ -6,7 +6,7 @@ use crate::{
 use axum::{
     Json,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, header},
     response::{IntoResponse, Response},
 };
@@ -389,20 +389,6 @@ pub async fn image_url(
     Ok(Json(serde_json::json!({"saved":true})))
 }
 async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<String>> {
-    if kind == "albums" {
-        let existing: Option<String> =
-            sqlx::query_scalar("SELECT a.cover_url FROM main.albums a JOIN name_group_members m ON m.entity_id=a.id AND m.kind='albums' WHERE m.group_id=? AND a.cover_url IS NOT NULL LIMIT 1")
-                .bind(id)
-                .fetch_optional(&state.read_db)
-                .await?
-                .flatten();
-        if existing
-            .as_ref()
-            .is_some_and(|v| v.starts_with("https://i.scdn.co/image/"))
-        {
-            return Ok(existing);
-        }
-    }
     let singular = if kind == "artists" { "artist" } else { "album" };
     let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links WHERE entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
     let external = external.and_then(|s| {
@@ -456,23 +442,18 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
             crate::spotify::api_get(state, &format!("/artists/{artist}"), &[]).await?
         }
     };
-    Ok(image["images"]
-        .as_array()
-        .and_then(|images| {
-            images
-                .iter()
-                .rev()
-                .find(|image| image["width"].as_i64().unwrap_or(320) >= 300)
-                .or_else(|| images.first())
-        })
-        .and_then(|image| image["url"].as_str())
-        .filter(|s| s.starts_with("https://i.scdn.co/image/"))
-        .map(str::to_owned))
+    Ok(crate::spotify::best_image(&image["images"]))
+}
+#[derive(Default, Deserialize)]
+pub struct ArtworkQuery {
+    #[serde(default)]
+    pub cached: bool,
 }
 pub async fn artwork(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path((kind, id)): Path<(String, String)>,
+    Query(query): Query<ArtworkQuery>,
 ) -> Result<Response> {
     auth::session(&state, &headers).await?;
     let id =
@@ -498,6 +479,14 @@ pub async fn artwork(
         // A restored database is untrusted input too: derive the response type
         // from the image bytes, never from an editable MIME string in SQLite.
         return Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response());
+    }
+    // A fast cache lookup must never wait for Spotify or a cold download.
+    if query.cached {
+        return Ok((
+            axum::http::StatusCode::NOT_FOUND,
+            [(header::CACHE_CONTROL, "no-store")],
+        )
+            .into_response());
     }
     // Never queue optional downloads on browser HTTP connections. Cached and
     // personal artwork remain available while the provider slot is busy.
@@ -601,6 +590,7 @@ mod tests {
                 State(state.clone()),
                 headers.clone(),
                 Path(("artists".into(), id.clone())),
+                Query(ArtworkQuery::default()),
             ),
         )
         .await;
@@ -622,7 +612,12 @@ mod tests {
             .unwrap();
         let cached = tokio::time::timeout(
             std::time::Duration::from_millis(500),
-            artwork(State(state.clone()), headers, Path(("artists".into(), id))),
+            artwork(
+                State(state.clone()),
+                headers,
+                Path(("artists".into(), id)),
+                Query(ArtworkQuery::default()),
+            ),
         )
         .await
         .unwrap()

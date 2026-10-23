@@ -58,10 +58,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
-      .fill("consultation browser password");
+      .fill("consultation browser password 7!");
     await page
       .getByLabel("Confirm password")
-      .fill("consultation browser password");
+      .fill("consultation browser password 7!");
     await page.getByRole("button", { name: "Create your archive" }).click();
     await expect(page.locator("#total-listens")).toHaveText("0");
     const rows = [];

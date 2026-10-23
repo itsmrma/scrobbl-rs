@@ -60,10 +60,10 @@ test("owner setup, private history, imports, search, preferences and Spotify con
 
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page
     .getByLabel("Confirm password")
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: "Create your archive" }).click();
   await expect(
     page.getByRole("heading", { name: "Your listening, at a glance." }),
@@ -178,7 +178,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: /^Sign in/ }).click();
   await expect(page.locator("#total-listens")).toHaveText("3");
   expect(errors).toEqual([]);

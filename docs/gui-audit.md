@@ -78,7 +78,7 @@ Spotify artwork shares the display group cache and uses one download slot, with 
 
 Connections uses expandable cards, a green badge for authorization verified on the last request, and a separate notice for automatic provider cooldowns with a human-readable wait. Generic form errors now have an icon, heading and message. Time help draws an 18 px glyph inside its existing 44 px touch target.
 
-Owner setup now requires a username, confirmed password and live checks. New passwords require at least 15 characters, reject a local set of common/repeating/account-derived values, and retain the 1024-byte upper bound. Existing passwords continue to work; existing owners choose a username after signing in. Restore keeps the destination username and validates its replacement password. Password rules follow the length and blocklist approach in [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/#passwordver); this local rule set is not a breach-corpus check.
+Owner setup requires a username, confirmed password and live checks. The fourth local feedback pass supersedes the earlier 15-character rule: new passwords require at least 8 characters, a letter, a number and a special character; three-character ascending/descending alphabet, numeric and keyboard sequences and repeated patterns are rejected, as are normalized account-derived values. The 1024-byte upper bound remains. Existing sign-in passwords continue to work. Restore applies the same new-password policy and retains the destination username.
 
 The local preview and ticket remain open for the owner's visual feedback. Physical device and live-service acceptance remain in the final release validation.
 
@@ -148,3 +148,31 @@ Synthetic screenshot evidence: [compact artist edit](screenshots/gui-edit-artist
 The original Spotify ZIP was inspected read-only. Row 12034 of `Streaming_History_Audio_2024.json` already contains `(((())))` as the artist of `Living Life In The Night - 8D Audio`. The stored value matches the source exactly; the owner confirmed that the punctuation name had been mistaken for corruption. No import repair or name replacement is needed.
 
 The local preview is rebuilt and restarted using the existing archive, with its listen count unchanged. Physical PC/Mac/iOS checks remain consolidated in #31: zoom at 80%, wide/narrow layouts, pointer/touch selection, half-star preview/selection, filter motion and reduced motion, and List/Grid persistence. GUI #26 stays open for the owner's local visual acceptance.
+
+
+## Fourth local feedback pass — PR #47
+
+All twelve findings are tracked in [GUI #26](https://github.com/itsmrma/scrobbl-rs/issues/26). This pass changes shared layouts as well as individual controls:
+
+- The password visibility button stays 44 px wide. Setup and restore use the requested 8-character/composition/sequence/username policy on the client and server. Confirmation uses the same icon, type size and colour as the checklist.
+- Copy redirect URI, Copy API URL and Copy key share an adjacent live check, cleared after three seconds. Clipboard failures appear beside the action and create no success toast. Copying no longer triggers unrelated settings/status reloads.
+- Connections aligns its title, status icon/text and disclosure control. Settings and API keys separate labels, inputs, actions and explanatory text; the key-creation fields share a desktop row and stack on narrow screens.
+- Musical page covers grow to 200–280 px on desktop, 160 px on tablet and 112 px on narrow phones. Ratings retain an accessible legend without the visible “Your rating” line. Edit and Spotify actions share sizing, spacing and border treatment; Spotify icons are not underlined.
+- Metrics use compact shared cards and become label/value rows on phones. Album grids cap card width at 220 px; artist albums/tracks use adjacent independent panels on wide screens. The whole musical card or ranking row opens its detail page through the existing accessible link, preserving keyboard and modified-click behaviour.
+- The sidebar playback card includes artwork, title/artist, a progress bar, sample-based elapsed time and duration. The whole playing card links to Spotify; the narrow sidebar keeps the artwork and existing accessible tooltip. Empty and unavailable states retain readable labels.
+
+### Artwork diagnosis
+
+`npx playwright test tests/gui-audit.spec.cjs -g 'password field fills'` failed before the fix with **26 px** input width versus **292.5 px** minimum. It now passes: the form's full-width button rule applies only to the submit action.
+
+`npx playwright test tests/gui-audit.spec.cjs -g 'cached artwork bypasses'` failed before the fix because no cached image progressed within the two-second window while the first cold request was held. The minimized browser scenario now passes. Visible artwork first probes `?cached=true`: authenticated SQLite-only reads bypass the client download queue. Only cache misses enter the single cold-download queue; data reads stay available and provider cooldowns remain enforced.
+
+Artist and album artwork can reuse public track metadata for five minutes (maximum 64 entries), avoiding another provider request/cooldown for the same imported track. No errors or credentials enter that cache. The regression repeats the real catalogue lookup within 500 ms with only one provider response supplied.
+
+Album parsing previously selected the last Spotify image, usually the smallest thumbnail. Both parser and artwork retrieval now choose the largest reported width, independently of response order, and artwork retrieval no longer trusts the old stored thumbnail URL. Migration 13 removes only disposable Spotify album cache entries so old low-resolution bytes are replaced; custom images, original metadata and listens are preserved. Cache-probe and migration tests verify that custom images remain readable without contacting Spotify.
+
+The first uncached image still depends on Spotify and its request limit; these isolated tests establish removal of local serialization and duplicate metadata work, not a promise about live provider latency.
+
+Synthetic screenshot evidence: [desktop artist](screenshots/gui-artist-balanced.png), [phone artist](screenshots/gui-artist-balanced-mobile.png), [password setup](screenshots/gui-password-policy.png), [copy and API spacing](screenshots/gui-api-spacing.png), [sidebar playback](screenshots/gui-sidebar-playback.png). The temporary API secret is masked. No private listening history is included.
+
+Verification for this pass: the full Rust suite passes (four opt-in workloads remain ignored); Clippy with warnings denied, rustfmt, TypeScript/Vite, release build, Prettier for changed files and diff checks pass. All **34 Chromium** and **34 WebKit** scenarios pass. The interrupted WebKit run was restarted to obtain a complete result. No new Firefox claim is made; its previously documented local profile limit remains. The preview at `http://127.0.0.1:3210` uses the existing archive, with 54 listens and 54 observations before and after restart, and schema 13. GUI #26 remains open for local visual feedback; final physical-device/live-provider checks stay in #31. The owner follows CI after push; it was not awaited or monitored.

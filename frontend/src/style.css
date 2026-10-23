@@ -943,7 +943,7 @@ footer {
 .auth-card form {
   margin-bottom: 32px;
 }
-.auth-card form button {
+.auth-card form > button {
   width: 100%;
 }
 .loading {
@@ -3374,4 +3374,367 @@ dialog {
 .artwork-editor .connection-actions {
   margin: 0;
   gap: 8px;
+}
+/* Shared spacing rhythm: fields, actions and sections keep separate breathing room. */
+.password-field {
+  width: 100%;
+}
+.password-field .icon-button {
+  flex: 0 0 44px;
+  width: 44px;
+}
+.password-match {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin: 0;
+}
+.password-match .material-icons-outlined {
+  font-size: 16px;
+}
+.password-guidance {
+  margin: 0;
+}
+.copy-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: fit-content;
+}
+.copy-feedback {
+  display: inline-flex;
+  align-items: center;
+  min-width: 22px;
+  color: var(--success);
+}
+.copy-error {
+  flex-basis: 100%;
+  color: var(--error);
+  font-size: 12px;
+}
+.api-keys-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 20px;
+}
+.api-keys-panel > :is(h2, h3, p, form, label, section) {
+  margin: 0;
+}
+.api-keys-panel > h3 {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.api-keys-panel form {
+  gap: 16px;
+}
+.api-keys-panel form > button {
+  justify-self: start;
+}
+.api-secret {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+.api-secret > :is(h3, p) {
+  margin: 0;
+}
+.api-keys-panel .connection-actions {
+  margin: 0;
+}
+.guide code + .copy-control {
+  margin-top: 12px;
+}
+.spotify-card > summary {
+  grid-template-columns: auto minmax(0, 1fr) 24px;
+}
+.spotify-card > summary .connection-badge {
+  line-height: 1.4;
+  align-self: center;
+  gap: 8px;
+}
+.spotify-card > summary .connection-badge .material-icons-outlined {
+  font-size: 20px;
+  line-height: 1;
+}
+.connection-step .connection-actions {
+  gap: 12px;
+  margin-top: 20px;
+}
+.settings-form form,
+.settings-form fieldset {
+  gap: 16px;
+}
+
+/* Cover and actions scale together; metrics stay compact regardless of viewport width. */
+.music-heading {
+  grid-template-columns: clamp(200px, 20vw, 280px) minmax(0, 1fr);
+  gap: 16px 32px;
+  align-items: center;
+  margin: 28px 0 24px;
+}
+.music-heading > .cover.large {
+  grid-row: 1 / 3;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+.music-heading .page-heading {
+  align-self: end;
+}
+.music-heading h1 {
+  font-size: clamp(32px, 3.5vw, 52px);
+  line-height: 1.15;
+  margin: 0;
+}
+.music-heading .page-heading p:empty {
+  display: none;
+}
+.music-heading .music-personal {
+  align-self: start;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.music-heading .rating-control {
+  flex-basis: 100%;
+}
+.spotify-attribution {
+  padding: 10px 15px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-decoration: none;
+  font-weight: 600;
+  gap: 10px;
+}
+.spotify-attribution:hover {
+  background: var(--surface-raised);
+}
+.spotify-attribution .material-icons-outlined {
+  text-decoration: none;
+  font-size: 20px;
+}
+.stats-grid {
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.stats-grid .stat {
+  margin: 0;
+  padding: 18px 20px;
+  gap: 8px;
+  justify-content: start;
+}
+.stat > strong {
+  font-size: 30px;
+  line-height: 1.2;
+}
+.music-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(180px, 100%), 220px));
+  gap: 16px;
+}
+.ranking-row {
+  position: relative;
+}
+.music-item-link {
+  text-decoration: none;
+}
+.music-item-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  z-index: 1;
+}
+:is(.music-card, .ranking-row):has(.music-item-link):hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+:is(.music-card, .ranking-row):has(.music-item-link:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* A small playback card keeps artwork, title and sample progress together. */
+.sidebar-now {
+  position: relative;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 10px 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.sidebar-now .cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 7px;
+}
+.sidebar-now .nav-copy {
+  min-width: 0;
+}
+.sidebar-now small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-bottom: 4px;
+}
+.sidebar-now .nav-copy > a {
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.sidebar-now .nav-copy > a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: 12px;
+}
+.sidebar-now.is-playing:hover {
+  border-color: var(--accent);
+}
+.sidebar-playback {
+  grid-column: 1 / -1;
+}
+.sidebar-playback progress {
+  display: block;
+  width: 100%;
+  height: 3px;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  accent-color: var(--accent);
+  background: var(--border);
+}
+.sidebar-playback progress::-webkit-progress-bar {
+  background: var(--border);
+}
+.sidebar-playback progress::-webkit-progress-value {
+  background: var(--accent);
+}
+.sidebar-playback progress::-moz-progress-bar {
+  background: var(--accent);
+}
+.sidebar-playback .playback-time {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.sidebar-playback .playback-time > span {
+  font-size: 10px;
+}
+.sidebar-playback .playback-time .material-icons-outlined {
+  color: var(--accent);
+  font-size: 16px;
+}
+.collapsed .sidebar-now {
+  display: flex;
+  padding: 8px 0;
+  border-color: transparent;
+  background: transparent;
+}
+.collapsed .sidebar-now .cover {
+  width: 40px;
+  height: 40px;
+}
+@media (max-width: 700px) {
+  .music-heading {
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 20px;
+  }
+  .music-heading > .cover.large {
+    grid-row: 1;
+  }
+  .music-heading .page-heading {
+    align-self: center;
+  }
+  .music-heading .music-personal {
+    grid-column: 1 / -1;
+  }
+  .music-grid {
+    grid-template-columns: repeat(auto-fill, minmax(min(145px, 100%), 1fr));
+  }
+  .spotify-card > summary {
+    grid-template-columns: minmax(0, 1fr) 24px;
+  }
+  .spotify-card > summary .connection-badge {
+    grid-column: 1;
+  }
+  .stats-grid .stat {
+    padding: 16px;
+  }
+}
+@media (max-width: 400px) {
+  .music-heading {
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 16px;
+  }
+  .music-heading h1 {
+    font-size: 28px;
+  }
+}
+.api-secret .connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.api-keys-panel .job {
+  padding: 20px 0;
+  gap: 8px;
+}
+.sidebar-now {
+  margin-bottom: 12px;
+}
+@media (min-width: 900px) {
+  .api-key-create {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: 20px;
+  }
+  .api-key-create > :is(p, button) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 600px) {
+  .stats-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .stats-grid .stat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 16px;
+  }
+  .stats-grid .stat:last-child {
+    grid-column: auto;
+  }
+  .stats-grid .stat > strong {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 28px;
+  }
+  .stats-grid .stat > small {
+    grid-column: 1 / -1;
+  }
+}
+.music-collections {
+  min-width: 0;
+}
+@media (min-width: 1200px) {
+  .music-collections {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px;
+    align-items: start;
+  }
+  .music-collections .list-footer {
+    flex-wrap: wrap;
+    gap: 16px;
+  }
 }

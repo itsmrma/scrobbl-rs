@@ -26,7 +26,7 @@ function Stars({
   }
   return (
     <fieldset className="rating-control" disabled={disabled}>
-      <legend>Your rating</legend>
+      <legend className="visually-hidden">Personal rating</legend>
       <div className="rating-options">
         <div
           className="rating-stars"

@@ -151,9 +151,19 @@ fn validate_username(username: &str) -> Result<&str> {
     Ok(username)
 }
 pub fn validate_password(password: &str, username: Option<&str>) -> Result<()> {
-    if password.chars().count() < 15 || password.len() > 1024 {
+    if password.chars().count() < 8 || password.len() > 1024 {
         return Err(AppError::BadRequest(
-            "Choose a password of at least 15 characters (maximum 1024 bytes).".into(),
+            "Choose a password of at least 8 characters (maximum 1024 bytes).".into(),
+        ));
+    }
+    if !password.chars().any(char::is_alphabetic)
+        || !password.chars().any(char::is_numeric)
+        || !password
+            .chars()
+            .any(|c| !c.is_alphanumeric() && !c.is_whitespace())
+    {
+        return Err(AppError::BadRequest(
+            "Include at least one letter, one number and one special character.".into(),
         ));
     }
     let compact: String = password
@@ -161,19 +171,27 @@ pub fn validate_password(password: &str, username: Option<&str>) -> Result<()> {
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect();
-    let common = [
-        "passwordpassword",
-        "password123456789",
-        "123456789012345",
-        "1234567890123456",
-        "qwertyuiopasdfgh",
-        "qwertyuiopasdfghjkl",
-        "letmeinletmeinletmein",
-        "scrobblpassword",
-        "scrobblrspassword",
-    ];
+    let lower = password.to_lowercase();
+    let sequential = [
+        "abcdefghijklmnopqrstuvwxyz",
+        "0123456789",
+        "qwertyuiop",
+        "asdfghjkl",
+        "zxcvbnm",
+    ]
+    .iter()
+    .any(|sequence| {
+        [sequence.to_string(), sequence.chars().rev().collect()]
+            .iter()
+            .any(|order| {
+                order
+                    .as_bytes()
+                    .windows(3)
+                    .any(|part| lower.contains(std::str::from_utf8(part).unwrap()))
+            })
+    });
+    let chars: Vec<_> = password.chars().collect();
     let repeats = (1..=4).any(|n| {
-        let chars: Vec<_> = password.chars().collect();
         chars.len().is_multiple_of(n) && chars.iter().enumerate().all(|(i, c)| *c == chars[i % n])
     });
     let account_password = username.is_some_and(|u| {
@@ -184,8 +202,11 @@ pub fn validate_password(password: &str, username: Option<&str>) -> Result<()> {
             .collect();
         [u.clone(), format!("{u}password"), format!("{u}123456789")].contains(&compact)
     });
-    if common.contains(&compact.as_str()) || repeats || account_password {
-        return Err(AppError::BadRequest("This password is too easy to guess. Choose a unique passphrase or use a password manager.".into()));
+    if sequential || repeats || account_password {
+        return Err(AppError::BadRequest(
+            "Use a password without sequences or repeating patterns, different from your username."
+                .into(),
+        ));
     }
     Ok(())
 }

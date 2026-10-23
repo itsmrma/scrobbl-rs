@@ -53,7 +53,7 @@ const test = base.extend({
           await request.post("/api/setup", {
             data: {
               username: "owner",
-              password: "a local browser test password",
+              password: "a local browser test password 7!",
             },
             headers: { Origin: baseURL },
           })
@@ -119,11 +119,11 @@ async function login(page, path = "/dashboard") {
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   if (session.setup_required)
     await page
       .getByLabel("Confirm password")
-      .fill("a local browser test password");
+      .fill("a local browser test password 7!");
   await page
     .getByRole("button", {
       name: session.setup_required ? "Create your archive" : "Sign in",
@@ -791,6 +791,8 @@ test("visible artwork waits in the client while music data remains available", a
   });
   let requests = 0;
   await page.route("**/api/v1/artwork/**", async (route) => {
+    if (new URL(route.request().url()).searchParams.has("cached"))
+      return route.fulfill({ status: 404, body: "" });
     requests++;
     await gate;
     await route.fulfill({ status: 404, body: "" });
@@ -944,4 +946,271 @@ test("music layouts fill wide viewports and album and track views switch indepen
     fullPage: true,
     animations: "disabled",
   });
+});
+test("password field fills the form and visibility control stays compact", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const input = page.getByLabel("Password", { exact: true });
+  await expect(input).toBeVisible();
+  const field = await input.boundingBox();
+  const form = await page.locator(".auth-card form").boundingBox();
+  expect(field.width).toBeGreaterThan(form.width * 0.75);
+  expect(
+    (
+      await page
+        .getByRole("button", { name: "Show password", exact: true })
+        .boundingBox()
+    ).width,
+  ).toBeLessThanOrEqual(48);
+});
+test("cached artwork bypasses a slow cold image", async ({ page }) => {
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  let first;
+  const cached = new Set();
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (!first) first = url.pathname;
+    if (url.searchParams.has("cached")) {
+      if (url.pathname === first)
+        return route.fulfill({ status: 404, body: "" });
+      cached.add(url.pathname);
+      return route.fulfill({
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aTwAAAABJRU5ErkJggg==",
+          "base64",
+        ),
+      });
+    }
+    if (url.pathname === first) await gate;
+
+    await route.fulfill({ status: 404, body: "" });
+  });
+  try {
+    await login(page);
+    await expect.poll(() => cached.size, { timeout: 2000 }).toBeGreaterThan(0);
+  } finally {
+    release();
+  }
+});
+test("password setup uses the requested policy and matching feedback", async ({
+  page,
+  browserName,
+}) => {
+  await page.route("**/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: false,
+        setup_required: true,
+        username_required: true,
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByLabel("Username", { exact: true }).fill("owner");
+  const password = page.getByLabel("Password", { exact: true });
+  const confirm = page.getByLabel("Confirm password");
+  const submit = page.getByRole("button", {
+    name: "Create your archive",
+    exact: true,
+  });
+  for (const value of [
+    "M7!pL9$",
+    "MppLL9xx",
+    "MppLL!xx",
+    "7777799!",
+    "Abc!7mRp",
+    "M7!123xy",
+    "Qwe!7mRp",
+  ]) {
+    await password.fill(value);
+    await confirm.fill(value);
+    await expect(submit).toBeDisabled();
+  }
+  await password.fill("M7!pL9$x");
+  await confirm.fill("M7!pL9$x");
+  await expect(submit).toBeEnabled();
+  await expect(page.locator(".password-match")).toHaveText(
+    "check_circlePasswords match",
+  );
+  expect(
+    await page
+      .locator(".password-match")
+      .evaluate((e) => getComputedStyle(e).fontSize),
+  ).toBe(
+    await page
+      .locator(".password-guidance li")
+      .first()
+      .evaluate((e) => getComputedStyle(e).fontSize),
+  );
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-password-policy.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("copy actions show a nearby check without success toasts and report failures inline", async ({
+  page,
+  browserName,
+}) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text) => {
+          if (window.failClipboard) throw new Error("denied");
+          window.copiedText = text;
+        },
+      },
+    }),
+  );
+  await login(page, "/settings/api-keys");
+  const copy = page.getByRole("button", { name: "Copy API URL", exact: true });
+  await copy.click();
+  await expect(copy.locator("..").getByRole("status")).toHaveText(
+    "checkCopied",
+  );
+  await expect(page.locator(".toast")).toHaveCount(0);
+  expect(await page.evaluate(() => window.copiedText)).toContain("/api/v1");
+  await page.getByLabel("Key name", { exact: true }).fill("Copy feedback test");
+  await page
+    .getByRole("button", { name: "Create read-only key", exact: true })
+    .click();
+  const keyCopy = page.getByRole("button", { name: "Copy key", exact: true });
+  await keyCopy.click();
+  await expect(keyCopy.locator("..").getByRole("status")).toContainText(
+    "Copied",
+  );
+  await expect(
+    page.locator(".toast").filter({ hasText: "Key copied." }),
+  ).toHaveCount(0);
+  await page.evaluate(() => (window.failClipboard = true));
+  await keyCopy.click();
+  await expect(keyCopy.locator("..").getByRole("alert")).toContainText(
+    "Could not copy",
+  );
+  await page.evaluate(() => (window.failClipboard = false));
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-api-spacing.png`,
+    mask: [page.getByLabel("New key secret", { exact: true })],
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto("/settings/connections");
+  await page.locator(".spotify-card").evaluate((e) => (e.open = true));
+  await page
+    .locator(".guide")
+    .nth(1)
+    .evaluate((e) => (e.open = true));
+  const redirect = page.getByRole("button", {
+    name: "Copy redirect URI",
+    exact: true,
+  });
+  await redirect.click();
+  await expect(redirect.locator("..").getByRole("status")).toContainText(
+    "Copied",
+  );
+  await expect(page.locator(".toast")).toHaveCount(0);
+});
+
+test("music artwork and metrics stay proportionate and the full album card opens", async ({
+  page,
+  browserName,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const artist = archive.rankings.artists[0];
+  await page.route("**/api/v1/library/artists/*", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        spotify_url: "https://open.spotify.com/artist/0000000000000000000088",
+      },
+    });
+  });
+  await page.goto(`/music/artists/${artist.id}?period=all`);
+  for (const width of [390, 768, 1440, 2400]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.locator(".music-heading h1")).toHaveText(
+      artist.name + ".",
+    );
+    await expect(page.getByText("Your rating", { exact: true })).toHaveCount(0);
+    await expect
+      .poll(
+        async () =>
+          (await page.locator(".music-heading > .cover").boundingBox())
+            ?.width || 0,
+      )
+      .toBeGreaterThanOrEqual(width < 400 ? 112 : 160);
+    for (const stat of await page.locator(".stat").all())
+      expect((await stat.boundingBox()).height).toBeLessThan(165);
+    const spotify = page.locator(".spotify-attribution");
+    await expect(spotify).toBeVisible();
+    expect(
+      await spotify.evaluate((e) => getComputedStyle(e).textDecorationLine),
+    ).toBe("none");
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    await page.screenshot({
+      path: `test-results/gui-${browserName}-${width}-balanced-artist.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
+  const panel = page.getByRole("article", { name: "albums rankings" });
+  await panel.getByRole("button", { name: "Grid", exact: true }).click();
+  const card = panel.locator(".music-card").first();
+  await card.click({ position: { x: 30, y: 60 } });
+  await expect(page).toHaveURL(/\/music\/albums\//);
+});
+
+test("sidebar playback card displays artwork, progress and remains usable collapsed", async ({
+  page,
+  browserName,
+}) => {
+  await page.route("**/api/spotify/status", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        connected: true,
+        connection: "verified",
+      },
+    });
+  });
+  await page.route("**/api/spotify/now-playing", (route) =>
+    route.fulfill({
+      json: {
+        title: "A song with a long title for the sidebar",
+        artists: [{ id: "artist", name: "An artist with a long name" }],
+        album: "Album",
+        cover_url: null,
+        spotify_url: "https://open.spotify.com/track/0000000000000000000088",
+        duration_ms: 180000,
+        progress_ms: 45000,
+        response_received_at_ms: Date.now(),
+        observed_at_ms: Date.now(),
+      },
+    }),
+  );
+  await login(page);
+  const widget = page.locator(".sidebar-now");
+  await expect(widget.getByRole("link")).toContainText("A song");
+  await expect(widget.getByRole("progressbar")).toBeVisible();
+  expect((await widget.boundingBox()).height).toBeLessThan(155);
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-sidebar-playback.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("button", { name: "Collapse sidebar", exact: true })
+    .click();
+  await expect(widget.getByRole("progressbar")).toBeHidden();
 });

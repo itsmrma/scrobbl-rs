@@ -5,17 +5,21 @@ import { ErrorText, Icon, Wordmark } from "./ui";
 
 export function passwordChecks(password: string, username = "") {
   const compact = password.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  const common = [
-    "passwordpassword",
-    "password123456789",
-    "123456789012345",
-    "1234567890123456",
-    "qwertyuiopasdfgh",
-    "qwertyuiopasdfghjkl",
-    "letmeinletmeinletmein",
-    "scrobblpassword",
-    "scrobblrspassword",
+  const sequences = [
+    "abcdefghijklmnopqrstuvwxyz",
+    "0123456789",
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm",
   ];
+  const lower = password.toLowerCase();
+  const sequential = sequences.some((sequence) =>
+    [sequence, Array.from(sequence).reverse().join("")].some((order) =>
+      Array.from({ length: order.length - 2 }, (_, i) =>
+        order.slice(i, i + 3),
+      ).some((part) => lower.includes(part)),
+    ),
+  );
   const accountName = username.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
   const chars = Array.from(password);
   const repeated =
@@ -25,10 +29,16 @@ export function passwordChecks(password: string, username = "") {
         chars.length % n === 0 && chars.every((c, i) => c === chars[i % n]),
     );
   return [
-    { label: "At least 15 characters", met: chars.length >= 15 },
+    { label: "At least 8 characters", met: chars.length >= 8 },
+    { label: "At least one letter", met: /\p{L}/u.test(password) },
+    { label: "At least one number", met: /\p{N}/u.test(password) },
     {
-      label: "Not a common or repeating password",
-      met: password.length > 0 && !common.includes(compact) && !repeated,
+      label: "At least one special character",
+      met: /[^\p{L}\p{N}\s]/u.test(password),
+    },
+    {
+      label: "No sequences or repeating patterns",
+      met: password.length > 0 && !sequential && !repeated,
     },
     {
       label: "Different from your username",
@@ -56,10 +66,7 @@ export function PasswordFeedback({
 }) {
   return (
     <div className="password-guidance" id="password-guidance">
-      <p>
-        Use a unique passphrase or a password manager. Spaces and pasted
-        passwords are welcome.
-      </p>
+      <p>Choose a unique password. You can paste from a password manager.</p>
       <ul>
         {passwordChecks(password, username).map(({ label, met }) => (
           <li key={label} className={met ? "requirement-met" : ""}>
@@ -248,10 +255,14 @@ export function Auth({
               </label>
               {confirmation && (
                 <p
-                  className={
-                    confirmation === password ? "requirement-met" : "subtle"
-                  }
+                  className={`password-match ${confirmation === password ? "requirement-met" : "subtle"}`}
+                  role="status"
                 >
+                  <Icon>
+                    {confirmation === password
+                      ? "check_circle"
+                      : "radio_button_unchecked"}
+                  </Icon>
                   {confirmation === password
                     ? "Passwords match"
                     : "Passwords do not match yet"}

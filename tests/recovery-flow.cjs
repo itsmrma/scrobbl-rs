@@ -64,10 +64,10 @@ module.exports = async function recoveryFlow(page) {
   await expect(confirm).toBeDisabled();
   await page
     .getByLabel("New owner password", { exact: true })
-    .fill("a different recovery password");
+    .fill("a different recovery password 7!");
   await page
     .getByLabel("Repeat new password", { exact: true })
-    .fill("a different recovery password");
+    .fill("a different recovery password 7!");
   await expect(confirm).toBeDisabled();
   await page.getByLabel("I confirm replacement of the current archive").check();
   await expect(confirm).toBeEnabled();

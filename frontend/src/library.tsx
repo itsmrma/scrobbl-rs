@@ -81,16 +81,35 @@ export function Now({
   compact?: boolean;
 }) {
   const { data, error, browserTiming, browserCommit } = useContext(NowContext);
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    if (!compact || !data) return;
+    setClock(Date.now());
+    const timer = setInterval(() => {
+      if (!document.hidden) setClock(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [compact, data]);
+  const progress =
+    data?.progress_ms == null
+      ? null
+      : Math.min(
+          data.duration_ms ?? Infinity,
+          data.progress_ms + Math.max(0, clock - data.response_received_at_ms),
+        );
   if (compact)
     return (
-      <div className="sidebar-now" aria-label="Now playing">
+      <div
+        className={`sidebar-now ${data ? "is-playing" : "is-idle"}`}
+        aria-label="Now playing"
+      >
         <Cover url={data?.cover_url} />
         <div className="nav-copy">
           <small>
             {error
               ? "Playback unavailable"
               : data
-                ? "Now playing · Spotify"
+                ? "Listening on Spotify"
                 : "Now playing"}
           </small>
           {data ? (
@@ -106,6 +125,22 @@ export function Now({
             </span>
           )}
         </div>
+        {data && (
+          <div className="sidebar-playback nav-copy">
+            {progress !== null && data.duration_ms && (
+              <progress
+                aria-label="Playback progress"
+                value={progress}
+                max={data.duration_ms}
+              />
+            )}
+            <div className="playback-time">
+              <span>{duration(progress)}</span>
+              <Icon>graphic_eq</Icon>
+              <span>{duration(data.duration_ms)}</span>
+            </div>
+          </div>
+        )}
         <span className="collapsed-label">
           {data
             ? `${data.title} · ${data.artists.map((a) => a.name).join(", ")}`

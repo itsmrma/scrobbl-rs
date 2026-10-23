@@ -23,6 +23,62 @@ export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
     <span className="wordmark">{name}</span>
   );
 }
+export function CopyButton({
+  value,
+  children,
+  disabled = false,
+}: {
+  value: string;
+  children: ReactNode;
+  disabled?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setCopied(false);
+    setError("");
+  }, [value]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 3000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  return (
+    <div className="copy-control">
+      <button
+        type="button"
+        className="secondary"
+        disabled={disabled}
+        onClick={async () => {
+          setError("");
+          try {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+          } catch {
+            setCopied(false);
+            setError("Could not copy. Select and copy the text manually.");
+          }
+        }}
+      >
+        <Icon>content_copy</Icon>
+        {children}
+      </button>
+      <span className="copy-feedback" role="status">
+        {copied && (
+          <>
+            <Icon>check</Icon>
+            <span className="visually-hidden">Copied</span>
+          </>
+        )}
+      </span>
+      {error && (
+        <span className="copy-error" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
 // Queue cold image work before it reaches the browser's HTTP connection pool.
 // Cancelling a card releases its place; visible data reads stay independent.
 let artworkBusy = false;
@@ -63,6 +119,7 @@ export function Cover({
   const [failed, setFailed] = useState(false);
   const [revision, setRevision] = useState(0);
   const [readySource, setReadySource] = useState("");
+  const [cacheMiss, setCacheMiss] = useState("");
   const marker = useRef<HTMLElement | null>(null);
   const release = useRef<{ source: string; done: () => void } | null>(null);
   const local = !!url?.startsWith("/api/v1/artwork/");
@@ -76,10 +133,14 @@ export function Cover({
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
         observer.disconnect();
-        cancel = queueArtwork((done) => {
-          release.current = { source, done };
-          setReadySource(source);
-        });
+        if (cacheMiss !== source) {
+          setReadySource(`${source}&cached=true`);
+        } else {
+          cancel = queueArtwork((done) => {
+            release.current = { source, done };
+            setReadySource(source);
+          });
+        }
       },
       { rootMargin: "240px" },
     );
@@ -88,7 +149,7 @@ export function Cover({
       observer.disconnect();
       cancel();
     };
-  }, [local, source]);
+  }, [local, source, cacheMiss]);
   const finish = () => {
     const current = release.current;
     if (current && current.source === source) current.done();
@@ -131,18 +192,25 @@ export function Cover({
   }, [url]);
   return (url?.startsWith("https://i.scdn.co/") || local) &&
     !failed &&
-    (!local || readySource === source) ? (
+    (!local ||
+      readySource === source ||
+      readySource === `${source}&cached=true`) ? (
     <img
       ref={(node) => {
         marker.current = node;
       }}
       className={`cover ${large ? "large" : ""}`}
-      src={source || undefined}
+      src={(local ? readySource : source) || undefined}
       alt=""
       loading={local ? "eager" : "lazy"}
       referrerPolicy="no-referrer"
       onLoad={finish}
       onError={() => {
+        if (local && readySource.endsWith("&cached=true")) {
+          setReadySource("");
+          setCacheMiss(source || "");
+          return;
+        }
         finish();
         setFailed(true);
       }}

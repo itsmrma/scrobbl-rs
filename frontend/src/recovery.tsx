@@ -1,4 +1,4 @@
-import { PasswordFeedback } from "./account";
+import { passwordChecks, PasswordFeedback } from "./account";
 import { useRef, useState } from "react";
 import { api } from "./api";
 import type {
@@ -370,7 +370,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               <input
                 autoComplete="new-password"
                 type="password"
-                minLength={15}
+                minLength={8}
                 maxLength={1024}
                 required
                 value={password}
@@ -402,7 +402,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               disabled={
                 busy ||
                 !confirmed ||
-                Array.from(password).length < 15 ||
+                !passwordChecks(password).every((check) => check.met) ||
                 password !== repeat
               }
             >

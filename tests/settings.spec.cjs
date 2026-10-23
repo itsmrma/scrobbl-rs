@@ -1,5 +1,5 @@
 const { test, expect } = require("@playwright/test");
-const password = "a local browser test password";
+const password = "a local browser test password 7!";
 async function login(page, path = "/settings/general") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);

@@ -268,6 +268,19 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
     let path = format!("/api/v1/artwork/artists/{id}");
     for _ in 0..3 {
         assert_eq!(
+            call(
+                &state,
+                &token,
+                "GET",
+                &format!("{path}?cached=true"),
+                vec![],
+                false
+            )
+            .await
+            .1,
+            b"\x89PNG\r\n\x1a\ncached provider image"
+        );
+        assert_eq!(
             call(&state, &token, "GET", &path, vec![], false).await.1,
             b"\x89PNG\r\n\x1a\ncached provider image"
         );
@@ -374,5 +387,47 @@ async fn temporary_spotify_limit_does_not_cache_missing_artwork() {
             "temporary failure must not become a missing-image cache entry"
         );
     }
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn artwork_cache_probe_never_contacts_spotify_and_upgrade_preserves_custom_images() {
+    let (_dir, state, token) = setup().await;
+    let dash = get(&state, &token, "/api/dashboard").await;
+    let id = dash["rankings"]["albums"][0]["id"].as_str().unwrap();
+    let path = format!("/api/v1/artwork/albums/{id}?cached=true");
+    assert_eq!(
+        call(&state, &token, "GET", &path, vec![], false).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    for source in ["custom", "spotify"] {
+        sqlx::query("INSERT INTO artwork VALUES('albums',?,?,?,'image/png',0,9999999999999)")
+            .bind(id)
+            .bind(source)
+            .bind(b"\x89PNG\r\n\x1a\nimage".as_slice())
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(include_str!(
+        "../release-migrations/0013_album_artwork_quality.sql"
+    ))
+    .execute(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        call(&state, &token, "GET", &path, vec![], false).await.1,
+        b"\x89PNG\r\n\x1a\nimage"
+    );
+    let sources: Vec<String> = sqlx::query_scalar("SELECT source FROM artwork")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(sources, vec!["custom"]);
     state.storage.close().await;
 }

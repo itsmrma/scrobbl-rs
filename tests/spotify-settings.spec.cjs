@@ -26,11 +26,11 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   if (session.setup_required)
     await page
       .getByLabel("Confirm password")
-      .fill("a local browser test password");
+      .fill("a local browser test password 7!");
   await page
     .getByRole("button", {
       name: session.setup_required ? "Create your archive" : "Sign in",

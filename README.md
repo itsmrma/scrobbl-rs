@@ -28,7 +28,7 @@ system (on macOS: Xcode Command Line Tools). Then, from this repository:
 ```
 
 Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, create your owner username and password
-(at least 15 characters), and open **Settings** to configure Spotify. The service binds only to
+(at least 8 characters, including a letter, a number and a special character, without sequences or repeating patterns and different from the username), and open **Settings** to configure Spotify. The service binds only to
 `127.0.0.1`; use that exact address, including the port, rather than `localhost`.
 
 The archive foundations require Rust 1.94 or later and a **new data directory** when moving from

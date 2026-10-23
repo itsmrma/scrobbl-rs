@@ -15,6 +15,7 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Row;
+use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 
@@ -27,6 +28,7 @@ pub struct Spotify {
     wake: Arc<Notify>,
     cache: Arc<Mutex<Option<(i64, Value)>>>,
     catalogue_next: Arc<Mutex<tokio::time::Instant>>,
+    catalogue_tracks: Arc<Mutex<BTreeMap<String, (i64, Value)>>>,
     // Fixed production endpoints. Tests substitute a local HTTP server, never user-controlled URLs.
     pub(crate) api_base: String,
     pub(crate) token_url: String,
@@ -53,6 +55,7 @@ impl Spotify {
             wake: Default::default(),
             cache: Default::default(),
             catalogue_next: Arc::new(Mutex::new(tokio::time::Instant::now())),
+            catalogue_tracks: Default::default(),
             api_base: "https://api.spotify.com/v1".into(),
             token_url: "https://accounts.spotify.com/api/token".into(),
         }
@@ -514,6 +517,17 @@ pub(crate) async fn api_get(
     path: &str,
     params: &[(&str, String)],
 ) -> Result<Value> {
+    // An imported track supplies both album art and artist IDs. Reuse that
+    // public metadata across those lookups instead of paying the catalogue
+    // cooldown again. Keep the cache bounded and never cache provider errors.
+    let cache_track = path.starts_with("/tracks/") && params.is_empty();
+    if cache_track {
+        let mut tracks = state.spotify.catalogue_tracks.lock().await;
+        tracks.retain(|_, (at, _)| auth::now_ms() - *at < 300_000);
+        if let Some((_, value)) = tracks.get(path) {
+            return Ok(value.clone());
+        }
+    }
     if path.starts_with("/artists/") || path.starts_with("/albums/") || path.starts_with("/tracks/")
     {
         // Optional images yield to collection and now playing while waiting.
@@ -522,9 +536,21 @@ pub(crate) async fn api_get(
         *next = tokio::time::Instant::now() + Duration::from_secs(3);
     }
     let _gate = state.spotify.gate.lock().await;
-    api_get_locked(state, path, params)
-        .await
-        .map(|(value, _, _)| value)
+    let (value, _, _) = api_get_locked(state, path, params).await?;
+    if cache_track {
+        let mut tracks = state.spotify.catalogue_tracks.lock().await;
+        if tracks.len() >= 64 {
+            let oldest = tracks
+                .iter()
+                .min_by_key(|(_, (at, _))| at)
+                .map(|(path, _)| path.clone());
+            if let Some(oldest) = oldest {
+                tracks.remove(&oldest);
+            }
+        }
+        tracks.insert(path.to_owned(), (auth::now_ms(), value.clone()));
+    }
+    Ok(value)
 }
 async fn api_get_locked(
     state: &AppState,
@@ -581,6 +607,20 @@ async fn api_get_locked(
     }
     Ok((value, source_requested_at_ms, response_received_at_ms))
 }
+pub(crate) fn best_image(images: &Value) -> Option<String> {
+    images
+        .as_array()?
+        .iter()
+        .filter(|image| {
+            image["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("https://i.scdn.co/"))
+        })
+        .max_by_key(|image| image["width"].as_u64().unwrap_or(0))
+        .and_then(|image| image["url"].as_str())
+        .map(str::to_owned)
+}
+
 pub fn parse_track(row: &Value) -> Result<Track> {
     let id = row
         .get("uri")
@@ -604,14 +644,7 @@ pub fn parse_track(row: &Value) -> Result<Track> {
         .and_then(|v| v.get("name"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cover_url = album
-        .and_then(|v| v.get("images"))
-        .and_then(Value::as_array)
-        .and_then(|a| a.last())
-        .and_then(|v| v.get("url"))
-        .and_then(Value::as_str)
-        .filter(|url| url.starts_with("https://i.scdn.co/"))
-        .map(str::to_owned);
+    let cover_url = album.and_then(|v| best_image(&v["images"]));
     let mut artists = Vec::new();
     if let Some(items) = row.get("artists").and_then(Value::as_array) {
         for item in items {
@@ -996,6 +1029,44 @@ mod tests {
             body,
             retry: None,
         }
+    }
+    #[test]
+    fn track_artwork_uses_largest_image_regardless_of_provider_order() {
+        let mut row = track();
+        for images in [
+            json!([
+                {"url":"https://i.scdn.co/image/full", "width":640},
+                {"url":"https://i.scdn.co/image/thumb", "width":64},
+                {"url":"https://i.scdn.co/image/medium", "width":300}
+            ]),
+            json!([
+                {"url":"https://i.scdn.co/image/thumb", "width":64},
+                {"url":"https://i.scdn.co/image/full", "width":640}
+            ]),
+        ] {
+            row["album"]["images"] = images;
+            assert_eq!(
+                parse_track(&row).unwrap().cover_url.as_deref(),
+                Some("https://i.scdn.co/image/full")
+            );
+        }
+    }
+    #[tokio::test]
+    async fn artwork_reuses_track_metadata_without_another_provider_wait() {
+        let (_dir, state, _mock, handle) =
+            fixture(vec![reply("/v1/tracks/one", track())], false).await;
+        let first = api_get(&state, "/tracks/one", &[]).await.unwrap();
+        let again = tokio::time::timeout(
+            Duration::from_millis(500),
+            api_get(&state, "/tracks/one", &[]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(again, first);
+        assert_eq!(state.spotify.catalogue_tracks.lock().await.len(), 1);
+        state.storage.close().await;
+        handle.abort();
     }
     fn track() -> Value {
         json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Test track","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"Artist"}]})
