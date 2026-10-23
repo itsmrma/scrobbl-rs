@@ -71,7 +71,7 @@ pub async fn choices(
         "{}SELECT e.id,e.name,CASE WHEN COUNT(DISTINCT t.id)=1 THEN MIN(t.title) ELSE CAST(COUNT(DISTINCT t.id) AS TEXT)||' tracks' END AS subtitle FROM ",
         crate::library::METADATA
     ));
-    query.push(join).push(" WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND (e.name LIKE ").push_bind(pattern.clone()).push(" ESCAPE '\\' OR t.title LIKE ").push_bind(pattern).push(" ESCAPE '\\') GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 50");
+    query.push(join).push(" WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND e.name LIKE ").push_bind(pattern).push(" ESCAPE '\\' GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 50");
     let mut view = state.storage.read_view().await?;
     Ok(Json(
         query

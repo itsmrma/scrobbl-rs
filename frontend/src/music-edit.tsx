@@ -16,66 +16,110 @@ function Stars({
   change: (value: number | null) => void;
   disabled?: boolean;
 }) {
+  const [preview, setPreview] = useState<number | null>(null);
+  const displayed = preview ?? value ?? 0;
+  function pointedRating(star: number, clientX: number, element: HTMLElement) {
+    const rect = element.getBoundingClientRect();
+    return clientX - rect.left < rect.width / 2
+      ? Math.max(1, star - 0.5)
+      : star;
+  }
   return (
     <fieldset className="rating-control" disabled={disabled}>
       <legend>Your rating</legend>
-      <div className="rating-stars" aria-label="Star rating">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <button
-            key={star}
-            type="button"
-            className="star-button"
-            aria-label={`Rate ${star} stars; left half selects ${Math.max(1, star - 0.5)}`}
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              change(
-                event.detail > 0 && event.clientX - rect.left < rect.width / 2
-                  ? Math.max(1, star - 0.5)
-                  : star,
-              );
-            }}
-          >
-            <Icon>
-              {(value || 0) >= star
-                ? "star"
-                : (value || 0) >= star - 0.5
-                  ? "star_half"
-                  : "star_outline"}
-            </Icon>
-          </button>
-        ))}
-      </div>
-      <div className="rating-input">
-        <label>
-          Rating in stars
-          <select
-            aria-label="Rating in stars"
-            value={value ?? ""}
-            onChange={(e) =>
-              change(e.target.value ? Number(e.target.value) : null)
-            }
-          >
-            <option value="">Not rated</option>
-            {Array.from({ length: 9 }, (_, i) => 1 + i / 2).map((rating) => (
-              <option key={rating} value={rating}>
-                {rating} / 5
-              </option>
-            ))}
-          </select>
-        </label>
+      <div className="rating-options">
+        <div
+          className="rating-stars"
+          aria-label="Star rating"
+          onPointerLeave={() => setPreview(null)}
+        >
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              className="star-button"
+              aria-label={`Rate ${star} stars; left half selects ${Math.max(1, star - 0.5)}`}
+              aria-pressed={value !== null && value === star}
+              onPointerMove={(event) => {
+                if (event.pointerType === "mouse" && !disabled)
+                  setPreview(
+                    pointedRating(star, event.clientX, event.currentTarget),
+                  );
+              }}
+              onFocus={() => setPreview(star)}
+              onBlur={() => setPreview(null)}
+              onKeyDown={(event) => {
+                if (
+                  [
+                    "ArrowLeft",
+                    "ArrowDown",
+                    "ArrowRight",
+                    "ArrowUp",
+                    "Home",
+                    "End",
+                  ].includes(event.key)
+                ) {
+                  event.preventDefault();
+                  const next =
+                    event.key === "Home"
+                      ? 1
+                      : event.key === "End"
+                        ? 5
+                        : Math.max(
+                            1,
+                            Math.min(
+                              5,
+                              (value ?? 1) +
+                                (["ArrowLeft", "ArrowDown"].includes(event.key)
+                                  ? -0.5
+                                  : 0.5),
+                            ),
+                          );
+                  setPreview(null);
+                  change(next);
+                }
+              }}
+              onClick={(event) => {
+                setPreview(null);
+                change(
+                  event.detail > 0
+                    ? pointedRating(star, event.clientX, event.currentTarget)
+                    : star,
+                );
+              }}
+            >
+              <Icon>
+                {displayed >= star
+                  ? "star"
+                  : displayed >= star - 0.5
+                    ? "star_half"
+                    : "star_outline"}
+              </Icon>
+            </button>
+          ))}
+        </div>
+        <output aria-label="Rating in stars" aria-live="polite">
+          {preview ?? value ?? "Not rated"}
+          {(preview ?? value) !== null && " / 5"}
+        </output>
         {value !== null && (
           <button
-            className="secondary"
+            className="icon-button"
             type="button"
-            onClick={() => change(null)}
+            aria-label="Clear rating"
+            onClick={() => {
+              setPreview(null);
+              change(null);
+            }}
           >
-            Clear rating
+            <Icon>close</Icon>
           </button>
         )}
       </div>
     </fieldset>
   );
 }
+
 export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
   const [version, setVersion] = useState(0);
   const details = useLoad<Details>(
@@ -87,9 +131,6 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
   const toast = useToast();
   return (
     <div className="music-personal">
-      <Link className="button secondary" to={`/music/${kind}/${id}/edit`}>
-        <Icon>edit</Icon>Edit details{kind !== "tracks" && " & image"}
-      </Link>
       {details.data && (
         <Stars
           value={details.data.rating}
@@ -119,6 +160,9 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
           }}
         />
       )}
+      <Link className="button secondary" to={`/music/${kind}/${id}/edit`}>
+        <Icon>edit</Icon>Edit details{kind !== "tracks" && " & image"}
+      </Link>
       {details.data?.spotify_url && (
         <a
           className="spotify-attribution"
@@ -177,10 +221,11 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
       </Heading>
       <ErrorText>{details.error}</ErrorText>
       {details.data ? (
-        <div className="edit-layout">
-          <article className="panel padded">
+        <div className={`edit-layout ${kind === "tracks" ? "edit-track" : ""}`}>
+          <article className="panel padded details-editor">
             <h2>Details &amp; rating</h2>
             <form
+              className="details-form"
               onSubmit={async (e) => {
                 e.preventDefault();
                 setBusy(true);
@@ -209,17 +254,20 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                   disabled={busy}
                 />
               </label>
-              <p className="original-value">
-                From your sources: <strong>{details.data.original_name}</strong>
-              </p>
-              <button
-                className="secondary"
-                type="button"
-                disabled={busy || name === details.data.original_name}
-                onClick={() => setName(details.data!.original_name)}
-              >
-                <Icon>restart_alt</Icon>Use original name
-              </button>
+              <div className="source-name">
+                <p className="original-value">
+                  From your sources:{" "}
+                  <strong>{details.data.original_name}</strong>
+                </p>
+                <button
+                  className="secondary"
+                  type="button"
+                  disabled={busy || name === details.data.original_name}
+                  onClick={() => setName(details.data!.original_name)}
+                >
+                  <Icon>restart_alt</Icon>Use original name
+                </button>
+              </div>
               <Stars value={rating} change={setRating} disabled={busy} />
               <ErrorText>{error}</ErrorText>
               <div className="connection-actions">
@@ -304,38 +352,43 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                     }}
                   />
                 </label>
-                <button className="primary" disabled={busy || (!file && !url)}>
-                  {busy ? "Saving image…" : "Save image"}
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={busy || !details.data.custom_image}
-                  onClick={async () => {
-                    setBusy(true);
-                    setError("");
-                    try {
-                      await api.artworkUrl(kind, id, null);
-                      setFile(null);
-                      setUrl("");
-                      setVersion((v) => v + 1);
-                      window.dispatchEvent(
-                        new CustomEvent("artwork-updated", {
-                          detail: { kind, id },
-                        }),
-                      );
-                      toast(
-                        "Custom image removed. Spotify artwork will be used when available.",
-                      );
-                    } catch (e) {
-                      setError(e instanceof Error ? e.message : String(e));
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  <Icon>restart_alt</Icon>Use Spotify image
-                </button>
+                <div className="connection-actions">
+                  <button
+                    className="primary"
+                    disabled={busy || (!file && !url)}
+                  >
+                    {busy ? "Saving image…" : "Save image"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={busy || !details.data.custom_image}
+                    onClick={async () => {
+                      setBusy(true);
+                      setError("");
+                      try {
+                        await api.artworkUrl(kind, id, null);
+                        setFile(null);
+                        setUrl("");
+                        setVersion((v) => v + 1);
+                        window.dispatchEvent(
+                          new CustomEvent("artwork-updated", {
+                            detail: { kind, id },
+                          }),
+                        );
+                        toast(
+                          "Custom image removed. Spotify artwork will be used when available.",
+                        );
+                      } catch (e) {
+                        setError(e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    <Icon>restart_alt</Icon>Use Spotify image
+                  </button>
+                </div>
               </form>
               <ErrorText>{error}</ErrorText>
             </article>

@@ -120,3 +120,31 @@ The full automated suite passes 115 Rust tests with five opt-in cases skipped (i
 Synthetic screenshot evidence: [track](screenshots/gui-music-track-refined.png), [album](screenshots/gui-music-album-refined.png), [artist](screenshots/gui-music-artist-refined.png), [Connections](screenshots/gui-connections-aligned.png), [activity return action](screenshots/gui-activity-return.png), [ListenBrainz files](screenshots/gui-listenbrainz-files.png), [ListenBrainz public fetch](screenshots/gui-listenbrainz-public.png).
 
 The remaining live-provider cold/warm-cache timing and physical PC/Mac/iOS scenarios are consolidated in [final release validation #31](https://github.com/itsmrma/scrobbl-rs/issues/31). GUI #26 remains open for owner visual acceptance; the GitHub CI rerun is monitored by the owner after handoff.
+
+## Third local feedback pass — compact controls and fluid pages
+
+The owner's twelve additional findings are addressed in PR #47; the branch also incorporates `main` through `91e9b1e` (#49).
+
+- Results per page now belongs to the footer of every history/ranking list, including embedded lists on music pages. It stays available with filters collapsed and keeps the existing shared size preference. Singular record/result labels are corrected.
+- Artist and album suggestions match their own names, rather than associated track titles. Suggestions wait for a short typing pause, show a separate subtitle, fit the field width, and close on focus leaving the control or Escape. A selected identity occupies the input itself with an adjacent clear action. Keyboard arrows navigate suggestions. Safari keeps input focus through a pointer selection so blur cannot remove the option before its click.
+- History filters animate open/closed over 160 ms; reduced-motion preferences disable that duration. Buttons receive a short hover/pressed response without changing their layout.
+- Ratings sit between the music name and edit action. Stars preview whole and half ratings on hover, support half-step changes from the keyboard and retain a clear action; the redundant select is removed from music and edit pages.
+- Track history uses compact date/source, playback time and details columns. Expanded details retain all evidence fields. Music edits use the available page width; track details arrange name/source and rating alongside each other on desktop. Artwork preview and controls share a compact layout, with save/reset actions together. Back links no longer underline their arrows.
+- Source-entry checkboxes have explicit 18 px dimensions and sit beside their text in a responsive multi-column list. The inherited column label and full-width input styles caused the large empty rows in the reported screenshot.
+- Removed the fixed main/edit/settings width caps. Wide layout checks cover 1440 and 2400 CSS pixels. Album and track rankings now both offer independent, persisted List/Grid views, including on the artist page.
+
+### Reproduction and verification
+
+The initial command `npx playwright test tests/gui-audit.spec.cjs -g 'artist autocomplete|source-entry checkboxes|page size lives|stars preview' --reporter=list` failed all four cases: a track-title query returned an unrelated artist, the selection occupied a second row, the size selector was hidden with filters, and the fourth star stayed unfilled on a half-star hover. These cases pass after the fixes. Additional checks cover 18 px source checkboxes, compact track rows, un-underlined back links, wide edit pages and independent album/track views.
+
+WebKit additionally reproduced lost pointer selections: the selected field remained `Seed` rather than `Seed artist`, and selecting an album failed to narrow 135 records to two. Preserving input focus on option pointer down fixes both; the original two scenarios pass on replay.
+
+The complete browser suite has 28 scenarios per engine: Chromium's other 27 passed before updating an old `1 records` assertion, and the corrected local scenario passes; WebKit's other 26 passed before the focus fix, and the two affected scenarios pass on replay. The consultation and GUI scenarios are also rerun in Chromium after that focus fix. Rust's full suite, Clippy with warnings denied, rustfmt, TypeScript/Vite, release build, Prettier and diff checks pass. Firefox's previously recorded local profile limitation remains; this pass makes no new Firefox claim. CI is handed to the owner after pushing, without polling.
+
+Synthetic screenshot evidence: [compact artist edit](screenshots/gui-edit-artist-compact.png), [wide track edit](screenshots/gui-edit-track-wide.png), [artist album/track views](screenshots/gui-artist-album-views.png), [compact track history](screenshots/gui-track-history-compact.png).
+
+### Reported imported artist name
+
+The original Spotify ZIP was inspected read-only. Row 12034 of `Streaming_History_Audio_2024.json` already contains `(((())))` as the artist of `Living Life In The Night - 8D Audio`. The stored value matches the source exactly; the owner confirmed that the punctuation name had been mistaken for corruption. No import repair or name replacement is needed.
+
+The local preview is rebuilt and restarted using the existing archive, with its listen count unchanged. Physical PC/Mac/iOS checks remain consolidated in #31: zoom at 80%, wide/narrow layouts, pointer/touch selection, half-star preview/selection, filter motion and reduced motion, and List/Grid persistence. GUI #26 stays open for the owner's local visual acceptance.

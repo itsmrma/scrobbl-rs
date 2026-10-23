@@ -220,9 +220,8 @@ test("personal names, half-star ratings and custom images persist without changi
         animations: "disabled",
       });
     await page.getByLabel(label, { exact: true }).fill(`Personal ${kind}`);
-    await page
-      .getByLabel("Rating in stars", { exact: true })
-      .selectOption("3.5");
+    const fourthStar = page.locator(".star-button").nth(3);
+    await fourthStar.click({ position: { x: 8, y: 20 } });
     if (kind !== "tracks") {
       // Saving artwork must not discard an unsaved name or rating in the other form.
       await page.getByLabel("Upload an image").setInputFiles({
@@ -242,7 +241,7 @@ test("personal names, half-star ratings and custom images persist without changi
       await expect(page.getByLabel(label, { exact: true })).toHaveValue(
         `Personal ${kind}`,
       );
-      await expect(page.getByLabel("Rating in stars")).toHaveValue("3.5");
+      await expect(page.getByLabel("Rating in stars")).toHaveText("3.5 / 5");
       const image = await page.request.get(
         `/api/v1/artwork/${kind}/${item.id}`,
       );
@@ -264,9 +263,9 @@ test("personal names, half-star ratings and custom images persist without changi
     await expect(
       page.getByRole("heading", { name: `Personal ${kind}.`, exact: true }),
     ).toBeVisible();
-    await expect(page.getByLabel("Rating in stars")).toHaveValue("3.5");
+    await expect(page.getByLabel("Rating in stars")).toHaveText("3.5 / 5");
     await page.reload();
-    await expect(page.getByLabel("Rating in stars")).toHaveValue("3.5");
+    await expect(page.getByLabel("Rating in stars")).toHaveText("3.5 / 5");
     const details = await (
       await page.request.get(`/api/v1/library/${kind}/${item.id}`)
     ).json();
@@ -812,4 +811,137 @@ test("visible artwork waits in the client while music data remains available", a
   await expect(
     page.getByRole("heading", { name: "Import your export" }),
   ).toBeVisible();
+});
+
+test("artist autocomplete matches artist names rather than track titles", async ({
+  page,
+}) => {
+  await login(page, "/history?period=all");
+  const response = await page.request.get(
+    "/api/v1/consultation/choices/artists?q=song",
+  );
+  expect(await response.json()).toEqual([]);
+});
+
+test("selected filters and source-entry checkboxes stay compact", async ({
+  page,
+}) => {
+  await login(page, "/history?period=all");
+  await page.locator(".history-filter-disclosure > summary").click();
+  await page.getByLabel("Find artist").fill("Seed");
+  await page
+    .getByRole("button", { name: "Seed artist · Seed song", exact: true })
+    .click();
+  const chip = page.locator(".entity-field").first();
+  await expect(page.getByLabel("Find artist")).toHaveValue("Seed artist");
+  expect((await chip.boundingBox()).height).toBeLessThanOrEqual(44);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto(`/music/artists/${archive.rankings.artists[0].id}/edit`);
+  const checkbox = page.locator(".group-members input").first();
+  await expect(checkbox).toBeVisible();
+  const box = await checkbox.boundingBox();
+  expect(box.width).toBeLessThanOrEqual(24);
+  expect(box.height).toBeLessThanOrEqual(24);
+});
+
+test("page size lives below results while filters are collapsed", async ({
+  page,
+}) => {
+  await login(page, "/history?period=all");
+  await expect(page.locator("#history-list .listen-row")).toHaveCount(1);
+  await expect(page.getByLabel("Results per page")).toBeVisible();
+  const size = await page.getByLabel("Results per page").boundingBox();
+  const row = await page
+    .locator("#history-list .listen-row")
+    .last()
+    .boundingBox();
+  expect(size.y).toBeGreaterThan(row.y + row.height);
+});
+
+test("stars preview half ratings and track history uses compact rows", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto(`/music/tracks/${archive.rankings.tracks[0].id}`);
+  const star = page.locator(".star-button").nth(3);
+  await expect(star).toBeVisible();
+  const rect = await star.boundingBox();
+  await page.mouse.move(rect.x + rect.width * 0.25, rect.y + rect.height / 2);
+  await expect(star.locator(".material-icons-outlined")).toHaveText(
+    "star_half",
+  );
+  await expect(page.locator(".star-button").nth(2).locator("span")).toHaveText(
+    "star",
+  );
+  await page.mouse.move(0, 0);
+  await expect(star.locator("span")).toHaveText("star_outline");
+  await expect(
+    page.getByRole("combobox", { name: "Rating in stars" }),
+  ).toHaveCount(0);
+  const row = page.locator(".listen-context-tracks").first();
+  await expect(row).toBeVisible();
+  expect((await row.boundingBox()).height).toBeLessThanOrEqual(100);
+});
+
+test("music layouts fill wide viewports and album and track views switch independently", async ({
+  page,
+  browserName,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const width of [1440, 2400]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const kind of ["artists", "tracks"]) {
+      const id = archive.rankings[kind][0].id;
+      await page.goto(`/music/${kind}/${id}/edit`);
+      await expect(page.locator(".details-editor")).toBeVisible();
+      const main = await page.locator("#main").boundingBox();
+      const layout = await page.locator(".edit-layout").boundingBox();
+      expect(layout.width).toBeGreaterThan(main.width * 0.95);
+      if (kind === "tracks") {
+        expect(
+          (await page.locator(".details-editor").boundingBox()).width,
+        ).toBeGreaterThan(main.width * 0.95);
+        expect(
+          (await page.locator(".details-editor").boundingBox()).height,
+        ).toBeLessThan(440);
+      }
+      const back = page.locator(".back-link");
+      expect(
+        await back.evaluate((e) => getComputedStyle(e).textDecorationLine),
+      ).toBe("none");
+      await page.screenshot({
+        path: `test-results/gui-${browserName}-${width}-compact-edit-${kind}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+  await page.goto(`/music/artists/${archive.rankings.artists[0].id}`);
+  const albums = page.getByRole("article", { name: "albums rankings" });
+  const tracks = page.getByRole("article", { name: "tracks rankings" });
+  await albums.getByRole("button", { name: "List", exact: true }).click();
+  await tracks.getByRole("button", { name: "Grid", exact: true }).click();
+  await expect(albums.locator(".ranking-row")).toHaveCount(1);
+  await expect(tracks.locator(".music-card")).toHaveCount(1);
+  await page.reload();
+  await expect(
+    albums.getByRole("button", { name: "List", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    tracks.getByRole("button", { name: "Grid", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-compact-artist.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
 });

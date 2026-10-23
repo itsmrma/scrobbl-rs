@@ -286,32 +286,39 @@ function Pager({
   page,
   pageSize,
   change,
+  list,
+  resize,
 }: {
   total: number;
   page: number;
   pageSize: number;
   change: (page: number) => void;
+  list: ReturnType<typeof useListPreferences>;
+  resize: () => void;
 }) {
   return (
-    <div className="pagination">
-      <button
-        className="secondary"
-        disabled={page <= 1}
-        onClick={() => change(page - 1)}
-      >
-        Previous
-      </button>
-      <span>
-        Page {page} of {Math.max(1, Math.ceil(total / pageSize))} ·{" "}
-        {number.format(total)} results
-      </span>
-      <button
-        className="secondary"
-        disabled={page * pageSize >= total}
-        onClick={() => change(page + 1)}
-      >
-        Next
-      </button>
+    <div className="list-footer">
+      <PageSize list={list} changed={resize} />
+      <div className="pagination">
+        <button
+          className="secondary"
+          disabled={page <= 1}
+          onClick={() => change(page - 1)}
+        >
+          Previous
+        </button>
+        <span>
+          Page {page} of {Math.max(1, Math.ceil(total / pageSize))} ·{" "}
+          {number.format(total)} {total === 1 ? "result" : "results"}
+        </span>
+        <button
+          className="secondary"
+          disabled={page * pageSize >= total}
+          onClick={() => change(page + 1)}
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -323,7 +330,7 @@ function PageSize({
   changed: () => void;
 }) {
   return (
-    <label>
+    <label className="page-size">
       Results per page
       <select
         value={list.size}
@@ -411,7 +418,7 @@ function RankingsPanel({
   version?: number;
   standalone?: boolean;
 }) {
-  const list = useListPreferences();
+  const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
   const search = useSearch();
   const [draft, setDraft] = useState(params.get("q") || "");
   useEffect(() => setDraft(params.get("q") || ""), [search]);
@@ -486,7 +493,6 @@ function RankingsPanel({
         </div>
       )}
       <div className="filters">
-        <PageSize list={list} changed={reset} />
         {showView && (
           <div className="view-toggle" role="group" aria-label="Ranking view">
             <button
@@ -516,6 +522,8 @@ function RankingsPanel({
             grid={(!showView && kind === "albums") || list.view === "grid"}
           />
           <Pager
+            list={list}
+            resize={reset}
             total={result.data.total}
             page={result.data.page}
             pageSize={result.data.page_size}
@@ -867,72 +875,145 @@ function EntityFilter({
   change: (id: string) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [focused, setFocused] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const optionsId = useId();
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 150);
+    return () => clearTimeout(timer);
+  }, [search]);
   const options = useLoad(
-    () => api.choices(kind, search),
-    `${kind}:${search}`,
-    !!search && !id,
+    () => api.choices(kind, query),
+    `${kind}:${query}`,
+    !!query && !id,
   );
   const chosen = useLoad(
     () => api.music(kind, id, new URLSearchParams()),
     `${kind}:${id}`,
     !!id,
   );
+  const [selectedName, setSelectedName] = useState("");
+  const showOptions = focused && !id && !!query && query === search.trim();
   return (
-    <div className="entity-filter">
+    <div
+      className="entity-filter"
+      ref={container}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setFocused(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          input.current?.focus();
+          setFocused(false);
+        }
+        if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+          event.preventDefault();
+          setFocused(true);
+          const buttons = Array.from(
+            container.current?.querySelectorAll<HTMLButtonElement>(
+              ".entity-options button",
+            ) || [],
+          );
+          const current = buttons.indexOf(
+            document.activeElement as HTMLButtonElement,
+          );
+          const next =
+            current < 0
+              ? event.key === "ArrowDown"
+                ? 0
+                : buttons.length - 1
+              : (current +
+                  (event.key === "ArrowDown" ? 1 : -1) +
+                  buttons.length) %
+                buttons.length;
+          buttons[next]?.focus();
+        }
+      }}
+    >
       <label>
         {kind === "artists" ? "Artist" : "Album"}
-        <input
-          type="search"
-          aria-label={kind === "artists" ? "Find artist" : "Find album"}
-          placeholder={
-            id ? chosen.data?.name || "Selected identity" : `Find ${kind}`
-          }
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            if (id) change("");
-          }}
-        />
-      </label>
-      {id && (
-        <span className="pill">
-          {chosen.data?.name || "Selected"}
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Clear ${kind}`}
-            onClick={() => {
-              change("");
-              setSearch("");
-            }}
-          >
-            <Icon>close</Icon>
-          </button>
+        <span className="entity-field">
+          <input
+            ref={input}
+            type="search"
+            aria-label={kind === "artists" ? "Find artist" : "Find album"}
+            placeholder={`Find ${kind}`}
+            autoComplete="off"
+            maxLength={500}
+            aria-expanded={showOptions}
+            aria-controls={optionsId}
+            aria-autocomplete="list"
+            readOnly={!!id}
+            value={
+              id
+                ? chosen.data?.name || selectedName || "Selected identity"
+                : search
+            }
+            onFocus={() => setFocused(true)}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          {id && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Clear ${kind}`}
+              onClick={() => {
+                change("");
+                setSearch("");
+                setQuery("");
+                setSelectedName("");
+                input.current?.focus();
+              }}
+            >
+              <Icon>close</Icon>
+            </button>
+          )}
         </span>
-      )}
+      </label>
       <ErrorText>{options.error || (id ? chosen.error : "")}</ErrorText>
-      {!id && search && options.data && (
-        <ul className="entity-options" aria-label={`${kind} matches`}>
-          {options.data.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  change(item.id);
-                  setSearch("");
-                }}
-              >
-                {item.name}
-                {item.subtitle ? ` · ${item.subtitle}` : ""}
-              </button>
-            </li>
-          ))}
-          {!options.data.length && <li>No matches</li>}
-          {options.data.length === 50 && (
-            <li>
-              Showing 50 matches. Refine your search to narrow the choices.
-            </li>
+      {showOptions && (
+        <ul
+          id={optionsId}
+          className="entity-options"
+          aria-label={`${kind} matches`}
+        >
+          {options.data ? (
+            <>
+              {options.data.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-label={`${item.name}${item.subtitle ? ` · ${item.subtitle}` : ""}`}
+                    // Safari does not focus buttons on pointer down. Keep the
+                    // input focused until the selection click has been handled.
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setSelectedName(item.name);
+                      change(item.id);
+                      setSearch("");
+                      setQuery("");
+                      input.current?.focus();
+                      setFocused(false);
+                    }}
+                  >
+                    <strong>{item.name}</strong>
+                    {item.subtitle && <small>{item.subtitle}</small>}
+                  </button>
+                </li>
+              ))}
+              {!options.data.length && <li>No matches</li>}
+              {options.data.length === 50 && (
+                <li>
+                  Showing 50 matches. Refine your search to narrow the choices.
+                </li>
+              )}
+            </>
+          ) : (
+            <li role="status">Finding matches…</li>
           )}
         </ul>
       )}
@@ -977,6 +1058,8 @@ export function HistoryPage({
     false,
     isBool,
   );
+  const filterAnimation = useRef<Animation | null>(null);
+  useEffect(() => () => filterAnimation.current?.cancel(), []);
   const [draft, setDraft] = useState(params.get("q") || "");
   const search = useSearch();
   useEffect(() => {
@@ -1015,10 +1098,47 @@ export function HistoryPage({
       )}
       <details
         className="history-filter-disclosure panel"
-        open={filtersOpen}
-        onToggle={(e) => setFiltersOpen(e.currentTarget.open)}
+        ref={(node) => {
+          if (node && !filterAnimation.current) node.open = filtersOpen;
+        }}
       >
-        <summary>
+        <summary
+          onClick={(event) => {
+            event.preventDefault();
+            const details = event.currentTarget
+              .parentElement as HTMLDetailsElement;
+            const form = details.querySelector("form")!;
+            const opening = !filtersOpen;
+            const from = details.open ? form.getBoundingClientRect().height : 0;
+            filterAnimation.current?.cancel();
+            details.open = true;
+            const to = opening ? form.scrollHeight : 0;
+            setFiltersOpen(opening);
+            // Keep native details open during closing; collapse only after the motion.
+            details.open = true;
+            form.style.overflow = "hidden";
+            const animation = form.animate(
+              [
+                { height: `${from}px`, opacity: opening ? 0 : 1 },
+                { height: `${to}px`, opacity: opening ? 1 : 0 },
+              ],
+              {
+                duration: matchMedia("(prefers-reduced-motion: reduce)").matches
+                  ? 0
+                  : 160,
+                easing: "ease-out",
+              },
+            );
+            filterAnimation.current = animation;
+            animation.finished
+              .then(() => {
+                details.open = opening;
+                form.style.overflow = "";
+                filterAnimation.current = null;
+              })
+              .catch(() => {});
+          }}
+        >
           <Icon>tune</Icon>
           <span>
             <strong>Filters</strong>
@@ -1126,7 +1246,6 @@ export function HistoryPage({
               />
               Show listens below threshold too
             </label>
-            <PageSize list={list} changed={() => change({})} />
           </div>
           <div className="history-filter-actions">
             <button className="primary">
@@ -1189,7 +1308,8 @@ export function HistoryPage({
         <article className="panel">
           <div className="panel-title padded">
             <h2 id={embedded ? undefined : "history-total"}>
-              {number.format(result.data.total)} records
+              {number.format(result.data.total)}{" "}
+              {result.data.total === 1 ? "record" : "records"}
             </h2>
           </div>
           <ListenList
@@ -1199,6 +1319,8 @@ export function HistoryPage({
             context={musicKind}
           />
           <Pager
+            list={list}
+            resize={() => change({})}
             total={result.data.total}
             page={result.data.page}
             pageSize={result.data.page_size}
@@ -1278,7 +1400,6 @@ export function MusicPage({
         <RankingsPanel
           kind="albums"
           params={params}
-          showView={false}
           version={preferences.version}
           title="Albums in this period"
         />

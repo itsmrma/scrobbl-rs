@@ -185,10 +185,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page.getByLabel("Show listens below threshold too").check();
     await expect(page.locator("#history-total")).toHaveText("136 records");
     await page.getByLabel("Show listens below threshold too").uncheck();
-    await page.getByLabel("Find artist").fill("Consultation track 010");
+    await page.getByLabel("Find artist").fill("Consultation artist");
     await page
       .getByRole("button", {
-        name: "Consultation artist · Consultation track 010",
+        name: "Consultation artist · 116 tracks",
         exact: true,
       })
       .click();
@@ -247,7 +247,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       page.getByText("Chart segment:", { exact: false }),
     ).toBeVisible();
     await expect(page.getByLabel("Find artist")).toHaveAttribute(
-      "placeholder",
+      "value",
       "Consultation artist",
     );
     await page.setViewportSize({ width: 390, height: 844 });

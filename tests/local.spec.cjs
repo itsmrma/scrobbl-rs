@@ -123,7 +123,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page.locator(".history-filter-disclosure > summary").click();
   await page.locator("#history-status").selectOption("short");
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.locator("#history-total")).toHaveText("1 records");
+  await expect(page.locator("#history-total")).toHaveText("1 record");
   await expect(page.locator("#history-list")).toContainText("Short song");
   await page.getByRole("button", { name: "Reset", exact: true }).click();
   await page.locator("#history-q").fill("Earth, Wind & Fire");

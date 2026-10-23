@@ -381,7 +381,7 @@ small,
   margin-left: var(--effective-sidebar);
   padding: 0 36px;
   min-width: 0;
-  max-width: 1900px;
+  max-width: none;
 }
 .topbar {
   min-height: 76px;
@@ -627,7 +627,7 @@ main#main {
   box-shadow: inset 0 -3px var(--accent);
 }
 .settings-form {
-  max-width: 900px;
+  max-width: none;
 }
 .settings-form label {
   margin-bottom: 8px;
@@ -1280,6 +1280,8 @@ footer {
   position: relative;
 }
 .entity-options {
+  top: calc(100% + 6px);
+  left: 0;
   position: absolute;
   z-index: 5;
   background: var(--surface);
@@ -1288,11 +1290,18 @@ footer {
   list-style: none;
   padding: 8px;
   margin: 0;
-  width: min(340px, 75vw);
-  max-height: 300px;
+  width: 100%;
+  max-height: min(320px, 45vh);
   overflow-y: auto;
 }
 .entity-options button {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
   width: 100%;
   text-align: left;
   justify-content: start;
@@ -1876,13 +1885,14 @@ dialog {
   max-width: 65ch;
 }
 .back-link {
-  margin-bottom: 24px;
+  text-decoration: none;
+  margin-bottom: 16px;
 }
 .edit-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 24px;
-  max-width: 1200px;
+  max-width: none;
   align-items: start;
 }
 .original-value {
@@ -1920,7 +1930,6 @@ dialog {
   display: flex;
   align-items: center;
   color: var(--focus);
-  margin-bottom: 8px;
 }
 .rating-stars .material-icons-outlined {
   font-size: 25px;
@@ -1936,14 +1945,16 @@ dialog {
 .star-button:hover {
   background: var(--surface-raised);
 }
-.rating-input {
+.rating-options {
   display: flex;
-  align-items: end;
-  gap: 10px;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 6px 10px;
 }
-.rating-input label {
-  min-width: 135px;
+.rating-options output {
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 68px;
 }
 .spotify-attribution {
   display: inline-flex;
@@ -2614,6 +2625,9 @@ dialog {
   grid-column: 1 / -1;
 }
 .group-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 0 24px;
   list-style: none;
   margin: 16px 0;
   padding: 0;
@@ -2623,8 +2637,12 @@ dialog {
   padding: 12px 0;
 }
 .group-members .check {
-  align-items: flex-start;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
   gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
 }
 .group-members small,
 .group-members code {
@@ -2634,7 +2652,13 @@ dialog {
   overflow-wrap: anywhere;
 }
 .group-members input {
-  margin-top: 6px;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
 }
 .info-button > span {
   pointer-events: none;
@@ -2889,28 +2913,18 @@ dialog {
 .music-heading .music-personal {
   grid-column: 2;
   margin: 0;
-  align-items: end;
+  align-items: start;
+  flex-direction: column;
   gap: 12px 20px;
 }
 .music-personal .rating-control {
-  display: grid;
-  grid-template-columns: auto auto;
-  align-items: center;
-  column-gap: 12px;
+  display: block;
 }
 .music-personal .rating-control legend {
   margin-bottom: 2px;
 }
 .music-personal .rating-stars {
   margin: 0;
-}
-.music-personal .rating-input label {
-  font-size: 0;
-  min-width: 120px;
-  margin: 0;
-}
-.music-personal .rating-input select {
-  font-size: 12px;
 }
 .music-personal .spotify-attribution {
   margin: 0;
@@ -3005,19 +3019,45 @@ dialog {
   font-size: 12px;
 }
 .listen-row.listen-context-tracks {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 24px;
+  padding-block: 10px;
+}
+.listen-context-tracks .listen-date {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+.listen-context-tracks .listen-date small {
+  margin: 0;
+}
+.listen-context-tracks .listen-duration {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.listen-context-tracks .listen-duration small {
+  margin: 0;
+}
+.listen-context-tracks .listen-duration small:first-child {
+  display: none;
 }
 .listen-row.listen-context-albums {
   grid-template-columns: 38px minmax(0, 1fr) minmax(160px, 1fr) 100px;
 }
 .listen-context .listen-details {
+  padding: 0;
   margin: 0;
   border: 0;
   font-size: 12px;
   min-width: 0;
 }
 .listen-context-tracks .listen-details {
+  grid-column: 3;
+}
+.listen-context-tracks .listen-details[open] {
   grid-column: 1 / -1;
 }
 .listen-context-albums .listen-details {
@@ -3172,4 +3212,166 @@ dialog {
     grid-template-columns: 1fr;
     gap: 0;
   }
+}
+
+/* Fluid, compact controls shared by history and music pages. */
+.entity-field {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+.entity-field input[readonly] {
+  padding-right: 48px;
+  color: var(--text);
+}
+.entity-field > .icon-button {
+  position: absolute;
+  right: 1px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.entity-options small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.entity-options li + li {
+  border-top: 1px solid var(--border);
+}
+.entity-options button:hover,
+.entity-options button:focus-visible {
+  background: var(--surface-raised);
+}
+.list-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 16px 24px;
+}
+.list-footer .pagination {
+  padding: 0;
+  gap: 12px;
+}
+.page-size {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+.page-size select {
+  width: auto;
+  min-width: 76px;
+}
+.edit-layout > .panel {
+  margin-bottom: 0;
+}
+.edit-track {
+  grid-template-columns: minmax(0, 1fr);
+}
+.details-form {
+  gap: 16px;
+}
+.source-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.source-name p {
+  margin: 0;
+}
+.details-form .connection-actions {
+  margin: 4px 0 0;
+}
+.artwork-editor {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 16px 24px;
+}
+.artwork-editor > h2,
+.artwork-editor > p,
+.artwork-editor > .notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.artwork-editor > .cover.large,
+.artwork-editor > .artwork-preview {
+  width: 120px;
+  height: 120px;
+  margin: 0;
+}
+.artwork-editor > form {
+  min-width: 0;
+  gap: 12px;
+}
+.artwork-editor > form p {
+  margin: 0;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  button,
+  .button {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease,
+      filter 120ms ease;
+  }
+  button:enabled:hover,
+  .button:hover {
+    filter: brightness(1.1);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 10%, transparent);
+  }
+  button:enabled:active,
+  .button:active {
+    filter: brightness(0.95);
+    box-shadow: none;
+  }
+}
+@media (max-width: 600px) {
+  .list-footer {
+    padding: 16px;
+    justify-content: center;
+  }
+  .list-footer .pagination {
+    width: 100%;
+    gap: 8px;
+  }
+  .list-footer .pagination span {
+    font-size: 12px;
+  }
+  .artwork-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .listen-context-tracks .listen-date,
+  .listen-context-tracks .listen-duration {
+    display: block;
+  }
+  .listen-context-tracks .listen-details {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 901px) {
+  .edit-track .details-form {
+    grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    column-gap: 32px;
+  }
+  .edit-track .details-form > label,
+  .edit-track .source-name {
+    grid-column: 1;
+  }
+  .edit-track .rating-control {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    align-self: start;
+  }
+  .edit-track .details-form > .notice,
+  .edit-track .connection-actions {
+    grid-column: 1 / -1;
+  }
+}
+.artwork-editor .connection-actions {
+  margin: 0;
+  gap: 8px;
 }
