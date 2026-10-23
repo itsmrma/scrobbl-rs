@@ -336,3 +336,43 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
     assert_eq!(saved, png);
     state.storage.close().await;
 }
+
+#[tokio::test]
+async fn temporary_spotify_limit_does_not_cache_missing_artwork() {
+    let (_dir, state, token) = setup().await;
+    sqlx::query("INSERT INTO spotify_tokens VALUES(1,'unused','unused',9999999999999)")
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO settings(key,value) VALUES('retry_at_ms',?)")
+        .bind((auth::now_ms() + 60000).to_string())
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let dash = get(&state, &token, "/api/dashboard").await;
+    for kind in ["artists", "albums"] {
+        let id = dash["rankings"][kind][0]["id"].as_str().unwrap();
+        let (status, _) = call(
+            &state,
+            &token,
+            "GET",
+            &format!("/api/v1/artwork/{kind}/{id}"),
+            vec![],
+            false,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let cached: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM artwork WHERE kind=? AND entity_id=?")
+                .bind(kind)
+                .bind(id)
+                .fetch_one(&state.read_db)
+                .await
+                .unwrap();
+        assert_eq!(
+            cached, 0,
+            "temporary failure must not become a missing-image cache entry"
+        );
+    }
+    state.storage.close().await;
+}

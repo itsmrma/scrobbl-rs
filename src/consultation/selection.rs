@@ -80,9 +80,11 @@ pub(crate) async fn selection_at(
     };
     crate::calendar::filter(conn, &mut b, &period, now).await?;
     if let Some(id) = filters.artist.as_deref().filter(|s| !s.is_empty()) {
+        let id = crate::name_groups::canonical(conn, "artists", id).await?;
         b.push(" AND EXISTS(SELECT 1 FROM track_artists ta WHERE ta.track_id=l.track_id AND ta.artist_id=").push_bind(id.to_owned()).push(")");
     }
     if let Some(id) = filters.album.as_deref().filter(|s| !s.is_empty()) {
+        let id = crate::name_groups::canonical(conn, "albums", id).await?;
         b.push(" AND l.track_id IN (SELECT id FROM tracks WHERE album_id=")
             .push_bind(id.to_owned())
             .push(")");

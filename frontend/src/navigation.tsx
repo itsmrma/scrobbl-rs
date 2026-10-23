@@ -39,6 +39,8 @@ export function Link({
   "aria-label"?: string;
   "aria-current"?: "page";
   onClick?: () => void;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
 }) {
   return (
     <a

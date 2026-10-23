@@ -20,7 +20,7 @@ use std::{
 
 // CTEs overlay corrections without altering source metadata or executable schema.
 // Readers of a frozen archive use the same overlays as the live consultation.
-pub const METADATA: &str = "WITH artists AS (SELECT a.id,COALESCE((SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind='artist' AND entity_id=a.id AND field='name'),a.name) AS name,a.metadata_rank FROM main.artists a), albums AS (SELECT a.id,COALESCE((SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind='album' AND entity_id=a.id AND field='name'),a.name) AS name,'/api/v1/artwork/albums/'||a.id AS cover_url,a.metadata_rank FROM main.albums a), tracks AS (SELECT t.id,COALESCE((SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind='track' AND entity_id=t.id AND field='name'),t.title) AS title,t.album_id,t.duration_ms,t.spotify_url,t.structured_metadata,t.metadata_rank FROM main.tracks t) ";
+pub const METADATA: &str = include_str!("library-metadata.sql");
 const IMAGE_LIMIT: usize = 5 * 1024 * 1024;
 const PROVIDER_BUDGET: i64 = 128 * 1024 * 1024;
 const DAY: i64 = 86_400_000;
@@ -38,14 +38,14 @@ fn entity(kind: &str) -> Result<(&'static str, &'static str, &'static str)> {
 async fn exists(state: &AppState, kind: &str, id: &str) -> Result<()> {
     let (table, _, _) = entity(kind)?;
     let yes: bool = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?)"
+        "{METADATA} SELECT EXISTS(SELECT 1 FROM {table} WHERE id=?)"
     )))
     .bind(id)
     .fetch_one(&state.read_db)
     .await?;
     if yes { Ok(()) } else { Err(AppError::NotFound) }
 }
-async fn writable(state: &AppState) -> Result<()> {
+pub(crate) async fn writable(state: &AppState) -> Result<()> {
     if state.storage.directory.join("recovery.pending").exists()
         || crate::recovery::paused(&state.storage).await
         || sqlx::query_scalar::<_, bool>("SELECT maintenance FROM archive_state WHERE singleton=1")
@@ -78,15 +78,22 @@ pub async fn details(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<Details>> {
     auth::session(&state, &headers).await?;
-    let (table, singular, field) = entity(&kind)?;
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
+    let (_, singular, _) = entity(&kind)?;
     let mut tx = state.read_db.begin().await?;
-    let original_name: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-        "SELECT {field} FROM {table} WHERE id=?"
-    )))
-    .bind(&id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(AppError::NotFound)?;
+    let original_sql = if kind == "tracks" {
+        "SELECT title FROM main.tracks WHERE id=?"
+    } else if kind == "artists" {
+        "SELECT a.name FROM name_groups g JOIN main.artists a ON a.id=g.representative_id WHERE g.id=?"
+    } else {
+        "SELECT a.name FROM name_groups g JOIN main.albums a ON a.id=g.representative_id WHERE g.id=?"
+    };
+    let original_name: String = sqlx::query_scalar(original_sql)
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AppError::NotFound)?;
     let name: Option<String> = sqlx::query_scalar("SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind=? AND entity_id=? AND field='name'").bind(singular).bind(&id).fetch_optional(&mut *tx).await?;
     let rating: Option<f64> = sqlx::query_scalar("SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind=? AND entity_id=? AND field='rating'").bind(singular).bind(&id).fetch_optional(&mut *tx).await?;
     let custom_image: bool = sqlx::query_scalar(
@@ -96,7 +103,7 @@ pub async fn details(
     .bind(&id)
     .fetch_one(&mut *tx)
     .await?;
-    let external: Option<String> = sqlx::query_scalar("SELECT external_id FROM entity_links WHERE kind=? AND entity_id=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(singular).bind(&id).fetch_optional(&mut *tx).await?;
+    let external: Option<String> = sqlx::query_scalar("SELECT external_id FROM entity_links WHERE kind=? AND (entity_id=? OR entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?)) AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(singular).bind(&id).bind(&id).fetch_optional(&mut *tx).await?;
     let spotify_url = external.and_then(|s| {
         s.strip_prefix(&format!("spotify:{singular}:"))
             .filter(|id| valid_spotify_id(id))
@@ -117,6 +124,8 @@ pub async fn edit(
     Json(form): Json<Edit>,
 ) -> Result<Json<serde_json::Value>> {
     auth::require_write(&state, &headers).await?;
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
     writable(&state).await?;
     exists(&state, &kind, &id).await?;
     let (_, singular, _) = entity(&kind)?;
@@ -163,10 +172,10 @@ pub async fn edit(
     }
     let affected_sql = match kind.as_str() {
         "artists" => {
-            "SELECT id FROM listens WHERE track_id IN (SELECT track_id FROM track_artists WHERE artist_id=?)"
+            "SELECT id FROM listens WHERE track_id IN (SELECT track_id FROM track_artists WHERE artist_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?))"
         }
         "albums" => {
-            "SELECT id FROM listens WHERE track_id IN (SELECT id FROM tracks WHERE album_id=?)"
+            "SELECT id FROM listens WHERE track_id IN (SELECT id FROM tracks WHERE album_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?))"
         }
         _ => "SELECT id FROM listens WHERE track_id=?",
     };
@@ -335,6 +344,8 @@ pub async fn upload_image(
     data: Bytes,
 ) -> Result<Json<serde_json::Value>> {
     auth::require_write(&state, &headers).await?;
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
     if kind != "artists" && kind != "albums" {
         return Err(AppError::BadRequest(
             "Custom images are available for artists and albums.".into(),
@@ -356,6 +367,8 @@ pub async fn image_url(
     Json(form): Json<ImageUrl>,
 ) -> Result<Json<serde_json::Value>> {
     auth::require_write(&state, &headers).await?;
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
     writable(&state).await?;
     if kind != "artists" && kind != "albums" {
         return Err(AppError::BadRequest(
@@ -378,10 +391,11 @@ pub async fn image_url(
 async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<String>> {
     if kind == "albums" {
         let existing: Option<String> =
-            sqlx::query_scalar("SELECT cover_url FROM albums WHERE id=?")
+            sqlx::query_scalar("SELECT a.cover_url FROM main.albums a JOIN name_group_members m ON m.entity_id=a.id AND m.kind='albums' WHERE m.group_id=? AND a.cover_url IS NOT NULL LIMIT 1")
                 .bind(id)
-                .fetch_one(&state.read_db)
-                .await?;
+                .fetch_optional(&state.read_db)
+                .await?
+                .flatten();
         if existing
             .as_ref()
             .is_some_and(|v| v.starts_with("https://i.scdn.co/image/"))
@@ -390,7 +404,7 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
         }
     }
     let singular = if kind == "artists" { "artist" } else { "album" };
-    let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links WHERE entity_id=? AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
+    let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links WHERE entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
     let external = external.and_then(|s| {
         s.strip_prefix(&format!("spotify:{singular}:"))
             .filter(|v| valid_spotify_id(v))
@@ -401,9 +415,9 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
     } else {
         // Extended exports have track IDs, but do not contain album/artist IDs.
         let query = if kind == "albums" {
-            "SELECT e.external_id FROM entity_links e JOIN tracks t ON t.id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND t.album_id=? ORDER BY e.external_id LIMIT 1"
+            "SELECT e.external_id FROM entity_links e JOIN tracks t ON t.id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND t.album_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
         } else {
-            "SELECT e.external_id FROM entity_links e JOIN track_artists ta ON ta.track_id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND ta.artist_id=? ORDER BY e.external_id LIMIT 1"
+            "SELECT e.external_id FROM entity_links e JOIN track_artists ta ON ta.track_id=e.entity_id WHERE e.kind='track' AND e.namespace='spotify' AND ta.artist_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) ORDER BY e.external_id LIMIT 1"
         };
         let track: Option<String> = sqlx::query_scalar(query)
             .bind(id)
@@ -420,7 +434,7 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
         if kind == "albums" {
             track["album"].clone()
         } else {
-            let name: String = sqlx::query_scalar("SELECT name FROM artists WHERE id=?")
+            let name: String = sqlx::query_scalar("SELECT a.name FROM main.artists a JOIN name_groups g ON g.representative_id=a.id WHERE g.id=?")
                 .bind(id)
                 .fetch_one(&state.read_db)
                 .await?;
@@ -461,6 +475,8 @@ pub async fn artwork(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Response> {
     auth::session(&state, &headers).await?;
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
     if kind != "artists" && kind != "albums" {
         return Err(AppError::NotFound);
     }
@@ -499,9 +515,25 @@ pub async fn artwork(
         .acquire()
         .await
         .map_err(|_| AppError::Internal)?;
+    // A provider failure is not evidence that this entity has no image.
+    // Respect the shared request limit without poisoning the negative cache.
+    let unavailable = || {
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            [
+                (header::CACHE_CONTROL, "no-store"),
+                (header::RETRY_AFTER, "60"),
+            ],
+        )
+            .into_response()
+    };
     let bytes = match spotify_image(&state, &kind, &id).await {
-        Ok(Some(url)) => download(&url).await.ok(),
-        _ => None,
+        Ok(Some(url)) => match download(&url).await {
+            Ok(bytes) => Some(bytes),
+            Err(_) => return Ok(unavailable()),
+        },
+        Ok(None) | Err(AppError::NotFound) => None,
+        Err(_) => return Ok(unavailable()),
     };
     save_image(&state, &kind, &id, "spotify", bytes.as_deref()).await?;
     let bytes = bytes.ok_or(AppError::NotFound)?;

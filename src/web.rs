@@ -23,6 +23,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/healthz", get(health))
+        .route("/api/owner/username", post(auth::set_username))
         .route("/license", get(license))
         .route("/licenses", get(licenses))
         .route("/app.js", get(js))
@@ -59,6 +60,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/artwork/{kind}/{id}",
             get(crate::library::artwork).post(crate::library::image_url),
+        )
+        .route(
+            "/api/v1/library/{kind}/{id}/group",
+            get(crate::name_groups::members).post(crate::name_groups::change),
         )
         .route("/import", get(index))
         .route("/activities", get(index))

@@ -15,6 +15,7 @@ mod ingest;
 pub mod jobs;
 pub mod library;
 pub mod listenbrainz;
+pub mod name_groups;
 pub mod preferences;
 pub mod read_api;
 pub mod recovery;
@@ -54,7 +55,7 @@ impl AppState {
             spotify: spotify::Spotify::new(),
             login_attempts: Default::default(),
             artwork_gate: Default::default(),
-            artwork_fetches: Arc::new(tokio::sync::Semaphore::new(4)),
+            artwork_fetches: Arc::new(tokio::sync::Semaphore::new(1)),
             dashboard_cache: Default::default(),
         }
     }

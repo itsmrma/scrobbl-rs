@@ -51,7 +51,10 @@ const test = base.extend({
           .toBe(200);
         const session = await (
           await request.post("/api/setup", {
-            data: { password: "a local browser test password" },
+            data: {
+              username: "owner",
+              password: "a local browser test password",
+            },
             headers: { Origin: baseURL },
           })
         ).json();
@@ -99,7 +102,7 @@ const test = base.extend({
         await rm(directory, { recursive: true, force: true });
       }
     },
-    { scope: "worker" },
+    { scope: "test" },
   ],
   baseURL: async ({ auditApp }, use) => use(auditApp),
 });
@@ -113,6 +116,7 @@ async function login(page, path = "/dashboard") {
     fullPage: true,
     animations: "disabled",
   });
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");
@@ -489,4 +493,161 @@ test("neutral tinted surfaces retain readable text for every palette and extreme
   });
   for (const sample of ratios)
     expect(sample.ratio, JSON.stringify(sample)).toBeGreaterThanOrEqual(4.5);
+});
+
+test("ranking categories keep distinct identities during tab changes and back navigation", async ({
+  page,
+}) => {
+  await login(page, "/rankings/artists?period=all");
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const expected = Object.fromEntries(
+    ["artists", "albums", "tracks"].map((kind) => [
+      kind,
+      archive.rankings[kind][0].name,
+    ]),
+  );
+  for (const kind of ["albums", "tracks", "artists", "tracks"]) {
+    const response = page.waitForResponse((r) =>
+      r.url().includes(`/api/v1/consultation/rankings/${kind}?`),
+    );
+    await page
+      .getByRole("navigation", { name: "Ranking categories" })
+      .getByRole("link", { name: new RegExp(`^${kind}`, "i") })
+      .click();
+    const data = await (await response).json();
+    expect(data.items[0].name).toBe(expected[kind]);
+    const rows = page.locator(
+      "#main > .panel .rank-name a, #main > .rankings-panel .rank-name a",
+    );
+    await expect(rows.filter({ hasText: expected[kind] })).toBeVisible();
+    for (const other of Object.keys(expected).filter((k) => k !== kind))
+      await expect(rows.filter({ hasText: expected[other] })).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("navigation", { name: "Ranking categories" })
+        .locator('[aria-current="page"]'),
+    ).toHaveAttribute("href", new RegExp(`/rankings/${kind}`));
+  }
+  await page.goBack();
+  await expect(
+    page
+      .locator("#main > .panel .rank-name a")
+      .filter({ hasText: expected.artists }),
+  ).toBeVisible();
+});
+
+test("connection cards show a verified check and a readable automatic wait", async ({
+  page,
+  browserName,
+}) => {
+  await login(page, "/settings/connections");
+  const status = await (await page.request.get("/api/spotify/status")).json();
+  await page.route("**/api/spotify/status", (route) =>
+    route.fulfill({
+      json: {
+        ...status,
+        configured: true,
+        connected: true,
+        connection: "verified",
+        collection: "waiting",
+        verified_at_ms: Date.now() - 60000,
+        retry_at_ms: Date.now() + 35 * 60000,
+        last_error: "Spotify request limit reached. Retrying in 2100 seconds.",
+      },
+    }),
+  );
+  await page.reload();
+  await expect(page.locator("#connection-badge")).toContainText("Connected");
+  await expect(page.locator("#connection-badge")).toHaveClass(
+    /connection-verified/,
+  );
+  const summary = page.locator(".spotify-card > summary");
+  await summary.click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
+  ).toContainText("resume automatically");
+  await expect(page.locator(".spotify-card > summary")).not.toContainText(
+    "2100 seconds",
+  );
+  await page.locator(".guide > summary").first().click();
+  await page.screenshot({
+    path: `test-results/gui-feedback-connections-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("name groups can be separated and rejoined from the edit page", async ({
+  page,
+}) => {
+  await login(page, "/rankings/artists?period=all");
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const item = archive.rankings.artists[0];
+  await page.goto(`/music/artists/${item.id}/edit`);
+  await expect(
+    page.getByRole("heading", { name: "Grouped by name" }),
+  ).toBeVisible();
+  await page.locator(".group-members input[type=checkbox]").first().check();
+  await page.getByRole("button", { name: "Separate selected entries" }).click();
+  await expect(page).not.toHaveURL(new RegExp(item.id));
+  await expect(
+    page.getByRole("button", { name: "Rejoin selected by name" }),
+  ).toBeVisible();
+  await page.locator(".group-members input[type=checkbox]").first().check();
+  await page.getByRole("button", { name: "Rejoin selected by name" }).click();
+  await expect(page).toHaveURL(new RegExp(item.id));
+});
+
+test("yearly activity labels and full details remain readable without clipped tooltips", async ({
+  page,
+  browserName,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  const values = [4738, 4581, 9469, 11761, 19815, 16559, 34462, 26764];
+  await page.route("**/api/v1/consultation/activity?*", (route) =>
+    route.fulfill({
+      json: {
+        grain: "year",
+        mixed_week_starts: false,
+        buckets: values.map((listens, index) => ({
+          start: `${2019 + index}-01-01`,
+          through: `${2019 + index}-12-31`,
+          listens,
+          actual_ms: listens * 180000,
+          estimated_ms: 0,
+          unknown_durations: 0,
+          partial: index === 0 || index === 7,
+        })),
+      },
+    }),
+  );
+  await login(page, "/dashboard?period=all&grain=year");
+  await expect(page.locator(".chart-segment")).toHaveCount(8);
+  await page.locator(".chart-segment").nth(6).hover();
+  await expect(page.locator(".chart-readout")).toContainText("34,462");
+  await expect(page.locator(".chart-readout")).toContainText(
+    "2025-01-01 – 2025-12-31",
+  );
+  const inside = await page.locator(".chart-readout").evaluate((node) => {
+    const box = node.getBoundingClientRect(),
+      panel = node.closest("article").getBoundingClientRect();
+    return (
+      box.top >= panel.top &&
+      box.bottom <= panel.bottom &&
+      box.right <= panel.right
+    );
+  });
+  expect(inside).toBe(true);
+  await expect(
+    page.locator(".chart-segment").nth(6).locator("small").first(),
+  ).toHaveText("2025");
+  await page.screenshot({
+    path: `test-results/gui-activity-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
 });

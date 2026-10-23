@@ -24,6 +24,7 @@ import type {
   Limits,
   Details,
   Edit,
+  GroupPage,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -94,12 +95,29 @@ export type Session = {
   authenticated: boolean;
   setup_required: boolean;
   csrf: string | null;
+  username_required?: boolean;
+  username_setup_required?: boolean;
+  username?: string;
 };
 export type ConnectOutcome = {
   outcome: "pending" | "processing" | "connected" | "error";
   message: string | null;
 };
 export const api = {
+  nameGroup: (kind: string, id: string, q: string, page: number) =>
+    request<GroupPage>(
+      `/api/v1/library/${kind}/${id}/group?${new URLSearchParams({ q, page: String(page) })}`,
+    ),
+  changeNameGroup: (
+    kind: string,
+    id: string,
+    action: string,
+    member_ids: string[],
+  ) =>
+    post<{ group_id: string }>(`/api/v1/library/${kind}/${id}/group`, {
+      action,
+      member_ids,
+    }),
   listenBrainzLimits: () => request<Limits>("/api/v1/listenbrainz/limits"),
   importListenBrainz: (form: FormData) =>
     post<{ jobs: string[] }>("/api/v1/listenbrainz/upload", form),
@@ -125,8 +143,12 @@ export const api = {
   saveApiOrigins: (origins: string[]) =>
     post("/api/v1/api-keys/cors", { origins }),
   session: () => request<Session>("/api/session"),
-  login: (password: string, setup: boolean) =>
-    post<{ csrf: string }>(setup ? "/api/setup" : "/api/login", { password }),
+  login: (password: string, setup: boolean, username?: string) =>
+    post<{ csrf: string }>(setup ? "/api/setup" : "/api/login", {
+      password,
+      username,
+    }),
+  setUsername: (username: string) => post("/api/owner/username", { username }),
   logout: () => post("/api/logout"),
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>

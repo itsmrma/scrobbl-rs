@@ -83,7 +83,7 @@ def main():
             stack("config", "--quiet")
             stack("up", "-d", "--pull", "never")
             assert ready()["setup_required"]
-            csrf = request("/api/setup", {"password": "disposable Docker smoke password"})["csrf"]
+            csrf = request("/api/setup", {"username":"owner","password": "disposable Docker smoke password"})["csrf"]
             preferences = request("/api/v1/preferences")
             preferences["name"] = "Docker persistence smoke"
             request("/api/v1/preferences", {"preferences": preferences, "calendar_scope": "future"})
@@ -146,7 +146,7 @@ def main():
             stack("up", "-d", "--force-recreate", "--pull", "never")
             session = ready()
             assert not session["setup_required"] and not session["authenticated"]
-            csrf = request("/api/login", {"password": restored_password})["csrf"]
+            csrf = request("/api/login", {"username":"owner","password": restored_password})["csrf"]
             assert request("/api/history")["total"] == 1
             assert request("/api/v1/preferences")["name"] == "Docker persistence smoke"
             assert request("/api/v1/recovery")["paused"]
@@ -175,7 +175,7 @@ def main():
                    "--tmpfs", "/data/backups:rw,size=64k,uid=10001,gid=10001,mode=0700",
                    "--publish", f"127.0.0.1:{port}:3210", "--env", f"SCROBBL_EXTERNAL_ORIGIN={origin}", args.image)
             ready()
-            csrf = request("/api/login", {"password": restored_password})["csrf"]
+            csrf = request("/api/login", {"username":"owner","password": restored_password})["csrf"]
             full_id = request("/api/v1/recovery", {"kind": "backup"})["id"]
             failed = wait_asset(full_id, "failed")
             assert request("/api/history")["total"] == 1

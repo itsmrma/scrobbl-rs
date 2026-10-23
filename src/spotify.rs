@@ -26,6 +26,7 @@ pub struct Spotify {
     now_gate: Arc<Mutex<()>>,
     wake: Arc<Notify>,
     cache: Arc<Mutex<Option<(i64, Value)>>>,
+    catalogue_next: Arc<Mutex<tokio::time::Instant>>,
     // Fixed production endpoints. Tests substitute a local HTTP server, never user-controlled URLs.
     pub(crate) api_base: String,
     pub(crate) token_url: String,
@@ -51,6 +52,7 @@ impl Spotify {
             now_gate: Default::default(),
             wake: Default::default(),
             cache: Default::default(),
+            catalogue_next: Arc::new(Mutex::new(tokio::time::Instant::now())),
             api_base: "https://api.spotify.com/v1".into(),
             token_url: "https://accounts.spotify.com/api/token".into(),
         }
@@ -512,6 +514,13 @@ pub(crate) async fn api_get(
     path: &str,
     params: &[(&str, String)],
 ) -> Result<Value> {
+    if path.starts_with("/artists/") || path.starts_with("/albums/") || path.starts_with("/tracks/")
+    {
+        // Optional images yield to collection and now playing while waiting.
+        let mut next = state.spotify.catalogue_next.lock().await;
+        tokio::time::sleep_until(*next).await;
+        *next = tokio::time::Instant::now() + Duration::from_secs(3);
+    }
     let _gate = state.spotify.gate.lock().await;
     api_get_locked(state, path, params)
         .await
@@ -559,9 +568,7 @@ async fn api_get_locked(
             StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
         )
     {
-        return Err(AppError::Spotify(
-            "Spotify artwork is unavailable for this item or app.".into(),
-        ));
+        return Err(AppError::NotFound);
     }
     let value = checked_json(state, response).await?;
     let response_received_at_ms = auth::now_ms();

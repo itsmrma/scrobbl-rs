@@ -3,6 +3,7 @@ const password = "a local browser test password";
 async function login(page, path = "/settings/general") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page.getByLabel("Password", { exact: true }).fill(password);
   if (session.setup_required)
     await page.getByLabel("Confirm password").fill(password);
@@ -239,10 +240,12 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
   await expect(page.locator(".spotify-card")).toHaveAttribute("open", "", {
     timeout: 10000,
   });
-  await page.locator(".spotify-card > summary").click();
   await expect(page.locator(".spotify-card > summary")).toContainText(
-    "Reconnect your account",
+    "Action required",
   );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Spotify needs your attention" }),
+  ).toContainText("Reconnect your account");
   spotify = {
     ...spotify,
     connection: "verified",
@@ -253,10 +256,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     last_sync_ms: Date.now(),
   };
   await expect(page.locator("#connection-badge")).toContainText(
-    "Authorization verified",
+    "Connected · verified on last request",
     { timeout: 10000 },
   );
-  await page.locator(".spotify-card > summary").click();
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.clock.install();

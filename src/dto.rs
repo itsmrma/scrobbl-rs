@@ -283,6 +283,8 @@ mod tests {
             ActivityDetail::decl(&config),
             RowIssue::decl(&config),
             crate::listenbrainz::Limits::decl(&config),
+            crate::name_groups::GroupMember::decl(&config),
+            crate::name_groups::GroupPage::decl(&config),
             crate::library::Details::decl(&config),
             crate::library::Edit::decl(&config),
             crate::imports::ImportLimits::decl(&config),

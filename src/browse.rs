@@ -132,6 +132,7 @@ pub async fn music(
     auth::session(&state, &headers).await?;
     let mut view = state.storage.read_view().await?;
     let conn = &mut *view.transaction;
+    let id = crate::name_groups::canonical(conn, &kind, &id).await?;
     let sql = match kind.as_str() {
         "artists" => {
             filters.artist = Some(id.clone());

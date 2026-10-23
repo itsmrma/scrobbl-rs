@@ -174,6 +174,16 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
             params![id, artist_id, ordinal as i64],
         )?;
     }
+    for artist in &track.artists {
+        let source_id: String=optional(conn,"SELECT entity_id FROM entity_links WHERE kind='artist' AND external_id=? AND (namespace='spotify' OR namespace=?)",params![artist.id,format!("track:{id}")])?.ok_or(AppError::Internal)?;
+        crate::name_groups::attach(conn, "artists", &source_id)?;
+    }
+    if let Some(album) =
+        optional::<Option<String>>(conn, "SELECT album_id FROM tracks WHERE id=?", [&id])?.flatten()
+    {
+        crate::name_groups::attach(conn, "albums", &album)?;
+    }
+
     Ok((id, true))
 }
 pub(crate) fn publish(conn: &Connection, affected: &BTreeSet<String>) -> Result<()> {

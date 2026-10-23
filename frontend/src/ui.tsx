@@ -2,6 +2,11 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
 
+export const ArtworkContext = createContext<{
+  connected: boolean;
+  retryAt: number | null;
+}>({ connected: false, retryAt: null });
+
 export function Icon({ children }: { children: string }) {
   return (
     <span className="material-icons-outlined" aria-hidden="true">
@@ -27,7 +32,30 @@ export function Cover({
 }) {
   const [failed, setFailed] = useState(false);
   const [revision, setRevision] = useState(0);
+  const artwork = useContext(ArtworkContext);
   useEffect(() => setFailed(false), [url]);
+  useEffect(() => {
+    if (!failed || !artwork.connected || !url?.startsWith("/api/v1/artwork/"))
+      return;
+    // Retry once the shared cooldown expires. Failed images also recover after
+    // a temporary network failure without requiring the owner to reload.
+    const due =
+      Date.now() + Math.max(60_000, (artwork.retryAt || 0) - Date.now() + 1000);
+    const retry = () => {
+      if (!document.hidden && Date.now() >= due) {
+        setFailed(false);
+        setRevision((v) => v + 1);
+      }
+    };
+    const timer = setTimeout(retry, due - Date.now());
+    document.addEventListener("visibilitychange", retry);
+    window.addEventListener("online", retry);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", retry);
+      window.removeEventListener("online", retry);
+    };
+  }, [failed, artwork.connected, artwork.retryAt, url]);
   useEffect(() => {
     const changed = (event: Event) => {
       const { kind, id } = (event as CustomEvent<{ kind: string; id: string }>)
@@ -121,12 +149,39 @@ export function Heading({
     </div>
   );
 }
-export function ErrorText({ children }: { children?: ReactNode }) {
+export function Notice({
+  children,
+  title,
+  tone = "error",
+}: {
+  children?: ReactNode;
+  title: string;
+  tone?: "error" | "warning" | "success" | "info";
+}) {
   return children ? (
-    <p className="form-error" role="alert">
-      {children}
-    </p>
+    <div
+      className={`notice notice-${tone}`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      <Icon>
+        {
+          {
+            error: "error_outline",
+            warning: "schedule",
+            success: "check_circle",
+            info: "info",
+          }[tone]
+        }
+      </Icon>
+      <div>
+        <strong>{title}</strong>
+        <div className="notice-message">{children}</div>
+      </div>
+    </div>
   ) : null;
+}
+export function ErrorText({ children }: { children?: ReactNode }) {
+  return <Notice title="Something needs attention">{children}</Notice>;
 }
 export const ToastContext = createContext<
   (message: string, error?: boolean) => void

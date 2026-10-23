@@ -1,3 +1,4 @@
+import { NameGroup } from "./name-groups";
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
@@ -339,6 +340,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
               <ErrorText>{error}</ErrorText>
             </article>
           )}
+          {kind !== "tracks" && <NameGroup kind={kind} id={id} />}
         </div>
       ) : (
         !details.error && <p role="status">Loading details…</p>

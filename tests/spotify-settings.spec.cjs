@@ -6,11 +6,9 @@ async function openSpotify(page) {
   await expect(card).toBeVisible();
   if (!(await card.evaluate((element) => element.open)))
     await card.locator("summary").first().click();
-  const intervals = card
-    .locator(".connection-monitor")
-    .filter({
-      has: page.locator("summary").filter({ hasText: /^Refresh intervals$/ }),
-    });
+  const intervals = card.locator(".connection-monitor").filter({
+    has: page.locator("summary").filter({ hasText: /^Refresh intervals$/ }),
+  });
   if (!(await intervals.evaluate((element) => element.open)))
     await intervals.locator("summary").click();
 }
@@ -25,6 +23,7 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/settings/connections");
   const session = await (await page.request.get("/api/session")).json();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");
@@ -55,7 +54,9 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
     }),
   );
   await page.getByRole("button", { name: "Save intervals" }).click();
-  await expect(page.getByRole("alert")).toContainText("Save unavailable");
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Save unavailable" }),
+  ).toContainText("Save unavailable");
   await expect(collection).toHaveValue("90");
   await page.unroute("**/api/spotify/intervals");
   await page.getByRole("button", { name: "Save intervals" }).click();

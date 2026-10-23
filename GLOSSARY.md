@@ -62,3 +62,10 @@ L'insieme degli ascolti cancellati che possono ancora essere recuperati prima de
 
 **Calendario assegnato**:
 Il fuso orario e il giorno di inizio settimana usati per collocare un ascolto nei giorni e nelle settimane della consultazione. È distinto dall’istante originale dell’ascolto e può differire fra ascolti acquisiti con impostazioni diverse.
+
+**Raggruppamento per nome**:
+La consultazione congiunta di schede artista con lo stesso nome, o album con lo stesso titolo e artista. Non dimostra che le identità originali coincidano e può essere modificata senza perdere le schede sorgente.
+
+**Separazione dal gruppo**:
+La scelta di consultare separatamente una o più schede prima raggruppate per nome, per distinguere per esempio degli omonimi. È reversibile e non cancella ascolti o informazioni originali.
+_Avoid_: Decoupling, cancellazione di duplicati.

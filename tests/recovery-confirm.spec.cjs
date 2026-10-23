@@ -69,6 +69,7 @@ test("confirmed restore survives restart and requires new access and explicit re
   try {
     await start();
     await page.goto("/");
+    await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
       .fill("original browser password");
@@ -125,6 +126,7 @@ test("confirmed restore survives restart and requires new access and explicit re
     await expect(
       page.getByRole("button", { name: "Sign in", exact: true }),
     ).toBeVisible();
+    await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
       .fill("new browser recovery password");

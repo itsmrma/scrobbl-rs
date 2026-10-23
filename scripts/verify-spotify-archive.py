@@ -166,7 +166,7 @@ def main():
         env['SCROBBL_DATA_DIR'] = str(destination)
         cookie, csrf = None, None
         start()
-        with api('/api/setup', {'password': secrets.token_hex(24)}) as response:
+        with api('/api/setup', {'username':'owner','password': secrets.token_hex(24)}) as response:
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         old_cookie = cookie
@@ -200,7 +200,7 @@ def main():
         except urllib.error.HTTPError as error:
             assert error.code == 401
         cookie, csrf = None, None
-        with api('/api/login', {'password':password}) as response:
+        with api('/api/login', {'username':'owner','password':password}) as response:
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         assert cookie != old_cookie
@@ -220,7 +220,7 @@ def main():
                 'source_disk':original_disk,'restored_disk':restored_disk}
     try:
         start()
-        with api('/api/setup', {'password': secrets.token_hex(24)}) as response:
+        with api('/api/setup', {'username':'owner','password': secrets.token_hex(24)}) as response:
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         began = time.monotonic()

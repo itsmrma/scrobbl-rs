@@ -161,6 +161,21 @@ pub async fn validate_database(
         let n: i64 = query.build_query_scalar().fetch_one(&mut *conn).await?;
         counts.insert(name.into(), n);
     }
+    for table in ["name_groups", "name_group_members"] {
+        let present: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)",
+        )
+        .bind(table)
+        .fetch_one(&mut *conn)
+        .await?;
+        if present {
+            let count: i64 =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                    .fetch_one(&mut *conn)
+                    .await?;
+            counts.insert(table.to_owned(), count);
+        }
+    }
     // Older portable packages are validated before their supported migrations.
     let shared: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='original_payloads')")
         .fetch_one(&mut *conn).await?;
@@ -692,10 +707,11 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
         !store.directory.join("recovery.pending").exists(),
         "A restore is already awaiting restart"
     );
-    ensure!(
-        password.chars().count() >= 12 && password.len() <= 1024,
-        "Choose a new password of at least 12 characters (maximum 1024 bytes)"
-    );
+    let username: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='owner_username'")
+            .fetch_optional(&store.private)
+            .await?;
+    auth::validate_password(&password, username.as_deref())?;
     let asset = asset(store, id).await?;
     ensure!(
         asset.state == "ready" && asset.format == "zip",
@@ -756,6 +772,12 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
         .bind(auth::now_ms())
         .execute(&mut private)
         .await?;
+    if let Some(username) = username {
+        sqlx::query("INSERT INTO settings(key,value) VALUES('owner_username',?)")
+            .bind(username)
+            .execute(&mut private)
+            .await?;
+    }
     private.close().await?;
     std::fs::create_dir_all(new.join("spool/incoming"))?;
     std::fs::create_dir(new.join("snapshots"))?;

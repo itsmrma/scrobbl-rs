@@ -55,6 +55,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       })
       .toBe(200);
     await page.goto("/");
+    await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
       .fill("consultation browser password");
@@ -135,10 +136,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       .getByRole("link", { name: "View all tracks", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Top tracks." }),
+      page.getByRole("heading", { name: "Rankings." }),
     ).toBeVisible();
     const ranking = page.locator("article").filter({
-      has: page.getByRole("heading", { name: "Top tracks", exact: true }),
+      has: page.getByRole("heading", { name: "Your tracks", exact: true }),
     });
     await ranking.getByLabel("Results per page").selectOption("10");
     await expect(ranking.locator(".ranking-row")).toHaveCount(10);
@@ -197,7 +198,8 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page
       .getByRole("combobox", { name: "Source", exact: true })
       .selectOption("spotify_import");
-    await expect(page.locator("#history-total")).toHaveText("2 records");
+    // The source-name artist now combines all of its imported tracks.
+    await expect(page.locator("#history-total")).toHaveText("135 records");
     await page.getByLabel("Find album").fill("Consultation album 010");
     await page
       .getByRole("button", {
@@ -232,14 +234,14 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
           has: page.getByRole("heading", { name: "Albums in this period" }),
         })
         .locator(".music-card"),
-    ).toHaveCount(1);
+    ).toHaveCount(10);
     await page.getByLabel("Period", { exact: true }).selectOption("custom");
     await page.getByLabel("From", { exact: true }).fill("2025-06-01");
     await page.getByLabel("Through", { exact: true }).fill("2025-06-03");
     await page.getByLabel("Group by").selectOption("day");
     await expect(page.locator(".chart-segment:visible")).toHaveCount(3);
     await page.locator(".chart-segment:visible").first().click();
-    await expect(page.locator("#history-total")).toHaveText("2 records");
+    await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(
       page.getByText("Chart segment:", { exact: false }),
     ).toBeVisible();
@@ -250,7 +252,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/rankings/albums?period=all");
     await expect(
-      page.getByRole("heading", { name: "Top albums." }),
+      page.getByRole("heading", { name: "Rankings." }),
     ).toBeVisible();
     expect(
       await page.evaluate(

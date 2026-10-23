@@ -13,7 +13,7 @@ listening history. See [exploring your archive](docs/consultation.md) for filter
 counting rules. For generic Docker,
 Compose and private HTTPS configuration, see [Docker installation](docs/docker.md).
 Read-only API keys, coherent copies and incremental synchronization are available; see the
-[read API guide](docs/read-api.md). Personal name/title corrections, artist/album images and
+[read API guide](docs/read-api.md). Reversible artist/album name groups, personal name/title corrections, images and
 half-star ratings are available; advanced library management remains future work. See the
 [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
 for requirements, confirmed choices, prototype status and open decisions.
@@ -27,8 +27,8 @@ system (on macOS: Xcode Command Line Tools). Then, from this repository:
 ./scripts/run-local.sh
 ```
 
-Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, set your owner password
-(at least 12 characters), and open **Settings** to configure Spotify. The service binds only to
+Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, create your owner username and password
+(at least 15 characters), and open **Settings** to configure Spotify. The service binds only to
 `127.0.0.1`; use that exact address, including the port, rather than `localhost`.
 
 The archive foundations require Rust 1.94 or later and a **new data directory** when moving from

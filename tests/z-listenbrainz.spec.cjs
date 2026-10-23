@@ -70,6 +70,7 @@ test("ListenBrainz upload runs in background, preserves compact provenance and p
 }) => {
   await page.goto("/import");
   const session = await (await page.request.get("/api/session")).json();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");

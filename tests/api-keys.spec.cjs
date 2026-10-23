@@ -71,6 +71,7 @@ test("API key lifecycle, one-time secret, explicit origins and mobile layout", a
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/settings/api-keys");
   const session = await (await page.request.get("/api/session")).json();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");

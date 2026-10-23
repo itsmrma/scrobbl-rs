@@ -45,6 +45,19 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(
     page.getByRole("heading", { name: "Make this space yours" }),
   ).toBeVisible();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
+  await page.getByLabel("Password", { exact: true }).fill("aaaaaaaaaaaaaaa");
+  await page.getByLabel("Confirm password").fill("aaaaaaaaaaaaaaa");
+  await expect(
+    page.getByRole("button", { name: "Create your archive" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Show password" }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
+    "type",
+    "text",
+  );
+  await page.getByRole("button", { name: "Hide password" }).click();
+
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");
@@ -161,6 +174,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");

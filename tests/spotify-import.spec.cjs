@@ -4,6 +4,7 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
   page,
 }) => {
   await page.goto("/import");
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");

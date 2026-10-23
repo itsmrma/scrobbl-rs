@@ -1,3 +1,4 @@
+import { PasswordFeedback } from "./account";
 import { useRef, useState } from "react";
 import { api } from "./api";
 import type {
@@ -369,13 +370,14 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               <input
                 autoComplete="new-password"
                 type="password"
-                minLength={12}
+                minLength={15}
                 maxLength={1024}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
+            <PasswordFeedback password={password} />
             <label>
               Repeat new password
               <input
@@ -400,7 +402,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               disabled={
                 busy ||
                 !confirmed ||
-                password.length < 12 ||
+                Array.from(password).length < 15 ||
                 password !== repeat
               }
             >

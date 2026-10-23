@@ -11,6 +11,7 @@ test("Spotify opens a separate tab; the original dialog follows decline, closure
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/settings/connections");
   const session = await (await page.request.get("/api/session")).json();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password");

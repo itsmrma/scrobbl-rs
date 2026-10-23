@@ -1386,26 +1386,6 @@ footer {
   height: 16px;
   border: 1px solid var(--muted);
 }
-.chart-tip {
-  visibility: hidden;
-  position: absolute;
-  z-index: 3;
-  bottom: 100%;
-  left: 0;
-  width: 230px;
-  padding: 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  text-align: left;
-}
-.chart-segment:last-child .chart-tip {
-  left: auto;
-  right: 0;
-}
-.chart-segment:is(:hover, :focus-visible) .chart-tip {
-  visibility: visible;
-}
 @media (max-width: 600px) {
   .music-heading {
     gap: 12px;
@@ -2214,4 +2194,677 @@ dialog {
 
 .listenbrainz-import .upload-dropzone li {
   overflow-wrap: anywhere;
+}
+
+/* Compact information glyph, with a full touch target. */
+.info-button {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+}
+.info-button > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted);
+}
+.info-button:hover > span {
+  color: var(--text);
+  border-color: var(--text);
+}
+:root {
+  --success: #86dba2;
+}
+:root.theme-light {
+  --success: #246e3c;
+}
+.notice {
+  --notice-color: var(--error);
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--notice-color) 35%, var(--border));
+  background: color-mix(in srgb, var(--notice-color) 7%, var(--surface));
+  color: var(--text);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 16px 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.notice > .material-icons-outlined {
+  color: var(--notice-color);
+  margin-top: 2px;
+}
+.notice > div {
+  min-width: 0;
+}
+.notice strong {
+  display: block;
+  font-size: 14px;
+}
+.notice-message {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.notice-message p {
+  margin: 6px 0 0;
+}
+.notice-warning {
+  --notice-color: var(--warning);
+}
+.notice-success {
+  --notice-color: var(--success);
+}
+.notice-info {
+  --notice-color: var(--muted);
+}
+.connection-title,
+.connection-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.spotify-card > summary {
+  position: relative;
+  list-style: none;
+  padding: 12px 42px 20px 0;
+}
+.spotify-card > summary::-webkit-details-marker {
+  display: none;
+}
+.spotify-card > summary::marker {
+  content: "";
+}
+.spotify-card > summary > .material-icons-outlined {
+  position: absolute;
+  right: 4px;
+  top: 18px;
+  transition: transform var(--motion-fast);
+}
+.spotify-card[open] > summary > .material-icons-outlined {
+  transform: rotate(180deg);
+}
+.spotify-card summary .connection-badge {
+  display: inline-flex;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: 30px;
+  padding: 4px 10px;
+  margin: 12px 0 6px;
+}
+.spotify-card .connection-verified {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 40%, var(--border));
+  background: color-mix(in srgb, var(--success) 7%, var(--surface));
+}
+.connection-steps {
+  display: grid;
+  gap: 16px;
+}
+.connection-step {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+}
+.connection-step > .guide {
+  margin: 20px 0 0;
+}
+.connection-step .connection-actions {
+  margin-left: 48px;
+}
+.spotify-details .guide,
+.spotify-details .connection-monitor {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 0;
+  margin-bottom: 12px;
+  overflow: clip;
+}
+.spotify-details .guide > summary,
+.spotify-details .connection-monitor > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  cursor: pointer;
+  background: var(--surface-raised);
+  min-height: 64px;
+}
+.spotify-details .guide > summary::-webkit-details-marker,
+.spotify-details .connection-monitor > summary::-webkit-details-marker {
+  display: none;
+}
+.spotify-details .guide > summary::marker,
+.spotify-details .connection-monitor > summary::marker {
+  content: "";
+}
+.spotify-details .guide > summary > span:not(.material-icons-outlined) {
+  flex: 1;
+  min-width: 0;
+}
+.spotify-details .guide > summary strong,
+.spotify-details .guide > summary small {
+  display: block;
+}
+.spotify-details .guide > summary small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  margin-top: 2px;
+}
+.spotify-details .guide > summary > .material-icons-outlined:last-child {
+  transition: transform var(--motion-fast);
+}
+.spotify-details .guide[open] > summary > .material-icons-outlined:last-child {
+  transform: rotate(180deg);
+}
+.spotify-details .guide[open] > summary,
+.spotify-details .connection-monitor[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+.spotify-details .guide > :not(summary),
+.spotify-details .connection-monitor > :not(summary) {
+  margin: 18px;
+}
+.spotify-details .guide > ol {
+  margin-left: 18px;
+  padding-left: 22px;
+}
+.spotify-details details details {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.spotify-details .guide > form {
+  max-width: 660px;
+}
+.ranking-categories {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+.ranking-categories a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 20px;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.ranking-categories a[aria-current="page"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.ranking-categories a[aria-current="page"] > .material-icons-outlined {
+  color: var(--accent);
+}
+.ranking-categories strong {
+  display: block;
+  font-size: 15px;
+}
+.ranking-categories small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.ranking-period {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.ranking-period .filters {
+  flex: 1;
+}
+.ranking-help {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+}
+.ranking-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.ranking-panel-heading h2 {
+  margin: 0;
+}
+.result-count {
+  color: var(--muted);
+  font-size: 13px;
+}
+.rankings-panel > .filters {
+  display: inline-flex;
+  vertical-align: bottom;
+  margin-right: 24px;
+  gap: 20px;
+}
+.rankings-panel .ranking-row {
+  padding: 20px 0;
+  gap: 20px;
+}
+.rankings-panel .rank-number {
+  font-size: 16px;
+  min-width: 3ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.rankings-panel .ranking-row .cover {
+  width: 60px;
+  height: 60px;
+}
+.rankings-panel .category-artists .cover {
+  border-radius: 50%;
+}
+.rankings-panel .rank-name a {
+  font-size: 16px;
+}
+.rankings-panel .rank-name small {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.rank-plays {
+  display: block;
+  font-variant-numeric: tabular-nums;
+}
+.rank-plays small {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.rankings-panel .rank-plays {
+  font-size: 20px;
+}
+.rank-time {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.rankings-panel .time-composition {
+  font-size: 11px;
+}
+.rankings-panel .rank-value {
+  max-width: 220px;
+}
+.password-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.password-field input {
+  min-width: 0;
+  flex: 1;
+}
+.password-field .icon-button {
+  min-width: 44px;
+}
+.password-guidance {
+  margin: 12px 0 20px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.password-guidance ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.password-guidance li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.password-guidance .material-icons-outlined {
+  font-size: 16px;
+}
+.requirement-met {
+  color: var(--success);
+}
+.auth-card label small,
+.account-upgrade label small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.account-upgrade {
+  width: min(520px, calc(100% - 32px));
+  margin: 10vh auto;
+}
+@media (max-width: 600px) {
+  .connection-step {
+    padding: 18px 14px;
+  }
+  .connection-step .connection-actions {
+    margin-left: 0;
+  }
+  .spotify-details .guide > summary {
+    padding: 14px;
+    gap: 8px;
+  }
+  .ranking-categories {
+    gap: 6px;
+  }
+  .ranking-categories a {
+    padding: 12px 6px;
+    flex-direction: column;
+    text-align: center;
+    gap: 6px;
+  }
+  .ranking-categories small {
+    display: none;
+  }
+  .ranking-categories strong {
+    font-size: 13px;
+  }
+  .rankings-panel .ranking-row {
+    gap: 10px;
+    display: grid;
+    grid-template-columns: 24px 44px minmax(0, 1fr);
+  }
+  .rankings-panel .ranking-row .cover {
+    width: 44px;
+    height: 44px;
+  }
+  .rankings-panel .rank-number {
+    min-width: 0;
+    font-size: 13px;
+  }
+  .rankings-panel .rank-name a {
+    font-size: 14px;
+  }
+  .rankings-panel .rank-value {
+    grid-column: 3;
+    max-width: none;
+    text-align: left;
+  }
+  .rankings-panel .rank-plays {
+    font-size: 16px;
+  }
+  .rankings-panel .time-composition {
+    font-size: 10px;
+  }
+  .rankings-panel .filters {
+    width: 100%;
+    margin-right: 0;
+  }
+}
+.name-group-editor {
+  grid-column: 1 / -1;
+}
+.group-members {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+}
+.group-members li {
+  border-bottom: 1px solid var(--border);
+  padding: 12px 0;
+}
+.group-members .check {
+  align-items: flex-start;
+  gap: 12px;
+}
+.group-members small,
+.group-members code {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.group-members input {
+  margin-top: 6px;
+}
+.info-button > span {
+  pointer-events: none;
+}
+.chart-scroll {
+  padding: 10px 4px 16px;
+}
+.chart-bars {
+  gap: 12px;
+  min-height: 240px;
+}
+.chart-segment {
+  flex: 1 0 64px;
+  min-width: 64px;
+  max-width: none;
+  gap: 8px;
+  border-radius: 6px;
+}
+.chart-segment small {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.chart-segment .chart-bar-value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.bar-space {
+  height: 180px;
+  background: repeating-linear-gradient(
+    to top,
+    transparent 0,
+    transparent 59px,
+    color-mix(in srgb, var(--border) 40%, transparent) 59px,
+    color-mix(in srgb, var(--border) 40%, transparent) 60px
+  );
+}
+.bar {
+  width: min(70%, 80px);
+  border-radius: 6px 6px 0 0;
+  opacity: 0.8;
+  transition:
+    opacity var(--motion-fast),
+    filter var(--motion-fast);
+}
+.chart-segment:is(:hover, :focus-visible) .bar {
+  opacity: 1;
+  filter: brightness(1.1);
+}
+.actual-bar,
+.actual-key {
+  background: var(--accent);
+}
+.estimated-bar,
+.estimated-key {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--accent) 0 3px,
+    var(--surface-raised) 3px 6px
+  );
+}
+.chart-readout {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0 20px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.chart-readout > div:last-child {
+  text-align: right;
+}
+.chart-readout strong {
+  display: block;
+  font-size: 22px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.chart-readout small,
+.chart-readout span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.chart-readout .partial-label {
+  display: inline-flex;
+  margin-left: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  font-size: 10px;
+  vertical-align: middle;
+}
+.history-filters {
+  margin-bottom: 20px;
+}
+.history-filter-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.history-filter-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.history-filter-heading span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.history-filters > .filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0 0 18px;
+}
+.history-filters label {
+  margin: 0;
+  min-width: 0;
+}
+.history-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 18px;
+}
+.history-filter-grid input:not([type="checkbox"]),
+.history-filter-grid select {
+  width: 100%;
+  min-width: 0;
+}
+.history-filter-grid .entity-filter {
+  min-width: 0;
+}
+.history-filter-grid .checkbox-label {
+  min-height: 44px;
+  align-self: end;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-raised);
+  font-weight: 400;
+}
+.history-filter-grid .checkbox-label input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+.history-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 18px;
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.history-filter-actions button {
+  margin: 0;
+}
+.segment-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 16px;
+  margin: 0 0 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  max-width: 100%;
+}
+.segment-filter > .material-icons-outlined {
+  color: var(--muted);
+  font-size: 20px;
+}
+.segment-filter small {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.segment-filter strong {
+  font-size: 14px;
+}
+.segment-filter .icon-button {
+  margin-left: 12px;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+@media (max-width: 750px) {
+  .history-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .history-filter-grid .history-search {
+    grid-column: 1 / -1;
+  }
+  .history-filters > .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 450px) {
+  .history-filter-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .history-filters > .filters {
+    grid-template-columns: 1fr;
+  }
+  .history-filter-heading {
+    gap: 2px;
+  }
+  .chart-readout strong {
+    font-size: 18px;
+  }
+  .chart-readout {
+    gap: 12px;
+  }
+  .chart-readout .partial-label {
+    display: block;
+    margin: 4px 0 0;
+    width: fit-content;
+  }
+}
+.time-help {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-inline: 7px;
+}
+.time-help .info-button {
+  position: absolute;
+  left: -13px;
+  top: -13px;
+  margin: 0;
 }

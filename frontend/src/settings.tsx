@@ -1,3 +1,4 @@
+import { SpotifyNotice } from "./spotify-status";
 import { useEffect, useState } from "react";
 import type { CalendarScope, Preferences, SpotifyStatus } from "./generated";
 import { api } from "./api";
@@ -336,7 +337,14 @@ export function Appearance({
 function HttpsGuide() {
   return (
     <details className="guide">
-      <summary>Connect on a private server with HTTPS</summary>
+      <summary>
+        <Icon>lock</Icon>
+        <span>
+          <strong>Connect on a private server with HTTPS</strong>
+          <small>Private address, certificate and reverse proxy</small>
+        </span>
+        <Icon>expand_more</Icon>
+      </summary>
       <p>
         Use a trusted HTTPS name reachable over LAN or VPN. Keep scrobbl.rs
         private; this setup does not require router port forwarding. Local use
@@ -550,8 +558,10 @@ export function Connections({
     [client, setClient] = useState(""),
     [secret, setSecret] = useState("");
   const toast = useToast();
+  const waiting = !!status?.retry_at_ms && status.retry_at_ms > Date.now();
   const needsAction =
-    status?.connection === "action_required" || !!status?.last_error;
+    status?.connection === "action_required" ||
+    (!!status?.last_error && !waiting);
   useEffect(() => {
     if (needsAction || (status && !status.configured)) setOpen(true);
   }, [needsAction, status?.configured, status?.last_error]);
@@ -610,17 +620,32 @@ export function Connections({
         onToggle={(e) => setOpen(e.currentTarget.open)}
       >
         <summary>
-          <strong>Spotify</strong>
-          <span id="connection-badge">Connection: {connection}</span>
+          <strong className="connection-title">
+            <Icon>headphones</Icon>Spotify
+          </strong>
+          <span
+            id="connection-badge"
+            className={`connection-badge ${status.connected && status.connection === "verified" ? "connection-verified" : ""}`}
+          >
+            <Icon>
+              {status.connected && status.connection === "verified"
+                ? "check_circle"
+                : status.connection === "action_required"
+                  ? "error_outline"
+                  : "link"}
+            </Icon>
+            {status.connected && status.connection === "verified"
+              ? "Connected · verified on last request"
+              : connection}
+          </span>
           <span>Collection: {collection}</span>
-          {status.last_error && (
-            <span className="form-error">{status.last_error}</span>
-          )}
+          <Icon>expand_more</Icon>
           {needsAction && (
             <span>Review the details and the available actions.</span>
           )}
         </summary>
         <div className="spotify-details">
+          <SpotifyNotice status={status} preferences={preferences} />
           <ol
             className="connection-steps"
             aria-label="Spotify connection steps"
@@ -651,7 +676,14 @@ export function Connections({
                 </div>
               </div>
               <details className="guide" open={!status.configured}>
-                <summary>Create or configure your Spotify app</summary>
+                <summary>
+                  <Icon>settings</Icon>
+                  <span>
+                    <strong>Create or configure your Spotify app</strong>
+                    <small>Redirect URI and app credentials</small>
+                  </span>
+                  <Icon>expand_more</Icon>
+                </summary>
                 <p>
                   Complete these steps in order. Keep the Developer Dashboard
                   open alongside scrobbl.rs.
@@ -689,7 +721,7 @@ export function Connections({
                   <li>
                     Click <strong>Save</strong> in the Spotify Developer
                     Dashboard after adding the redirect URI. Unsaved changes
-                    cause ?redirect_uri: Not matching configuration?. Check app
+                    cause “redirect_uri: Not matching configuration”. Check app
                     eligibility and permitted users, then copy the Client ID and
                     Client Secret into the fields below.
                   </li>
