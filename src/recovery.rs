@@ -107,7 +107,7 @@ pub fn hash_file(path: &Path) -> anyhow::Result<(String, u64)> {
         hash.update(&buffer[..n]);
         size += n as u64;
     }
-    Ok((format!("{:x}", hash.finalize()), size))
+    Ok((crate::auth::encode_hex(&hash.finalize()), size))
 }
 fn valid_member(name: &str) -> bool {
     name == "archive.db"
@@ -420,7 +420,7 @@ fn unpack(package: &Path, work: &Path, materialize_spool: bool) -> anyhow::Resul
             file.sync_all()?;
         }
         ensure!(
-            format!("{:x}", hash.finalize()) == expected.sha256,
+            crate::auth::encode_hex(&hash.finalize()) == expected.sha256,
             "Backup checksum mismatch"
         );
         if let Some(hash) = expected.name.strip_prefix("spool/") {
@@ -757,12 +757,9 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
         .run_direct(None, &mut private, false)
         .await?;
     let hash = tokio::task::spawn_blocking(move || {
-        use argon2::{
-            Argon2, PasswordHasher,
-            password_hash::{SaltString, rand_core::OsRng},
-        };
+        use argon2::{Argon2, PasswordHasher};
         Argon2::default()
-            .hash_password(password.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(password.as_bytes())
             .map(|v| v.to_string())
             .map_err(|_| anyhow::anyhow!("Password preparation failed"))
     })

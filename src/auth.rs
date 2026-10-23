@@ -2,17 +2,13 @@ use crate::{
     AppState,
     error::{AppError, Result},
 };
-use argon2::{
-    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::{SaltString, rand_core::OsRng},
-};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json,
     extract::State,
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use rand::RngCore;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -24,7 +20,7 @@ pub fn now_ms() -> i64 {
 }
 pub fn random_secret() -> String {
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    rand::fill(&mut bytes);
     encode_hex(&bytes)
 }
 pub(crate) fn encode_hex(bytes: &[u8]) -> String {
@@ -37,7 +33,7 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 pub fn digest(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    encode_hex(&Sha256::digest(value.as_bytes()))
 }
 fn session_cookie(headers: &HeaderMap) -> Option<&str> {
     headers
@@ -257,7 +253,7 @@ pub async fn setup(
     validate_password(&form.password, Some(&username))?;
     let hash = tokio::task::spawn_blocking(move || {
         Argon2::default()
-            .hash_password(form.password.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(form.password.as_bytes())
             .map(|v| v.to_string())
             .map_err(|_| AppError::Internal)
     })
