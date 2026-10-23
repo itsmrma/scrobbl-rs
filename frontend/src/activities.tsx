@@ -1,3 +1,4 @@
+import type { ArtworkActivity } from "./artwork-activity";
 import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
@@ -147,14 +148,78 @@ export function SidebarActivity({ job }: { job: Activity }) {
     </Link>
   );
 }
+export function ArtworkWork({
+  work,
+  compact = false,
+}: {
+  work: ArtworkActivity;
+  compact?: boolean;
+}) {
+  if (!work.total) return null;
+  const progress = (
+    <div className="activity-progress">
+      {work.pending > 0 && (
+        <progress
+          aria-label="Artwork download progress"
+          value={work.loaded + work.failed}
+          max={work.total}
+        />
+      )}
+      <small>
+        {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
+        remaining
+        {work.failed > 0
+          ? " · " + number.format(work.failed) + " could not load"
+          : ""}
+      </small>
+    </div>
+  );
+  return compact ? (
+    <Link to="/activities" className="sidebar-job artwork-work">
+      <span className="sidebar-job-heading">
+        <Icon>downloading</Icon>
+        <strong>Downloading artwork</strong>
+        <Icon>chevron_right</Icon>
+      </span>
+      {progress}
+    </Link>
+  ) : (
+    <article
+      className="activity-row panel artwork-work"
+      aria-label="Artwork downloads"
+    >
+      <div className="activity-symbol">
+        <Icon>{work.pending ? "downloading" : "photo_library"}</Icon>
+      </div>
+      <div className="activity-content">
+        <div className="activity-row-heading">
+          <strong>
+            {work.pending ? "Downloading artwork" : "Artwork downloads"}
+          </strong>
+          <span className="state-badge">
+            {work.pending
+              ? "In progress"
+              : work.failed
+                ? "Finished with unavailable images"
+                : "Complete"}
+          </span>
+        </div>
+        <p>Artwork is saved locally and reused across your archive.</p>
+        {progress}
+      </div>
+    </article>
+  );
+}
 export function Activities({
   jobs,
+  artworkWork,
   error,
   path,
   preferences,
   refresh,
 }: {
   jobs: Activity[];
+  artworkWork: ArtworkActivity;
   error: string;
   path: string;
   preferences: Preferences;
@@ -474,7 +539,10 @@ export function Activities({
           <div className="activities-summary">
             <div>
               <Icon>pending_actions</Icon>
-              <strong>{jobs.filter(isActive).length}</strong>
+              <strong>
+                {jobs.filter(isActive).length +
+                  (artworkWork.pending > 0 ? 1 : 0)}
+              </strong>
               <span>In progress</span>
             </div>
             <div>
@@ -493,6 +561,7 @@ export function Activities({
               results and recovery actions.
             </p>
           </div>
+          <ArtworkWork work={artworkWork} />
           <div className="activities-toolbar">
             <h2>Activity history</h2>
             <label>
@@ -569,7 +638,11 @@ export function Activities({
           ) : (
             <div className="empty activity-empty">
               <Icon>task_alt</Icon>
-              <h2>No activities to show</h2>
+              <h2>
+                {artworkWork.total
+                  ? "No other activities"
+                  : "No activities to show"}
+              </h2>
               <p>
                 Imports, collection and calendar changes leave a saved report
                 here. You can leave the page while the server works.

@@ -730,7 +730,9 @@ test("history filters collapse without clearing the selection and music history 
         kind === "tracks" ? 0 : 1,
       );
       if (kind === "albums")
-        await expect(row.locator(".listen-title")).toContainText("Seed artist");
+        await expect(row.locator(".listen-title .listen-artists")).toHaveCount(
+          0,
+        );
       await row.locator("summary").click();
       await expect(row).toContainText("Playback timestamp (UTC)");
       await expect(row).toContainText("Archived on");
@@ -1356,6 +1358,14 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
     })),
   );
   expect(cells.reduce((sum, t) => sum + t.w * t.h, 0)).toBeCloseTo(1, 5);
+  for (const cell of await collage.locator(".collage-tile").all()) {
+    const box = await cell.boundingBox();
+    expect(Math.abs(box.width - box.height)).toBeLessThan(1);
+  }
+  await expect(
+    albums.getByRole("button", { name: "Collage", exact: true }),
+  ).toHaveCSS("outline-style", "solid");
+
   for (let i = 0; i < cells.length; i++)
     for (let j = i + 1; j < cells.length; j++) {
       const a = cells[i],
@@ -1374,7 +1384,10 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   const png = await require("node:fs/promises").readFile(await download.path());
   expect(png.subarray(1, 4).toString()).toBe("PNG");
   expect(png.readUInt32BE(16)).toBe(1200);
-  expect(png.readUInt32BE(20)).toBe(1320);
+  const preview = await collage.locator(".collage-preview").boundingBox();
+  expect(png.readUInt32BE(20)).toBe(
+    Math.round((preview.height / preview.width) * 1200) + 120,
+  );
   await page.screenshot({
     path: `test-results/gui-${browserName}-album-collage.png`,
     fullPage: true,
@@ -1656,4 +1669,308 @@ test("overview charts and activity reports have compact responsive layouts", asy
       .getByRole("link", { name: "All activities", exact: true })
       .click();
   }
+});
+
+test("period notices do not move controls and music artwork stays square", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  const controls = page.locator(".overview-heading .filters select");
+  const before = await controls.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      x: node.getBoundingClientRect().x,
+      y: node.getBoundingClientRect().y,
+    })),
+  );
+  await controls.first().selectOption("month");
+  const after = await controls.evaluateAll((nodes) =>
+    nodes.map((node) => ({
+      x: node.getBoundingClientRect().x,
+      y: node.getBoundingClientRect().y,
+    })),
+  );
+  expect(after).toEqual(before);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/gui-seventh-period.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const kind of ["artists", "albums", "tracks"]) {
+    await page.goto("/music/" + kind + "/" + archive.rankings[kind][0].id);
+    const cover = page.locator(".music-heading > .cover");
+    await expect(cover).toBeVisible();
+    await expect
+      .poll(async () => {
+        const box = await cover.boundingBox();
+        return box ? Math.abs(box.width - box.height) : Infinity;
+      })
+      .toBeLessThan(1);
+    await expect(cover).toHaveCSS("object-fit", "contain");
+    if (kind === "albums") {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({
+        path: "test-results/gui-seventh-square-header.png",
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+});
+
+test("history collaborators share a baseline and album edits have equal panels", async ({
+  page,
+}) => {
+  await page.route("**/api/history?*", async (route) => {
+    const response = await route.fetch(),
+      data = await response.json();
+    data.items = data.items.map((item) => ({
+      ...item,
+      artists: [
+        { id: "first", name: "First artist" },
+        { id: "second", name: "Second artist" },
+      ],
+    }));
+    await route.fulfill({ json: data });
+  });
+  await login(page, "/history?period=all");
+  const artists = page.locator(".listen-title small").first().getByRole("link");
+  await expect(artists).toHaveCount(2);
+  const first = await artists.first().boundingBox(),
+    second = await artists.last().boundingBox();
+  expect(Math.abs(first.y - second.y)).toBeLessThan(1);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/gui-seventh-collaborators.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto("/music/albums/" + archive.rankings.albums[0].id + "/edit");
+  const details = await page.locator(".details-editor").boundingBox(),
+    artwork = await page.locator(".artwork-editor").boundingBox();
+  expect(Math.abs(details.height - artwork.height)).toBeLessThan(1);
+  await expect(
+    page.getByRole("link", { name: "Back to album", exact: true }),
+  ).toHaveClass(/button/);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/gui-seventh-album-edit.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("artwork downloads appear in activities and continue across navigation", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const saved = new Set();
+  let downloads = 0;
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#7c9bac"/><circle cx="300" cy="150" r="130" fill="#e8cb8b"/></svg>';
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("cached"))
+      return route.fulfill(
+        saved.has(url.pathname)
+          ? { contentType: "image/svg+xml", body: svg }
+          : { status: 404, body: "" },
+      );
+    downloads++;
+    await gate;
+    saved.add(url.pathname);
+    await route.fulfill({ contentType: "image/svg+xml", body: svg });
+  });
+  try {
+    await login(page, "/rankings/albums?period=all");
+    await expect(page.locator(".sidebar .artwork-work")).toContainText(
+      "Downloading artwork",
+    );
+    await page.locator(".sidebar .artwork-work").click();
+    const work = page.getByRole("article", {
+      name: "Artwork downloads",
+      exact: true,
+    });
+    await expect(work).toContainText("1 remaining");
+    await expect(work.getByRole("progressbar")).toHaveAttribute("value", "0");
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({
+      path: "test-results/gui-seventh-artwork-" + browserName + ".png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    release();
+    await expect(work).toContainText("1 saved");
+    await expect(work).toContainText("Complete");
+    await expect(page.locator(".sidebar .artwork-work")).toHaveCount(0);
+    await page.goto("/rankings/albums?period=all");
+    await expect(
+      page.locator(".music-card img, .ranking-row img").first(),
+    ).toBeVisible();
+    expect(downloads).toBe(1);
+  } finally {
+    release();
+  }
+});
+
+test("album evidence aligns with closed columns and disclosures animate", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto("/music/albums/" + archive.rankings.albums[0].id);
+  const row = page.locator(".listen-context-albums").first();
+  const dateX = (await row.locator(".listen-date").boundingBox()).x;
+  const archiveX = (await row.locator(".listen-archive").boundingBox()).x;
+  await expect(row.locator(".listen-artists")).toHaveCount(0);
+  const motion = await row.locator("summary").evaluate((summary) => {
+    summary.click();
+    const body = summary.parentElement.querySelector("dl");
+    const animation = body.getAnimations()[0];
+    if (!animation) return null;
+    animation.pause();
+    animation.currentTime = 0;
+    const start = body.getBoundingClientRect().height;
+    animation.currentTime = 80;
+    const middle = body.getBoundingClientRect().height;
+    animation.finish();
+    return {
+      start,
+      middle,
+      end: body.getBoundingClientRect().height,
+      duration: animation.effect.getTiming().duration,
+    };
+  });
+  expect(motion.duration).toBe(160);
+  expect(motion.middle).toBeGreaterThan(motion.start);
+  expect(motion.middle).toBeLessThan(motion.end);
+  expect(
+    Math.abs((await row.locator("dl > div").nth(0).boundingBox()).x - dateX),
+  ).toBeLessThan(1);
+  expect(
+    Math.abs((await row.locator("dl > div").nth(4).boundingBox()).x - archiveX),
+  ).toBeLessThan(1);
+  await row.scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/gui-seventh-evidence-" + browserName + ".png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const reduced = await row.locator("summary").evaluate((summary) => {
+    summary.click();
+    return {
+      open: summary.parentElement.open,
+      animations: summary.parentElement.querySelector("dl").getAnimations()
+        .length,
+    };
+  });
+  expect(reduced).toEqual({ open: false, animations: 0 });
+});
+
+test("weighted collages retain square tiles across sizes and exports", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1600 });
+  await page.route("**/api/v1/artwork/**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const hue =
+      [...path].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body:
+        '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="hsl(' +
+        hue +
+        ',40%,36%)"/><circle cx="300" cy="300" r="210" fill="hsl(' +
+        (hue + 75) +
+        ',60%,72%)"/></svg>',
+    });
+  });
+  await page.route(
+    "**/api/v1/consultation/rankings/albums?*",
+    async (route) => {
+      const data = await (await route.fetch()).json();
+      const source = data.items[0];
+      data.items = Array.from({ length: 25 }, (_, i) => ({
+        ...source,
+        id: "mosaic-" + i,
+        name: "Album " + (i + 1),
+        position: i + 1,
+        cover_url: "/api/v1/artwork/albums/mosaic-" + i,
+        plays: Math.max(1, Math.round(400 / 2 ** (i / 2))),
+        listened_ms: Math.max(1, Math.round(400 / 2 ** (i / 2))) * 180000,
+      }));
+      data.total = 25;
+      return route.fulfill({ json: data });
+    },
+  );
+  await login(page, "/rankings/albums?period=all");
+  await page.getByRole("button", { name: "Collage", exact: true }).click();
+  const collage = page.getByRole("region", {
+    name: "Album collage",
+    exact: true,
+  });
+  for (const count of [9, 16, 25]) {
+    await collage.getByRole("combobox").selectOption(String(count));
+    await expect(collage.locator(".collage-tile")).toHaveCount(count);
+    const boxes = await collage.locator(".collage-tile").evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect();
+        return { x: box.x, y: box.y, w: box.width, h: box.height };
+      }),
+    );
+    expect(boxes[0].w).toBeGreaterThan(boxes.at(-1).w * 1.5);
+    for (let i = 0; i < boxes.length; i++) {
+      expect(Math.abs(boxes[i].w - boxes[i].h)).toBeLessThan(1);
+      for (let j = i + 1; j < boxes.length; j++)
+        expect(
+          Math.max(
+            0,
+            Math.min(boxes[i].x + boxes[i].w, boxes[j].x + boxes[j].w) -
+              Math.max(boxes[i].x, boxes[j].x),
+          ) *
+            Math.max(
+              0,
+              Math.min(boxes[i].y + boxes[i].h, boxes[j].y + boxes[j].h) -
+                Math.max(boxes[i].y, boxes[j].y),
+            ),
+        ).toBeLessThan(1);
+    }
+  }
+  await expect.poll(() => collage.locator("img").count()).toBe(25);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/gui-seventh-weighted-collage-" + browserName + ".png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  const download = page.waitForEvent("download");
+  await collage
+    .getByRole("button", { name: "Download PNG", exact: true })
+    .click();
+  const file = await download;
+  const png = await require("node:fs/promises").readFile(await file.path());
+  const box = await collage.locator(".collage-preview").boundingBox();
+  expect(png.readUInt32BE(16)).toBe(1200);
+  expect(png.readUInt32BE(20)).toBe(
+    Math.round((box.height / box.width) * 1200) + 120,
+  );
 });

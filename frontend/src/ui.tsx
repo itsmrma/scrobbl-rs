@@ -1,3 +1,4 @@
+import { queueArtwork } from "./artwork-activity";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
@@ -80,38 +81,6 @@ export function CopyButton({
     </div>
   );
 }
-// Queue cold image work before it reaches the browser's HTTP connection pool.
-// Cancelling a card releases its place; visible data reads stay independent.
-let artworkBusy = false;
-const artworkQueue: (() => void)[] = [];
-function pumpArtwork() {
-  if (!artworkBusy) artworkQueue.shift()?.();
-}
-function queueArtwork(start: (done: () => void) => void, priority = false) {
-  let started = false,
-    finished = false;
-  const done = () => {
-    if (finished) return;
-    finished = true;
-    if (started) {
-      artworkBusy = false;
-      pumpArtwork();
-    }
-  };
-  const queued = () => {
-    if (finished) {
-      pumpArtwork();
-      return;
-    }
-    started = true;
-    artworkBusy = true;
-    start(done);
-  };
-  if (priority) artworkQueue.unshift(queued);
-  else artworkQueue.push(queued);
-  pumpArtwork();
-  return done;
-}
 export function Cover({
   url,
   large = false,
@@ -124,7 +93,10 @@ export function Cover({
   const [readySource, setReadySource] = useState("");
   const [cacheMiss, setCacheMiss] = useState("");
   const marker = useRef<HTMLElement | null>(null);
-  const release = useRef<{ source: string; done: () => void } | null>(null);
+  const release = useRef<{
+    source: string;
+    done: (loaded: boolean | null) => void;
+  } | null>(null);
   const local = !!url?.startsWith("/api/v1/artwork/");
   const source = local
     ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
@@ -133,6 +105,7 @@ export function Cover({
     if (!local || !source || !marker.current) return;
     let cancel = () => {};
     let pending = false;
+    let current = true;
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
@@ -151,12 +124,23 @@ export function Cover({
               rect.top >= window.innerHeight
             ) {
               pending = false;
-              done();
+              done(null);
               return;
             }
             observer.disconnect();
             release.current = { source, done };
-            setReadySource(source);
+            void fetch(source)
+              .then(async (response) => {
+                if (!response.ok) throw new Error("Artwork download failed");
+                await response.arrayBuffer();
+                done(true);
+                if (current)
+                  setReadySource(source + "&cached=true&downloaded=true");
+              })
+              .catch(() => {
+                done(false);
+                if (current) setFailed(true);
+              });
           }, !!marker.current?.closest(".music-heading"));
         }
       },
@@ -164,13 +148,14 @@ export function Cover({
     );
     observer.observe(marker.current);
     return () => {
+      current = false;
       observer.disconnect();
       cancel();
     };
   }, [local, source, cacheMiss]);
-  const finish = () => {
+  const finish = (loaded: boolean) => {
     const current = release.current;
-    if (current && current.source === source) current.done();
+    if (current && current.source === source) current.done(loaded);
   };
   const artwork = useContext(ArtworkContext);
   useEffect(() => setFailed(false), [url]);
@@ -212,7 +197,8 @@ export function Cover({
     !failed &&
     (!local ||
       readySource === source ||
-      readySource === `${source}&cached=true`) ? (
+      readySource === `${source}&cached=true` ||
+      readySource === source + "&cached=true&downloaded=true") ? (
     <img
       ref={(node) => {
         marker.current = node;
@@ -222,14 +208,14 @@ export function Cover({
       alt=""
       loading={local ? "eager" : "lazy"}
       referrerPolicy="no-referrer"
-      onLoad={finish}
+      onLoad={() => finish(true)}
       onError={() => {
         if (local && readySource.endsWith("&cached=true")) {
           setReadySource("");
           setCacheMiss(source || "");
           return;
         }
-        finish();
+        finish(false);
         setFailed(true);
       }}
     />

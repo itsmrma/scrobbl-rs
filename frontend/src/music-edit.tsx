@@ -210,7 +210,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
   }, [file]);
   return (
     <>
-      <Link to={back} className="back-link">
+      <Link to={back} className="back-link button secondary">
         <Icon>arrow_back</Icon>Back to{" "}
         {kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}
       </Link>

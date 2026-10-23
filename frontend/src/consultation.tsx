@@ -276,7 +276,9 @@ function PeriodFilters({
       {["today", "week", "month", "year"].includes(
         params.get("period") || "",
       ) && (
-        <span className="pill">Current period · incomplete, through now</span>
+        <span className="period-notice">
+          Current period · incomplete, through now
+        </span>
       )}
     </div>
   );
@@ -1437,6 +1439,35 @@ export function MusicPage({
     undefined,
     true,
   );
+  const introduction = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = introduction.current;
+    const header = content?.parentElement;
+    if (!content || !header) return;
+    const resize = () => {
+      const size = Math.min(
+        content.getBoundingClientRect().height,
+        header.clientWidth * 0.42,
+      );
+      const value = Math.round(size) + "px";
+      if (header.style.getPropertyValue("--music-artwork-size") !== value)
+        header.style.setProperty("--music-artwork-size", value);
+    };
+    // Apply measurements outside ResizeObserver delivery: changing the column
+    // can reflow a wrapped title, especially in WebKit.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resize);
+    });
+    observer.observe(content);
+    observer.observe(header);
+    resize();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [result.data?.id]);
   return (
     <>
       <ErrorText>{result.error}</ErrorText>
@@ -1444,7 +1475,7 @@ export function MusicPage({
         <>
           <div className="music-heading">
             <Cover url={result.data.cover_url} large />
-            <div className="music-header-content">
+            <div className="music-header-content" ref={introduction}>
               <Heading
                 title={result.data.name}
                 eyebrow={kind.slice(0, -1).toUpperCase()}

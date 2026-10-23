@@ -1,9 +1,16 @@
+import { useArtworkActivity } from "./artwork-activity";
+import { useDisclosureMotion } from "./disclosure";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
-import { Activities, SidebarActivity, isActive } from "./activities";
+import {
+  Activities,
+  SidebarActivity,
+  ArtworkWork,
+  isActive,
+} from "./activities";
 import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
@@ -32,6 +39,8 @@ import "./style.css";
 import { Auth, UsernameSetup } from "./account";
 
 function Shell({ logout }: { logout: () => void }) {
+  useDisclosureMotion();
+  const artworkWork = useArtworkActivity();
   const path = useLocation(),
     appearance = useAppearance(),
     toast = useToast();
@@ -199,6 +208,7 @@ function Shell({ logout }: { logout: () => void }) {
     document.title = `${title} · ${preferences?.name || "scrobbl.rs"}`;
   }, [title, preferences?.name]);
   const activeJobs = jobs.filter(isActive);
+  const activeCount = activeJobs.length + (artworkWork.pending > 0 ? 1 : 0);
   if (!preferences)
     return (
       <main className="loading">
@@ -292,28 +302,31 @@ function Shell({ logout }: { logout: () => void }) {
                   "activity-link " + (page === "activities" ? "active" : "")
                 }
                 aria-current={page === "activities" ? "page" : undefined}
-                aria-label={`Activities: ${activeJobs.length} active`}
+                aria-label={`Activities: ${activeCount} active`}
               >
                 <Icon>pending_actions</Icon>
                 <span className="nav-copy">
-                  Activities <span className="pill">{activeJobs.length}</span>
+                  Activities <span className="pill">{activeCount}</span>
                 </span>
                 <span className="collapsed-label">
-                  Activities: {activeJobs.length} active
+                  Activities: {activeCount} active
                 </span>
                 {collapsed && (
                   <span className="activity-count" aria-hidden="true">
-                    {activeJobs.length}
+                    {activeCount}
                   </span>
                 )}
               </Link>
               <div className="nav-copy">
                 <p className="subtle" role="status">
                   {jobsError ||
-                    (activeJobs.length
-                      ? `${activeJobs.length} in progress`
+                    (activeCount
+                      ? `${activeCount} in progress`
                       : "No activities running")}
                 </p>
+                {artworkWork.pending > 0 && (
+                  <ArtworkWork work={artworkWork} compact />
+                )}
                 {activeJobs.slice(0, 2).map((job) => (
                   <SidebarActivity key={job.id} job={job} />
                 ))}
@@ -412,7 +425,7 @@ function Shell({ logout }: { logout: () => void }) {
               </button>
               <span>Your library / {title}</span>
               <Link to="/activities" className="mobile-activities">
-                <Icon>pending_actions</Icon>Activities ({activeJobs.length})
+                <Icon>pending_actions</Icon>Activities ({activeCount})
               </Link>
               <span className="private-label">
                 <Icon>lock</Icon>Private archive
@@ -449,6 +462,7 @@ function Shell({ logout }: { logout: () => void }) {
               <section hidden={page !== "activities"}>
                 <Activities
                   jobs={jobs}
+                  artworkWork={artworkWork}
                   error={jobsError}
                   path={path}
                   preferences={preferences}

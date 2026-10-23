@@ -35,15 +35,17 @@ export function ListenList({
                   <Link to={musicLink("tracks", item.track_id)}>
                     {item.title}
                   </Link>
-                  <small>
-                    {item.artists.map((a, i) => (
-                      <span key={a.id}>
-                        {i > 0 && ", "}
-                        <Link to={musicLink("artists", a.id)}>{a.name}</Link>
-                      </span>
-                    ))}
-                    {!item.artists.length && "Unknown artist"}
-                  </small>
+                  {context !== "albums" && (
+                    <small className="listen-artists">
+                      {item.artists.map((a, i) => (
+                        <span key={a.id}>
+                          {i > 0 && ", "}
+                          <Link to={musicLink("artists", a.id)}>{a.name}</Link>
+                        </span>
+                      ))}
+                      {!item.artists.length && "Unknown artist"}
+                    </small>
+                  )}
                 </div>
               </>
             )}
