@@ -456,7 +456,6 @@ async fn automatic_review_revalidates_preserves_originals_and_undoes_whole_batch
 async fn automatic_review_excludes_boundary_repeats_conflicts_and_distinct_identities() {
     for case in [
         "one_second",
-        "same_source",
         "competing",
         "identity",
         "evidence",
@@ -517,6 +516,32 @@ async fn automatic_review_excludes_boundary_repeats_conflicts_and_distinct_ident
             "{case}"
         );
     }
+}
+
+#[tokio::test]
+async fn automatic_review_includes_same_source_duplicates_within_one_second() {
+    let (_dir, state, token) = setup().await;
+    review_copy(
+        &state,
+        "spotify_import",
+        "same_source:one",
+        3000000,
+        "Same source title",
+        "spotify:track:0000000000000000000001",
+    )
+    .await;
+    review_copy(
+        &state,
+        "spotify_import",
+        "same_source:two",
+        3000400,
+        "Same source title",
+        "spotify:track:0000000000000000000001",
+    )
+    .await;
+    let preview = get(&state, &token, "/api/v1/review/automatic").await;
+    assert_eq!(preview["groups"], 1);
+    assert_eq!(preview["records"], 2);
 }
 
 #[tokio::test]

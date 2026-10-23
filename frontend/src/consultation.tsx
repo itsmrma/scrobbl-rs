@@ -408,8 +408,10 @@ function RankingRows({
             <small>
               {kind === "artists"
                 ? item.subtitle?.endsWith(" tracks")
-                  ? item.subtitle
-                  : "Artist"
+                  ? `${item.subtitle.replace(" tracks", "")} different tracks listened`
+                  : item.subtitle
+                    ? `1 track listened (${item.subtitle})`
+                    : "Artist"
                 : item.subtitle || (kind === "albums" ? "Album" : "Track")}
             </small>
           </div>
@@ -1141,15 +1143,21 @@ function TrackScope({ id, clear }: { id: string; clear: () => void }) {
     id,
   );
   return (
-    <p className="pill">
-      Track:{" "}
+    <div className="track-scope-chip">
+      <span className="track-scope-label">Track:</span>
       <Link to={musicLink("tracks", id)}>
         {result.data?.name || "Selected track"}
       </Link>
-      <button type="button" className="secondary" onClick={clear}>
-        Clear track filter
+      <button
+        type="button"
+        className="track-scope-clear"
+        aria-label="Clear track filter"
+        title="Clear track filter"
+        onClick={clear}
+      >
+        <Icon>close</Icon>
       </button>
-    </p>
+    </div>
   );
 }
 export function HistoryPage({

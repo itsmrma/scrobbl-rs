@@ -126,6 +126,9 @@ export function ReviewPage({
   const [page, setPage] = useState(0);
   const [decisionsPage, setDecisionsPage] = useState(0);
   const [version, setVersion] = useState(0);
+  const [autoVersion, setAutoVersion] = useState(0);
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  const [decidingId, setDecidingId] = useState<string | null>(null);
   const result = useLoad(
     () => api.review(page, decisionsPage),
     `review:${page}:${decisionsPage}:${version}`,
@@ -138,9 +141,53 @@ export function ReviewPage({
   const [message, setMessage] = useState("");
   const automatic = useLoad(
     () => api.automaticReview(),
-    `automatic:${version}`,
+    `automatic:${autoVersion}`,
     true,
   );
+
+  const visibleGroups = (result.data?.groups || []).filter(
+    (g) => !resolvedIds.has(g.id),
+  );
+  const resolvedItemsCount = (result.data?.groups || [])
+    .filter((g) => resolvedIds.has(g.id))
+    .reduce((sum, g) => sum + g.items.length, 0);
+  const currentTotal = Math.max(
+    0,
+    (result.data?.total ?? 0) - resolvedItemsCount,
+  );
+
+  async function decideOne(
+    group: ReviewData["groups"][number],
+    keep: string | null,
+  ) {
+    setDecidingId(group.id);
+    setError("");
+    setMessage("");
+    try {
+      await api.decideReview(
+        group.items.map((i) => i.id),
+        group.items.map((i) => i.revision),
+        keep,
+      );
+      setResolvedIds((prev) => new Set(prev).add(group.id));
+      setMessage(
+        keep
+          ? "Selected record kept. The other records are in trash; Undo restores them."
+          : "Records marked reviewed and kept as separate listens.",
+      );
+      void refresh();
+      if (visibleGroups.length <= 1) {
+        setVersion((v) => v + 1);
+        setAutoVersion((v) => v + 1);
+        setResolvedIds(new Set());
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDecidingId(null);
+    }
+  }
+
   async function action(run: () => Promise<unknown>, message: string) {
     setBusy(true);
     setError("");
@@ -148,7 +195,9 @@ export function ReviewPage({
     try {
       await run();
       setMessage(message);
+      setResolvedIds(new Set());
       setVersion((v) => v + 1);
+      setAutoVersion((v) => v + 1);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -171,16 +220,18 @@ export function ReviewPage({
         </Link>
         <button
           className="secondary"
-          disabled={busy}
+          disabled={busy || !!decidingId}
           onClick={() => {
             setError("");
+            setResolvedIds(new Set());
             setVersion((v) => v + 1);
+            setAutoVersion((v) => v + 1);
           }}
         >
           <Icon>refresh</Icon>Refresh comparisons
         </button>
         {result.data && (
-          <strong>{number.format(result.data.total)} records to review</strong>
+          <strong>{number.format(currentTotal)} records to review</strong>
         )}
       </div>
       <ErrorText>{error || result.error}</ErrorText>
@@ -192,9 +243,8 @@ export function ReviewPage({
         <p>
           Only isolated pairs starting less than one second apart qualify. They
           must describe the same Spotify track, or have exactly matching title,
-          album and artist credits, and come from different sources. Repeats,
-          competing nearby records, incomplete metadata and conflicting playback
-          evidence stay for manual review.
+          album and artist credits. Repeats, competing nearby records, incomplete
+          metadata and conflicting playback evidence stay for manual review.
         </p>
         <p>
           The record with actual playback time takes priority, followed by
@@ -214,7 +264,7 @@ export function ReviewPage({
             </span>
             <button
               className="primary"
-              disabled={busy || !automatic.data.groups}
+              disabled={busy || !!decidingId || !automatic.data.groups}
               onClick={() =>
                 void action(
                   () => api.executeAutomaticReview(automatic.data!.token),
@@ -240,37 +290,25 @@ export function ReviewPage({
       {!result.data && !result.error && (
         <p role="status">Loading comparisons…</p>
       )}
-      {result.data?.groups.map((group) => (
+      {visibleGroups.map((group) => (
         <Comparison
           key={`${group.id}:${group.items.map((i) => i.revision).join(":")}`}
           group={group}
           preferences={preferences}
-          busy={busy}
-          decide={(keep) =>
-            action(
-              () =>
-                api.decideReview(
-                  group.items.map((i) => i.id),
-                  group.items.map((i) => i.revision),
-                  keep,
-                ),
-              keep
-                ? "Selected record kept. The other records are in trash; Undo restores them."
-                : "Records marked reviewed and kept as separate listens.",
-            )
-          }
+          busy={busy || decidingId === group.id}
+          decide={(keep) => decideOne(group, keep)}
         />
       ))}
-      {result.data && !result.data.groups.length && (
+      {result.data && !visibleGroups.length && (
         <div className="panel empty">
           <Icon>task_alt</Icon>
           <h2>
-            {result.data.total
+            {currentTotal
               ? "No more records on this page"
               : "All caught up"}
           </h2>
           <p>
-            {result.data.total
+            {currentTotal
               ? "Go back to review the remaining records."
               : "There are no flagged records to review."}
           </p>

@@ -43,7 +43,6 @@ fn compatible(a: &Candidate, b: &Candidate) -> bool {
         && a.counted == b.counted
         && !a.sources.is_empty()
         && !b.sources.is_empty()
-        && a.sources.is_disjoint(&b.sources)
         && a.sources.union(&b.sources).all(|source| {
             matches!(
                 source.as_str(),
