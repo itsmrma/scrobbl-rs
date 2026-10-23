@@ -2,10 +2,7 @@ use crate::{
     AppState,
     error::{AppError, Result},
 };
-use argon2::{
-    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::{SaltString, rand_core::OsRng},
-};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json,
     extract::State,
@@ -159,7 +156,7 @@ pub async fn setup(
     }
     let hash = tokio::task::spawn_blocking(move || {
         Argon2::default()
-            .hash_password(form.password.as_bytes(), &SaltString::generate(&mut OsRng))
+            .hash_password(form.password.as_bytes())
             .map(|v| v.to_string())
             .map_err(|_| AppError::Internal)
     })
