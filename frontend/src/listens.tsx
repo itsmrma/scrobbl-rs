@@ -1,4 +1,5 @@
 import type { Listen, Preferences } from "./generated";
+import { useEffect, useRef } from "react";
 import { Cover, date, duration, Icon } from "./ui";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
@@ -14,8 +15,41 @@ export function ListenList({
   id?: string;
   context?: Kind;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let frame = 0;
+    const pending = new Map<HTMLElement, number>();
+    // Measure the metadata alone, never the expandable row or the image whose
+    // dimensions we change. This also shrinks correctly when a badge disappears.
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const row = entry.target.closest<HTMLElement>(".listen-row");
+        if (row && entry.contentRect.height > 0)
+          pending.set(
+            row,
+            Math.round(Math.max(38, Math.min(72, entry.contentRect.height))),
+          );
+      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        for (const [row, size] of pending) {
+          const value = `${size}px`;
+          if (row.style.getPropertyValue("--listen-artwork") !== value)
+            row.style.setProperty("--listen-artwork", value);
+        }
+        pending.clear();
+      });
+    });
+    list.current
+      ?.querySelectorAll(".listen-date")
+      .forEach((el) => observer.observe(el));
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [items]);
   return (
-    <div id={id}>
+    <div id={id} ref={list}>
       {!items.length ? (
         <div className="empty">
           <strong>No listens in this selection</strong>

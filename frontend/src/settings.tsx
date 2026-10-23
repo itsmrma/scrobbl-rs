@@ -918,8 +918,8 @@ export function Connections({
             )}
             {status.review_count > 0 && (
               <p className="warning">
-                {status.review_count} records need review. Use Possible
-                duplicates in <Link to="/history">Listening history</Link>.
+                {status.review_count} records need review.{" "}
+                <Link to="/review">Review possible duplicates</Link>.
               </p>
             )}
           </details>
@@ -994,7 +994,7 @@ export function Settings({
   statusError: string;
 }) {
   return (
-    <>
+    <div className="settings-page">
       <Heading eyebrow="MAKE YOURSELF AT HOME" title="Settings & connections">
         Preferences for your instance and this browser.
       </Heading>
@@ -1035,6 +1035,6 @@ export function Settings({
       <div hidden={section !== "api-keys"}>
         {section === "api-keys" && <ApiKeys preferences={preferences} />}
       </div>
-    </>
+    </div>
   );
 }

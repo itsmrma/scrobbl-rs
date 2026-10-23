@@ -241,3 +241,40 @@ Verification: the full 43-scenario Chromium run passes, followed by five focused
 Synthetic screenshots: [period notice](screenshots/gui-period-notice-stable.png), [square header](screenshots/gui-artwork-square.png), [inline collaborators](screenshots/gui-history-collaborators-inline.png), [album edit](screenshots/gui-album-edit-equal-panels.png), [artwork activity](screenshots/gui-artwork-activity.png), [aligned facts](screenshots/gui-history-aligned-evidence.png), [weighted square collage](screenshots/gui-collage-square-weighted.png).
 
 The preview was restarted with no active server job. Read-only fingerprints confirm all 158,648 pre-existing listen identities and all 77 image payloads remain intact after the final restart. No new migration is introduced. GUI #26 remains open for visual feedback; physical devices/live-provider validation remains in #31 and CI is followed by the owner after push.
+
+## Eighth owner pass: actionable review and compact timelines — 23 October 2026
+
+The latest request is recorded in [GUI #26](https://github.com/itsmrma/scrobbl-rs/issues/26). This pass keeps the existing archive identity and makes identification and exceptions lead; metadata supports them and repetitive successful work collapses into a secondary layer.
+
+| Finding | Final behavior and evidence |
+| --- | --- |
+| History artwork stayed 38 px even when metadata made rows much taller. | A shared observer measures only the collapsed date/source block. Cover and title grow or shrink within bounds; opening evidence does not enlarge them. The initial browser test failed at 38 px and now verifies both growth and shrinkage. Squares retain the full image. |
+| Connections pointed at flagged history with no resolution actions. | `/review`, linked from history and Connections, compares nearby flagged records. No choice is preselected. Keep all separately, or select one and move the other displayed records to trash. Original observations/variants remain; persistent paginated decisions expose Undo. Owner session, CSRF, maintenance fencing, current revisions and transactional publication protect writes. Undo preserves later annotations/calendar changes, but refuses new source evidence or intervening review/trash changes. No real owner record was resolved by the agent. |
+| Monthly timelines needed horizontal scrolling on desktop. | Omit zero months and combine adjacent low-activity months to fit the measured width, preserving peaks while possible. Every displayed total is exact; the label and drilldown use the complete range. An 84-month fixture fits 14 desktop bars and preserves its 600-listen peak. Mobile keeps scrolling individual non-empty months. |
+| Successful background collection repeated dozens of large cards. | One initially collapsed collection group contains dated result rows linked to reports. Active, failed and partial jobs remain prominent. Reports fill the available content width; paragraphs retain readable measure. |
+| View controls and Settings differed in spacing and grouping. | List/Grid/Collage share one control group; grid sizing follows it. Settings share panel width, heading spacing, field/action gaps and mobile insets. Private archive was removed from the header. |
+| CI Docker setup failed with HTTP 400. | Disposable setup and restored-owner passwords in the smoke script now meet the requested number/special-character policy. No security requirement was weakened. Docker is verified by the Linux CI job; no local Docker runtime is installed. |
+| CI WebKit reported access-control errors for pending artwork on document teardown. | Artwork downloads now participate in the same explicit page-exit cancellation as JSON requests, while surviving SPA navigation. The failing consultation path passes locally in WebKit; no console-error filter was added. |
+
+### Impeccable follow-through
+
+Used the same pinned Impeccable 4.7.0 source as the original audit. `context` ran once. Applied the `audit`, `layout`, `adapt`, `clarify`, `harden`, `optimize` and `polish` references to the requested surfaces. The layout reference's two isolated assessments separated visual/source hierarchy from the mechanical scan. The final visual assessment found no layout blocker in scope; five fresh desktop Settings captures and mobile General supplement the chart, comparison and Activities captures.
+
+The layout-scoped detector initially returned `[]`. The full source detector then flagged the pre-existing thick left accent on running activity cards. Replaced it with a subtle whole-surface/border state and removed a similar new selection stripe. The subsequent `detect --json frontend/src` returned `[]`, exit 0. This is source detector evidence, not a claim of complete WCAG certification. New product/branding, `bolder`, `overdrive` and live variant generation are not part of this refinement request.
+
+| Dimension | Score | Verified scope and limit |
+| --- | --- | --- |
+| Accessibility | 3/4 | Native radio/disclosure controls, labels, focus, error/status feedback, readable palette tests and reduced motion; full physical screen-reader acceptance remains in #31. |
+| Performance | 3/4 | Bounded review pages, indexed candidate lookup, memoized monthly grouping, batched observer writes and no new runtime dependency. Fifty candidate searches across the 613 real flagged records took about 30 ms in a read-only check; this is not a full network/page benchmark. |
+| Theming | 4/4 | New surfaces use existing semantic tokens and radio accent; light/dark synthetic captures retain the established palette. |
+| Responsive design | 3/4 | Compact desktop chart and report, mobile comparison and Settings with no horizontal page overflow; physical devices remain in the final test. |
+| Implementation integrity | 4/4 | Clean final source detector; decisions retain originals and publish canonical archive changes. No invented counts, progress or automatic duplicate deletions. |
+| Total | **17/20 — Good** | No known blocker in the requested layout scope. The score is evidence-bounded, not a promise of flawless design. |
+
+Synthetic captures: [duplicate comparison](screenshots/gui-duplicate-review.png), [mobile comparison](screenshots/gui-duplicate-review-mobile.png), [monthly timeline](screenshots/gui-compact-monthly-chart.png), [grouped collection](screenshots/gui-grouped-collection-runs.png), [full-width report](screenshots/gui-activity-full-width.png), [General](screenshots/gui-settings-general-uniform.png), [Appearance](screenshots/gui-settings-appearance-uniform.png), [Connections](screenshots/gui-settings-connections-uniform.png), [Data](screenshots/gui-settings-data-uniform.png), [API keys](screenshots/gui-settings-api-keys-uniform.png), [mobile General](screenshots/gui-settings-general-mobile-uniform.png).
+
+Local preview restarted with all **160,818 pre-existing listen IDs** and identical bytes for **101 saved images** confirmed. Embedded JavaScript/CSS hashes match the built files. No new schema migration in this pass. The branch incorporates the five current main updates. GUI #26 remains open for owner acceptance; this request explicitly includes checking the final CI/merge state before handoff.
+
+The local full browser runs covered 48 scenarios each: all 48 Chromium passed; WebKit passed 47 and exposed a separate export-test race. The trace showed its POST cancelled by the test's immediate hard navigation before server receipt, leaving no export. The test now waits for the durable request acknowledgement before checking that generation survives navigation; no fixed sleep or longer assertion timeout was added. The CI WebKit consultation failure's artwork teardown path passes locally after explicit cancellation.
+
+The duplicate-review regression additionally verifies atomic rollback when a later selected row is stale, preservation of a later personal title/rating during Undo, and rejection of Undo after new original source evidence. Final Rust/Clippy/format/build checks and the final CI result are recorded in #26 and the PR handoff.

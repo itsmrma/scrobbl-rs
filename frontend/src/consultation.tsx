@@ -1,5 +1,12 @@
 import { SpotifyNotice } from "./spotify-status";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   Dashboard,
   History,
@@ -12,6 +19,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Collage } from "./collage";
+import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
 import { Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
@@ -543,6 +551,15 @@ function RankingsPanel({
             >
               <Icon>grid_view</Icon>Grid
             </button>
+            {kind !== "tracks" && (
+              <button
+                className="secondary collage-toggle"
+                aria-pressed={collage}
+                onClick={() => setCollage(!collage)}
+              >
+                <Icon>dashboard</Icon>Collage
+              </button>
+            )}
           </div>
           {!collage && list.view === "grid" && (
             <div
@@ -574,15 +591,6 @@ function RankingsPanel({
                 <Icon>add</Icon>
               </button>
             </div>
-          )}
-          {kind !== "tracks" && (
-            <button
-              className="secondary collage-toggle"
-              aria-pressed={collage}
-              onClick={() => setCollage(!collage)}
-            >
-              <Icon>dashboard</Icon>Collage
-            </button>
           )}
         </div>
       )}
@@ -654,6 +662,21 @@ function Chart({
   update: Selection["update"];
   version?: number;
 }) {
+  const chart = useRef<HTMLElement>(null);
+  const [barLimit, setBarLimit] = useState(18);
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width || 0;
+      if (!width) return;
+      setBarLimit(
+        matchMedia("(max-width: 600px)").matches
+          ? Number.MAX_SAFE_INTEGER
+          : Math.max(4, Math.min(18, Math.floor(width / 76))),
+      );
+    });
+    if (chart.current) observer.observe(chart.current);
+    return () => observer.disconnect();
+  }, []);
   const result = useLoad(
     () => api.chart(params),
     `chart:${params}:${version}`,
@@ -663,7 +686,18 @@ function Chart({
   );
   const [inspected, setInspected] = useState<string | null>(null);
   const byTime = params.get("sort") === "time";
-  const buckets = result.data?.buckets || [];
+  const buckets = useMemo(
+    () =>
+      result.data?.grain === "month"
+        ? compactBuckets(result.data.buckets, barLimit)
+        : (result.data?.buckets || []).map((b) => ({ ...b, periods: 1 })),
+    [result.data, barLimit],
+  );
+  const grouped = buckets.some((b) => b.periods > 1);
+  const bucketLabel = (b: (typeof buckets)[number], full = false) =>
+    b.periods > 1
+      ? `${periodLabel(b.start, "month")} – ${periodLabel(b.through, "month")}`
+      : periodLabel(b.start, result.data!.grain, full);
   const max = Math.max(
     1,
     ...buckets.map((b) => (byTime ? b.actual_ms + b.estimated_ms : b.listens)),
@@ -681,7 +715,10 @@ function Chart({
       undefined,
     );
   return (
-    <article className="panel padded activity-chart">
+    <article
+      className={`panel padded activity-chart ${result.data?.grain === "month" ? "chart-compact" : ""}`}
+      ref={chart}
+    >
       <div className="panel-title">
         <h2>Listening activity</h2>
         <label>
@@ -700,13 +737,17 @@ function Chart({
       </div>
       <p className="subtle">
         Your archived listening over time. Select a bar to explore that period.
+        {result.data?.grain === "month" &&
+          " Months without listens are omitted."}
+        {grouped &&
+          " Quieter adjacent months are combined; each bar shows its full range."}
       </p>
       {inspectedBucket && (
         <div className="chart-readout" aria-live="polite" aria-atomic="true">
           <div>
             <small>{inspected ? "Period details" : "Most active period"}</small>
             <strong>
-              {periodLabel(inspectedBucket.start, result.data!.grain, true)}
+              {bucketLabel(inspectedBucket, true)}
               {inspectedBucket.partial && (
                 <span className="partial-label">Partial period</span>
               )}
@@ -752,6 +793,13 @@ function Chart({
               const next = new URLSearchParams(params);
               next.set("bucket", result.data!.grain);
               next.set("bucket_start", b.start);
+              if (b.periods > 1) {
+                next.delete("bucket");
+                next.delete("bucket_start");
+                next.set("period", "custom");
+                next.set("from", b.start);
+                next.set("to", b.through);
+              }
               next.delete("page");
               const value = byTime
                 ? timeValue(b)
@@ -794,7 +842,7 @@ function Chart({
                     </span>
                   </span>
                   <small>
-                    {periodLabel(b.start, result.data!.grain)}
+                    {bucketLabel(b)}
                     {b.partial ? " *" : ""}
                   </small>
                   <small className="chart-bar-value">
@@ -811,8 +859,10 @@ function Chart({
       )}
       {!result.data && !result.error && <p role="status">Loading activity…</p>}
       <p className="subtle">
-        * Partial period. Empty bars mean no archived listens. Each listen
-        belongs to its assigned date.
+        * Partial period.{" "}
+        {result.data?.grain !== "month" &&
+          "Empty bars mean no archived listens. "}
+        Each listen belongs to its assigned date.
       </p>
     </article>
   );
@@ -1170,7 +1220,8 @@ export function HistoryPage({
     <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
         <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
-          Search and combine period, artist, album and source filters.
+          Search and combine period, artist, album and source filters.{" "}
+          <Link to="/review">Review possible duplicates</Link>
         </Heading>
       )}
       {!embedded && params.get("track") && (

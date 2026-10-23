@@ -194,6 +194,7 @@ pub struct SpotifyStatus {
 #[derive(Serialize, TS)]
 pub struct Activity {
     pub id: String,
+    pub created_at_ms: i64,
     pub kind: String,
     pub state: String,
     pub filename: Option<String>,

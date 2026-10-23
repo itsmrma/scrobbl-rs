@@ -83,7 +83,7 @@ def main():
             stack("config", "--quiet")
             stack("up", "-d", "--pull", "never")
             assert ready()["setup_required"]
-            csrf = request("/api/setup", {"username":"owner","password": "disposable Docker smoke password"})["csrf"]
+            csrf = request("/api/setup", {"username":"owner","password": "disposable Docker smoke password 7!"})["csrf"]
             preferences = request("/api/v1/preferences")
             preferences["name"] = "Docker persistence smoke"
             request("/api/v1/preferences", {"preferences": preferences, "calendar_scope": "future"})
@@ -141,7 +141,7 @@ def main():
             preferences = request("/api/v1/preferences")
             preferences["name"] = "After backup"
             request("/api/v1/preferences", {"preferences": preferences, "calendar_scope": "future"})
-            restored_password = "new Docker recovery owner password"
+            restored_password = "new Docker recovery owner password 7!"
             assert request("/api/v1/recovery/restore", {"asset_id": uploaded_id, "password": restored_password, "confirm_replace": True})["restart_required"]
             stack("up", "-d", "--force-recreate", "--pull", "never")
             session = ready()

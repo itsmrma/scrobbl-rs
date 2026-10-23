@@ -237,6 +237,14 @@ export function Activities({
     3000,
   );
   const visibleJobs = listPage || kind ? history.data || [] : jobs;
+  const collectionRuns = visibleJobs.filter(
+    (j) =>
+      j.kind === "spotify_collection" &&
+      j.state === "completed" &&
+      j.outcome !== "partial" &&
+      !j.error_code,
+  );
+  const separateJobs = visibleJobs.filter((j) => !collectionRuns.includes(j));
   const [issuesPage, setIssuesPage] = useState(0);
   const detail = useLoad<ActivityDetail>(
     () => api.activity(id, issuesPage),
@@ -282,6 +290,9 @@ export function Activities({
               <div className="activity-detail-status" role="status">
                 <span>
                   {phaseLabel(job)} · Attempt {job.attempt}
+                  {job.created_at_ms
+                    ? ` · ${date(job.created_at_ms, preferences)}`
+                    : ""}
                 </span>
               </div>
               <Progress job={job} />
@@ -588,7 +599,7 @@ export function Activities({
           </div>
           <ErrorText>{history.error}</ErrorText>
           {visibleJobs.length ? (
-            visibleJobs.map((job) => (
+            separateJobs.map((job) => (
               <article
                 className={
                   "activity-row panel " + (isActive(job) ? "is-active" : "")
@@ -654,6 +665,50 @@ export function Activities({
                 Earlier import reports in Data &amp; recovery
               </Link>
             </div>
+          )}
+          {!!collectionRuns.length && (
+            <details className="panel collection-runs">
+              <summary>
+                <Icon>sync</Icon>
+                <span>
+                  <strong>Spotify background collection</strong>
+                  <small>
+                    {collectionRuns.length} completed runs on this page ·{" "}
+                    {number.format(
+                      collectionRuns.reduce((sum, j) => sum + j.added, 0),
+                    )}{" "}
+                    new listens
+                  </small>
+                </span>
+                <Icon>expand_more</Icon>
+              </summary>
+              <div>
+                {collectionRuns.map((job) => (
+                  <Link
+                    key={job.id}
+                    to={`/activities/${job.id}`}
+                    className="collection-run"
+                  >
+                    <time
+                      dateTime={
+                        job.created_at_ms
+                          ? new Date(job.created_at_ms).toISOString()
+                          : undefined
+                      }
+                    >
+                      {job.created_at_ms
+                        ? date(job.created_at_ms, preferences)
+                        : "Open collection report"}
+                    </time>
+                    <span>
+                      {number.format(job.added)} new listens ·{" "}
+                      {number.format(job.processed)} processed
+                    </span>
+                    <Icon>chevron_right</Icon>
+                  </Link>
+                ))}
+              </div>
+            </details>
           )}
           <div className="connection-actions">
             <button

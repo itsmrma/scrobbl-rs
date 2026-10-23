@@ -25,6 +25,9 @@ La conservazione dei dati normalizzati degli ascolti, delle impronte e della pro
 **Riconciliazione di ascolti**:
 L'associazione delle osservazioni originali che descrivono lo stesso ascolto, rappresentato una sola volta nell'archivio. È distinta dall'unione di identità musicali e dal raggruppamento di edizioni.
 
+**Possibile duplicato di ascolto**:
+Un record per cui le informazioni disponibili non bastano a stabilire se descriva un ascolto già presente. I record restano separati finché l'utente li esamina; la revisione può mantenerli distinti oppure conservarne uno e spostare gli altri nel cestino.
+
 **Variante originale**:
 Una versione dell'osservazione originale che differisce nei dati ricevuti dalla fonte pur riferendosi allo stesso ascolto.
 

@@ -25,6 +25,7 @@ import {
 import { Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
+import { ReviewPage } from "./review";
 import {
   ArtworkContext,
   ErrorText,
@@ -197,6 +198,7 @@ function Shell({ logout }: { logout: () => void }) {
       {
         dashboard: "Overview",
         history: "Listening history",
+        review: "Review duplicates",
         import: "Import history",
         settings: settingsSection === "api-keys" ? "API keys" : "Settings",
         activities: "Activities",
@@ -286,8 +288,16 @@ function Shell({ logout }: { logout: () => void }) {
                   key={to}
                   to={to}
                   aria-label={label}
-                  className={page === key ? "active" : ""}
-                  aria-current={page === key ? "page" : undefined}
+                  className={
+                    page === key || (page === "review" && key === "history")
+                      ? "active"
+                      : ""
+                  }
+                  aria-current={
+                    page === key || (page === "review" && key === "history")
+                      ? "page"
+                      : undefined
+                  }
                 >
                   <Icon>{icon}</Icon>
                   <span className="nav-copy">{label}</span>
@@ -427,9 +437,6 @@ function Shell({ logout }: { logout: () => void }) {
               <Link to="/activities" className="mobile-activities">
                 <Icon>pending_actions</Icon>Activities ({activeCount})
               </Link>
-              <span className="private-label">
-                <Icon>lock</Icon>Private archive
-              </span>
             </header>
             <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
               <section hidden={page !== "dashboard"}>
@@ -445,6 +452,9 @@ function Shell({ logout }: { logout: () => void }) {
                   visible={page === "history"}
                 />
               </section>
+              {page === "review" && (
+                <ReviewPage preferences={preferences} refresh={refresh} />
+              )}
               <section hidden={page !== "import"}>
                 <ImportPage refresh={refresh} />
               </section>
@@ -501,6 +511,7 @@ function Shell({ logout }: { logout: () => void }) {
                 "music",
                 "dashboard",
                 "history",
+                "review",
                 "import",
                 "settings",
                 "activities",

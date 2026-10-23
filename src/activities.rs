@@ -36,6 +36,7 @@ async fn present(conn: &mut sqlx::SqliteConnection, job: Job) -> Result<Activity
     };
     Ok(Activity {
         id: job.id,
+        created_at_ms: job.created_at_ms,
         kind: job.kind,
         state: job.state,
         filename: job.filename,

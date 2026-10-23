@@ -573,6 +573,19 @@ pub(crate) fn review_spotify_imports(conn: &Connection, events: &[Event]) -> Res
             continue;
         }
         for id in std::iter::once(listen).chain(peers) {
+            let kind = if uncertain {
+                "spotify_identity_uncertain"
+            } else {
+                "spotify_export_duration"
+            };
+            let reviewed: bool = one(
+                conn,
+                "SELECT EXISTS(SELECT 1 FROM conflicts WHERE listen_id=? AND kind=? AND resolved_at_ms IS NOT NULL)",
+                params![id, kind],
+            )?;
+            if reviewed {
+                continue;
+            }
             let flagged = execute(
                 conn,
                 "UPDATE listens SET needs_review=1 WHERE id=? AND needs_review=0",

@@ -1,4 +1,5 @@
 import { queueArtwork } from "./artwork-activity";
+import { downloadArtwork } from "./api";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
@@ -129,10 +130,8 @@ export function Cover({
             }
             observer.disconnect();
             release.current = { source, done };
-            void fetch(source)
-              .then(async (response) => {
-                if (!response.ok) throw new Error("Artwork download failed");
-                await response.arrayBuffer();
+            void downloadArtwork(source)
+              .then(() => {
                 done(true);
                 if (current)
                   setReadySource(source + "&cached=true&downloaded=true");

@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Job {
     pub id: String,
+    pub created_at_ms: i64,
     pub kind: String,
     pub state: String,
     pub file_id: Option<String>,

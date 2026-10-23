@@ -25,6 +25,7 @@ import type {
   Details,
   Edit,
   GroupPage,
+  Listen,
 } from "./generated";
 
 export class SessionExpired extends Error {}
@@ -46,6 +47,24 @@ window.addEventListener("pagehide", leaveDocument);
 window.addEventListener("pageshow", () => {
   leavingDocument = false;
 });
+// Artwork downloads survive SPA navigation but must be cancelled before the
+// document disappears, just like the JSON reads below (not left to WebKit).
+export async function downloadArtwork(path: string) {
+  if (leavingDocument)
+    throw new DOMException("The page is being left.", "AbortError");
+  const controller = new AbortController();
+  pendingRequests.add(controller);
+  try {
+    const response = await fetch(path, {
+      signal: controller.signal,
+      credentials: "same-origin",
+    });
+    if (!response.ok) throw new Error("Artwork download failed");
+    await response.arrayBuffer();
+  } finally {
+    pendingRequests.delete(controller);
+  }
+}
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
@@ -106,7 +125,26 @@ export type ConnectOutcome = {
   outcome: "pending" | "processing" | "connected" | "error";
   message: string | null;
 };
+export type ReviewPage = {
+  total: number;
+  page: number;
+  decisions_total: number;
+  groups: { id: string; items: (Listen & { revision: number })[] }[];
+  recent: { id: string; at_ms: number; count: number; removed: number }[];
+};
 export const api = {
+  review: (page = 0, decisionsPage = 0) =>
+    request<ReviewPage>(
+      `/api/v1/review?page=${page}&decisions_page=${decisionsPage}`,
+    ),
+  decideReview: (ids: string[], revisions: number[], keep_id: string | null) =>
+    post<{ decision_id: string; removed: number }>("/api/v1/review", {
+      ids,
+      revisions,
+      keep_id,
+    }),
+  undoReview: (id: string) =>
+    post(`/api/v1/review/${encodeURIComponent(id)}/undo`),
   nameGroup: (kind: string, id: string, q: string, page: number) =>
     request<GroupPage>(
       `/api/v1/library/${kind}/${id}/group?${new URLSearchParams({ q, page: String(page) })}`,

@@ -34,6 +34,12 @@ pub fn router(state: AppState) -> Router {
         .route("/spotify/connect-result/{attempt}", get(index))
         .route("/dashboard", get(index))
         .route("/history", get(index))
+        .route("/review", get(index))
+        .route(
+            "/api/v1/review",
+            get(crate::review::list).post(crate::review::decide),
+        )
+        .route("/api/v1/review/{id}/undo", post(crate::review::undo))
         .route("/rankings/{kind}", get(index))
         .route(
             "/api/v1/consultation/choices/{kind}",

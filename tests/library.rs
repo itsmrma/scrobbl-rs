@@ -93,6 +93,205 @@ async fn get(state: &AppState, token: &str, path: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 #[tokio::test]
+async fn duplicate_review_is_explicit_recoverable_and_keeps_originals() {
+    let (_dir, state, token) = setup().await;
+    let raw = json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Source title","duration_ms":180000,"album":{"id":"0000000000000000000002","name":"Source album","images":[]},"artists":[{"id":"0000000000000000000003","name":"Source artist"}]});
+    let event = Event {
+        source: "listenbrainz",
+        source_key: "lb:one:0".into(),
+        source_timestamp_ms: 1000000,
+        played_at_ms: 1000000,
+        listened_ms: None,
+        duration_kind: DurationKind::Unknown,
+        counted: true,
+        track: scrobbl_rs::spotify::parse_track(&raw).unwrap(),
+        raw,
+    };
+    let mut tx = state.db.begin().await.unwrap();
+    db::ingest(&mut tx, std::slice::from_ref(&event))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    let review = get(&state, &token, "/api/v1/review").await;
+    assert_eq!(review["total"], 2);
+    let items = review["groups"][0]["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let ids: Vec<_> = items.iter().map(|i| i["id"].as_str().unwrap()).collect();
+    let revisions: Vec<_> = items
+        .iter()
+        .map(|i| i["revision"].as_i64().unwrap())
+        .collect();
+    let action = json!({"ids":ids,"revisions":revisions,"keep_id":ids[0]});
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review",
+            serde_json::to_vec(&action).unwrap(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    let (status, body) = call(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/review",
+        serde_json::to_vec(&action).unwrap(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let decision: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["total"],
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM observations")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM observation_variants")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        2
+    );
+    // Replaying either source must not resurrect the discarded record.
+    let mut tx = state.db.begin().await.unwrap();
+    db::ingest(&mut tx, &[event]).await.unwrap();
+    tx.commit().await.unwrap();
+    seed(&state, "Source title").await;
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    let track = items[0]["track_id"].as_str().unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            &format!("/api/v1/library/tracks/{track}"),
+            serde_json::to_vec(&json!({"name":"Personal reviewed title","rating":4.5})).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let undo = format!(
+        "/api/v1/review/{}/undo",
+        decision["decision_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        call(&state, &token, "POST", &undo, b"{}".to_vec(), true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 2);
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["total"],
+        2
+    );
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["items"][0]["title"],
+        "Personal reviewed title"
+    );
+    assert_eq!(
+        call(&state, &token, "POST", &undo, b"{}".to_vec(), true)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    // The old comparison cannot overwrite a newer revision after undo.
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review",
+            serde_json::to_vec(&action).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let review = get(&state, &token, "/api/v1/review").await;
+    let items = review["groups"][0]["items"].as_array().unwrap();
+    let separate = json!({"ids":items.iter().map(|i|i["id"].clone()).collect::<Vec<_>>(), "revisions":items.iter().map(|i|i["revision"].clone()).collect::<Vec<_>>(),"keep_id":null});
+    let before_revision: i64 =
+        sqlx::query_scalar("SELECT revision FROM archive_state WHERE singleton=1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    let mut stale = separate.clone();
+    stale["revisions"][1] = json!(-1);
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review",
+            serde_json::to_vec(&stale).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT revision FROM archive_state WHERE singleton=1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        before_revision
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 2);
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/review",
+            serde_json::to_vec(&separate).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["total"],
+        2
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    let current = get(&state, &token, "/api/v1/review").await;
+    let latest = current["recent"][0]["id"].as_str().unwrap();
+    seed(&state, "Changed source evidence").await;
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            &format!("/api/v1/review/{latest}/undo"),
+            b"{}".to_vec(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+}
+#[tokio::test]
 async fn corrections_overlay_sources_propagate_to_reads_survive_reingest_and_can_be_removed() {
     let (_dir, state, token) = setup().await;
     let dash = get(&state, &token, "/api/dashboard?period=all").await;

@@ -196,9 +196,11 @@ pub async fn status(
         coverage_warning: setting(conn, "coverage_warning").await?,
         retry_at_ms,
         imports,
-        review_count: sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
-            .fetch_one(&mut *conn)
-            .await?,
+        review_count: sqlx::query_scalar(
+            "SELECT COUNT(*) FROM listens WHERE needs_review=1 AND trashed_at_ms IS NULL",
+        )
+        .fetch_one(&mut *conn)
+        .await?,
     }))
 }
 #[derive(Deserialize)]

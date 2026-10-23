@@ -133,6 +133,292 @@ async function login(page, path = "/dashboard") {
   await expect(page.locator("#main")).toBeVisible();
 }
 
+test("history artwork and type follow metadata height and shrink again", async ({
+  page,
+}) => {
+  await login(page, "/history?period=all");
+  const row = page.locator(".listen-row").first();
+  const sizes = () =>
+    row.evaluate((el) => ({
+      artwork: el.querySelector(".cover").getBoundingClientRect().width,
+      type: parseFloat(
+        getComputedStyle(el.querySelector(".listen-title > a")).fontSize,
+      ),
+    }));
+  const compact = await sizes();
+  await row.locator(".listen-date").evaluate((el) => {
+    for (let i = 0; i < 3; i++) {
+      const line = document.createElement("small");
+      line.className = "extra-evidence";
+      line.textContent = "Possible duplicate";
+      el.append(line);
+    }
+  });
+  await expect
+    .poll(async () => (await sizes()).artwork)
+    .toBeGreaterThan(compact.artwork + 8);
+  expect((await sizes()).type).toBeGreaterThan(compact.type);
+  await row
+    .locator(".extra-evidence")
+    .evaluateAll((elements) => elements.forEach((el) => el.remove()));
+  await expect
+    .poll(async () => (await sizes()).artwork)
+    .toBeCloseTo(compact.artwork, 0);
+  await expect(page.getByText("Private archive", { exact: true })).toHaveCount(
+    0,
+  );
+});
+
+test("monthly charts compact quieter ranges without losing listens or drilldown", async ({
+  page,
+  browserName,
+}) => {
+  const buckets = Array.from({ length: 84 }, (_, i) => {
+    const start = new Date(Date.UTC(2019, i, 1)).toISOString().slice(0, 10);
+    const through = new Date(Date.UTC(2019, i + 1, 0))
+      .toISOString()
+      .slice(0, 10);
+    const listens = i % 13 === 0 ? 0 : i === 60 ? 600 : i % 7 === 0 ? 90 : 4;
+    return {
+      start,
+      through,
+      listens,
+      actual_ms: listens * 60000,
+      estimated_ms: 0,
+      unknown_durations: 0,
+      partial: false,
+    };
+  });
+  await page.route("**/api/v1/consultation/activity?*", (route) =>
+    route.fulfill({
+      json: {
+        grain: "month",
+        buckets,
+        mixed_week_starts: false,
+        partial: false,
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page, "/dashboard?period=all&grain=month");
+  const bars = page.locator(".chart-segment");
+  await expect.poll(() => bars.count()).toBeLessThanOrEqual(18);
+  await expect.poll(() => bars.count()).toBeGreaterThan(0);
+  const total = await bars.evaluateAll((elements) =>
+    elements.reduce(
+      (sum, el) =>
+        sum +
+        Number(
+          el.querySelector(".chart-bar-value").textContent.replaceAll(",", ""),
+        ),
+      0,
+    ),
+  );
+  expect(total).toBe(buckets.reduce((sum, b) => sum + b.listens, 0));
+  await expect(
+    page.getByRole("link", {
+      name: "2024-01-01 – 2024-01-31: 600 listens",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    await page
+      .locator(".chart-scroll")
+      .evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: `test-results/gui-eighth-chart-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  const grouped = page.locator('.chart-segment[href*="period=custom"]').first();
+  const href = new URL(await grouped.getAttribute("href"), page.url());
+  const from = href.searchParams.get("from"),
+    to = href.searchParams.get("to");
+  await grouped.click();
+  await expect(page).toHaveURL(new RegExp("from=" + from + ".*to=" + to));
+  await page.goto("/dashboard?period=all&grain=month");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => bars.count())
+    .toBe(buckets.filter((b) => b.listens).length);
+  expect(
+    await page
+      .locator(".chart-scroll")
+      .evaluate((el) => el.scrollWidth > el.clientWidth),
+  ).toBe(true);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+
+test("completed Spotify collection runs collapse into dated reports that fill the page", async ({
+  page,
+  browserName,
+}) => {
+  const jobs = Array.from({ length: 40 }, (_, i) => ({
+    id: `collection-${i}`,
+    kind: "spotify_collection",
+    state: "completed",
+    filename: "Spotify background collection",
+    created_at_ms: Date.UTC(2026, 9, 23, 12, i),
+    attempt: 1,
+    processed: 2,
+    added: 1,
+    reconciled: 0,
+    duplicates: 1,
+    invalid: 0,
+    skipped: 0,
+    ambiguous: 0,
+    retry_at_ms: null,
+    error_code: null,
+    expected_rows: null,
+    phase: "finished",
+    outcome: "complete",
+    inventory_complete: true,
+    originals: 1,
+    variants: 0,
+    below_threshold: 0,
+    target_timezone: null,
+    target_week_start: null,
+  }));
+  await page.route("**/api/v1/activities", (route) =>
+    route.fulfill({ json: jobs }),
+  );
+  await page.route("**/api/v1/activities/collection-*", (route) =>
+    route.fulfill({
+      json: {
+        activity: jobs[0],
+        issues: [],
+        members: [],
+        source_parameters: null,
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 1680, height: 1000 });
+  await login(page, "/activities");
+  await expect(page.locator(".collection-runs")).toContainText(
+    "40 completed runs",
+  );
+  await expect(page.locator(".collection-run").first()).toBeHidden();
+  await expect(page.locator(".activity-row")).toHaveCount(0);
+  await page.locator(".collection-runs > summary").click();
+  await expect(page.locator(".collection-run").first()).toContainText(
+    "23 Oct 2026",
+  );
+  await page.screenshot({
+    path: `test-results/gui-eighth-activities-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.locator(".collection-run").first().click();
+  await expect(page.locator(".activity-detail")).toBeVisible();
+  const widths = await page
+    .locator(".activity-detail")
+    .evaluate((el) => [
+      el.getBoundingClientRect().width,
+      el.closest("main").clientWidth,
+    ]);
+  expect(widths[1] - widths[0]).toBeLessThan(4);
+  await page.screenshot({
+    path: `test-results/gui-eighth-report-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("duplicate review supports an explicit choice, trash and undo from actual source imports", async ({
+  page,
+  browserName,
+}) => {
+  await login(page, "/import");
+  const seedListen = (
+    await (await page.request.get("/api/history?period=all&status=all")).json()
+  ).items[0];
+  await page
+    .getByLabel("ListenBrainz username for files (optional)")
+    .fill("review-sample");
+  await page.getByLabel("ListenBrainz history files").setInputFiles({
+    name: "review.jsonl",
+    mimeType: "application/json",
+    buffer: Buffer.from(
+      JSON.stringify({
+        listened_at: Math.floor(seedListen.played_at_ms / 1000),
+        track_metadata: {
+          artist_name: "Seed artist",
+          track_name: "Seed song",
+          release_name: "Seed album",
+        },
+      }),
+    ),
+  });
+  await page
+    .getByRole("button", { name: "Upload ListenBrainz files", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get("/api/v1/review")).json()).total,
+    )
+    .toBe(2);
+  await page.goto("/history?status=review&period=all");
+  await page
+    .getByRole("link", { name: "Review possible duplicates", exact: true })
+    .click();
+  await expect(page.locator(".review-record")).toHaveCount(2);
+  await expect(
+    page.getByRole("button", { name: /Keep selected/ }),
+  ).toBeDisabled();
+  await page
+    .getByRole("radio", { name: "Keep spotify_import record", exact: true })
+    .check();
+  await page.screenshot({
+    path: `test-results/gui-eighth-duplicates-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: /Keep selected/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "All caught up" }),
+  ).toBeVisible();
+  expect(
+    (
+      await (
+        await page.request.get("/api/history?period=all&status=all")
+      ).json()
+    ).total,
+  ).toBe(1);
+  await page.getByText("Review decisions · Undo", { exact: true }).click();
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.locator(".review-record")).toHaveCount(2);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `test-results/gui-eighth-duplicates-mobile-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("button", { name: "Keep all as separate listens", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "All caught up" }),
+  ).toBeVisible();
+  expect(
+    (
+      await (
+        await page.request.get("/api/history?period=all&status=all")
+      ).json()
+    ).total,
+  ).toBe(2);
+});
+
 test("extended-history drop selects actual files without opening a browser dialog", async ({
   page,
 }) => {

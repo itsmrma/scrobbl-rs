@@ -21,6 +21,7 @@ pub mod read_api;
 pub mod recovery;
 pub mod recovery_http;
 pub mod retention;
+pub mod review;
 pub mod spotify;
 pub mod storage;
 pub mod web;

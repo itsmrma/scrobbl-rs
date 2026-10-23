@@ -12,10 +12,17 @@ module.exports = async function recoveryFlow(page) {
   await page.getByLabel("From date").fill("2026-01-01");
   await page.getByLabel("Through date").fill("2026-12-31");
   await page.getByLabel("Export format").selectOption("json");
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/recovery") &&
+      response.request().method() === "POST",
+  );
   await page
     .getByRole("button", { name: "Create export", exact: true })
     .click();
-  // Navigate away: generation must continue independently of the page's lifetime.
+  expect((await accepted).status()).toBe(200);
+  // Once receipt is confirmed, generation must continue independently of the
+  // page. A hard navigation before receipt can cancel the POST in WebKit.
   await page.goto("/activities");
   await page.goto("/settings/data");
   const exportRow = page

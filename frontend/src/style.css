@@ -550,8 +550,11 @@ main#main {
   justify-content: center;
 }
 .listen-row {
+  --listen-cover-size: min(72px, var(--listen-artwork, 38px));
   display: grid;
-  grid-template-columns: 38px minmax(120px, 1.5fr) minmax(80px, 1fr) 150px 90px;
+  grid-template-columns:
+    var(--listen-cover-size) minmax(120px, 1.5fr) minmax(80px, 1fr)
+    150px 90px;
   align-items: center;
   gap: 16px;
   padding: 16px 24px;
@@ -4560,7 +4563,8 @@ dialog {
   align-items: center;
 }
 .activity-row.is-active {
-  border-left: 3px solid var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface));
 }
 .activity-row .activity-symbol {
   display: grid;
@@ -4618,7 +4622,7 @@ dialog {
   font-variant-numeric: tabular-nums;
 }
 .activity-detail {
-  max-width: 1080px;
+  width: 100%;
   margin-top: 16px;
 }
 .activity-detail-heading {
@@ -5048,8 +5052,8 @@ dialog {
     84px;
 }
 .listen-context-artists {
-  --listen-columns: 34px minmax(100px, 1.2fr) minmax(90px, 1fr)
-    minmax(150px, 1fr) minmax(150px, 1fr) 80px;
+  --listen-columns: var(--listen-cover-size) minmax(100px, 1.2fr)
+    minmax(90px, 1fr) minmax(150px, 1fr) minmax(150px, 1fr) 80px;
 }
 .listen-context .listen-details[open] {
   display: block;
@@ -5147,8 +5151,8 @@ dialog {
     --listen-columns: minmax(150px, 1.2fr) minmax(160px, 1fr) 84px;
   }
   .listen-context-artists {
-    --listen-columns: 34px minmax(100px, 1.2fr) minmax(90px, 1fr)
-      minmax(150px, 1fr) 80px;
+    --listen-columns: var(--listen-cover-size) minmax(100px, 1.2fr)
+      minmax(90px, 1fr) minmax(150px, 1fr) 80px;
   }
   .listen-context-albums .listen-details dl > div:nth-child(5) {
     grid-column: 1;
@@ -5161,7 +5165,7 @@ dialog {
 }
 @media (max-width: 900px) {
   .listen-context-artists {
-    --listen-columns: 34px minmax(0, 1fr) 90px;
+    --listen-columns: var(--listen-cover-size) minmax(0, 1fr) 90px;
   }
   .listen-context-artists .listen-details dl > div {
     grid-column: 2 / -1;
@@ -5193,5 +5197,292 @@ dialog {
 @media (prefers-reduced-motion: reduce) {
   .collage {
     animation: none;
+  }
+}
+
+/* Content-driven list density; the reference measurement excludes disclosures. */
+.listen-row > .cover {
+  width: var(--listen-cover-size);
+  height: var(--listen-cover-size);
+  aspect-ratio: 1;
+  object-fit: contain;
+}
+.listen-row .listen-title > a {
+  font-size: clamp(13px, calc(var(--listen-cover-size) * 0.25), 18px);
+  line-height: 1.35;
+}
+.listen-row .listen-artists {
+  font-size: clamp(11px, calc(var(--listen-cover-size) * 0.19), 13px);
+}
+.listen-row .listen-artists a {
+  font-size: inherit;
+}
+.listen-row .listen-album {
+  font-size: clamp(12px, calc(var(--listen-cover-size) * 0.21), 15px);
+}
+@media (max-width: 600px) {
+  .listen-row {
+    --listen-cover-size: min(56px, var(--listen-artwork, 38px));
+  }
+  .listen-row:not(.listen-context) {
+    grid-template-columns: var(--listen-cover-size) minmax(0, 1fr);
+  }
+}
+@media (min-width: 601px) {
+  .activity-chart.chart-compact .chart-segment {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .activity-chart.chart-compact .chart-bars {
+    gap: 8px;
+  }
+  .activity-chart.chart-compact .chart-segment small {
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* Collection successes form one secondary group; active/failed work stays visible. */
+.collection-runs {
+  margin: 16px 0;
+  overflow: hidden;
+}
+.collection-runs > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  min-height: 64px;
+  list-style: none;
+}
+.collection-runs > summary::-webkit-details-marker {
+  display: none;
+}
+.collection-runs > summary > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.collection-runs small,
+.review-decision small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 12px;
+}
+.collection-runs > summary > .material-icons-outlined:last-child {
+  transition: transform 160ms ease-out;
+}
+.collection-runs[open] > summary > .material-icons-outlined:last-child {
+  transform: rotate(180deg);
+}
+.collection-run {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 16px;
+  min-height: 52px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  text-decoration: none;
+  font-size: 13px;
+}
+.collection-run > span:not(.material-icons-outlined) {
+  color: var(--muted);
+}
+.collection-run:hover {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.activity-detail p {
+  max-width: 75ch;
+}
+
+.settings-page > div > .panel {
+  width: 100%;
+  max-width: none;
+}
+.settings-page .padded {
+  padding: 24px;
+}
+.settings-page h2 {
+  margin: 0 0 12px;
+}
+.settings-page .settings-form label {
+  margin-bottom: 0;
+}
+.settings-page .settings-form > form {
+  display: grid;
+  gap: 20px;
+}
+.settings-page .settings-form > form > button {
+  justify-self: start;
+}
+.settings-page .settings-form > p {
+  max-width: 75ch;
+  margin-bottom: 24px;
+}
+.settings-page .connection-monitor {
+  margin-block: 16px;
+}
+
+.review-toolbar,
+.review-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.review-toolbar {
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.review-comparison {
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.review-comparison > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 20px;
+  padding: 20px;
+}
+.review-comparison h2 {
+  font-size: 18px;
+  margin: 0 0 8px;
+  overflow-wrap: anywhere;
+}
+.review-comparison > header > div,
+.review-record > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-comparison header p {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+  max-width: 75ch;
+}
+.review-record {
+  display: grid;
+  grid-template-columns:
+    24px 60px minmax(140px, 1.4fr) minmax(150px, 1fr)
+    minmax(120px, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  margin: 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+}
+.review-record:not(:has(input)) {
+  grid-template-columns: 60px minmax(140px, 1.4fr) minmax(150px, 1fr) minmax(
+      120px,
+      1fr
+    );
+}
+.review-record input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.review-record > .cover {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+}
+.review-record small {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.review-record strong,
+.review-identity > a {
+  font-size: 14px;
+}
+.review-record.selected {
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+.review-record:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+.review-duration {
+  text-align: right;
+  font-size: 14px;
+}
+.review-actions {
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+.review-feedback {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--success);
+}
+.review-decisions > summary {
+  padding: 16px 20px;
+  min-height: 52px;
+}
+.review-decision {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+}
+@media (max-width: 900px) {
+  .review-record,
+  .review-record:not(:has(input)) {
+    grid-template-columns: 24px 48px minmax(0, 1fr);
+    gap: 8px 12px;
+  }
+  .review-record:not(:has(input)) {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+  .review-record > .cover {
+    width: 48px;
+    height: 48px;
+  }
+  .review-evidence,
+  .review-duration {
+    grid-column: 3;
+    text-align: left;
+  }
+  .review-record:not(:has(input)) .review-evidence,
+  .review-record:not(:has(input)) .review-duration {
+    grid-column: 2;
+  }
+}
+@media (max-width: 600px) {
+  .settings-page .padded {
+    padding: 16px;
+  }
+  .review-comparison > header {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .review-actions > button {
+    width: 100%;
+  }
+  .collection-run {
+    grid-template-columns: minmax(0, 1fr) 24px;
+    gap: 4px 12px;
+  }
+  .collection-run > span:not(.material-icons-outlined) {
+    grid-row: 2;
+  }
+  .collection-run > .material-icons-outlined {
+    grid-column: 2;
+    grid-row: 1 / 3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collection-runs > summary > .material-icons-outlined:last-child {
+    transition: none;
   }
 }
