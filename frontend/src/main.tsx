@@ -4,7 +4,7 @@ import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
 import { Activities, activityName, isActive } from "./activities";
-import { ImportPage, Now, NowPlayingProvider } from "./library";
+import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
@@ -470,6 +470,7 @@ function Shell({ logout }: { logout: () => void }) {
                     key={path}
                   />
                 )}
+              {path === "/music/now-playing" && <NowPlayingPage />}
               {page === "music" &&
                 kinds.includes(path.split("/")[2] as Kind) &&
                 path.split("/")[3] &&

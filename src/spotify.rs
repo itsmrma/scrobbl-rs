@@ -533,7 +533,7 @@ pub(crate) async fn api_get(
         // Optional images yield to collection and now playing while waiting.
         let mut next = state.spotify.catalogue_next.lock().await;
         tokio::time::sleep_until(*next).await;
-        *next = tokio::time::Instant::now() + Duration::from_secs(3);
+        *next = tokio::time::Instant::now() + Duration::from_secs(1);
     }
     let _gate = state.spotify.gate.lock().await;
     let (value, _, _) = api_get_locked(state, path, params).await?;
@@ -851,8 +851,18 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
         && auth::now_ms() / interval == time / interval
     {
         let mut value = value.clone();
+        let external = value["spotify_url"]
+            .as_str()
+            .and_then(|url| url.strip_prefix("https://open.spotify.com/track/"))
+            .map(|id| format!("spotify:track:{id}"));
+        let track_id: Option<String> = if let Some(external) = external {
+            sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(external).fetch_optional(&state.read_db).await?
+        } else {
+            None
+        };
         if let Some(object) = value.as_object_mut() {
             object.insert("served_at_ms".into(), json!(auth::now_ms()));
+            object.insert("track_id".into(), json!(track_id));
         }
         return Ok(Json(value));
     }
@@ -874,7 +884,9 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let value = if row["is_playing"] == true && row["currently_playing_type"] == "track" {
         match parse_track(&row["item"]) {
             Ok(track) => {
-                json!({"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
+                let track_id: Option<String> = sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(&track.id).fetch_optional(&state.read_db).await?;
+
+                json!({"track_id":track_id,"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
             }
             Err(_) => Value::Null,
         }
@@ -1067,6 +1079,30 @@ mod tests {
         assert_eq!(state.spotify.catalogue_tracks.lock().await.len(), 1);
         state.storage.close().await;
         handle.abort();
+    }
+    #[tokio::test]
+    async fn cold_catalogue_images_do_not_pay_a_three_second_local_delay() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                reply("/v1/artists/one", json!({"images":[]})),
+                reply("/v1/artists/two", json!({"images":[]})),
+            ],
+            false,
+        )
+        .await;
+        api_get(&state, "/artists/one", &[]).await.unwrap();
+        let second = tokio::time::timeout(
+            Duration::from_millis(1800),
+            api_get(&state, "/artists/two", &[]),
+        )
+        .await;
+        handle.abort();
+        assert!(
+            second.is_ok(),
+            "cold images are delayed by a fixed three-second local wait"
+        );
+        second.unwrap().unwrap();
+        state.storage.close().await;
     }
     fn track() -> Value {
         json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Test track","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"Artist"}]})
@@ -1766,7 +1802,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.0["title"], "Test track");
-        let _ = now_playing(State(state.clone()), headers).await.unwrap();
+        assert!(first.0["track_id"].is_null());
+        sqlx::query("INSERT INTO tracks(id,title,metadata_rank) VALUES('local-now-track','Test track','spotify')").execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO entity_links VALUES('track','spotify','spotify:track:0000000000000000000001','local-now-track',0,'{}')").execute(&state.db).await.unwrap();
+        let cached = now_playing(State(state.clone()), headers).await.unwrap();
+        assert_eq!(cached.0["track_id"], "local-now-track");
         assert_eq!(mock.calls.lock().await.len(), 1);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
             .fetch_one(&state.db)

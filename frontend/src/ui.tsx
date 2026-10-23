@@ -17,7 +17,8 @@ export function Icon({ children }: { children: string }) {
 export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
   return name === "scrobbl.rs" ? (
     <span className="wordmark">
-      scrobbl<span className="wordmark-suffix">.rs</span>
+      scrobbl<span className="accent">.</span>
+      <span className="wordmark-suffix">rs</span>
     </span>
   ) : (
     <span className="wordmark">{name}</span>
@@ -86,7 +87,7 @@ const artworkQueue: (() => void)[] = [];
 function pumpArtwork() {
   if (!artworkBusy) artworkQueue.shift()?.();
 }
-function queueArtwork(start: (done: () => void) => void) {
+function queueArtwork(start: (done: () => void) => void, priority = false) {
   let started = false,
     finished = false;
   const done = () => {
@@ -97,7 +98,7 @@ function queueArtwork(start: (done: () => void) => void) {
       pumpArtwork();
     }
   };
-  artworkQueue.push(() => {
+  const queued = () => {
     if (finished) {
       pumpArtwork();
       return;
@@ -105,7 +106,9 @@ function queueArtwork(start: (done: () => void) => void) {
     started = true;
     artworkBusy = true;
     start(done);
-  });
+  };
+  if (priority) artworkQueue.unshift(queued);
+  else artworkQueue.push(queued);
   pumpArtwork();
   return done;
 }
@@ -129,20 +132,35 @@ export function Cover({
   useEffect(() => {
     if (!local || !source || !marker.current) return;
     let cancel = () => {};
+    let pending = false;
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries.some((entry) => entry.isIntersecting)) return;
-        observer.disconnect();
         if (cacheMiss !== source) {
+          observer.disconnect();
           setReadySource(`${source}&cached=true`);
-        } else {
+        } else if (!pending) {
+          pending = true;
           cancel = queueArtwork((done) => {
+            const rect = marker.current?.getBoundingClientRect();
+            // Scrolling away must not leave invisible cold images ahead of
+            // the page the owner is actually reading. Observe them again.
+            if (
+              !rect?.width ||
+              rect.bottom <= 0 ||
+              rect.top >= window.innerHeight
+            ) {
+              pending = false;
+              done();
+              return;
+            }
+            observer.disconnect();
             release.current = { source, done };
             setReadySource(source);
-          });
+          }, !!marker.current?.closest(".music-heading"));
         }
       },
-      { rootMargin: "240px" },
+      { rootMargin: cacheMiss === source ? "0px" : "240px" },
     );
     observer.observe(marker.current);
     return () => {

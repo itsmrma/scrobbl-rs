@@ -562,6 +562,11 @@ test("connection cards show a verified check and a readable automatic wait", asy
   await expect(page.locator("#connection-badge")).toHaveClass(
     /connection-verified/,
   );
+  const identity = await page.locator(".connection-identity").boundingBox();
+  const badge = await page.locator("#connection-badge").boundingBox();
+  expect(
+    Math.abs(identity.y + identity.height / 2 - badge.y - badge.height / 2),
+  ).toBeLessThanOrEqual(1);
   const summary = page.locator(".spotify-card > summary");
   await summary.click();
   await expect(
@@ -800,6 +805,7 @@ test("visible artwork waits in the client while music data remains available", a
   try {
     await login(page);
     await expect(page.locator(".chart-bars")).toBeVisible();
+    await page.locator(".rankings-grid").scrollIntoViewIfNeeded();
     await expect.poll(() => requests).toBeGreaterThan(0);
     await page.waitForTimeout(150);
     expect(
@@ -1156,6 +1162,22 @@ test("music artwork and metrics stay proportionate and the full album card opens
     ).toBe("none");
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
+      JSON.stringify(
+        await page.locator("body *").evaluateAll((nodes) =>
+          nodes
+            .filter((node) => {
+              const box = node.getBoundingClientRect();
+              return box.width && box.right > innerWidth + 1;
+            })
+            .map((node) => ({
+              tag: node.tagName,
+              class: node.className,
+              right: node.getBoundingClientRect().right,
+              width: node.getBoundingClientRect().width,
+            }))
+            .slice(-8),
+        ),
+      ),
     ).toBeLessThanOrEqual(width);
     await page.screenshot({
       path: `test-results/gui-${browserName}-${width}-balanced-artist.png`,
@@ -1203,6 +1225,21 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   const widget = page.locator(".sidebar-now");
   await expect(widget.getByRole("link")).toContainText("A song");
   await expect(widget.getByRole("progressbar")).toBeVisible();
+  const lefts = await widget
+    .locator(".nav-copy")
+    .first()
+    .locator(":scope > small, :scope > a, :scope > span")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => node.getBoundingClientRect().left),
+    );
+  expect(Math.max(...lefts) - Math.min(...lefts)).toBeLessThanOrEqual(1);
+  const collapse = page.getByRole("button", {
+    name: "Collapse sidebar",
+    exact: true,
+  });
+  await collapse.hover();
+  await expect(collapse).toHaveCSS("box-shadow", "none");
+  await expect(page.locator(".sidebar .wordmark > .accent")).toHaveText(".");
   expect((await widget.boundingBox()).height).toBeLessThan(155);
   await page.screenshot({
     path: `test-results/gui-${browserName}-sidebar-playback.png`,
@@ -1213,4 +1250,205 @@ test("sidebar playback card displays artwork, progress and remains usable collap
     .getByRole("button", { name: "Collapse sidebar", exact: true })
     .click();
   await expect(widget.getByRole("progressbar")).toBeHidden();
+});
+test("first star accepts half a star and album listen rows stay compact", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto(`/music/albums/${archive.rankings.albums[0].id}`);
+  const first = page.locator(".star-button").first();
+  await expect(first).toBeVisible();
+  const box = await first.boundingBox();
+  await first.hover({ position: { x: box.width * 0.25, y: box.height / 2 } });
+  await expect(first.locator(".material-icons-outlined")).toHaveText(
+    "star_half",
+  );
+  await first.click({ position: { x: box.width * 0.25, y: box.height / 2 } });
+  await expect(page.getByLabel("Rating in stars", { exact: true })).toHaveText(
+    "0.5 / 5",
+  );
+  await page.reload();
+  await expect(page.getByLabel("Rating in stars", { exact: true })).toHaveText(
+    "0.5 / 5",
+  );
+  const row = page.locator(".listen-context-albums").first();
+  expect((await row.boundingBox()).height).toBeLessThanOrEqual(100);
+});
+test("compact music toolbar, adjustable grids, aligned collections and collage PNG export", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.route("**/api/v1/artwork/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="#687f9c"/><circle cx="300" cy="300" r="170" fill="#d8c78c"/></svg>',
+    }),
+  );
+  await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
+    const response = await route.fetch(),
+      data = await response.json();
+    if (data.items.length)
+      data.items = Array.from({ length: 20 }, (_, index) => ({
+        ...data.items[0],
+        id: `${data.items[0].id}-${index}`,
+        name: `${data.items[0].name} ${index + 1}`,
+        position: index + 1,
+        plays: 40 - index,
+        listened_ms: (40 - index) * 180000,
+      }));
+    data.total = data.items.length;
+    await route.fulfill({ json: data });
+  });
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto(`/music/artists/${archive.rankings.artists[0].id}`);
+  await expect(
+    page.locator(".music-heading").getByLabel("Period", { exact: true }),
+  ).toBeVisible();
+  const albums = page.getByRole("article", { name: "albums rankings" }),
+    tracks = page.getByRole("article", { name: "tracks rankings" });
+  await albums.getByRole("button", { name: "Grid", exact: true }).click();
+  const small = (await albums.locator(".music-card").first().boundingBox())
+    .width;
+  expect(small).toBeLessThanOrEqual(145);
+  await albums
+    .getByRole("button", { name: "Larger cards", exact: true })
+    .click();
+  await expect(
+    albums.getByRole("status", { name: "Card size", exact: true }),
+  ).toHaveText("Medium");
+  expect(
+    (await albums.locator(".music-card").first().boundingBox()).width,
+  ).toBeGreaterThan(small + 25);
+  await page.reload();
+  await expect(
+    albums.getByRole("status", { name: "Card size", exact: true }),
+  ).toHaveText("Medium");
+  await tracks.getByRole("button", { name: "List", exact: true }).click();
+  const ab = await albums.boundingBox(),
+    tb = await tracks.boundingBox();
+  expect(Math.abs(ab.y + ab.height - tb.y - tb.height)).toBeLessThanOrEqual(2);
+  const last = tracks.locator(".ranking-row").last();
+  expect(
+    parseFloat(await last.evaluate((e) => getComputedStyle(e).paddingBottom)),
+  ).toBeGreaterThanOrEqual(10);
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-music-density.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await albums.getByRole("button", { name: "Collage", exact: true }).click();
+  const collage = albums.getByRole("region", { name: "Album collage" });
+  await expect(collage.locator(".collage-tile")).toHaveCount(16);
+  await expect.poll(() => collage.locator("img").count()).toBe(16);
+  const cells = await collage.locator(".collage-tile").evaluateAll((nodes) =>
+    nodes.map((e) => ({
+      x: parseFloat(e.style.left) / 100,
+      y: parseFloat(e.style.top) / 100,
+      w: parseFloat(e.style.width) / 100,
+      h: parseFloat(e.style.height) / 100,
+    })),
+  );
+  expect(cells.reduce((sum, t) => sum + t.w * t.h, 0)).toBeCloseTo(1, 5);
+  for (let i = 0; i < cells.length; i++)
+    for (let j = i + 1; j < cells.length; j++) {
+      const a = cells[i],
+        b = cells[j];
+      expect(
+        Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
+          Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)),
+      ).toBeLessThan(0.000001);
+    }
+  const readyDownload = page.waitForEvent("download");
+  await collage
+    .getByRole("button", { name: "Download PNG", exact: true })
+    .click();
+  const download = await readyDownload;
+  expect(download.suggestedFilename()).toBe("scrobbl-albums-collage.png");
+  const png = await require("node:fs/promises").readFile(await download.path());
+  expect(png.subarray(1, 4).toString()).toBe("PNG");
+  expect(png.readUInt32BE(16)).toBe(1200);
+  expect(png.readUInt32BE(20)).toBe(1320);
+  await page.screenshot({
+    path: `test-results/gui-${browserName}-album-collage.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.goto("/rankings/artists?period=all");
+  await page.getByRole("button", { name: "Collage", exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Artist collage" })
+      .locator(".collage-tile"),
+  ).toHaveCount(16);
+});
+
+test("now playing opens the archived track locally and handles tracks awaiting collection", async ({
+  page,
+}) => {
+  let trackId = null;
+  await page.route("**/api/spotify/status", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        connected: true,
+        connection: "verified",
+      },
+    });
+  });
+  await page.route("**/api/spotify/now-playing", (route) =>
+    route.fulfill({
+      json: {
+        track_id: trackId,
+        title: "Seed song",
+        artists: [{ id: "artist", name: "Seed artist" }],
+        album: "Seed album",
+        cover_url: null,
+        spotify_url: "https://open.spotify.com/track/0000000000000000000088",
+        duration_ms: 180000,
+        progress_ms: 45000,
+        response_received_at_ms: Date.now(),
+        observed_at_ms: Date.now(),
+      },
+    }),
+  );
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  trackId = archive.rankings.tracks[0].id;
+  await page.reload();
+  const link = page
+    .locator(".sidebar-now")
+    .getByRole("link", { name: "Seed song", exact: true });
+  await expect(link).toHaveAttribute("href", /\/music\/tracks\//);
+  await link.click();
+  await expect(page.locator(".music-heading")).toContainText(
+    "Track by Seed artist",
+  );
+  await page.goto(`/music/albums/${archive.rankings.albums[0].id}`);
+  await expect(page.locator(".music-heading")).toContainText(
+    "Album by Seed artist",
+  );
+  trackId = null;
+  await page.reload();
+  await page
+    .locator(".sidebar-now")
+    .getByRole("link", { name: "Seed song", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/music\/now-playing/);
+  await expect(
+    page.getByRole("heading", { name: "Playing now", exact: true }),
+  ).toBeVisible();
+  expect(
+    (await (await page.request.get("/api/dashboard?period=all")).json()).totals
+      .records,
+  ).toBe(archive.totals.records);
 });

@@ -256,10 +256,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     verified_at_ms: Date.now(),
     last_sync_ms: Date.now(),
   };
-  await expect(page.locator("#connection-badge")).toContainText(
-    "Connected · verified on last request",
-    { timeout: 10000 },
-  );
+  await expect(page.locator("#connection-badge")).toContainText("Connected", {
+    timeout: 10000,
+  });
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.clock.install();

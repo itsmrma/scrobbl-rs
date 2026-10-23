@@ -21,7 +21,7 @@ function Stars({
   function pointedRating(star: number, clientX: number, element: HTMLElement) {
     const rect = element.getBoundingClientRect();
     return clientX - rect.left < rect.width / 2
-      ? Math.max(1, star - 0.5)
+      ? Math.max(0.5, star - 0.5)
       : star;
   }
   return (
@@ -38,7 +38,7 @@ function Stars({
               key={star}
               type="button"
               className="star-button"
-              aria-label={`Rate ${star} stars; left half selects ${Math.max(1, star - 0.5)}`}
+              aria-label={`Rate ${star} stars; left half selects ${Math.max(0.5, star - 0.5)}`}
               aria-pressed={value !== null && value === star}
               onPointerMove={(event) => {
                 if (event.pointerType === "mouse" && !disabled)
@@ -62,14 +62,14 @@ function Stars({
                   event.preventDefault();
                   const next =
                     event.key === "Home"
-                      ? 1
+                      ? 0.5
                       : event.key === "End"
                         ? 5
                         : Math.max(
-                            1,
+                            0.5,
                             Math.min(
                               5,
-                              (value ?? 1) +
+                              (value ?? 0.5) +
                                 (["ArrowLeft", "ArrowDown"].includes(event.key)
                                   ? -0.5
                                   : 0.5),

@@ -12,6 +12,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Now } from "./library";
+import { Collage } from "./collage";
 import { MusicActions } from "./music-edit";
 import { Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
@@ -353,15 +354,18 @@ function RankingRows({
   kind,
   params,
   grid = false,
+  cardSize = 140,
 }: {
   items: Ranking[];
   kind: Kind;
   params: URLSearchParams;
   grid?: boolean;
+  cardSize?: number;
 }) {
   return items.length ? (
     <ol
       className={`${grid ? "music-grid" : "ranking-list"} category-${kind}`}
+      style={{ "--music-card-size": `${cardSize}px` } as Style}
       data-ranking-kind={kind}
     >
       {items.map((item) => (
@@ -424,6 +428,13 @@ function RankingsPanel({
   standalone?: boolean;
 }) {
   const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
+  const [cardSize, setCardSize] = useBrowserPreference(
+    `card-size-${kind}`,
+    140,
+    (value): value is number =>
+      typeof value === "number" && [140, 180, 220].includes(value),
+  );
+  const [collage, setCollage] = useState(false);
   const search = useSearch();
   const [draft, setDraft] = useState(params.get("q") || "");
   useEffect(() => setDraft(params.get("q") || ""), [search]);
@@ -465,7 +476,7 @@ function RankingsPanel({
     });
   return (
     <article
-      className={`panel padded ${standalone ? "rankings-panel" : ""}`}
+      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""}`}
       aria-label={`${kind} rankings`}
     >
       <div className="ranking-panel-heading">
@@ -477,55 +488,105 @@ function RankingsPanel({
         )}
       </div>
       {showView && (
-        <div className="filters">
+        <div className="ranking-toolbar">
           <form
             className="search-inline"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               update({ q: draft, page: "1", [pageKey]: "1" });
             }}
           >
-            <label>
-              Search rankings
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                maxLength={500}
-              />
-            </label>
-            <button className="secondary">Search</button>
+            <input
+              aria-label="Search rankings"
+              placeholder="Search rankings"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              maxLength={500}
+            />
+            <button className="secondary" aria-label="Search">
+              <Icon>search</Icon>
+            </button>
           </form>
-        </div>
-      )}
-      <div className="filters">
-        {showView && (
           <div className="view-toggle" role="group" aria-label="Ranking view">
             <button
               className="secondary"
-              aria-pressed={list.view === "list"}
-              onClick={() => list.setView("list")}
+              aria-pressed={!collage && list.view === "list"}
+              onClick={() => {
+                list.setView("list");
+                setCollage(false);
+              }}
             >
               <Icon>view_list</Icon>List
             </button>
             <button
               className="secondary"
-              aria-pressed={list.view === "grid"}
-              onClick={() => list.setView("grid")}
+              aria-pressed={!collage && list.view === "grid"}
+              onClick={() => {
+                list.setView("grid");
+                setCollage(false);
+              }}
             >
               <Icon>grid_view</Icon>Grid
             </button>
           </div>
-        )}
-      </div>
+          {!collage && list.view === "grid" && (
+            <div
+              className="card-size-control"
+              role="group"
+              aria-label="Card size"
+            >
+              <button
+                className="icon-button"
+                aria-label="Smaller cards"
+                disabled={cardSize === 140}
+                onClick={() => setCardSize(cardSize - 40)}
+              >
+                <Icon>remove</Icon>
+              </button>
+              <output aria-label="Card size">
+                {cardSize === 140
+                  ? "Small"
+                  : cardSize === 180
+                    ? "Medium"
+                    : "Large"}
+              </output>
+              <button
+                className="icon-button"
+                aria-label="Larger cards"
+                disabled={cardSize === 220}
+                onClick={() => setCardSize(cardSize + 40)}
+              >
+                <Icon>add</Icon>
+              </button>
+            </div>
+          )}
+          {kind !== "tracks" && (
+            <button
+              className="secondary collage-toggle"
+              aria-pressed={collage}
+              onClick={() => setCollage(!collage)}
+            >
+              <Icon>dashboard</Icon>Collage
+            </button>
+          )}
+        </div>
+      )}
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
-          <RankingRows
-            items={result.data.items}
-            kind={kind}
-            params={params}
-            grid={(!showView && kind === "albums") || list.view === "grid"}
-          />
+          {collage && kind !== "tracks" ? (
+            <Collage items={result.data.items} kind={kind} params={params} />
+          ) : (
+            <div className="ranking-results">
+              <RankingRows
+                cardSize={cardSize}
+                items={result.data.items}
+                kind={kind}
+                params={params}
+                grid={(!showView && kind === "albums") || list.view === "grid"}
+              />
+            </div>
+          )}
           <Pager
             list={list}
             resize={reset}
@@ -1089,7 +1150,7 @@ export function HistoryPage({
     });
   if (!visible) return null;
   return (
-    <>
+    <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
         <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
           Search and combine period, artist, album and source filters.
@@ -1279,6 +1340,11 @@ export function HistoryPage({
               Reset
             </button>
           </div>
+          <p className="subtle">
+            Listens below 30 seconds of actual playback remain archived and are
+            excluded from valid-listen statistics. Estimated or unknown time
+            alone does not exclude a listen.
+          </p>
         </form>
       </details>
       {params.get("bucket") && (
@@ -1303,15 +1369,10 @@ export function HistoryPage({
           </button>
         </div>
       )}
-      <p className="subtle">
-        Listens below 30 seconds of actual playback remain archived and are
-        excluded from valid-listen statistics. Estimated or unknown time alone
-        does not exclude a listen.
-      </p>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <article className="panel">
-          <div className="panel-title padded">
+          <div className="panel-title history-result-heading">
             <h2 id={embedded ? undefined : "history-total"}>
               {number.format(result.data.total)}{" "}
               {result.data.total === 1 ? "record" : "records"}
@@ -1340,7 +1401,7 @@ export function HistoryPage({
       ) : (
         !result.error && <p role="status">Loading listening history…</p>
       )}
-    </>
+    </div>
   );
 }
 export function MusicPage({
@@ -1363,7 +1424,6 @@ export function MusicPage({
   );
   return (
     <>
-      <PeriodFilters selection={selection} />
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
@@ -1373,6 +1433,11 @@ export function MusicPage({
               title={result.data.name}
               eyebrow={kind.slice(0, -1).toUpperCase()}
             >
+              {kind === "albums"
+                ? "Album by "
+                : kind === "tracks"
+                  ? "Track by "
+                  : ""}
               {result.data.artists.map((a, i) => (
                 <span key={a.id}>
                   {i > 0 && ", "}
@@ -1390,6 +1455,9 @@ export function MusicPage({
               )}
             </Heading>
             <MusicActions kind={kind} id={id} />
+            <div className="music-period">
+              <PeriodFilters selection={selection} />
+            </div>
           </div>
           <Stats totals={result.data.totals} />
         </>

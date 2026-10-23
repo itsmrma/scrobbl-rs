@@ -21,11 +21,11 @@ import {
   Heading,
   Icon,
   number,
-  SpotifyLink,
   useToast,
 } from "./ui";
 import { useLoad } from "./load";
 import { Link } from "./navigation";
+import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
 
 const NowContext = createContext<{
@@ -72,6 +72,58 @@ export function NowPlayingProvider({
     </NowContext>
   );
 }
+export function NowPlayingPage() {
+  const { data, error } = useContext(NowContext);
+  return (
+    <>
+      <Link className="back-link" to="/dashboard">
+        <Icon>arrow_back</Icon>Overview
+      </Link>
+      <ErrorText>{error}</ErrorText>
+      {data ? (
+        <>
+          <div className="music-heading">
+            <Cover url={data.cover_url} large />
+            <Heading title={data.title}>
+              Track by {data.artists.map((artist) => artist.name).join(", ")}
+            </Heading>
+            <div className="music-personal">
+              <a
+                className="spotify-attribution"
+                href={data.spotify_url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View on Spotify<Icon>open_in_new</Icon>
+              </a>
+            </div>
+          </div>
+          <article className="panel padded">
+            <h2>Playing now</h2>
+            <p>{data.album || "Album not reported"}</p>
+            {data.track_id ? (
+              <Link
+                className="button secondary"
+                to={musicLink("tracks", data.track_id)}
+              >
+                Open track history<Icon>arrow_forward</Icon>
+              </Link>
+            ) : (
+              <p>
+                This track has not been collected in your archive yet. Its
+                listening history will appear after collection.
+              </p>
+            )}
+          </article>
+        </>
+      ) : (
+        <Heading title="Nothing playing">
+          Start a track on Spotify to see it here.
+        </Heading>
+      )}
+    </>
+  );
+}
 export function Now({
   status,
   compact = false,
@@ -114,7 +166,15 @@ export function Now({
           </small>
           {data ? (
             <>
-              <SpotifyLink url={data.spotify_url}>{data.title}</SpotifyLink>
+              <Link
+                to={
+                  data.track_id
+                    ? musicLink("tracks", data.track_id)
+                    : "/music/now-playing"
+                }
+              >
+                {data.title}
+              </Link>
               <span>{data.artists.map((a) => a.name).join(", ")}</span>
             </>
           ) : (
@@ -158,7 +218,15 @@ export function Now({
         <div>
           <h3>
             {data ? (
-              <SpotifyLink url={data.spotify_url}>{data.title}</SpotifyLink>
+              <Link
+                to={
+                  data.track_id
+                    ? musicLink("tracks", data.track_id)
+                    : "/music/now-playing"
+                }
+              >
+                {data.title}
+              </Link>
             ) : (
               "Your next favourite awaits"
             )}

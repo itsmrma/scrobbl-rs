@@ -628,9 +628,15 @@ export function Connections({
         onToggle={(e) => setOpen(e.currentTarget.open)}
       >
         <summary>
-          <strong className="connection-title">
-            <Icon>headphones</Icon>Spotify
-          </strong>
+          <div className="connection-identity">
+            <span className="connection-provider-icon">
+              <Icon>headphones</Icon>
+            </span>
+            <div>
+              <strong className="connection-title">Spotify</strong>
+              <span className="connection-collection">{collection}</span>
+            </div>
+          </div>
           <span
             id="connection-badge"
             className={`connection-badge ${status.connected && status.connection === "verified" ? "connection-verified" : ""}`}
@@ -642,12 +648,16 @@ export function Connections({
                   ? "error_outline"
                   : "link"}
             </Icon>
-            {status.connected && status.connection === "verified"
-              ? "Connected · verified on last request"
-              : connection}
-          </span>
-          <span className="connection-collection">
-            Collection: {collection}
+            <span>
+              {status.connected && status.connection === "verified" ? (
+                <>
+                  <strong>Connected</strong>
+                  <small>Verified on last request</small>
+                </>
+              ) : (
+                connection
+              )}
+            </span>
           </span>
           <Icon>expand_more</Icon>
           {needsAction && (

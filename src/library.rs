@@ -1,4 +1,4 @@
-//! Owner annotations and bounded artwork retrieval, separate from source metadata.
+//! Owner annotations and persistent local artwork, separate from source metadata.
 use crate::{
     AppState, auth, db,
     error::{AppError, Result},
@@ -22,7 +22,6 @@ use std::{
 // Readers of a frozen archive use the same overlays as the live consultation.
 pub const METADATA: &str = include_str!("library-metadata.sql");
 const IMAGE_LIMIT: usize = 5 * 1024 * 1024;
-const PROVIDER_BUDGET: i64 = 128 * 1024 * 1024;
 const DAY: i64 = 86_400_000;
 
 fn entity(kind: &str) -> Result<(&'static str, &'static str, &'static str)> {
@@ -140,10 +139,10 @@ pub async fn edit(
     }
     if form
         .rating
-        .is_some_and(|v| !v.is_finite() || !(1.0..=5.0).contains(&v) || (v * 2.0).fract() != 0.0)
+        .is_some_and(|v| !v.is_finite() || !(0.5..=5.0).contains(&v) || (v * 2.0).fract() != 0.0)
     {
         return Err(AppError::BadRequest(
-            "Choose 1 to 5 stars, in half-star steps, or clear the rating.".into(),
+            "Choose 0.5 to 5 stars, in half-star steps, or clear the rating.".into(),
         ));
     }
     let mut tx = state.db.begin().await?;
@@ -308,31 +307,16 @@ async fn save_image(
     writable(state).await?;
     let mime = data.map(image_type).transpose()?;
     let now = auth::now_ms();
-    let expires = if source == "spotify" {
-        Some(now + if data.is_some() { 7 * DAY } else { DAY })
-    } else {
-        None
-    };
+    // Successful downloads are part of the local library. Only a confirmed
+    // absence expires, so the provider can be checked again later.
+    let expires = (source == "spotify" && data.is_none()).then_some(now + DAY);
     let mut tx = state.db.begin().await?;
-    if source == "spotify" {
-        sqlx::query("DELETE FROM artwork WHERE source='spotify' AND expires_at_ms<=?")
-            .bind(now)
-            .execute(&mut *tx)
-            .await?;
-        let mut total: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(SUM(length(bytes)),0) FROM artwork WHERE source='spotify'",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
-        while total + data.map_or(0, |v| v.len() as i64) > PROVIDER_BUDGET {
-            let deleted:Option<i64>=sqlx::query_scalar("DELETE FROM artwork WHERE rowid=(SELECT rowid FROM artwork WHERE source='spotify' ORDER BY checked_at_ms LIMIT 1) RETURNING COALESCE(length(bytes),0)").fetch_optional(&mut *tx).await?;
-            if let Some(size) = deleted {
-                total -= size
-            } else {
-                break;
-            }
-        }
-    }
+    sqlx::query(
+        "DELETE FROM artwork WHERE source='spotify' AND bytes IS NULL AND expires_at_ms<=?",
+    )
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=excluded.expires_at_ms").bind(kind).bind(id).bind(source).bind(data).bind(mime).bind(now).bind(expires).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
@@ -472,7 +456,7 @@ pub async fn artwork(
         )
             .into_response()
     };
-    let cached=sqlx::query("SELECT bytes,mime FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    let cached=sqlx::query("SELECT bytes,mime FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
     if let Some(row) = cached {
         let bytes: Option<Vec<u8>> = row.get("bytes");
         let bytes = bytes.ok_or(AppError::NotFound)?;

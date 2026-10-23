@@ -160,7 +160,7 @@ async fn ratings_validate_half_steps_and_image_urls_reject_local_targets_without
     let (_dir, state, token) = setup().await;
     let dash = get(&state, &token, "/api/dashboard").await;
     let id = dash["rankings"]["artists"][0]["id"].as_str().unwrap();
-    for rating in [0.5, 0.0, 5.5, 3.3] {
+    for rating in [0.0, -0.5, 5.5, 3.3] {
         assert_eq!(
             call(
                 &state,
@@ -175,6 +175,19 @@ async fn ratings_validate_half_steps_and_image_urls_reject_local_targets_without
             StatusCode::BAD_REQUEST
         );
     }
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            &format!("/api/v1/library/artists/{id}"),
+            serde_json::to_vec(&json!({"name":null,"rating":0.5})).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
     // Valid image signature; active document types cannot be stored or served.
     let png = b"\x89PNG\r\n\x1a\nlocal image bytes".to_vec();
     assert_eq!(
@@ -429,5 +442,75 @@ async fn artwork_cache_probe_never_contacts_spotify_and_upgrade_preserves_custom
         .await
         .unwrap();
     assert_eq!(sources, vec!["custom"]);
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn downloaded_spotify_artwork_survives_cleanup_restart_and_backup() {
+    let (dir, state, token) = setup().await;
+    let dash = get(&state, &token, "/api/dashboard").await;
+    let id = dash["rankings"]["artists"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let png = b"\x89PNG\r\n\x1a\npermanent provider image";
+    sqlx::query("INSERT INTO artwork VALUES('artists',?,'spotify',?,'image/png',0,1)")
+        .bind(&id)
+        .bind(png.as_slice())
+        .execute(&state.db)
+        .await
+        .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../release-migrations/0014_persistent_spotify_artwork.sql"
+    ))
+    .execute(&state.db)
+    .await
+    .unwrap();
+    scrobbl_rs::retention::cleanup(&state.storage)
+        .await
+        .unwrap();
+    let expires: Option<i64> =
+        sqlx::query_scalar("SELECT expires_at_ms FROM artwork WHERE entity_id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+    assert!(expires.is_none());
+    let config = state.config.clone();
+    state.storage.close().await;
+    let store = storage::open(dir.path()).await.unwrap();
+    let state = AppState::new(store, config);
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "GET",
+            &format!("/api/v1/artwork/artists/{id}?cached=true"),
+            vec![],
+            false
+        )
+        .await
+        .1,
+        png
+    );
+    let work = tempfile::tempdir().unwrap();
+    let backup = work.path().join("artwork.zip");
+    recovery::create_backup(&state.storage, work.path(), &backup)
+        .await
+        .unwrap();
+    let restored = tempfile::tempdir().unwrap();
+    recovery::trial_restore(&backup, restored.path())
+        .await
+        .unwrap();
+    let mut copy = recovery::connect(&restored.path().join("archive.db"), true)
+        .await
+        .unwrap();
+    let saved: Vec<u8> =
+        sqlx::query_scalar("SELECT bytes FROM artwork WHERE entity_id=? AND source='spotify'")
+            .bind(&id)
+            .fetch_one(&mut copy)
+            .await
+            .unwrap();
+    assert_eq!(saved, png);
     state.storage.close().await;
 }

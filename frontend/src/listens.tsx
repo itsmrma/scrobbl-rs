@@ -1,5 +1,5 @@
 import type { Listen, Preferences } from "./generated";
-import { Cover, date, duration } from "./ui";
+import { Cover, date, duration, Icon } from "./ui";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import type { Kind } from "./selection";
@@ -25,7 +25,7 @@ export function ListenList({
       ) : (
         items.map((item) => (
           <article
-            className={`listen-row ${context === "tracks" || context === "albums" ? `listen-context listen-context-${context}` : ""}`}
+            className={`listen-row ${context ? `listen-context listen-context-${context}` : ""}`}
             key={item.id}
           >
             {context !== "tracks" && (
@@ -91,9 +91,12 @@ export function ListenList({
                       : "Unknown duration"}
               </small>
             </div>
-            {(context === "tracks" || context === "albums") && (
+            {context && (
               <details className="listen-details">
-                <summary>Listen details</summary>
+                <summary>
+                  <Icon>info_outline</Icon>
+                  <span className="visually-hidden">Listen details</span>
+                </summary>
                 <dl>
                   <div>
                     <dt>Playback timestamp (UTC)</dt>

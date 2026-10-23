@@ -135,6 +135,7 @@ pub struct ActivityChart {
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
+    pub track_id: Option<String>,
     pub title: String,
     pub artists: Vec<Artist>,
     pub album: Option<String>,

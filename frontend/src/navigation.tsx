@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
 
 const selections = new Map<string, string>();
 const isConsultation = (path: string) =>
@@ -36,6 +36,7 @@ export function Link({
   to: string;
   children: ReactNode;
   className?: string;
+  style?: CSSProperties;
   "aria-label"?: string;
   "aria-current"?: "page";
   onClick?: () => void;
