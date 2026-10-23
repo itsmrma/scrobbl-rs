@@ -4834,12 +4834,12 @@ dialog {
   gap: 12px;
 }
 .overview-heading .filters label {
-  min-width: 130px;
+  min-width: 140px;
   flex: 0 1 auto;
   font-size: 11px;
 }
 .overview-heading .filters .select-control {
-  min-width: 130px;
+  min-width: 140px;
 }
 .overview-rankings .ranking-row {
   grid-template-rows: auto auto 3px;

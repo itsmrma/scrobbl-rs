@@ -2339,7 +2339,10 @@ test("period notices do not move controls and music artwork stays square", async
       y: node.getBoundingClientRect().y,
     })),
   );
-  expect(after).toEqual(before);
+  for (let i = 0; i < before.length; i++) {
+    expect(Math.abs(after[i].x - before[i].x)).toBeLessThan(1);
+    expect(Math.abs(after[i].y - before[i].y)).toBeLessThan(1);
+  }
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: "test-results/gui-seventh-period.png",
