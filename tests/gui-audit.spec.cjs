@@ -1025,7 +1025,11 @@ test("history filters collapse without clearing the selection and music history 
       await expect(row).toContainText("Counted listen");
     }
     for (const control of await page.locator("#main select:visible").all()) {
-      expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(44);
+      // Gecko can report 43.99988 for a 44 CSS-pixel control. Allow only
+      // subpixel layout precision, not a smaller interaction target.
+      expect((await control.boundingBox()).height).toBeGreaterThanOrEqual(
+        44 - 0.01,
+      );
     }
     const cover = await page.locator(".music-heading > .cover").boundingBox();
     expect(cover.width).toBeGreaterThanOrEqual(160);
