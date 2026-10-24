@@ -107,7 +107,8 @@ def main():
                 tar.add(path, arcname="scrobbl-rs/" + name, filter=lambda info: None if Path(info.name).name in (".DS_Store", "__pycache__") else info)
         tar.add(out / "distribution.json", arcname="scrobbl-rs/distribution.json")
         tar.add(notices, arcname="scrobbl-rs/THIRD_PARTY_LICENSES")
-    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    with archive.open("rb") as source:
+        digest = hashlib.file_digest(source, "sha256").hexdigest()
     (out / "source.tar.gz.sha256").write_text(digest + "  source.tar.gz\n")
     print(f"Packaged {len(manifest['cargo'])} Cargo and {len(manifest['npm'])} npm packages; source SHA-256 {digest}")
 

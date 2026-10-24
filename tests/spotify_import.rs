@@ -351,7 +351,14 @@ async fn full_size_spotify_zip() {
     let result = storage.job(&id).await.unwrap();
     assert_eq!(result.outcome.as_deref(), Some("complete"));
     assert_eq!(result.processed, 18000);
-    assert_eq!(count(&storage, "job_members").await, 18);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM job_members WHERE job_id=?")
+            .bind(&id)
+            .fetch_one(&storage.readers)
+            .await
+            .unwrap(),
+        18
+    );
     println!(
         "18 JSON / {bytes} bytes / 18,000 synthetic rows: {:?}",
         start.elapsed()

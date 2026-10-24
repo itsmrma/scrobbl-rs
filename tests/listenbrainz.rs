@@ -104,6 +104,85 @@ async fn compact_retention_releases_complete_listenbrainz_files_but_keeps_partia
     storage.close().await;
 }
 
+#[tokio::test]
+async fn reupload_attaches_its_job_before_waiting_cleanup_can_release_the_source() {
+    use axum::{body::Body, http::Request};
+    use scrobbl_rs::{AppState, auth, config::Config, retention, web};
+    use tower::ServiceExt;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let bytes = serde_json::to_vec(&[row(1700000000)]).unwrap();
+    let first = enqueue(&storage, "history.json", &bytes, None).await;
+    run(&storage, &first).await;
+    retention::cleanup(&storage).await.unwrap();
+    let hash = auth::digest(std::str::from_utf8(&bytes).unwrap());
+    let path = storage.directory.join("spool").join(&hash);
+    assert!(!path.exists());
+    let state = AppState::new(
+        storage.clone(),
+        Config {
+            port: 3210,
+            bind_ip: "127.0.0.1".parse().unwrap(),
+            external_origin: None,
+            data_dir: dir.path().into(),
+            sync_seconds: 120,
+            now_playing_seconds: 30,
+            import_limits: Default::default(),
+            api_snapshot_limits: Default::default(),
+            env_client_id: None,
+            env_client_secret: None,
+        },
+    );
+    let token = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
+        .bind(auth::digest(&token))
+        .execute(&storage.private)
+        .await
+        .unwrap();
+    // Hold only the archive writer: receipt can publish bytes but must wait to
+    // register them. Queue cleanup behind the receiver's spool lease precisely
+    // at that point, without relying on a probabilistic concurrent stress loop.
+    let writer = storage.writer.acquire().await.unwrap();
+    let body = format!(
+        "--test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"history.json\"\r\nContent-Type: application/json\r\n\r\n{}\r\n--test--\r\n",
+        std::str::from_utf8(&bytes).unwrap()
+    );
+    let upload = tokio::spawn(
+        web::router(state).oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/listenbrainz/upload")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "csrf")
+                .header("content-type", "multipart/form-data; boundary=test")
+                .body(Body::from(body))
+                .unwrap(),
+        ),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !path.exists() {
+            assert!(!upload.is_finished());
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let mut cleanup = Box::pin(retention::cleanup(&storage));
+    assert!(futures_util::poll!(cleanup.as_mut()).is_pending());
+    drop(writer);
+    let (response, cleaned) = tokio::join!(upload, cleanup);
+    cleaned.unwrap();
+    assert_eq!(
+        response.unwrap().unwrap().status(),
+        200,
+        "cleanup released the reupload before its new job attached"
+    );
+    assert!(path.is_file());
+    storage.close().await;
+}
+
 #[test]
 fn timestamps_durations_and_optional_metadata_are_not_invented() {
     for (value, kind, ms, counted) in [

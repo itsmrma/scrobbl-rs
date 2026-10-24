@@ -94,6 +94,19 @@ impl Storage {
         parameters: &Value,
     ) -> Result<String> {
         let _files = self.spool_operations.read().await;
+        self.enqueue_locked(kind, file_id, filename, parameters)
+            .await
+    }
+
+    /// The caller holds a shared spool gate from receipt through job attachment.
+    /// Reacquiring it here could deadlock behind a waiting cleanup writer.
+    pub(crate) async fn enqueue_locked(
+        &self,
+        kind: &str,
+        file_id: Option<&str>,
+        filename: Option<&str>,
+        parameters: &Value,
+    ) -> Result<String> {
         if let Some(file_id) = file_id {
             let retained: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM source_files WHERE id=? AND retained=1)",

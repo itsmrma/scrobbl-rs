@@ -4,6 +4,150 @@ use scrobbl_rs::{
 use serde_json::json;
 use sqlx::Connection;
 
+#[tokio::test]
+async fn cancelled_upload_does_not_leave_incoming_bytes_after_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = storage::open(dir.path()).await.unwrap();
+    let (mut sender, mut reader) = tokio::io::duplex(131072);
+    let receiving = store.clone();
+    let upload = tokio::spawn(async move { receiving.receive(&mut reader, 262144).await });
+    tokio::io::AsyncWriteExt::write_all(&mut sender, &[1; 131072])
+        .await
+        .unwrap();
+    let incoming = dir.path().join("spool/incoming");
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            assert!(
+                !upload.is_finished(),
+                "receiver finished before cancellation"
+            );
+            if std::fs::read_dir(&incoming).unwrap().next().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // The cleanup gate must wait for a live receiver, even before it has a job.
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(30),
+            retention::cleanup(&store)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(std::fs::read_dir(&incoming).unwrap().count(), 1);
+    upload.abort();
+    assert!(upload.await.unwrap_err().is_cancelled());
+    retention::cleanup(&store).await.unwrap();
+    assert_eq!(
+        std::fs::read_dir(&incoming).unwrap().count(),
+        0,
+        "cancelled uploads retain their partial bytes forever"
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM source_files")
+            .fetch_one(&store.readers)
+            .await
+            .unwrap(),
+        0
+    );
+    store.close().await;
+}
+
+#[tokio::test]
+async fn cleanup_checks_all_reference_kinds_and_preserves_unattached_uploads() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = storage::open(dir.path()).await.unwrap();
+    let unattached = store
+        .receive(&mut b"unattached".as_slice(), 100)
+        .await
+        .unwrap();
+    for reference in ["direct", "input", "member", "page"] {
+        let file = store.receive(&mut reference.as_bytes(), 100).await.unwrap();
+        let first = store
+            .enqueue("test", Some(&file), None, &json!({}))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE jobs SET state='completed',outcome='complete' WHERE id=?")
+            .bind(first)
+            .execute(&store.writer)
+            .await
+            .unwrap();
+        let pending = store.enqueue("test", None, None, &json!({})).await.unwrap();
+        match reference {
+            "direct" => {
+                sqlx::query("UPDATE jobs SET file_id=? WHERE id=?")
+                    .bind(&file)
+                    .bind(&pending)
+                    .execute(&store.writer)
+                    .await
+                    .unwrap();
+            }
+            "input" => {
+                sqlx::query("INSERT INTO job_inputs VALUES(?,0,?,'test')")
+                    .bind(&pending)
+                    .bind(&file)
+                    .execute(&store.writer)
+                    .await
+                    .unwrap();
+            }
+            "member" => {
+                sqlx::query("INSERT INTO job_members(job_id,member,kind,state,file_id) VALUES(?,'test','music','pending',?)").bind(&pending).bind(&file).execute(&store.writer).await.unwrap();
+            }
+            _ => {
+                sqlx::query("INSERT INTO listenbrainz_pages VALUES(?,'test',?)")
+                    .bind(&pending)
+                    .bind(&file)
+                    .execute(&store.writer)
+                    .await
+                    .unwrap();
+            }
+        }
+        retention::cleanup(&store).await.unwrap();
+        assert!(
+            dir.path().join("spool").join(&file).exists(),
+            "pending {reference}"
+        );
+        sqlx::query("UPDATE jobs SET state='completed',outcome='no_music' WHERE id=?")
+            .bind(pending)
+            .execute(&store.writer)
+            .await
+            .unwrap();
+        retention::cleanup(&store).await.unwrap();
+        assert!(
+            !dir.path().join("spool").join(&file).exists(),
+            "completed {reference}"
+        );
+    }
+    assert!(dir.path().join("spool").join(unattached).exists());
+    store.close().await;
+}
+
+#[tokio::test]
+async fn failed_source_publication_does_not_leave_untracked_spool_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = storage::open(dir.path()).await.unwrap();
+    // Fail precisely after the immutable file is published, before its inventory
+    // can commit. This models an interrupted/failed database write at that seam.
+    sqlx::query("CREATE TRIGGER reject_source BEFORE INSERT ON source_files BEGIN SELECT RAISE(ABORT,'synthetic publication failure'); END")
+        .execute(&store.writer).await.unwrap();
+    let bytes = b"complete bytes without a committed inventory";
+    assert!(store.receive(&mut bytes.as_slice(), 1000).await.is_err());
+    let orphan = dir.path().join("spool").join(scrobbl_rs::auth::digest(
+        std::str::from_utf8(bytes).unwrap(),
+    ));
+    assert!(orphan.is_file());
+    retention::cleanup(&store).await.unwrap();
+    assert!(
+        !orphan.exists(),
+        "untracked published bytes are never reclaimed"
+    );
+    store.close().await;
+}
+
 fn source() -> String {
     json!([{"ts":"2026-01-01T00:00:00Z","ms_played":60000,
         "master_metadata_track_name":"Song","master_metadata_album_artist_name":"Artist",

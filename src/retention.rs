@@ -1,6 +1,6 @@
 //! Compact history retains provenance and hashes, and only the source files still
 //! needed by unfinished work. File publication, backup and deletion share a gate.
-use anyhow::{Context, ensure};
+use anyhow::Context;
 use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::BTreeSet;
 
@@ -107,6 +107,14 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     if store.directory.join("recovery.pending").exists() {
         return Ok(());
     }
+    // Receivers hold a shared spool gate until publication/attachment. With the
+    // exclusive gate, incoming files can only belong to interrupted uploads.
+    for entry in std::fs::read_dir(store.directory.join("spool/incoming"))? {
+        let entry = entry?;
+        if entry.file_type()?.is_file() {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
     let pinned = legacy_pins(store)?;
     let mut tx = store.writer.begin().await?;
     sqlx::query("DELETE FROM artwork WHERE source='spotify' AND expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
@@ -115,10 +123,17 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     // references have completed successfully. Partial, failed and cancelled work
     // remains retryable. Unattached uploads are retained, too.
     let candidates: Vec<String> = sqlx::query_scalar(
-        "SELECT f.id FROM source_files f WHERE
-         EXISTS(SELECT 1 FROM jobs j WHERE j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id) OR EXISTS(SELECT 1 FROM listenbrainz_pages p WHERE p.job_id=j.id AND p.file_id=f.id))
-         AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id) OR EXISTS(SELECT 1 FROM listenbrainz_pages p WHERE p.job_id=j.id AND p.file_id=f.id))
-         AND (j.state!='completed' OR COALESCE(j.outcome,'complete') NOT IN ('complete','no_music')))",
+        "WITH references_to_files AS (
+           SELECT file_id,id AS job_id FROM jobs WHERE file_id IS NOT NULL
+           UNION ALL SELECT file_id,job_id FROM job_inputs
+           UNION ALL SELECT file_id,job_id FROM job_members WHERE file_id IS NOT NULL
+           UNION ALL SELECT file_id,job_id FROM listenbrainz_pages
+         )
+         SELECT f.id FROM references_to_files r
+         JOIN source_files f ON f.id=r.file_id AND f.retained=1
+         JOIN jobs j ON j.id=r.job_id
+         GROUP BY f.id
+         HAVING MIN(j.state='completed' AND COALESCE(j.outcome,'complete') IN ('complete','no_music'))=1",
     ).fetch_all(&mut *tx).await?;
     for id in candidates {
         if pinned.contains(&id) {
@@ -131,19 +146,29 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     }
     tx.commit().await?;
     // Commit unavailability before unlinking; retry after a crash at either step.
-    let removed: Vec<String> =
-        sqlx::query_scalar("SELECT content_hash FROM source_files WHERE retained=0")
-            .fetch_all(&store.readers)
-            .await?;
-    for hash in removed {
-        ensure!(
-            hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()),
-            "Invalid source hash"
-        );
-        if pinned.contains(&hash) {
+    // Inspect only files still on disk, including publication interrupted before
+    // source_files committed. Never walk historical released rows on every tick.
+    for entry in std::fs::read_dir(store.directory.join("spool"))? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let hash = name.to_string_lossy();
+        if !entry.file_type()?.is_file()
+            || hash.len() != 64
+            || !hash.bytes().all(|c| c.is_ascii_hexdigit())
+            || pinned.contains(hash.as_ref())
+        {
             continue;
         }
-        match std::fs::remove_file(store.directory.join("spool").join(hash)) {
+        let retained: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM source_files WHERE content_hash=? AND retained=1)",
+        )
+        .bind(hash.as_ref())
+        .fetch_one(&store.readers)
+        .await?;
+        if retained {
+            continue;
+        }
+        match std::fs::remove_file(entry.path()) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
