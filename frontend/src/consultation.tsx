@@ -466,12 +466,17 @@ function RankingsPanel({
   scrolling?: boolean;
 }) {
   const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
-  const [cardSize, setCardSize] = useBrowserPreference(
+  const cardSizes = [100, 140, 220];
+  const [savedCardSize, setCardSize] = useBrowserPreference(
     `card-size-${kind}`,
     140,
     (value): value is number =>
-      typeof value === "number" && [140, 180, 220].includes(value),
+      typeof value === "number" && [100, 140, 180, 220].includes(value),
   );
+  const cardSize = savedCardSize === 180 ? 220 : savedCardSize;
+  useEffect(() => {
+    if (savedCardSize === 180) setCardSize(220);
+  }, [savedCardSize, setCardSize]);
   const [collage, setCollage] = useState(false);
   const search = useSearch();
   const [draft, setDraft] = useState(params.get("q") || "");
@@ -601,15 +606,19 @@ function RankingsPanel({
             <button
               className="icon-button"
               aria-label="Smaller cards"
-              disabled={cardSize === 140}
-              onClick={() => setCardSize(cardSize - 40)}
+              disabled={cardSize === 100}
+              onClick={() =>
+                setCardSize(
+                  cardSizes[Math.max(0, cardSizes.indexOf(cardSize) - 1)],
+                )
+              }
             >
               <Icon>remove</Icon>
             </button>
             <output aria-label="Card size">
-              {cardSize === 140
+              {cardSize === 100
                 ? "Small"
-                : cardSize === 180
+                : cardSize === 140
                   ? "Medium"
                   : "Large"}
             </output>
@@ -617,7 +626,16 @@ function RankingsPanel({
               className="icon-button"
               aria-label="Larger cards"
               disabled={cardSize === 220}
-              onClick={() => setCardSize(cardSize + 40)}
+              onClick={() =>
+                setCardSize(
+                  cardSizes[
+                    Math.min(
+                      cardSizes.length - 1,
+                      cardSizes.indexOf(cardSize) + 1,
+                    )
+                  ],
+                )
+              }
             >
               <Icon>add</Icon>
             </button>

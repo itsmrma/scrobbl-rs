@@ -1171,7 +1171,30 @@ test("completed Spotify collection runs collapse into dated reports that fill th
   );
   await expect(page.locator(".collection-run").first()).toBeHidden();
   await expect(page.locator(".activity-row")).toHaveCount(0);
-  await page.locator(".collection-runs > summary").click();
+  const collection = page.locator(".collection-runs");
+  const summary = collection.locator(":scope > summary");
+  const animateToggle = () =>
+    summary.evaluate((node) => {
+      node.click();
+      return node.parentElement
+        .querySelector(":scope > div")
+        .getAnimations()
+        .map((animation) => animation.effect.getTiming().duration);
+    });
+  expect(await animateToggle()).toContain(160);
+  await expect
+    .poll(
+      async () =>
+        (await collection.locator(":scope > div").boundingBox()).height,
+    )
+    .toBeGreaterThan(400);
+  expect(
+    (await collection.locator(":scope > div").boundingBox()).height,
+  ).toBeLessThanOrEqual(520);
+  expect(await animateToggle()).toContain(160);
+  await expect(collection).not.toHaveAttribute("open");
+  await summary.focus();
+  await summary.press("Enter");
   await expect(page.locator(".collection-run").first()).toContainText(
     "23 Oct 2026",
   );
@@ -2574,10 +2597,16 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   const albums = page.getByRole("article", { name: "albums rankings" }),
     tracks = page.getByRole("article", { name: "tracks rankings" });
   await albums.getByRole("button", { name: "Grid", exact: true }).click();
+  await expect(
+    albums.getByRole("status", { name: "Card size", exact: true }),
+  ).toHaveText("Medium");
+  await albums
+    .getByRole("button", { name: "Smaller cards", exact: true })
+    .click();
   const small = (await albums.locator(".music-card").first().boundingBox())
     .width;
-  expect(small).toBeGreaterThanOrEqual(140);
-  expect(small).toBeLessThan(180);
+  expect(small).toBeGreaterThanOrEqual(100);
+  expect(small).toBeLessThan(140);
   const gridBox = await albums.locator(".music-grid").boundingBox();
   const firstRow = await albums.locator(".music-card").evaluateAll((nodes) => {
     const y = nodes[0].getBoundingClientRect().y;
@@ -2603,6 +2632,20 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     albums.getByRole("status", { name: "Card size", exact: true }),
   ).toHaveText("Medium");
+  const medium = (await albums.locator(".music-card").first().boundingBox())
+    .width;
+  await albums
+    .getByRole("button", { name: "Larger cards", exact: true })
+    .click();
+  await expect(
+    albums.getByRole("status", { name: "Card size", exact: true }),
+  ).toHaveText("Large");
+  expect(
+    (await albums.locator(".music-card").first().boundingBox()).width,
+  ).toBeGreaterThan(medium + 25);
+  await albums
+    .getByRole("button", { name: "Smaller cards", exact: true })
+    .click();
   await tracks.getByRole("button", { name: "List", exact: true }).click();
   const ab = await albums.boundingBox(),
     tb = await tracks.boundingBox();

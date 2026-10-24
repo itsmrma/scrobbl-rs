@@ -34,6 +34,7 @@
   --text: #f2f3f7;
   --muted: #bac0cc;
   --accent: #c9ee8b;
+  --chart-accent: var(--accent);
   --accent-ink: #192912;
   --sidebar: color-mix(in oklab, #191c24 94%, var(--accent));
   --error: #ffaaa0;
@@ -42,6 +43,7 @@
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :root.theme-light {
+  --chart-accent: color-mix(in oklab, var(--accent) 50%, #17351b);
   color-scheme: light;
   --bg: color-mix(in oklab, #f5f6fa 95%, var(--accent));
   --surface: color-mix(in oklab, #ffffff 97%, var(--accent));
@@ -2755,13 +2757,13 @@ dialog {
 }
 .actual-bar,
 .actual-key {
-  background: var(--accent);
+  background: var(--chart-accent);
 }
 .estimated-bar,
 .estimated-key {
   background: repeating-linear-gradient(
     45deg,
-    var(--accent) 0 3px,
+    var(--chart-accent) 0 3px,
     var(--surface-raised) 3px 6px
   );
 }
@@ -5324,6 +5326,11 @@ dialog {
 .collection-runs {
   margin: 16px 0;
   overflow: hidden;
+}
+.collection-runs > div {
+  max-height: min(60vh, 520px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .collection-runs > summary {
   display: flex;

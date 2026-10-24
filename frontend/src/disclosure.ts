@@ -1,5 +1,13 @@
 import { useEffect } from "react";
 
+function disclosureBody(details: HTMLDetailsElement) {
+  if (details.classList.contains("listen-details"))
+    return details.querySelector<HTMLElement>("dl");
+  if (details.classList.contains("collection-runs"))
+    return details.querySelector<HTMLElement>(":scope > div");
+  return details;
+}
+
 // Keep native details semantics and leave explicitly controlled disclosures alone.
 export function useDisclosureMotion() {
   useEffect(() => {
@@ -18,9 +26,7 @@ export function useDisclosureMotion() {
       )
         return;
       if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-      const body = details.classList.contains("listen-details")
-        ? details.querySelector<HTMLElement>("dl")
-        : details;
+      const body = disclosureBody(details);
       if (!body) return;
       event.preventDefault();
       const previous = running.get(details);
@@ -59,9 +65,7 @@ export function useDisclosureMotion() {
       for (const [details, { animation, opening, overflow }] of running) {
         animation.cancel();
         details.open = opening;
-        const body = details.classList.contains("listen-details")
-          ? details.querySelector<HTMLElement>("dl")
-          : details;
+        const body = disclosureBody(details);
         if (body) body.style.overflow = overflow;
       }
     };
