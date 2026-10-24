@@ -922,15 +922,23 @@ export function Connections({
                 </p>
               </details>
             )}
-            <Link to="/activities">Collection and import reports</Link>
+            <div className="connection-report-actions">
+              <Link className="button secondary" to="/activities">
+                <Icon>receipt_long</Icon>Collection and import reports
+              </Link>
+            </div>
             {status.coverage_warning && (
               <p className="warning">{status.coverage_warning}</p>
             )}
             {status.review_count > 0 && (
-              <p className="warning">
-                {status.review_count} records need review.{" "}
-                <Link to="/review">Review possible duplicates</Link>.
-              </p>
+              <div className="connection-review-actions">
+                <span className="warning">
+                  {status.review_count} records need review.
+                </span>
+                <Link className="button secondary" to="/review">
+                  <Icon>rule</Icon>Review possible duplicates
+                </Link>
+              </div>
             )}
           </details>
           <details className="connection-monitor">

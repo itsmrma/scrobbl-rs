@@ -319,25 +319,47 @@ export function ReviewPage({
         Decide which records describe the same listen. Original source records
         stay saved, and you can undo each decision below.
       </Heading>
-      <div
-        className="review-toolbar review-views"
-        role="group"
-        aria-label="Review views"
-      >
-        <button
-          className="secondary"
-          aria-pressed={view === "comparisons"}
-          onClick={() => setView("comparisons")}
+      <div className="review-toolbar review-controls">
+        <div className="review-views" role="group" aria-label="Review views">
+          <button
+            className="secondary"
+            aria-pressed={view === "comparisons"}
+            onClick={() => setView("comparisons")}
+          >
+            <Icon>compare_arrows</Icon>Comparisons
+          </button>
+          <button
+            className="secondary"
+            aria-pressed={view === "trash"}
+            onClick={() => setView("trash")}
+          >
+            <Icon>delete_outline</Icon>Trash
+          </button>
+        </div>
+        <Link
+          className="button secondary"
+          to="/history?status=review&period=all"
         >
-          <Icon>compare_arrows</Icon>Comparisons
-        </button>
+          <Icon>arrow_back</Icon>Flagged history
+        </Link>
         <button
-          className="secondary"
-          aria-pressed={view === "trash"}
-          onClick={() => setView("trash")}
+          className="secondary icon-button"
+          aria-label="Refresh review"
+          disabled={busy || !!decidingId}
+          onClick={() => {
+            setError("");
+            setResolvedIds(new Set());
+            setVersion((v) => v + 1);
+            setAutoVersion((v) => v + 1);
+          }}
         >
-          <Icon>delete_outline</Icon>Trash
+          <Icon>refresh</Icon>
         </button>
+        {view === "comparisons" && result.data && (
+          <strong className="review-count">
+            {number.format(currentTotal)} records to review
+          </strong>
+        )}
       </div>
       {message && (
         <p className="review-feedback" role="status">
@@ -360,80 +382,71 @@ export function ReviewPage({
         />
       ) : (
         <>
-          <div className="review-toolbar">
-            <Link
-              className="button secondary"
-              to="/history?status=review&period=all"
-            >
-              <Icon>arrow_back</Icon>View flagged history
-            </Link>
-            <button
-              className="secondary"
-              disabled={busy || !!decidingId}
-              onClick={() => {
-                setError("");
-                setResolvedIds(new Set());
-                setVersion((v) => v + 1);
-                setAutoVersion((v) => v + 1);
-              }}
-            >
-              <Icon>refresh</Icon>Refresh comparisons
-            </button>
-            {result.data && (
-              <strong>{number.format(currentTotal)} records to review</strong>
-            )}
-          </div>
           <ErrorText>{result.error}</ErrorText>
-          <section
-            className="panel padded automatic-review"
+          <details
+            className="panel automatic-review"
+            role="region"
             aria-label="Automatic duplicate review"
           >
-            <h2>Resolve matching duplicates automatically</h2>
-            <p>
-              Only isolated pairs starting less than one second apart qualify.
-              They must describe the same Spotify track, or have exactly
-              matching title, album and artist credits. Repeats, competing
-              nearby records, incomplete metadata and conflicting playback
-              evidence stay for manual review.
-            </p>
-            <p>
-              The record with actual playback time takes priority, followed by
-              estimated time. Other records move to trash; every original stays
-              saved. You can undo the whole batch below.
-            </p>
-            <ErrorText>{automatic.error}</ErrorText>
-            {automatic.data ? (
-              <div className="review-actions">
-                <span role="status">
-                  <strong>
-                    {number.format(automatic.data.groups)} matching{" "}
-                    {automatic.data.groups === 1 ? "pair" : "pairs"}
-                  </strong>{" "}
-                  · {number.format(automatic.data.records)} records ·{" "}
-                  {number.format(automatic.data.remaining)} remain for manual
-                  review
-                </span>
-                <button
-                  className="primary"
-                  disabled={busy || !!decidingId || !automatic.data.groups}
-                  onClick={() =>
-                    void action(
-                      () => api.executeAutomaticReview(automatic.data!.token),
-                      "Matching duplicates resolved. Undo below restores the entire batch.",
-                    )
-                  }
-                >
-                  <Icon>done_all</Icon>Resolve{" "}
-                  {number.format(automatic.data.groups)}{" "}
-                  {automatic.data.groups === 1 ? "pair" : "pairs"} automatically
-                </button>
-              </div>
-            ) : (
-              !automatic.error && (
-                <p role="status">Checking automatic matches…</p>
-              )
-            )}
-          </section>
+            <summary>
+              <h2>Resolve matching duplicates automatically</h2>
+              <span className="automatic-preview-count">
+                {automatic.error
+                  ? "Preview unavailable"
+                  : automatic.data
+                    ? `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
+                    : "Checking…"}
+              </span>
+              <Icon>expand_more</Icon>
+            </summary>
+            <div className="automatic-review-body">
+              <p>
+                Only isolated pairs starting less than one second apart qualify.
+                They must describe the same Spotify track, or have exactly
+                matching title, album and artist credits. Repeats, competing
+                nearby records, incomplete metadata and conflicting playback
+                evidence stay for manual review.
+              </p>
+              <p>
+                The record with actual playback time takes priority, followed by
+                estimated time. Other records move to trash; every original
+                stays saved. You can undo the whole batch below.
+              </p>
+              <ErrorText>{automatic.error}</ErrorText>
+              {automatic.data ? (
+                <div className="review-actions">
+                  <span role="status">
+                    <strong>
+                      {number.format(automatic.data.groups)} matching{" "}
+                      {automatic.data.groups === 1 ? "pair" : "pairs"}
+                    </strong>{" "}
+                    · {number.format(automatic.data.records)} records ·{" "}
+                    {number.format(automatic.data.remaining)} remain for manual
+                    review
+                  </span>
+                  <button
+                    className="primary"
+                    disabled={busy || !!decidingId || !automatic.data.groups}
+                    onClick={() =>
+                      void action(
+                        () => api.executeAutomaticReview(automatic.data!.token),
+                        "Matching duplicates resolved. Undo below restores the entire batch.",
+                      )
+                    }
+                  >
+                    <Icon>done_all</Icon>Resolve{" "}
+                    {number.format(automatic.data.groups)}{" "}
+                    {automatic.data.groups === 1 ? "pair" : "pairs"}{" "}
+                    automatically
+                  </button>
+                </div>
+              ) : (
+                !automatic.error && (
+                  <p role="status">Checking automatic matches…</p>
+                )
+              )}
+            </div>
+          </details>
           {!result.data && !result.error && (
             <p role="status">Loading comparisons…</p>
           )}

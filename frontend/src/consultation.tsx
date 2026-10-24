@@ -22,7 +22,7 @@ import { ListenList } from "./listens";
 import { Collage } from "./collage";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
-import { Link, navigate, useSearch } from "./navigation";
+import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
 import { periods, isBool, useBrowserPreference } from "./preferences";
@@ -1211,8 +1211,14 @@ export function HistoryPage({
       {!embedded && (
         <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
           Search and combine period, artist, album and source filters.{" "}
-          <Link to="/review">Review possible duplicates</Link>
         </Heading>
+      )}
+      {!embedded && (
+        <div className="history-actions">
+          <Link className="button secondary" to="/review">
+            <Icon>rule</Icon>Review possible duplicates
+          </Link>
+        </div>
       )}
       {!embedded && params.get("track") && (
         <TrackScope
@@ -1512,6 +1518,7 @@ export function MusicPage({
   }, [result.data?.id]);
   return (
     <>
+      <BackButton fallback={`/rankings/${kind}?${context(selection.params)}`} />
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>

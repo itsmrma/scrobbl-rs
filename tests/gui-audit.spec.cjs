@@ -134,6 +134,151 @@ async function login(page, path = "/dashboard") {
   await expect(page.locator("#main")).toBeVisible();
 }
 
+test("review controls share a row and automatic review collapses with aligned animated content", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page, "/review");
+  const automatic = page.getByRole("region", {
+    name: "Automatic duplicate review",
+  });
+  const summary = automatic.locator(":scope > summary");
+  await expect(automatic).not.toHaveAttribute("open");
+  await expect(summary).toContainText("0 matching pairs");
+  const collapsed = await automatic.boundingBox();
+  expect(collapsed.height).toBeLessThan(80);
+  const views = await page
+    .getByRole("group", { name: "Review views" })
+    .boundingBox();
+  const refresh = await page
+    .getByRole("button", { name: "Refresh review", exact: true })
+    .boundingBox();
+  expect(
+    Math.abs(views.y + views.height / 2 - refresh.y - refresh.height / 2),
+  ).toBeLessThan(1);
+  const timings = await summary.evaluate((node) => {
+    node.click();
+    return node.parentElement
+      .getAnimations()
+      .map((animation) => animation.effect.getTiming().duration);
+  });
+  expect(timings).toContain(160);
+  await expect(
+    automatic.locator(".automatic-review-body > p").first(),
+  ).toBeVisible();
+  await expect
+    .poll(async () => (await automatic.boundingBox()).height)
+    .toBeGreaterThan(collapsed.height + 80);
+  const positions = await automatic.evaluate((node) =>
+    [
+      node.querySelector("summary h2"),
+      node.querySelector(".automatic-review-body > p"),
+      node.querySelector(".review-actions [role=status]"),
+    ].map((element) => element.getBoundingClientRect().x),
+  );
+  expect(Math.max(...positions) - Math.min(...positions)).toBeLessThan(1);
+  await summary.click();
+  await expect(automatic).not.toHaveAttribute("open");
+  await page.screenshot({
+    path: `test-results/gui-review-compact-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(automatic).toHaveAttribute("open");
+  expect(await automatic.evaluate((node) => node.getAnimations().length)).toBe(
+    0,
+  );
+  await page.keyboard.press("Enter");
+  await expect(automatic).not.toHaveAttribute("open");
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `test-results/gui-review-compact-mobile-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("music page back preserves source filters across child filters reload and forward navigation", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const artistURL = `/music/artists/${archive.rankings.artists[0].id}?period=all&sort=time`;
+  await page.goto(artistURL);
+  await page
+    .getByRole("article", { name: "albums rankings" })
+    .getByRole("link", { name: "Seed album", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/music\/albums\//);
+  const albumURL = page.url();
+  await chooseOption(
+    page.locator(".music-period [role=combobox]").first(),
+    "year",
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(artistURL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "$"),
+  );
+  await expect(page.locator(".music-heading h1")).toContainText("Seed artist");
+  await page.goForward();
+  await expect(page).toHaveURL(albumURL);
+  await page
+    .getByRole("article", { name: "tracks rankings" })
+    .getByRole("link", { name: "Seed song", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/music\/tracks\//);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(albumURL);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page.locator(".music-heading h1")).toContainText("Seed artist");
+  await page.goto(`/music/albums/${archive.rankings.albums[0].id}?period=all`);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL(/\/rankings\/albums\?period=all$/);
+});
+
+test("report and duplicate review links use the shared action button style", async ({
+  page,
+}) => {
+  await login(page, "/history?period=all");
+  const review = page.getByRole("link", {
+    name: "Review possible duplicates",
+    exact: true,
+  });
+  await expect(review).toHaveClass(/button secondary/);
+  const status = await (await page.request.get("/api/spotify/status")).json();
+  await page.route("**/api/spotify/status", (route) =>
+    route.fulfill({
+      json: { ...status, configured: true, connected: true, review_count: 470 },
+    }),
+  );
+  await page.goto("/settings/connections");
+  await page.locator(".spotify-card > summary").click();
+  const reports = page.getByRole("link", {
+    name: "Collection and import reports",
+    exact: true,
+  });
+  const monitor = page.locator(".connection-monitor").filter({ has: reports });
+  if ((await monitor.getAttribute("open")) === null)
+    await monitor.locator(":scope > summary").click();
+  for (const link of [reports, review]) {
+    await expect(link).toBeVisible();
+    await expect(link).toHaveClass(/button secondary/);
+    await expect(link).toHaveCSS("text-decoration-line", "none");
+  }
+});
+
 test("custom dropdowns support keyboard and mobile categories while grid controls stay stable", async ({
   page,
   browserName,
@@ -765,6 +910,7 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
   const automatic = page.getByRole("region", {
     name: "Automatic duplicate review",
   });
+  await automatic.locator(":scope > summary").click();
   await expect(automatic).toContainText("1 matching pair");
   await automatic
     .getByRole("button", { name: "Resolve 1 pair automatically", exact: true })
