@@ -3445,6 +3445,9 @@ test("artwork reports expose a saved pause and a slow completion estimate", asyn
   await expect(page.locator(".artwork-estimate")).toContainText(
     "Estimated finish:",
   );
+  await expect(
+    page.getByRole("button", { name: "Cancel downloads", exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("button", { name: "Pause downloads", exact: true })
     .click();
@@ -3461,6 +3464,17 @@ test("artwork reports expose a saved pause and a slow completion estimate", asyn
   await expect(
     page.getByRole("button", { name: "Pause downloads", exact: true }),
   ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Cancel downloads", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Resume downloads", exact: true }),
+  ).toBeVisible();
+  const cancelled = await (
+    await page.request.get("/api/v1/activities/" + job.id)
+  ).json();
+  expect(cancelled.activity.state).toBe("cancelled");
+  expect(cancelled.activity.processed).toBe(job.processed);
 });
 
 test("connection disclosures and import layout use the available card width", async ({
@@ -3522,10 +3536,17 @@ test("duplicate review controls share a height with flagged history first", asyn
   });
   const trash = controls.getByRole("button", { name: "Trash", exact: true });
   await expect(history).toBeVisible();
+  const group = controls.getByRole("group", {
+    name: "Review views",
+    exact: true,
+  });
   const boxes = await Promise.all(
-    [history, comparisons, trash].map((e) => e.boundingBox()),
+    [history, group, comparisons, trash].map((e) => e.boundingBox()),
   );
   expect(boxes[0].x).toBeLessThan(boxes[1].x);
   expect(Math.abs(boxes[0].height - boxes[1].height)).toBeLessThan(1);
-  expect(Math.abs(boxes[0].height - boxes[2].height)).toBeLessThan(1);
+  expect(Math.abs(boxes[0].y - boxes[1].y)).toBeLessThan(1);
+  expect(boxes[2].height).toBe(boxes[3].height);
+  await expect(group).toHaveCSS("border-top-width", "1px");
+  await expect(comparisons).toHaveCSS("border-top-width", "0px");
 });

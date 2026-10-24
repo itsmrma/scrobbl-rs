@@ -530,6 +530,7 @@ export function Activities({
                             job.error_code === "artwork_paused"
                               ? "resume"
                               : "pause",
+                            "cancel",
                           ]
                         : ["cancel"]
                       : ["failed", "cancelled"].includes(job.state) ||
