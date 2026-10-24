@@ -1,5 +1,20 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent, ReactNode } from "react";
+import type { CSSProperties, MouseEvent, ReactNode } from "react";
+import { Icon } from "./ui";
+
+type NavigationState = {
+  index: number;
+  back?: { index: number; url: string };
+};
+function navigationState(): NavigationState {
+  return history.state?.scrobblNavigation || { index: 0 };
+}
+// Keep the entry index through reloads so page-back can skip filter changes.
+if (!history.state?.scrobblNavigation)
+  history.replaceState(
+    { ...history.state, scrobblNavigation: { index: 0 } },
+    "",
+  );
 
 const selections = new Map<string, string>();
 const isConsultation = (path: string) =>
@@ -25,20 +40,64 @@ rememberSelection();
 window.addEventListener("popstate", rememberSelection);
 export function navigate(path: string) {
   rememberSelection();
-  history.pushState(null, "", destination(path));
+  const target = destination(path);
+  const current = navigationState();
+  const back =
+    new URL(target, location.href).pathname === location.pathname
+      ? current.back
+      : { index: current.index, url: location.pathname + location.search };
+  history.pushState(
+    { scrobblNavigation: { index: current.index + 1, back } },
+    "",
+    target,
+  );
   window.dispatchEvent(new PopStateEvent("popstate"));
+}
+export function returnTo(path: string) {
+  const current = navigationState();
+  if (
+    current.back &&
+    new URL(current.back.url, location.href).pathname ===
+      new URL(path, location.href).pathname
+  ) {
+    history.go(current.back.index - current.index);
+  } else {
+    history.replaceState({ scrobblNavigation: current }, "", destination(path));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+}
+export function BackButton({ fallback }: { fallback: string }) {
+  const current = navigationState();
+  return (
+    <button
+      className="button secondary music-back"
+      onClick={() => {
+        if (current.back && current.back.index < current.index)
+          history.go(current.back.index - current.index);
+        else navigate(fallback);
+      }}
+    >
+      <Icon>arrow_back</Icon>Back
+    </button>
+  );
 }
 export function Link({
   to,
   children,
+  back = false,
   ...props
 }: {
   to: string;
+  back?: boolean;
   children: ReactNode;
   className?: string;
+  style?: CSSProperties;
   "aria-label"?: string;
+  "aria-describedby"?: string;
   "aria-current"?: "page";
   onClick?: () => void;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
 }) {
   return (
     <a
@@ -55,7 +114,8 @@ export function Link({
         )
           return;
         event.preventDefault();
-        navigate(to);
+        if (back) returnTo(to);
+        else navigate(to);
       }}
     >
       {children}
@@ -68,7 +128,7 @@ export function useLocation() {
     const legacy = location.hash.slice(1);
     if (["dashboard", "history", "import", "settings"].includes(legacy)) {
       history.replaceState(
-        null,
+        history.state,
         "",
         legacy === "settings" ? "/settings/connections" : `/${legacy}`,
       );

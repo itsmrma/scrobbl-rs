@@ -70,7 +70,7 @@ async fn https_origin_survives_proxy_and_oauth_requires_the_same_secure_session(
         "POST",
         "/api/setup",
         &base,
-        json!({"password":"test deployment password"}),
+        json!({"username":"owner","password":"test deployment password 7!"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -112,7 +112,7 @@ async fn https_origin_survives_proxy_and_oauth_requires_the_same_secure_session(
         "POST",
         "/api/login",
         &base,
-        json!({"password":"test deployment password"}),
+        json!({"username":"owner","password":"test deployment password 7!"}),
     )
     .await;
     let other_cookie = other_headers["set-cookie"]
@@ -181,7 +181,7 @@ async fn https_origin_survives_proxy_and_oauth_requires_the_same_secure_session(
             "POST",
             "/api/login",
             &spoof,
-            json!({"password":"test deployment password"})
+            json!({"username":"owner","password":"test deployment password 7!"})
         )
         .await
         .0,
@@ -269,7 +269,7 @@ async fn private_http_browsing_works_but_cannot_start_an_invalid_spotify_redirec
         "POST",
         "/api/setup",
         &base,
-        json!({"password":"test deployment password"}),
+        json!({"username":"owner","password":"test deployment password 7!"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

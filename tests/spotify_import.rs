@@ -92,7 +92,23 @@ async fn zip_inventory_rows_variants_provenance_thresholds_and_semantic_reimport
     assert_eq!(result.invalid, 1);
     assert_eq!(result.skipped, 2);
     assert_eq!(result.below_threshold, 4);
-    assert_eq!(count(&storage, "job_members").await, 5);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM job_members WHERE job_id=?")
+            .bind(&id)
+            .fetch_one(&storage.readers)
+            .await
+            .unwrap(),
+        5
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM job_members m JOIN jobs j ON j.id=m.job_id WHERE j.kind='artwork'"
+        )
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap(),
+        2
+    );
     assert_eq!(count(&storage, "source_occurrences").await, 8);
     assert_eq!(count(&storage, "observation_variants").await, 4);
     let null_files: i64 =
@@ -405,6 +421,73 @@ async fn upload_http(
     let data =
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     (status, data)
+}
+#[tokio::test]
+async fn cancelling_a_receiving_upload_cannot_requeue_it_at_eof_or_restart() {
+    use tokio::io::AsyncWriteExt;
+    let (dir, state, cookie) = http_state().await;
+    let (mut sender, receiver) = tokio::io::duplex(4096);
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/import/spotify")
+        .header("host", "127.0.0.1:3210")
+        .header("origin", "http://127.0.0.1:3210")
+        .header("cookie", cookie)
+        .header("x-csrf-token", "csrf")
+        .header(
+            "content-type",
+            "multipart/form-data; boundary=test-boundary",
+        )
+        .body(Body::from_stream(tokio_util::io::ReaderStream::new(
+            receiver,
+        )))
+        .unwrap();
+    let upload = tokio::spawn(web::router(state.clone()).oneshot(request));
+    sender.write_all(format!("--test-boundary\r\nContent-Disposition: form-data; name=\"files\"; filename=\"first.json\"\r\n\r\n{}\r\n", json!([row(0,30000)])).as_bytes()).await.unwrap();
+    let id = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Some(id) =
+                sqlx::query_scalar::<_, String>("SELECT id FROM jobs WHERE phase='receiving'")
+                    .fetch_optional(&state.db)
+                    .await
+                    .unwrap()
+                && std::fs::read_dir(state.storage.directory.join("spool/incoming"))
+                    .unwrap()
+                    .next()
+                    .is_some()
+            {
+                break id;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    state.storage.cancel(&id).await.unwrap();
+    sender.write_all(b"--test-boundary--\r\n").await.unwrap();
+    sender.shutdown().await.unwrap();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(5), upload)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    assert!(
+        state
+            .storage
+            .claim("spotify_import")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(count(&state.storage, "listens").await, 0);
+    state.storage.close().await;
+    drop(state);
+    let reopened = db::open(dir.path()).await.unwrap();
+    assert_eq!(reopened.job(&id).await.unwrap().state, "cancelled");
+    assert!(reopened.claim("spotify_import").await.unwrap().is_none());
+    reopened.close().await;
 }
 #[tokio::test]
 async fn multipart_receipt_is_guarded_and_incomplete_uploads_never_process() {

@@ -36,6 +36,7 @@ async fn present(conn: &mut sqlx::SqliteConnection, job: Job) -> Result<Activity
     };
     Ok(Activity {
         id: job.id,
+        created_at_ms: job.created_at_ms,
         kind: job.kind,
         state: job.state,
         filename: job.filename,
@@ -99,14 +100,35 @@ pub async fn detail(
 ) -> Result<Json<ActivityDetail>> {
     auth::session(&state, &headers).await?;
     let mut view = state.storage.read_view().await?;
-    let job = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
+    let job: Job = sqlx::query_as("SELECT * FROM jobs WHERE id=?")
         .bind(&id)
         .fetch_optional(&mut *view.transaction)
         .await?
         .ok_or_else(|| AppError::BadRequest("Unknown activity.".into()))?;
-    let members = sqlx::query_as("SELECT member,kind,state,expected_rows,processed,error_code,originals,variants,duplicates,added,reconciled,invalid,skipped,below_threshold FROM job_members WHERE job_id=? ORDER BY member").bind(&id).fetch_all(&mut *view.transaction).await?;
+    let mut members: Vec<ActivityMember> = sqlx::query_as("SELECT member,kind,state,expected_rows,processed,error_code,originals,variants,duplicates,added,reconciled,invalid,skipped,below_threshold FROM job_members WHERE job_id=? ORDER BY member LIMIT ? OFFSET ?").bind(&id).bind(if job.kind=="artwork" {100i64} else {i64::MAX}).bind(if job.kind=="artwork" {i64::from(query.issues_page)*100} else {0}).fetch_all(&mut *view.transaction).await?;
+    if job.kind == "artwork" {
+        for member in &mut members {
+            let group = member
+                .member
+                .split_once(':')
+                .map(|(_, id)| id)
+                .unwrap_or("");
+            let name: Option<String>=sqlx::query_scalar("SELECT COALESCE(ar.name,al.name) FROM name_groups g LEFT JOIN artists ar ON g.kind='artists' AND ar.id=g.representative_id LEFT JOIN albums al ON g.kind='albums' AND al.id=g.representative_id WHERE g.id=?").bind(group).fetch_optional(&mut *view.transaction).await?.flatten();
+            member.member = format!(
+                "{} · {}",
+                if member.kind == "artists" {
+                    "Artist"
+                } else {
+                    "Album"
+                },
+                name.as_deref().unwrap_or("No longer in the library")
+            );
+        }
+    }
+
     Ok(Json(ActivityDetail {
-        issues: sqlx::query_as("SELECT member,row_number,reason FROM source_occurrences WHERE job_id=? AND outcome='invalid' ORDER BY member,row_number LIMIT 100 OFFSET ?").bind(&id).bind(i64::from(query.issues_page)*100).fetch_all(&mut *view.transaction).await?,
+        source_parameters: if job.kind == "artwork" { Some(serde_json::json!({"interval_ms": crate::artwork::IMAGE_INTERVAL_MS, "next_at_ms": crate::db::setting(&state.db,"artwork_background_next_at_ms").await?.and_then(|v|v.parse::<i64>().ok())})) } else if job.kind.starts_with("listenbrainz_") {Some(serde_json::from_str(&job.parameters_json).map_err(|_|AppError::Internal)?)}else{None},
+        issues: sqlx::query_as("SELECT member,row_number,reason FROM source_occurrences WHERE job_id=? AND (outcome='invalid' OR (? LIKE 'listenbrainz_%' AND reason IS NOT NULL)) ORDER BY member,row_number LIMIT 100 OFFSET ?").bind(&id).bind(&job.kind).bind(i64::from(query.issues_page)*100).fetch_all(&mut *view.transaction).await?,
         activity: present(&mut view.transaction, job).await?,
         members,
     }))
@@ -122,9 +144,17 @@ pub async fn action(
     Json(form): Json<Action>,
 ) -> Result<Json<serde_json::Value>> {
     auth::require_write(&state, &headers).await?;
-    // Only expose controls for the worker available in this block. Source adapters own their controls.
+    if form.action == "cancel" {
+        state.storage.job(&id).await?;
+        state.storage.cancel(&id).await?;
+        return Ok(Json(serde_json::json!({"ok":true})));
+    }
+    // Retry/other controls remain owned by their source workflow.
     let job = state.storage.job(&id).await?;
-    if job.kind != "calendar" && job.kind != "spotify_import" {
+    if !matches!(
+        job.kind.as_str(),
+        "calendar" | "spotify_import" | "listenbrainz_file" | "listenbrainz_fetch" | "artwork"
+    ) {
         return Err(AppError::BadRequest(
             "Controls for this activity belong to its source workflow.".into(),
         ));
@@ -137,10 +167,105 @@ pub async fn action(
     if form.action == "retry" && job.kind == "spotify_import" {
         sqlx::query("UPDATE jobs SET parameters_json=? WHERE id=? AND (state IN ('failed','cancelled') OR outcome='partial')").bind(serde_json::to_string(&state.config.import_limits).map_err(|_|AppError::Internal)?).bind(&id).execute(&state.db).await?;
     }
+    if form.action == "retry" && job.kind == "listenbrainz_fetch" && job.state == "completed" {
+        return Err(AppError::BadRequest("Use the official ListenBrainz ZIP to complete an uncertain interval, or start a new bounded fetch.".into()));
+    }
+    if form.action == "retry"
+        && job.kind == "listenbrainz_file"
+        && (matches!(job.state.as_str(), "failed" | "cancelled")
+            || job.outcome.as_deref() == Some("partial"))
+    {
+        let mut parameters: serde_json::Value =
+            serde_json::from_str(&job.parameters_json).map_err(|_| AppError::Internal)?;
+        parameters["limits"] = serde_json::json!(
+            crate::listenbrainz::Limits::from_env().map_err(|_| AppError::Internal)?
+        );
+        sqlx::query("UPDATE jobs SET parameters_json=? WHERE id=?")
+            .bind(parameters.to_string())
+            .bind(&id)
+            .execute(&state.db)
+            .await?;
+    }
     match form.action.as_str() {
+        "pause" if job.kind == "artwork" => state.storage.pause_artwork(&id).await?,
+        "resume" if job.kind == "artwork" => state.storage.resume_artwork(&id).await?,
         "cancel" => state.storage.cancel(&id).await?,
         "retry" => state.storage.retry(&id).await?,
         _ => return Err(AppError::BadRequest("Unknown activity action.".into())),
     }
     Ok(Json(serde_json::json!({"ok":true})))
+}
+
+/// Separate cancellation route stays available while restore drains other writes.
+pub async fn cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    auth::require_write(&state, &headers).await?;
+    state.storage.job(&id).await?;
+    state.storage.cancel(&id).await?;
+    Ok(Json(serde_json::json!({"ok":true})))
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    #[tokio::test]
+    async fn cancellation_and_status_remain_available_during_exclusive_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::storage::open(dir.path()).await.unwrap();
+        let state = AppState::new(
+            store,
+            crate::config::Config {
+                bind_ip: "127.0.0.1".parse().unwrap(),
+                port: 3210,
+                data_dir: dir.path().into(),
+                external_origin: None,
+                sync_seconds: 120,
+                now_playing_seconds: 30,
+                import_limits: Default::default(),
+                api_snapshot_limits: Default::default(),
+                env_client_id: None,
+                env_client_secret: None,
+            },
+        );
+        let token = auth::random_secret();
+        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
+            .bind(auth::digest(&token))
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let id = state
+            .storage
+            .enqueue("recovery_restore", None, None, &serde_json::json!({}))
+            .await
+            .unwrap();
+        let _exclusive = state.storage.requests.write().await;
+        for (method, path) in [
+            ("GET", format!("/api/v1/activities/{id}")),
+            ("POST", format!("/api/v1/activities/{id}/cancel")),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "csrf")
+                .body(Body::empty())
+                .unwrap();
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                crate::web::router(state.clone()).oneshot(request),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+        }
+        assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    }
 }

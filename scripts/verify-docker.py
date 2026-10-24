@@ -83,7 +83,7 @@ def main():
             stack("config", "--quiet")
             stack("up", "-d", "--pull", "never")
             assert ready()["setup_required"]
-            csrf = request("/api/setup", {"password": "disposable Docker smoke password"})["csrf"]
+            csrf = request("/api/setup", {"username":"owner","password": "disposable Docker smoke password 7!"})["csrf"]
             preferences = request("/api/v1/preferences")
             preferences["name"] = "Docker persistence smoke"
             request("/api/v1/preferences", {"preferences": preferences, "calendar_scope": "future"})
@@ -141,12 +141,12 @@ def main():
             preferences = request("/api/v1/preferences")
             preferences["name"] = "After backup"
             request("/api/v1/preferences", {"preferences": preferences, "calendar_scope": "future"})
-            restored_password = "new Docker recovery owner password"
+            restored_password = "new Docker recovery owner password 7!"
             assert request("/api/v1/recovery/restore", {"asset_id": uploaded_id, "password": restored_password, "confirm_replace": True})["restart_required"]
             stack("up", "-d", "--force-recreate", "--pull", "never")
             session = ready()
             assert not session["setup_required"] and not session["authenticated"]
-            csrf = request("/api/login", {"password": restored_password})["csrf"]
+            csrf = request("/api/login", {"username":"owner","password": restored_password})["csrf"]
             assert request("/api/history")["total"] == 1
             assert request("/api/v1/preferences")["name"] == "Docker persistence smoke"
             assert request("/api/v1/recovery")["paused"]
@@ -175,7 +175,7 @@ def main():
                    "--tmpfs", "/data/backups:rw,size=64k,uid=10001,gid=10001,mode=0700",
                    "--publish", f"127.0.0.1:{port}:3210", "--env", f"SCROBBL_EXTERNAL_ORIGIN={origin}", args.image)
             ready()
-            csrf = request("/api/login", {"password": restored_password})["csrf"]
+            csrf = request("/api/login", {"username":"owner","password": restored_password})["csrf"]
             full_id = request("/api/v1/recovery", {"kind": "backup"})["id"]
             failed = wait_asset(full_id, "failed")
             assert request("/api/history")["total"] == 1
@@ -186,6 +186,34 @@ def main():
             stack("up", "-d", "--pull", "never")
             ready()
             assert hashlib.sha256(download(backup_id)).hexdigest() == package_hash
+            # Owner controls affect only this application: restart preserves access/data,
+            # while a clean stop remains stopped under the supplied restart policy.
+            original_boot = request("/api/v1/application")["boot_id"]
+            original_totals = request("/api/dashboard?period=all")["totals"]
+            request("/api/v1/application", {"action": "restart", "confirmed": True})
+            for _ in range(90):
+                try:
+                    if request("/api/v1/application")["boot_id"] != original_boot:
+                        break
+                except (OSError, urllib.error.URLError):
+                    pass
+                time.sleep(1)
+            else:
+                raise RuntimeError("Application restart did not finish")
+            assert request("/api/dashboard?period=all")["totals"] == original_totals
+            container_id = stack("ps", "-q", "scrobbl", capture=True)
+            assert docker("inspect", "--format", "{{.HostConfig.RestartPolicy.Name}}", container_id, capture=True) == "on-failure"
+            request("/api/v1/application", {"action": "stop", "confirmed": True})
+            for _ in range(60):
+                if docker("inspect", "--format", "{{.State.Running}}", container_id, capture=True) == "false":
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError("Application stop did not stop its container")
+            time.sleep(2)
+            assert docker("inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", container_id, capture=True) == "false 0"
+            stack("start", "scrobbl")
+            ready()
             stack("stop")
             print("Docker smoke passed: import, persistence, portable backup/export, isolated verification, uploaded restore, fresh owner access, pause/resume, actual disk-full refusal, retained copies, source notices and SIGTERM")
         finally:

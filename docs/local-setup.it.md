@@ -18,7 +18,8 @@ Dalla cartella del progetto:
 ./scripts/run-local.sh
 ```
 
-Apri **http://127.0.0.1:3210**. Crea la password del proprietario, di almeno 12 caratteri.
+Apri **http://127.0.0.1:3210**. Crea uno username del proprietario e una password unica di almeno 8 caratteri, con una lettera, un numero e un carattere speciale, senza sequenze o ripetizioni e diversa dallo username.
+Le installazioni già configurate chiedono di scegliere lo username dopo l’accesso con la password esistente.
 Non serve Docker. Il processo Rust deve restare avviato per raccogliere gli ascolti; puoi chiudere
 la pagina. Per arrestarlo usa Ctrl+C, poi riavvialo con lo stesso comando. I dati restano in `data/`.
 

@@ -8,7 +8,7 @@
            SUM(CASE WHEN counted=1 AND duration_kind='unknown' THEN 1 ELSE 0 END) AS unknown_durations
     FROM selected GROUP BY track_id
 ), artist_ranks AS (
-    SELECT ar.id, ar.name, CASE WHEN COUNT(*)=1 THEN MIN(t.title) ELSE CAST(COUNT(*) AS TEXT) || ' tracks' END AS subtitle, NULL AS cover_url,
+    SELECT ar.id, ar.name, CASE WHEN COUNT(*)=1 THEN MIN(t.title) ELSE CAST(COUNT(*) AS TEXT) || ' tracks' END AS subtitle, '/api/v1/artwork/artists/'||ar.id AS cover_url,
            SUM(b.plays) AS plays, SUM(b.listened_ms) AS listened_ms, SUM(b.actual_ms) AS actual_ms, SUM(b.estimated_ms) AS estimated_ms, SUM(b.unknown_durations) AS unknown_durations
     FROM by_track b JOIN track_artists ta ON ta.track_id=b.track_id
     JOIN artists ar ON ar.id=ta.artist_id JOIN tracks t ON t.id=b.track_id

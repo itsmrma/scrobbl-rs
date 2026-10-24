@@ -244,7 +244,7 @@ async fn replacement_requires_new_access_rotates_generation_and_pauses_jobs_unti
             .is_err()
     );
     assert!(!directory.path().join("recovery.pending").exists());
-    recovery::prepare_restore(&store, &id, "a completely new password".into())
+    recovery::prepare_restore(&store, &id, "a completely new password 7!".into())
         .await
         .unwrap();
     assert!(store.claim("test_import").await.unwrap().is_none());
@@ -277,7 +277,7 @@ async fn replacement_requires_new_access_rotates_generation_and_pauses_jobs_unti
     assert!(
         Argon2::default()
             .verify_password(
-                b"a completely new password",
+                b"a completely new password 7!",
                 &PasswordHash::new(&hash).unwrap()
             )
             .is_ok()
@@ -376,7 +376,7 @@ async fn damaged_or_incompatible_backup_never_replaces_the_destination() {
     );
     let id = register(&store, &output, &manifest).await;
     assert!(
-        recovery::prepare_restore(&store, &id, "a completely new password".into())
+        recovery::prepare_restore(&store, &id, "a completely new password 7!".into())
             .await
             .is_err()
     );
@@ -428,7 +428,7 @@ async fn failed_restore_after_database_open_releases_staging_on_repeated_attempt
     let id = register(&store, &output, &manifest).await;
     for _ in 0..3 {
         assert!(
-            recovery::prepare_restore(&store, &id, "a completely new password".into())
+            recovery::prepare_restore(&store, &id, "a completely new password 7!".into())
                 .await
                 .is_err()
         );
@@ -511,7 +511,7 @@ async fn startup_finishes_activation_interrupted_between_resource_renames() {
     seed(&store).await;
     let (_work, path, manifest) = backup(&store).await;
     let id = register(&store, &path, &manifest).await;
-    recovery::prepare_restore(&store, &id, "a completely new password".into())
+    recovery::prepare_restore(&store, &id, "a completely new password 7!".into())
         .await
         .unwrap();
     store.close().await;
@@ -727,7 +727,7 @@ async fn recovery_http_requires_owner_csrf_and_explicit_confirmation() {
             "/api/v1/recovery/restore",
             true,
             true,
-            json!({"asset_id":"0".repeat(64),"password":"a completely new password","confirm_replace":false}),
+            json!({"asset_id":"0".repeat(64),"password":"a completely new password 7!","confirm_replace":false}),
             StatusCode::BAD_REQUEST,
         ),
         (

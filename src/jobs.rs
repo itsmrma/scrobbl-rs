@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct Job {
     pub id: String,
+    pub created_at_ms: i64,
     pub kind: String,
     pub state: String,
     pub file_id: Option<String>,
@@ -136,12 +137,27 @@ impl Storage {
         {
             return Ok(None);
         }
-        Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
+        Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
             .bind(auth::now_ms()).bind(kind).bind(auth::now_ms()).fetch_optional(&self.writer).await?)
     }
-    pub async fn cancel(&self, id: &str) -> Result<()> {
-        sqlx::query("UPDATE jobs SET cancel_requested=1,state='cancelled',updated_at_ms=? WHERE id=? AND state IN ('queued','waiting','running')")
+    /// User pause is a durable waiting state, excluded from automatic claims.
+    pub async fn pause_artwork(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_paused',attempt=attempt+1,updated_at_ms=? WHERE id=? AND kind='artwork' AND state IN ('queued','running','waiting')")
             .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+        Ok(())
+    }
+    pub async fn resume_artwork(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_pacing',updated_at_ms=? WHERE id=? AND kind='artwork' AND state='waiting' AND error_code='artwork_paused'")
+            .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+        Ok(())
+    }
+    pub async fn cancel(&self, id: &str) -> Result<()> {
+        let mut tx = self.writer.begin().await?;
+        sqlx::query("UPDATE jobs SET cancel_requested=1,state='cancelled',updated_at_ms=? WHERE id=? AND state IN ('queued','waiting','running')")
+            .bind(auth::now_ms()).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE recovery_assets SET state='failed' WHERE job_id=? AND state='pending' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND state='cancelled')")
+            .bind(id).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     /// Persist a provider wait or a terminal failure without losing the last checkpoint.
@@ -196,10 +212,28 @@ impl Storage {
         rows: &[SourceRow],
         complete: bool,
     ) -> Result<IngestReport> {
+        self.commit_source_batch(lease, member, first_row, rows, complete, None)
+            .await
+    }
+    pub async fn commit_source_batch(
+        &self,
+        lease: &Job,
+        member: &str,
+        first_row: i64,
+        rows: &[SourceRow],
+        complete: bool,
+        parameters: Option<&Value>,
+    ) -> Result<IngestReport> {
         let mut tx = self.writer.begin().await?;
         let report = self
             .commit_member_batch_in(&mut tx, lease, member, first_row, rows, complete)
             .await?;
+        if let Some(parameters) = parameters {
+            sqlx::query("UPDATE jobs SET parameters_json=?,error_code=?,phase=?,outcome=?,inventory_complete=? WHERE id=?").bind(parameters.to_string()).bind(parameters["_terminal_code"].as_str()).bind(if complete {"finished"}else{"fetching"}).bind(if complete {Some(if parameters["_terminal_code"].is_string(){"partial"}else{"complete"})}else{None}).bind(complete).bind(&lease.id).execute(&mut *tx).await?;
+        }
+        if complete && lease.kind.starts_with("listenbrainz_") {
+            crate::artwork::enqueue_missing(&mut tx).await?;
+        }
         tx.commit().await?;
         Ok(report)
     }
@@ -228,13 +262,19 @@ impl Storage {
         if first_row != position + 1 {
             return Err(stale());
         }
-        let events: Vec<Event> = rows
+        let mut events: Vec<Event> = rows
             .iter()
             .filter_map(|r| match r {
                 SourceRow::Event(e) => Some(e.as_ref().clone()),
                 _ => None,
             })
             .collect();
+        for event in &mut events {
+            if event.source == "listenbrainz" {
+                let ordinal:i64=sqlx::query_scalar("INSERT INTO job_identity_counts(job_id,identity_key,occurrences) VALUES(?,?,1) ON CONFLICT(job_id,identity_key) DO UPDATE SET occurrences=occurrences+1 RETURNING occurrences").bind(&lease.id).bind(&event.source_key).fetch_one(&mut **tx).await?;
+                event.source_key = format!("{}:{ordinal}", event.source_key);
+            }
+        }
         let below_threshold = events.iter().filter(|e| !e.counted).count() as i64;
         let file_id: Option<String> =
             sqlx::query_scalar("SELECT file_id FROM job_members WHERE job_id=? AND member=?")
@@ -242,7 +282,17 @@ impl Storage {
                 .bind(member)
                 .fetch_one(&mut **tx)
                 .await?;
-        let file_id = file_id.or_else(|| lease.file_id.clone());
+        let file_id = if lease.kind == "listenbrainz_fetch" {
+            sqlx::query_scalar::<_, String>(
+                "SELECT file_id FROM listenbrainz_pages WHERE job_id=? AND member=?",
+            )
+            .bind(&lease.id)
+            .bind(member)
+            .fetch_optional(&mut **tx)
+            .await?
+        } else {
+            file_id.or_else(|| lease.file_id.clone())
+        };
         let report = crate::ingest::with_connection(tx, |conn| {
             crate::ingest::import_rows(
                 conn,

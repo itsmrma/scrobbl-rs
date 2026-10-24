@@ -495,6 +495,7 @@ pub async fn run(storage: &Storage, mut job: Job) -> Result<()> {
     };
     sqlx::query("UPDATE jobs SET state=?,outcome=?,phase='finished',error_code=?,updated_at_ms=? WHERE id=?")
         .bind(if outcome=="error"{"failed"}else{"completed"}).bind(outcome).bind(error).bind(auth::now_ms()).bind(&job.id).execute(&mut *transaction).await?;
+    crate::artwork::enqueue_missing(&mut transaction).await?;
     transaction.commit().await?;
     Ok(())
 }

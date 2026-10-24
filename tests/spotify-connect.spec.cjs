@@ -11,13 +11,14 @@ test("Spotify opens a separate tab; the original dialog follows decline, closure
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/settings/connections");
   const session = await (await page.request.get("/api/session")).json();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   if (session.setup_required)
     await page
       .getByLabel("Confirm password")
-      .fill("a local browser test password");
+      .fill("a local browser test password 7!");
   await page
     .getByRole("button", {
       name: session.setup_required ? "Create your archive" : "Sign in",

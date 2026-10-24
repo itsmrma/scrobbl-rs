@@ -97,7 +97,7 @@ async fn sign_in(app: &Router) -> (String, String) {
         app,
         "POST",
         "/api/setup",
-        json!({"password":"a long local test password"}),
+        json!({"username":"owner","password":"a long local test password 7!"}),
         None,
         None,
     )
@@ -587,7 +587,7 @@ async fn authentication_csrf_revocation_and_restart() {
             &app,
             "POST",
             "/api/setup",
-            json!({"password":"another long password"}),
+            json!({"username":"owner","password":"another long password 7!"}),
             None,
             None
         )
@@ -683,7 +683,7 @@ async fn authentication_csrf_revocation_and_restart() {
             &app,
             "POST",
             "/api/login",
-            json!({"password":"incorrect password"}),
+            json!({"username":"owner","password":"incorrect password"}),
             None,
             None
         )
@@ -696,7 +696,7 @@ async fn authentication_csrf_revocation_and_restart() {
             &app,
             "POST",
             "/api/login",
-            json!({"password":"a long local test password"}),
+            json!({"username":"owner","password":"a long local test password 7!"}),
             None,
             None
         )
@@ -720,7 +720,9 @@ async fn hostile_origins_hosts_expired_sessions_and_oauth_states_are_rejected() 
             .header("host", host)
             .header("origin", origin)
             .header("content-type", "application/json")
-            .body(Body::from("{\"password\":\"a long local test password\"}"))
+            .body(Body::from(
+                "{\"username\":\"owner\",\"password\":\"a long local test password 7!\"}",
+            ))
             .unwrap();
         assert_eq!(
             app.clone().oneshot(r).await.unwrap().status(),
@@ -952,4 +954,429 @@ async fn reverse_ambiguity_uses_the_counterpart_time_not_the_merged_time() {
             .unwrap(),
         3
     );
+}
+
+#[tokio::test]
+async fn owner_setup_requires_username_and_rejects_guessable_passwords_on_the_server() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    for body in [
+        json!({"password":"a long local test password 7!"}),
+        json!({"username":"owner","password":"short"}),
+        json!({"username":"owner","password":"aaaaaaaaaaaaaaa"}),
+        json!({"username":"owner","password":"Password123456789!"}),
+    ] {
+        assert_eq!(
+            request(&app, "POST", "/api/setup", body, None, None)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let (cookie, csrf) = sign_in(&app).await;
+    let session = request(
+        &app,
+        "GET",
+        "/api/session",
+        Value::Null,
+        Some(&cookie),
+        None,
+    )
+    .await
+    .1;
+    assert_eq!(session["username"], "owner");
+    assert_eq!(session["username_setup_required"], false);
+    for username in [None, Some("someone-else")] {
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                "/api/login",
+                json!({"username":username,"password":"a long local test password 7!"}),
+                None,
+                None
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"username":"OWNER","password":"a long local test password 7!"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/owner/username",
+            json!({"username":"changed"}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+}
+
+#[tokio::test]
+async fn existing_owner_can_add_username_only_with_a_valid_session_and_csrf() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, csrf) = sign_in(&app).await;
+    sqlx::query("DELETE FROM settings WHERE key='owner_username'")
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    let session = request(
+        &app,
+        "GET",
+        "/api/session",
+        Value::Null,
+        Some(&cookie),
+        None,
+    )
+    .await
+    .1;
+    assert_eq!(session["username_setup_required"], true);
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"password":"a long local test password 7!"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    for (cookie, csrf, status) in [
+        (None, None, StatusCode::UNAUTHORIZED),
+        (Some(cookie.as_str()), None, StatusCode::FORBIDDEN),
+        (Some(cookie.as_str()), Some(csrf.as_str()), StatusCode::OK),
+    ] {
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                "/api/owner/username",
+                json!({"username":"listener"}),
+                cookie,
+                csrf
+            )
+            .await
+            .0,
+            status
+        );
+    }
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"password":"a long local test password 7!"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            json!({"username":"listener","password":"a long local test password 7!"}),
+            None,
+            None
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn imported_artist_and_album_rankings_combine_tracks_with_the_same_name() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, csrf) = sign_in(&app).await;
+    let one = exported("2025-05-01T12:03:00Z", 180000);
+    let mut two = one.clone();
+    two["spotify_track_uri"] = json!("spotify:track:0000000000000000000002");
+    two["master_metadata_track_name"] = json!("A different song");
+    let (events, _) = parse_extended(&serde_json::to_vec(&json!([one, two])).unwrap()).unwrap();
+    save(&state, &events).await;
+    for kind in ["artists", "albums"] {
+        let (status, page, _) = request(
+            &app,
+            "GET",
+            &format!("/api/v1/consultation/rankings/{kind}"),
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(page["total"], 1, "{kind}: {page}");
+        assert_eq!(page["items"][0]["plays"], 2);
+        let id = page["items"][0]["id"].as_str().unwrap();
+        let music = request(
+            &app,
+            "GET",
+            &format!("/api/v1/consultation/music/{kind}/{id}"),
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await
+        .1;
+        assert_eq!(music["totals"]["listens"], 2);
+        let group_path = format!("/api/v1/library/{kind}/{id}/group");
+        let members = request(&app, "GET", &group_path, Value::Null, Some(&cookie), None)
+            .await
+            .1;
+        assert_eq!(members["total"], 2);
+        let member = members["members"][0]["id"].as_str().unwrap();
+        let separate = json!({"action":"separate","member_ids":[member]});
+        assert_eq!(
+            request(
+                &app,
+                "POST",
+                &group_path,
+                separate.clone(),
+                Some(&cookie),
+                None
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        let (status, changed, _) = request(
+            &app,
+            "POST",
+            &group_path,
+            separate,
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{changed}");
+        let detached = changed["group_id"].as_str().unwrap();
+        let separated = request(
+            &app,
+            "GET",
+            &format!("/api/v1/consultation/rankings/{kind}"),
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await
+        .1;
+        assert_eq!(separated["total"], 2);
+        assert!(
+            separated["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["plays"] == 1)
+        );
+        save(&state, &events).await;
+        let separated = request(
+            &app,
+            "GET",
+            &format!("/api/v1/consultation/rankings/{kind}"),
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await
+        .1;
+        assert_eq!(separated["total"], 2, "reimport must preserve separation");
+        let rejoined = request(
+            &app,
+            "POST",
+            &format!("/api/v1/library/{kind}/{detached}/group"),
+            json!({"action":"rejoin","member_ids":[member]}),
+            Some(&cookie),
+            Some(&csrf),
+        )
+        .await;
+        assert_eq!(rejoined.0, StatusCode::OK, "{}", rejoined.1);
+        let combined = request(
+            &app,
+            "GET",
+            &format!("/api/v1/consultation/rankings/{kind}"),
+            Value::Null,
+            Some(&cookie),
+            None,
+        )
+        .await
+        .1;
+        assert_eq!(combined["total"], 1);
+        assert_eq!(combined["items"][0]["plays"], 2);
+    }
+}
+
+#[tokio::test]
+async fn name_group_upgrade_preserves_source_ids_and_existing_personal_data() {
+    let (dir, state) = state().await;
+    let mut two = exported("2025-05-01T12:03:00Z", 180000);
+    two["spotify_track_uri"] = json!("spotify:track:0000000000000000000002");
+    two["master_metadata_track_name"] = json!("Another song");
+    let (events, _) = parse_extended(
+        &serde_json::to_vec(&json!([exported("2025-05-01T12:03:00Z", 180000), two])).unwrap(),
+    )
+    .unwrap();
+    save(&state, &events).await;
+    let before: Vec<String> = sqlx::query_scalar("SELECT id FROM listens ORDER BY id")
+        .fetch_all(&state.read_db)
+        .await
+        .unwrap();
+    let artist: String = sqlx::query_scalar("SELECT id FROM artists ORDER BY id LIMIT 1")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO local_corrections VALUES('artist',?,'name','\"Personal artist\"')")
+        .bind(&artist)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    for sql in [
+        "DROP TABLE name_group_members",
+        "DROP TABLE name_groups",
+        "DELETE FROM _sqlx_migrations WHERE version=12",
+    ] {
+        sqlx::query(sql).execute(&state.db).await.unwrap();
+    }
+    state.storage.close().await;
+    let reopened = db::open(dir.path()).await.unwrap();
+    let after: Vec<String> = sqlx::query_scalar("SELECT id FROM listens ORDER BY id")
+        .fetch_all(&reopened.readers)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    let group: String = sqlx::query_scalar(
+        "SELECT group_id FROM name_group_members WHERE entity_id=? AND kind='artists'",
+    )
+    .bind(&artist)
+    .fetch_one(&reopened.readers)
+    .await
+    .unwrap();
+    let members: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM name_group_members WHERE group_id=?")
+            .bind(&group)
+            .fetch_one(&reopened.readers)
+            .await
+            .unwrap();
+    assert_eq!(members, 2);
+    let personal: String = sqlx::query_scalar(
+        "SELECT value_json FROM local_corrections WHERE entity_id=? AND field='name'",
+    )
+    .bind(&group)
+    .fetch_one(&reopened.readers)
+    .await
+    .unwrap();
+    assert_eq!(personal, "\"Personal artist\"");
+    let originals: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM observations")
+        .fetch_one(&reopened.readers)
+        .await
+        .unwrap();
+    assert_eq!(originals, 2);
+    let app = web::router(AppState::new(reopened.clone(), state.config.clone()));
+    let (cookie, csrf) = sign_in(&app).await;
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            &format!("/api/v1/library/artists/{group}"),
+            json!({"name":"Combined group","rating":null}),
+            Some(&cookie),
+            Some(&csrf)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, separated, _) = request(
+        &app,
+        "POST",
+        &format!("/api/v1/library/artists/{group}/group"),
+        json!({"action":"separate","member_ids":[artist]}),
+        Some(&cookie),
+        Some(&csrf),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{separated}");
+    let group = separated["group_id"].as_str().unwrap().to_owned();
+    let details = request(
+        &app,
+        "GET",
+        &format!("/api/v1/library/artists/{group}"),
+        Value::Null,
+        Some(&cookie),
+        None,
+    )
+    .await
+    .1;
+    assert_eq!(
+        details["name"], "Personal artist",
+        "separation restores an older source-specific correction"
+    );
+    let work = tempfile::tempdir().unwrap();
+    let package = work.path().join("group-backup.zip");
+    scrobbl_rs::recovery::create_backup(&reopened, work.path(), &package)
+        .await
+        .unwrap();
+    let trial = tempfile::tempdir().unwrap();
+    scrobbl_rs::recovery::trial_restore(&package, trial.path())
+        .await
+        .unwrap();
+    let mut restored = scrobbl_rs::recovery::connect(&trial.path().join("archive.db"), true)
+        .await
+        .unwrap();
+    let retained: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM name_group_members WHERE group_id=?")
+            .bind(&group)
+            .fetch_one(&mut restored)
+            .await
+            .unwrap();
+    assert_eq!(retained, 1);
+    reopened.close().await;
+}
+
+#[test]
+fn password_policy_accepts_eight_characters_and_rejects_sequences_and_account_names() {
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("owner")).is_ok());
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$", Some("owner")).is_err());
+    assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("m7pl9x")).is_err());
+    for password in [
+        "Abc!7mRp",
+        "Zyx!7mRp",
+        "M7!123xy",
+        "M7!321xy",
+        "Qwe!7mRp",
+        "x7!x7!x7!x7!",
+        "LongEnough!",
+        "LongEnough7",
+        "7777777!",
+    ] {
+        assert!(
+            scrobbl_rs::auth::validate_password(password, Some("owner")).is_err(),
+            "{password}"
+        );
+    }
 }

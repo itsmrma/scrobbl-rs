@@ -6,20 +6,20 @@ export const kinds: Kind[] = ["artists", "albums", "tracks"];
 const isSize = (v: unknown): v is number =>
   typeof v === "number" && [10, 25, 50, 100].includes(v);
 const isView = (v: unknown): v is string => v === "list" || v === "grid";
-export function useListPreferences() {
+export function useListPreferences(defaultView = "list", scope = "") {
+  const viewKey = scope ? `ranking-view-${scope}` : "ranking-view";
   const [size, setSize] = useState(() => stored("page-size", 50, isSize));
-  const [view, setView] = useState(() =>
-    stored("ranking-view", "list", isView),
-  );
+  const [view, setView] = useState(() => stored(viewKey, defaultView, isView));
   useEffect(() => {
+    setView(stored(viewKey, defaultView, isView));
     const update = (event: Event) => {
       if (event instanceof CustomEvent) {
         if (event.detail.key === "page-size") setSize(event.detail.value);
-        else setView(event.detail.value);
+        else if (event.detail.key === viewKey) setView(event.detail.value);
         return;
       }
       setSize(stored("page-size", 50, isSize));
-      setView(stored("ranking-view", "list", isView));
+      setView(stored(viewKey, defaultView, isView));
     };
     window.addEventListener("consultation-preference", update);
     window.addEventListener("storage", update);
@@ -27,7 +27,7 @@ export function useListPreferences() {
       window.removeEventListener("consultation-preference", update);
       window.removeEventListener("storage", update);
     };
-  }, []);
+  }, [viewKey, defaultView]);
   function save(key: string, value: string | number) {
     try {
       localStorage.setItem(`scrobbl:${key}`, JSON.stringify(value));
@@ -44,7 +44,7 @@ export function useListPreferences() {
     size,
     view,
     setSize: (n: number) => save("page-size", n),
-    setView: (v: string) => save("ranking-view", v),
+    setView: (v: string) => save(viewKey, v),
   };
 }
 export function useSelection(visible: boolean, initialPeriod = "all") {

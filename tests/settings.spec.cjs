@@ -1,8 +1,10 @@
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
-const password = "a local browser test password";
+const password = "a local browser test password 7!";
 async function login(page, path = "/settings/general") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page.getByLabel("Password", { exact: true }).fill(password);
   if (session.setup_required)
     await page.getByLabel("Confirm password").fill(password);
@@ -28,8 +30,8 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   page.on("pageerror", (error) => errors.push(error.message));
   await login(page);
   await page.getByLabel("Instance name").fill("Music room");
-  await page.getByLabel("Initial dashboard period").selectOption("30d");
-  await page.getByLabel("Time format").selectOption("12");
+  await chooseOption(page.getByLabel("Initial dashboard period"), "30d");
+  await chooseOption(page.getByLabel("Time format"), "12");
   await page.route("**/api/v1/preferences", (route) =>
     route.request().method() === "POST"
       ? route.fulfill({
@@ -85,8 +87,11 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
     timeout: 10000,
   });
   await page.getByRole("link", { name: "Appearance", exact: true }).click();
-  await expect(page.getByLabel("Theme", { exact: true })).toHaveValue("light");
-  await page.getByLabel("Theme", { exact: true }).selectOption("dark");
+  await expect(page.getByLabel("Theme", { exact: true })).toHaveAttribute(
+    "data-value",
+    "light",
+  );
+  await chooseOption(page.getByLabel("Theme", { exact: true }), "dark");
   await page.getByLabel("HEX colour").fill("#ffffff");
   await expect(page.getByLabel("HEX colour")).toHaveValue("#ffffff");
   await expect(page.locator(".preview.dark span")).toHaveCSS(
@@ -107,33 +112,49 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   await otherPage.emulateMedia({ colorScheme: "light" });
   await login(otherPage);
   await expect(otherPage.getByLabel("Instance name")).toHaveValue("Music room");
-  await expect(otherPage.getByLabel("Time format")).toHaveValue("12");
+  await expect(otherPage.getByLabel("Time format")).toHaveAttribute(
+    "data-value",
+    "12",
+  );
   await otherPage
     .getByRole("link", { name: "Appearance", exact: true })
     .click();
-  await expect(otherPage.getByLabel("Theme", { exact: true })).toHaveValue(
+  await expect(otherPage.getByLabel("Theme", { exact: true })).toHaveAttribute(
+    "data-value",
     "auto",
   );
   await expect(otherPage.locator("html")).toHaveClass(/theme-light/);
   await otherPage.emulateMedia({ colorScheme: "dark" });
   await expect(otherPage.locator("html")).not.toHaveClass(/theme-light/);
-  await expect(page.getByLabel("Theme", { exact: true })).toHaveValue("dark");
+  await expect(page.getByLabel("Theme", { exact: true })).toHaveAttribute(
+    "data-value",
+    "dark",
+  );
   await other.close();
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(page.getByLabel("Period", { exact: true })).toHaveValue("30d");
-  await page.getByLabel("Period", { exact: true }).selectOption("all");
+  await expect(page.getByLabel("Period", { exact: true })).toHaveAttribute(
+    "data-value",
+    "30d",
+  );
+  await chooseOption(page.getByLabel("Period", { exact: true }), "all");
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await page.getByLabel("Search", { exact: true }).fill("Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(/(?:\?|&)q=Earth(?:&|$)/);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await expect(page.getByLabel("Search", { exact: true })).toHaveValue("Earth");
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(page.getByLabel("Period", { exact: true })).toHaveValue("all");
+  await expect(page.getByLabel("Period", { exact: true })).toHaveAttribute(
+    "data-value",
+    "all",
+  );
   await require("./recovery-flow.cjs")(page);
   await require("./navigation-flow.cjs")(page);
   expect(errors).toEqual([]);
@@ -199,7 +220,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     .click();
   await expect(page.getByRole("progressbar")).not.toHaveAttribute("value");
   await expect(
-    page.getByText("12 processed · total not yet known"),
+    page
+      .locator(".activity-detail")
+      .getByText("12 processed · total not yet known"),
   ).toBeVisible();
   await page.reload();
   await expect(
@@ -239,10 +262,12 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
   await expect(page.locator(".spotify-card")).toHaveAttribute("open", "", {
     timeout: 10000,
   });
-  await page.locator(".spotify-card > summary").click();
   await expect(page.locator(".spotify-card > summary")).toContainText(
-    "Reconnect your account",
+    "Action required",
   );
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Spotify needs your attention" }),
+  ).toContainText("Reconnect your account");
   spotify = {
     ...spotify,
     connection: "verified",
@@ -252,11 +277,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     verified_at_ms: Date.now(),
     last_sync_ms: Date.now(),
   };
-  await expect(page.locator("#connection-badge")).toContainText(
-    "Authorization verified",
-    { timeout: 10000 },
-  );
-  await page.locator(".spotify-card > summary").click();
+  await expect(page.locator("#connection-badge")).toContainText("Connected", {
+    timeout: 10000,
+  });
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.clock.install();

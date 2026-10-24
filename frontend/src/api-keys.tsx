@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { ApiKeySettings, Preferences } from "./generated";
-import { date, ErrorText, useToast } from "./ui";
+import { CopyButton, date, ErrorText, useToast } from "./ui";
 
 export function ApiKeys({ preferences }: { preferences: Preferences }) {
   const [settings, setSettings] = useState<ApiKeySettings | null>(null);
@@ -57,18 +57,9 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
             API base URL
             <input readOnly value={settings.base_url} />
           </label>
-          <button
-            className="secondary"
-            disabled={busy}
-            onClick={() =>
-              void action(async () => {
-                await navigator.clipboard.writeText(settings.base_url);
-                notify("API URL copied.");
-              })
-            }
-          >
+          <CopyButton value={settings.base_url} disabled={busy}>
             Copy API URL
-          </button>
+          </CopyButton>
           {!settings.base_url.startsWith("https://") && (
             <p className="warning">
               This instance uses HTTP. Configure the external HTTPS origin
@@ -82,6 +73,7 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
             scrobbl.rs read API.
           </p>
           <form
+            className="api-key-create"
             onSubmit={(e) => {
               e.preventDefault();
               void action(async () => {
@@ -150,18 +142,9 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                 />
               </label>
               <div className="connection-actions">
-                <button
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    void action(async () => {
-                      await navigator.clipboard.writeText(secret);
-                      notify("Key copied.");
-                    })
-                  }
-                >
+                <CopyButton value={secret} disabled={busy}>
                   Copy key
-                </button>
+                </CopyButton>
                 <button className="secondary" onClick={() => setSecret(null)}>
                   I have saved it
                 </button>

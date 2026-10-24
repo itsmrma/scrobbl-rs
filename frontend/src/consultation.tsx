@@ -1,4 +1,13 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { Select } from "./select";
+import { SpotifyNotice } from "./spotify-status";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   Dashboard,
   History,
@@ -10,11 +19,14 @@ import type {
 import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
-import { Now } from "./library";
-import { Link, navigate, useSearch } from "./navigation";
+import { Collage } from "./collage";
+import { compactBuckets } from "./chart-buckets";
+import { MusicActions } from "./music-edit";
+import { ListeningPatterns } from "./listening-patterns";
+import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
-import { periods } from "./preferences";
+import { periods, isBool, useBrowserPreference } from "./preferences";
 import {
   context,
   kinds,
@@ -104,7 +116,7 @@ function TimeHelp() {
           setHover(false);
         }}
       >
-        i
+        <span aria-hidden="true">i</span>
       </button>
       {open && (
         <span
@@ -214,12 +226,12 @@ function PeriodFilters({
     <div className="filters">
       <label>
         Period
-        <select
+        <Select
           aria-label="Period"
           value={params.get("period") || "all"}
-          onChange={(e) =>
+          onChange={(value) =>
             update({
-              period: e.target.value,
+              period: value,
               from: "",
               to: "",
               bucket: "",
@@ -233,7 +245,7 @@ function PeriodFilters({
             </option>
           ))}
           <option value="custom">Custom dates</option>
-        </select>
+        </Select>
       </label>
       {params.get("period") === "custom" && (
         <>
@@ -260,21 +272,24 @@ function PeriodFilters({
         </>
       )}
       {sort && (
-        <label>
+        <label className="period-rank-filter">
           Rank by
-          <select
+          <Select
+            aria-label="Rank by"
             value={params.get("sort") || "plays"}
-            onChange={(e) => update({ sort: e.target.value })}
+            onChange={(value) => update({ sort: value })}
           >
             <option value="plays">Listens</option>
             <option value="time">Listening time</option>
-          </select>
+          </Select>
         </label>
       )}
       {["today", "week", "month", "year"].includes(
         params.get("period") || "",
       ) && (
-        <span className="pill">Current period · incomplete, through now</span>
+        <span className="period-notice">
+          Current period · incomplete, through now
+        </span>
       )}
     </div>
   );
@@ -284,32 +299,39 @@ function Pager({
   page,
   pageSize,
   change,
+  list,
+  resize,
 }: {
   total: number;
   page: number;
   pageSize: number;
   change: (page: number) => void;
+  list: ReturnType<typeof useListPreferences>;
+  resize: () => void;
 }) {
   return (
-    <div className="pagination">
-      <button
-        className="secondary"
-        disabled={page <= 1}
-        onClick={() => change(page - 1)}
-      >
-        Previous
-      </button>
-      <span>
-        Page {page} of {Math.max(1, Math.ceil(total / pageSize))} ·{" "}
-        {number.format(total)} results
-      </span>
-      <button
-        className="secondary"
-        disabled={page * pageSize >= total}
-        onClick={() => change(page + 1)}
-      >
-        Next
-      </button>
+    <div className="list-footer">
+      <PageSize list={list} changed={resize} />
+      <div className="pagination">
+        <button
+          className="secondary"
+          disabled={page <= 1}
+          onClick={() => change(page - 1)}
+        >
+          Previous
+        </button>
+        <span>
+          Page {page} of {Math.max(1, Math.ceil(total / pageSize))} ·{" "}
+          {number.format(total)} {total === 1 ? "result" : "results"}
+        </span>
+        <button
+          className="secondary"
+          disabled={page * pageSize >= total}
+          onClick={() => change(page + 1)}
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -321,12 +343,13 @@ function PageSize({
   changed: () => void;
 }) {
   return (
-    <label>
+    <label className="page-size">
       Results per page
-      <select
+      <Select
+        aria-label="Results per page"
         value={list.size}
-        onChange={(e) => {
-          list.setSize(Number(e.target.value));
+        onChange={(value) => {
+          list.setSize(Number(value));
           changed();
         }}
       >
@@ -335,7 +358,7 @@ function PageSize({
             {n}
           </option>
         ))}
-      </select>
+      </Select>
     </label>
   );
 }
@@ -344,14 +367,27 @@ function RankingRows({
   kind,
   params,
   grid = false,
+  cardSize = 140,
+  bars = false,
 }: {
   items: Ranking[];
   kind: Kind;
   params: URLSearchParams;
   grid?: boolean;
+  cardSize?: number;
+  bars?: boolean;
 }) {
+  const byTime = params.get("sort") === "time";
+  const Plays = byTime ? "span" : "strong";
+  const Time = byTime ? "strong" : "span";
+  const metric = (row: Ranking) => (byTime ? row.listened_ms : row.plays);
+  const maximum = Math.max(1, ...items.map(metric));
   return items.length ? (
-    <ol className={grid ? "music-grid" : "ranking-list"}>
+    <ol
+      className={`${grid ? "music-grid" : "ranking-list"} category-${kind}`}
+      style={{ "--music-card-size": `${cardSize}px` } as Style}
+      data-ranking-kind={kind}
+    >
       {items.map((item) => (
         <li
           className={grid ? "music-card" : "ranking-row"}
@@ -366,12 +402,40 @@ function RankingRows({
           </span>
           <Cover url={item.cover_url} large={grid} />
           <div className="rank-name">
-            <Link to={musicLink(kind, item.id, params)}>{item.name}</Link>
-            {item.subtitle && <small>{item.subtitle}</small>}
+            <Link
+              className="music-item-link"
+              to={musicLink(kind, item.id, params)}
+            >
+              {item.name}
+            </Link>
+            <small>
+              {kind === "artists"
+                ? item.subtitle?.endsWith(" tracks")
+                  ? `${item.subtitle.replace(" tracks", "")} different tracks listened`
+                  : item.subtitle
+                    ? `1 track listened (${item.subtitle})`
+                    : "Artist"
+                : item.subtitle || (kind === "albums" ? "Album" : "Track")}
+            </small>
           </div>
+          {bars && (
+            <span className="ranking-meter" aria-hidden="true">
+              <span
+                style={{
+                  width: (100 * metric(item)) / maximum + "%",
+                }}
+              />
+            </span>
+          )}
           <div className="rank-value">
-            <span>
-              {number.format(item.plays)} listens · {timeValue(item)}
+            <span className="rank-metrics">
+              <Plays className="rank-plays">
+                {number.format(item.plays)} <small>listens</small>
+              </Plays>
+              <span className="rank-separator" aria-hidden="true">
+                ·
+              </span>
+              <Time className="rank-time">{timeValue(item)}</Time>
             </span>
             <Composition value={item} />
           </div>
@@ -389,6 +453,8 @@ function RankingsPanel({
   showView = true,
   title,
   version = 0,
+  standalone = false,
+  scrolling = false,
 }: {
   kind: Kind;
   params: URLSearchParams;
@@ -396,19 +462,50 @@ function RankingsPanel({
   showView?: boolean;
   title?: string;
   version?: number;
+  standalone?: boolean;
+  scrolling?: boolean;
 }) {
-  const list = useListPreferences();
+  const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
+  const cardSizes = [100, 140, 220];
+  const [savedCardSize, setCardSize] = useBrowserPreference(
+    `card-size-${kind}`,
+    140,
+    (value): value is number =>
+      typeof value === "number" && [100, 140, 180, 220].includes(value),
+  );
+  const cardSize = savedCardSize === 180 ? 220 : savedCardSize;
+  useEffect(() => {
+    if (savedCardSize === 180) setCardSize(220);
+  }, [savedCardSize, setCardSize]);
+  const [collage, setCollage] = useState(false);
   const search = useSearch();
   const [draft, setDraft] = useState(params.get("q") || "");
   useEffect(() => setDraft(params.get("q") || ""), [search]);
   const pageKey = `${kind}_page`;
   const query = new URLSearchParams(params);
-  query.set("page", params.get(pageKey) || params.get("page") || "1");
-  query.set("page_size", String(list.size));
+  query.set(
+    "page",
+    scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
+  );
+  query.set("page_size", scrolling ? "100" : String(list.size));
   const result = useLoad(
-    () => api.rankings(kind, query),
-    `${query}:${kind}:${version}`,
+    async () => {
+      const first = await api.rankings(kind, query);
+      if (!scrolling) return first;
+      const items = [...first.items];
+      for (let page = 2; items.length < first.total; page++) {
+        const next = new URLSearchParams(query);
+        next.set("page", String(page));
+        const batch = await api.rankings(kind, next);
+        if (!batch.items.length) break;
+        items.push(...batch.items);
+      }
+      return { ...first, items };
+    },
+    `rankings:${scrolling ? "scroll" : "page"}:${query}:${kind}:${version}`,
     visible,
+    undefined,
+    true,
   );
   const update = (patch: Record<string, string>, resetPages = true) => {
     const next = new URLSearchParams(location.search);
@@ -436,66 +533,141 @@ function RankingsPanel({
       tracks_page: "1",
     });
   return (
-    <article className="panel padded">
-      <h2>{title || `Top ${kind}`}</h2>
+    <article
+      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""} ${scrolling ? "scrolling-rankings" : ""}`}
+      aria-label={`${kind} rankings`}
+    >
+      <div className="ranking-panel-heading">
+        <h2>{standalone ? `Your ${kind}` : title || `Top ${kind}`}</h2>
+        {result.data && (
+          <span className="result-count">
+            {number.format(result.data.total)} {kind}
+          </span>
+        )}
+      </div>
       {showView && (
-        <div className="filters">
+        <div className="ranking-toolbar">
           <form
             className="search-inline"
-            onSubmit={(e) => {
-              e.preventDefault();
+            onSubmit={(event) => {
+              event.preventDefault();
               update({ q: draft, page: "1", [pageKey]: "1" });
             }}
           >
-            <label>
-              Search rankings
-              <input
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                maxLength={500}
-              />
-            </label>
-            <button className="secondary">Search</button>
+            <input
+              aria-label="Search rankings"
+              placeholder="Search rankings"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              maxLength={500}
+            />
+            <button className="secondary" aria-label="Search">
+              <Icon>search</Icon>
+            </button>
           </form>
-        </div>
-      )}
-      <div className="filters">
-        <PageSize list={list} changed={reset} />
-        {showView && (
           <div className="view-toggle" role="group" aria-label="Ranking view">
             <button
               className="secondary"
-              aria-pressed={list.view === "list"}
-              onClick={() => list.setView("list")}
+              aria-pressed={!collage && list.view === "list"}
+              onClick={() => {
+                list.setView("list");
+                setCollage(false);
+              }}
             >
               <Icon>view_list</Icon>List
             </button>
             <button
               className="secondary"
-              aria-pressed={list.view === "grid"}
-              onClick={() => list.setView("grid")}
+              aria-pressed={!collage && list.view === "grid"}
+              onClick={() => {
+                list.setView("grid");
+                setCollage(false);
+              }}
             >
               <Icon>grid_view</Icon>Grid
             </button>
+            {kind !== "tracks" && (
+              <button
+                className="secondary collage-toggle"
+                aria-pressed={collage}
+                onClick={() => setCollage(!collage)}
+              >
+                <Icon>dashboard</Icon>Collage
+              </button>
+            )}
           </div>
-        )}
-      </div>
+          <div
+            className={`card-size-control ${collage || list.view !== "grid" ? "inactive" : ""}`}
+            aria-hidden={collage || list.view !== "grid"}
+            inert={collage || list.view !== "grid"}
+            role="group"
+            aria-label="Card size"
+          >
+            <button
+              className="icon-button"
+              aria-label="Smaller cards"
+              disabled={cardSize === 100}
+              onClick={() =>
+                setCardSize(
+                  cardSizes[Math.max(0, cardSizes.indexOf(cardSize) - 1)],
+                )
+              }
+            >
+              <Icon>remove</Icon>
+            </button>
+            <output aria-label="Card size">
+              {cardSize === 100
+                ? "Small"
+                : cardSize === 140
+                  ? "Medium"
+                  : "Large"}
+            </output>
+            <button
+              className="icon-button"
+              aria-label="Larger cards"
+              disabled={cardSize === 220}
+              onClick={() =>
+                setCardSize(
+                  cardSizes[
+                    Math.min(
+                      cardSizes.length - 1,
+                      cardSizes.indexOf(cardSize) + 1,
+                    )
+                  ],
+                )
+              }
+            >
+              <Icon>add</Icon>
+            </button>
+          </div>
+        </div>
+      )}
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
-          <p>{number.format(result.data.total)} results</p>
-          <RankingRows
-            items={result.data.items}
-            kind={kind}
-            params={params}
-            grid={(!showView && kind === "albums") || list.view === "grid"}
-          />
-          <Pager
-            total={result.data.total}
-            page={result.data.page}
-            pageSize={result.data.page_size}
-            change={(n) => update({ [pageKey]: String(n) }, false)}
-          />
+          {collage && kind !== "tracks" ? (
+            <Collage items={result.data.items} kind={kind} params={params} />
+          ) : (
+            <div className="ranking-results">
+              <RankingRows
+                cardSize={cardSize}
+                items={result.data.items}
+                kind={kind}
+                params={params}
+                grid={(!showView && kind === "albums") || list.view === "grid"}
+              />
+            </div>
+          )}
+          {!scrolling && (
+            <Pager
+              list={list}
+              resize={reset}
+              total={result.data.total}
+              page={result.data.page}
+              pageSize={result.data.page_size}
+              change={(n) => update({ [pageKey]: String(n) }, false)}
+            />
+          )}
         </>
       ) : (
         !result.error && <p role="status">Loading rankings…</p>
@@ -509,50 +681,125 @@ function RankingsPanel({
     </article>
   );
 }
+function periodLabel(start: string, grain: string, full = false) {
+  const date = new Date(`${start}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return start;
+  if (grain === "year") return String(date.getUTCFullYear());
+  const label = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    ...(grain === "month"
+      ? { month: "short", year: "numeric" }
+      : {
+          day: "numeric",
+          month: "short",
+          ...(full ? { year: "numeric" } : {}),
+        }),
+  }).format(date);
+  return grain === "week" ? `Week of ${label}` : label;
+}
+const compactNumber = new Intl.NumberFormat("en-GB", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
 function Chart({
   params,
   visible = true,
-  update,
   version = 0,
 }: {
   params: URLSearchParams;
   visible?: boolean;
-  update: Selection["update"];
   version?: number;
 }) {
+  const chart = useRef<HTMLElement>(null);
+  const [barLimit, setBarLimit] = useState(18);
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width || 0;
+      if (!width) return;
+      setBarLimit(Math.max(3, Math.min(18, Math.floor(width / 76))));
+    });
+    if (chart.current) observer.observe(chart.current);
+    return () => observer.disconnect();
+  }, []);
+  const chartParams = new URLSearchParams(params);
+  chartParams.delete("grain");
   const result = useLoad(
-    () => api.chart(params),
-    `${params}:${version}`,
+    () => api.chart(chartParams),
+    `chart:${chartParams}:${version}`,
     visible,
+    undefined,
+    true,
   );
+  const [inspected, setInspected] = useState<string | null>(null);
   const byTime = params.get("sort") === "time";
-  const buckets = result.data?.buckets || [];
+  const buckets = useMemo(
+    () =>
+      result.data &&
+      (result.data.grain === "month" || result.data.buckets.length > barLimit)
+        ? compactBuckets(result.data.buckets, barLimit)
+        : (result.data?.buckets || []).map((b) => ({ ...b, periods: 1 })),
+    [result.data, barLimit],
+  );
+  const grouped = buckets.some((b) => b.periods > 1);
+  const spansYears =
+    !!buckets.length &&
+    buckets[0].start.slice(0, 4) !==
+      buckets[buckets.length - 1].through.slice(0, 4);
+  const bucketLabel = (b: (typeof buckets)[number], full = spansYears) =>
+    b.periods > 1
+      ? `${periodLabel(b.start, result.data!.grain === "week" ? "day" : result.data!.grain, full)} – ${periodLabel(b.through, result.data!.grain === "week" ? "day" : result.data!.grain, full)}`
+      : periodLabel(b.start, result.data!.grain, full);
   const max = Math.max(
     1,
     ...buckets.map((b) => (byTime ? b.actual_ms + b.estimated_ms : b.listens)),
   );
+  const inspectedBucket =
+    buckets.find((b) => b.start === inspected) ||
+    buckets.reduce<(typeof buckets)[number] | undefined>(
+      (best, b) =>
+        !best ||
+        (byTime
+          ? b.actual_ms + b.estimated_ms > best.actual_ms + best.estimated_ms
+          : b.listens > best.listens)
+          ? b
+          : best,
+      undefined,
+    );
   return (
-    <article className="panel padded activity-chart">
+    <article className="panel padded activity-chart chart-compact" ref={chart}>
       <div className="panel-title">
         <h2>Listening activity</h2>
-        <label>
-          Group by
-          <select
-            value={params.get("grain") || result.data?.grain || "day"}
-            onChange={(e) => update({ grain: e.target.value }, false)}
-          >
-            {["day", "week", "month", "year"].map((v) => (
-              <option key={v} value={v}>
-                {v[0].toUpperCase() + v.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
       <p className="subtle">
-        Empty segments mean no archived listens, rather than proof that no music
-        was played. Each listen and all its time belong to its assigned date.
+        Your archived listening over time. Select a bar to explore that period.
+        {grouped &&
+          " Quieter periods are combined to fit this view; each bar shows its exact date range."}
       </p>
+      {inspectedBucket && (
+        <div className="chart-readout" aria-live="polite" aria-atomic="true">
+          <div>
+            <small>{inspected ? "Period details" : "Most active period"}</small>
+            <strong>
+              {bucketLabel(inspectedBucket, true)}
+              {inspectedBucket.partial && (
+                <span className="partial-label">Partial period</span>
+              )}
+            </strong>
+            <span>
+              {inspectedBucket.start} – {inspectedBucket.through}
+            </span>
+          </div>
+          <div>
+            <strong>
+              {byTime
+                ? timeValue(inspectedBucket)
+                : number.format(inspectedBucket.listens)}
+            </strong>
+            <span>{byTime ? "listening time" : "listens"}</span>
+            {byTime && <Composition value={inspectedBucket} />}
+          </div>
+        </div>
+      )}
       {byTime && (
         <p className="chart-legend">
           <span className="actual-key" />
@@ -579,6 +826,13 @@ function Chart({
               const next = new URLSearchParams(params);
               next.set("bucket", result.data!.grain);
               next.set("bucket_start", b.start);
+              if (b.periods > 1) {
+                next.delete("bucket");
+                next.delete("bucket_start");
+                next.set("period", "custom");
+                next.set("from", b.start);
+                next.set("to", b.through);
+              }
               next.delete("page");
               const value = byTime
                 ? timeValue(b)
@@ -593,11 +847,9 @@ function Chart({
                   to={`/history?${next}`}
                   className="chart-segment"
                   aria-label={label}
+                  onMouseEnter={() => setInspected(b.start)}
+                  onFocus={() => setInspected(b.start)}
                 >
-                  <span className="chart-tip">
-                    {label}
-                    {byTime && <Composition value={b} />}
-                  </span>
                   <span className="bar-space">
                     <span
                       className={`bar ${b.partial ? "partial" : ""} ${byTime && b.unknown_durations > 0 && !b.actual_ms && !b.estimated_ms ? "unavailable" : ""}`}
@@ -623,10 +875,12 @@ function Chart({
                     </span>
                   </span>
                   <small>
-                    {b.start}
+                    {bucketLabel(b)}
                     {b.partial ? " *" : ""}
                   </small>
-                  <small>{value}</small>
+                  <small className="chart-bar-value">
+                    {byTime ? timeValue(b) : compactNumber.format(b.listens)}
+                  </small>
                 </Link>
               );
             })}
@@ -638,7 +892,7 @@ function Chart({
       )}
       {!result.data && !result.error && <p role="status">Loading activity…</p>}
       <p className="subtle">
-        * Partial segment. Select a bar to open its listening history.
+        * Partial period. Each listen belongs to its assigned date.
       </p>
     </article>
   );
@@ -663,19 +917,20 @@ export function Overview({
   if (!visible) return null;
   return (
     <>
-      <Heading
-        eyebrow="YOUR PERSONAL LISTENING ARCHIVE"
-        title="Your listening, at a glance"
-      >
-        The songs, the repeats, the moments. All yours.
-      </Heading>
-      <PeriodFilters selection={selection} />
+      <div className="overview-heading">
+        <Heading
+          eyebrow="YOUR PERSONAL LISTENING ARCHIVE"
+          title="Your listening, at a glance"
+        >
+          The songs, the repeats, the moments. All yours.
+        </Heading>
+        <PeriodFilters selection={selection} />
+      </div>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
           <Stats totals={result.data.totals} ids />
-          <Now visible={visible} status={status} />
-          <div className="rankings-grid">
+          <div className="rankings-grid overview-rankings">
             {kinds.map((kind) => (
               <article className="panel padded" key={kind}>
                 <div className="panel-title">
@@ -685,6 +940,7 @@ export function Overview({
                   </Link>
                 </div>
                 <RankingRows
+                  bars
                   items={result.data!.rankings[kind]}
                   kind={kind}
                   params={params}
@@ -695,7 +951,6 @@ export function Overview({
           <Chart
             params={params}
             visible={visible}
-            update={selection.update}
             version={preferences.version}
           />
           <article className="panel">
@@ -715,36 +970,59 @@ export function Overview({
 export function RankingsPage({
   kind,
   preferences,
+  status,
 }: {
   kind: Kind;
   preferences: Preferences;
+  status: SpotifyStatus | null;
 }) {
   const selection = useSelection(true);
   return (
     <>
-      <Heading title={`Top ${kind}`} eyebrow="YOUR LISTENING RANKED">
-        Counted listens in your archive, ordered by listens or precise listening
-        time.
+      <Heading title="Rankings" eyebrow="YOUR LISTENING RANKED">
+        {kind === "artists"
+          ? "Your most played artists, combining listens across all their tracks."
+          : kind === "albums"
+            ? "Your most played albums, combining listens across their tracks."
+            : "Your most played tracks, each ranked by its own listens."}
       </Heading>
-      <nav className="settings-tabs" aria-label="Ranking categories">
+      <nav className="ranking-categories" aria-label="Ranking categories">
         {kinds.map((k) => (
           <Link
             to={`/rankings/${k}?${context(selection.params)}`}
             key={k}
             aria-current={kind === k ? "page" : undefined}
           >
-            {k[0].toUpperCase() + k.slice(1)}
+            <Icon>
+              {{ artists: "person", albums: "album", tracks: "music_note" }[k]}
+            </Icon>
+            <span>
+              <strong>{k[0].toUpperCase() + k.slice(1)}</strong>
+              <small>
+                {
+                  {
+                    artists: "All tracks per artist",
+                    albums: "All tracks per album",
+                    tracks: "Individual songs",
+                  }[k]
+                }
+              </small>
+            </span>
           </Link>
         ))}
       </nav>
-      <PeriodFilters selection={selection} />
-      <p>
-        Listening time <TimeHelp />
-      </p>
+      <SpotifyNotice status={status} preferences={preferences} />
+      <div className="ranking-period">
+        <PeriodFilters selection={selection} />
+        <span className="ranking-help">
+          About listening time <TimeHelp />
+        </span>
+      </div>
       <RankingsPanel
         kind={kind}
         params={selection.params}
         version={preferences.version}
+        standalone
       />
     </>
   );
@@ -759,72 +1037,145 @@ function EntityFilter({
   change: (id: string) => void;
 }) {
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [focused, setFocused] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const container = useRef<HTMLDivElement>(null);
+  const optionsId = useId();
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 150);
+    return () => clearTimeout(timer);
+  }, [search]);
   const options = useLoad(
-    () => api.choices(kind, search),
-    `${kind}:${search}`,
-    !!search && !id,
+    () => api.choices(kind, query),
+    `${kind}:${query}`,
+    !!query && !id,
   );
   const chosen = useLoad(
     () => api.music(kind, id, new URLSearchParams()),
     `${kind}:${id}`,
     !!id,
   );
+  const [selectedName, setSelectedName] = useState("");
+  const showOptions = focused && !id && !!query && query === search.trim();
   return (
-    <div className="entity-filter">
+    <div
+      className="entity-filter"
+      ref={container}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setFocused(false);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          input.current?.focus();
+          setFocused(false);
+        }
+        if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+          event.preventDefault();
+          setFocused(true);
+          const buttons = Array.from(
+            container.current?.querySelectorAll<HTMLButtonElement>(
+              ".entity-options button",
+            ) || [],
+          );
+          const current = buttons.indexOf(
+            document.activeElement as HTMLButtonElement,
+          );
+          const next =
+            current < 0
+              ? event.key === "ArrowDown"
+                ? 0
+                : buttons.length - 1
+              : (current +
+                  (event.key === "ArrowDown" ? 1 : -1) +
+                  buttons.length) %
+                buttons.length;
+          buttons[next]?.focus();
+        }
+      }}
+    >
       <label>
         {kind === "artists" ? "Artist" : "Album"}
-        <input
-          type="search"
-          aria-label={kind === "artists" ? "Find artist" : "Find album"}
-          placeholder={
-            id ? chosen.data?.name || "Selected identity" : `Find ${kind}`
-          }
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            if (id) change("");
-          }}
-        />
-      </label>
-      {id && (
-        <span className="pill">
-          {chosen.data?.name || "Selected"}
-          <button
-            type="button"
-            className="icon-button"
-            aria-label={`Clear ${kind}`}
-            onClick={() => {
-              change("");
-              setSearch("");
-            }}
-          >
-            <Icon>close</Icon>
-          </button>
+        <span className="entity-field">
+          <input
+            ref={input}
+            type="search"
+            aria-label={kind === "artists" ? "Find artist" : "Find album"}
+            placeholder={`Find ${kind}`}
+            autoComplete="off"
+            maxLength={500}
+            aria-expanded={showOptions}
+            aria-controls={optionsId}
+            aria-autocomplete="list"
+            readOnly={!!id}
+            value={
+              id
+                ? chosen.data?.name || selectedName || "Selected identity"
+                : search
+            }
+            onFocus={() => setFocused(true)}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+          {id && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={`Clear ${kind}`}
+              onClick={() => {
+                change("");
+                setSearch("");
+                setQuery("");
+                setSelectedName("");
+                input.current?.focus();
+              }}
+            >
+              <Icon>close</Icon>
+            </button>
+          )}
         </span>
-      )}
+      </label>
       <ErrorText>{options.error || (id ? chosen.error : "")}</ErrorText>
-      {!id && search && options.data && (
-        <ul className="entity-options" aria-label={`${kind} matches`}>
-          {options.data.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => {
-                  change(item.id);
-                  setSearch("");
-                }}
-              >
-                {item.name}
-                {item.subtitle ? ` · ${item.subtitle}` : ""}
-              </button>
-            </li>
-          ))}
-          {!options.data.length && <li>No matches</li>}
-          {options.data.length === 50 && (
-            <li>
-              Showing 50 matches. Refine your search to narrow the choices.
-            </li>
+      {showOptions && (
+        <ul
+          id={optionsId}
+          className="entity-options"
+          aria-label={`${kind} matches`}
+        >
+          {options.data ? (
+            <>
+              {options.data.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    aria-label={`${item.name}${item.subtitle ? ` · ${item.subtitle}` : ""}`}
+                    // Safari does not focus buttons on pointer down. Keep the
+                    // input focused until the selection click has been handled.
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      setSelectedName(item.name);
+                      change(item.id);
+                      setSearch("");
+                      setQuery("");
+                      input.current?.focus();
+                      setFocused(false);
+                    }}
+                  >
+                    <strong>{item.name}</strong>
+                    {item.subtitle && <small>{item.subtitle}</small>}
+                  </button>
+                </li>
+              ))}
+              {!options.data.length && <li>No matches</li>}
+              {options.data.length === 50 && (
+                <li>
+                  Showing 50 matches. Refine your search to narrow the choices.
+                </li>
+              )}
+            </>
+          ) : (
+            <li role="status">Finding matches…</li>
           )}
         </ul>
       )}
@@ -837,15 +1188,21 @@ function TrackScope({ id, clear }: { id: string; clear: () => void }) {
     id,
   );
   return (
-    <p className="pill">
-      Track:{" "}
+    <div className="track-scope-chip">
+      <span className="track-scope-label">Track:</span>
       <Link to={musicLink("tracks", id)}>
         {result.data?.name || "Selected track"}
       </Link>
-      <button type="button" className="secondary" onClick={clear}>
-        Clear track filter
+      <button
+        type="button"
+        className="track-scope-clear"
+        aria-label="Clear track filter"
+        title="Clear track filter"
+        onClick={clear}
+      >
+        <Icon>close</Icon>
       </button>
-    </p>
+    </div>
   );
 }
 export function HistoryPage({
@@ -853,26 +1210,39 @@ export function HistoryPage({
   visible,
   params: override,
   embedded = false,
+  musicKind,
 }: {
   preferences: Preferences;
   visible: boolean;
   params?: URLSearchParams;
   embedded?: boolean;
+  musicKind?: Kind;
 }) {
   const selection = useSelection(visible),
     list = useListPreferences();
   const params = new URLSearchParams(override || selection.params);
+  const [filtersOpen, setFiltersOpen] = useBrowserPreference(
+    "history-filters-open",
+    false,
+    isBool,
+  );
+  const filterAnimation = useRef<Animation | null>(null);
+  const filterDetails = useRef<HTMLDetailsElement | null>(null);
+  const filtersId = useId();
+  useEffect(() => () => filterAnimation.current?.cancel(), []);
   const [draft, setDraft] = useState(params.get("q") || "");
   const search = useSearch();
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (visible) setDraft(params.get("q") || "");
   }, [search, visible]);
   params.set("page_size", String(list.size));
   if (embedded) params.set("page", params.get("history_page") || "1");
   const result = useLoad<History>(
     () => api.history(params),
-    `${params}:${preferences.version}`,
+    `history:${params}:${preferences.version}`,
     visible,
+    undefined,
+    true,
   );
   const change = (patch: Record<string, string>) =>
     selection.update({
@@ -882,151 +1252,266 @@ export function HistoryPage({
       albums_page: "1",
       tracks_page: "1",
     });
+  function toggleFilters() {
+    const details = filterDetails.current;
+    if (!details) return;
+    const form = details.querySelector("form")!;
+    const opening = !filtersOpen;
+    const from = details.open ? form.getBoundingClientRect().height : 0;
+    filterAnimation.current?.cancel();
+    details.open = true;
+    const to = opening ? form.scrollHeight : 0;
+    setFiltersOpen(opening);
+    details.open = true;
+    form.style.overflow = "hidden";
+    const animation = form.animate(
+      [
+        { height: `${from}px`, opacity: opening ? 0 : 1 },
+        { height: `${to}px`, opacity: opening ? 1 : 0 },
+      ],
+      {
+        duration: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? 0
+          : 160,
+        easing: "ease-out",
+      },
+    );
+    filterAnimation.current = animation;
+    animation.finished
+      .then(() => {
+        details.open = opening;
+        form.style.overflow = "";
+        filterAnimation.current = null;
+      })
+      .catch(() => {});
+  }
   if (!visible) return null;
   return (
-    <>
+    <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
-        <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
-          Search and combine period, artist, album and source filters.
-        </Heading>
+        <div className="history-heading">
+          <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
+            Search and combine period, artist, album and source filters.
+          </Heading>
+          <div className="history-actions">
+            <Link className="button secondary" to="/review">
+              <Icon>rule</Icon>Review possible duplicates
+            </Link>
+            <button
+              className="secondary"
+              aria-expanded={filtersOpen}
+              aria-controls={filtersId}
+              onClick={toggleFilters}
+            >
+              <Icon>tune</Icon>Filters
+              <Icon>{filtersOpen ? "expand_less" : "expand_more"}</Icon>
+            </button>
+          </div>
+        </div>
       )}
-      {!embedded && <PeriodFilters selection={selection} sort={false} />}
       {!embedded && params.get("track") && (
         <TrackScope
           id={params.get("track")!}
           clear={() => change({ track: "" })}
         />
       )}
-      <form
-        className="filters"
-        onSubmit={(e) => {
-          e.preventDefault();
-          change({ q: draft });
+      <details
+        id={filtersId}
+        className="history-filter-disclosure panel"
+        ref={(node) => {
+          filterDetails.current = node;
+          if (node && !filterAnimation.current) node.open = filtersOpen;
         }}
       >
-        <label>
-          Search
-          <input
-            id="history-q"
-            value={draft}
-            placeholder="Artist, album or track"
-            maxLength={500}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-        </label>
-        {!embedded && (
-          <>
-            <EntityFilter
-              kind="artists"
-              id={params.get("artist") || ""}
-              change={(id) => change({ artist: id })}
-            />
-            <EntityFilter
-              kind="albums"
-              id={params.get("album") || ""}
-              change={(id) => change({ album: id })}
-            />
-          </>
-        )}
-        <label>
-          Source
-          <select
-            aria-label="Source"
-            value={params.get("source") || ""}
-            onChange={(e) => change({ source: e.target.value })}
-          >
-            <option value="">All sources</option>
-            <option value="spotify_import">Spotify import</option>
-            <option value="spotify_api">Spotify collection</option>
-            <option value="listenbrainz">ListenBrainz</option>
-          </select>
-        </label>
-        <label>
-          Include
-          <select
-            id={embedded ? undefined : "history-status"}
-            value={params.get("status") || "counted"}
-            onChange={(e) => change({ status: e.target.value })}
-          >
-            {[
-              ["counted", "Counted listens"],
-              ["all", "All records"],
-              ["short", "Below threshold"],
-              ["actual", "Actual time"],
-              ["estimated", "Estimated / unknown time"],
-              ["review", "Possible duplicates"],
-            ].map(([v, t]) => (
-              <option key={v} value={v}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="checkbox-label">
-          <input
-            type="checkbox"
-            checked={params.get("status") === "all"}
-            onChange={(e) =>
-              change({ status: e.target.checked ? "all" : "counted" })
-            }
-          />
-          Show listens below threshold too
-        </label>
-        <PageSize list={list} changed={() => change({})} />
-        <button className="primary">Search</button>
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => {
-            setDraft("");
-            change({
-              q: "",
-              source: "",
-              status: "",
-              artist: "",
-              album: "",
-              track: "",
-              bucket: "",
-              bucket_start: "",
-              from: "",
-              to: "",
-              period: "all",
-            });
+        <summary
+          onClick={(event) => {
+            event.preventDefault();
+            toggleFilters();
           }}
         >
-          Reset
-        </button>
-      </form>
+          <Icon>tune</Icon>
+          <span>
+            <strong>Filters</strong>
+            <small>
+              {[
+                params.get("period") && params.get("period") !== "all"
+                  ? params.get("period")
+                  : "All time",
+                params.get("q"),
+                params.get("source")?.replaceAll("_", " "),
+                params.get("artist") ? "Artist selected" : "",
+                params.get("album") ? "Album selected" : "",
+                params.get("status") && params.get("status") !== "counted"
+                  ? params.get("status")
+                  : "Counted listens",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </small>
+          </span>
+          <span className="filter-toggle-label">
+            {filtersOpen ? "Hide filters" : "Show filters"}
+          </span>
+          <Icon>expand_more</Icon>
+        </summary>
+        <form
+          className="history-filters padded"
+          aria-label="Listening history filters"
+          onSubmit={(e) => {
+            e.preventDefault();
+            change({ q: draft });
+          }}
+        >
+          <div className="history-filter-heading">
+            <h2>Find your listens</h2>
+            <span>Combine filters to narrow your history</span>
+          </div>
+          {!embedded && <PeriodFilters selection={selection} sort={false} />}
+          <div className="history-filter-grid">
+            <label className="history-search">
+              Search
+              <input
+                id="history-q"
+                value={draft}
+                placeholder="Artist, album or track"
+                maxLength={500}
+                onChange={(e) => setDraft(e.target.value)}
+              />
+            </label>
+            {!embedded && (
+              <>
+                <EntityFilter
+                  kind="artists"
+                  id={params.get("artist") || ""}
+                  change={(id) => change({ artist: id })}
+                />
+                <EntityFilter
+                  kind="albums"
+                  id={params.get("album") || ""}
+                  change={(id) => change({ album: id })}
+                />
+              </>
+            )}
+            <label>
+              Source
+              <Select
+                aria-label="Source"
+                value={params.get("source") || ""}
+                onChange={(value) => change({ source: value })}
+              >
+                <option value="">All sources</option>
+                <option value="spotify_import">Spotify import</option>
+                <option value="spotify_api">Spotify collection</option>
+                <option value="listenbrainz">ListenBrainz</option>
+              </Select>
+            </label>
+            <label>
+              Include
+              <Select
+                aria-label="Include"
+                id={embedded ? undefined : "history-status"}
+                value={params.get("status") || "counted"}
+                onChange={(value) => change({ status: value })}
+              >
+                {[
+                  ["counted", "Counted listens"],
+                  ["all", "All records"],
+                  ["short", "Below threshold"],
+                  ["actual", "Actual time"],
+                  ["estimated", "Estimated / unknown time"],
+                  ["review", "Possible duplicates"],
+                ].map(([v, t]) => (
+                  <option key={v} value={v}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={params.get("status") === "all"}
+                onChange={(e) =>
+                  change({ status: e.target.checked ? "all" : "counted" })
+                }
+              />
+              Show listens below threshold too
+            </label>
+          </div>
+          <div className="history-filter-actions">
+            <button className="primary">
+              <Icon>search</Icon>Search
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                setDraft("");
+                change({
+                  q: "",
+                  source: "",
+                  status: "",
+                  artist: "",
+                  album: "",
+                  track: "",
+                  bucket: "",
+                  bucket_start: "",
+                  from: "",
+                  to: "",
+                  period: "all",
+                });
+              }}
+            >
+              Reset
+            </button>
+          </div>
+          <p className="subtle">
+            Listens below 30 seconds of actual playback remain archived and are
+            excluded from valid-listen statistics. Estimated or unknown time
+            alone does not exclude a listen.
+          </p>
+        </form>
+      </details>
       {params.get("bucket") && (
-        <p className="pill">
-          Chart segment: {params.get("bucket_start")} ({params.get("bucket")})
+        <div className="segment-filter">
+          <Icon>date_range</Icon>
+          <span>
+            <small>Chart segment:</small>
+            <strong>
+              {periodLabel(
+                params.get("bucket_start") || "",
+                params.get("bucket") || "",
+                true,
+              )}
+            </strong>
+          </span>
           <button
-            className="secondary"
+            className="icon-button"
+            aria-label="Clear segment"
             onClick={() => change({ bucket: "", bucket_start: "" })}
           >
-            Clear segment
+            <Icon>close</Icon>
           </button>
-        </p>
+        </div>
       )}
-      <p className="subtle">
-        Listens below 30 seconds of actual playback remain archived and are
-        excluded from valid-listen statistics. Estimated or unknown time alone
-        does not exclude a listen.
-      </p>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <article className="panel">
-          <div className="panel-title padded">
+          <div className="panel-title history-result-heading">
             <h2 id={embedded ? undefined : "history-total"}>
-              {number.format(result.data.total)} records
+              {number.format(result.data.total)}{" "}
+              {result.data.total === 1 ? "record" : "records"}
             </h2>
           </div>
           <ListenList
             id={embedded ? undefined : "history-list"}
             items={result.data.items}
             preferences={preferences}
+            context={musicKind}
           />
           <Pager
+            list={list}
+            resize={() => change({})}
             total={result.data.total}
             page={result.data.page}
             pageSize={result.data.page_size}
@@ -1041,7 +1526,7 @@ export function HistoryPage({
       ) : (
         !result.error && <p role="status">Loading listening history…</p>
       )}
-    </>
+    </div>
   );
 }
 export function MusicPage({
@@ -1057,71 +1542,122 @@ export function MusicPage({
     params = scoped(selection.params, kind, id);
   const result = useLoad(
     () => api.music(kind, id, params),
-    `${kind}:${id}:${params}:${preferences.version}`,
+    `music:${kind}:${id}:${params}:${preferences.version}`,
+    true,
+    undefined,
+    true,
   );
+  const introduction = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = introduction.current;
+    const header = content?.parentElement;
+    if (!content || !header) return;
+    const resize = () => {
+      const size = Math.min(
+        content.getBoundingClientRect().height,
+        header.clientWidth * 0.42,
+      );
+      const value = Math.round(size) + "px";
+      if (header.style.getPropertyValue("--music-artwork-size") !== value)
+        header.style.setProperty("--music-artwork-size", value);
+    };
+    // Apply measurements outside ResizeObserver delivery: changing the column
+    // can reflow a wrapped title, especially in WebKit.
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(resize);
+    });
+    observer.observe(content);
+    observer.observe(header);
+    resize();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [result.data?.id]);
   return (
     <>
-      <PeriodFilters selection={selection} />
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
           <div className="music-heading">
             <Cover url={result.data.cover_url} large />
-            <Heading
-              title={result.data.name}
-              eyebrow={kind.slice(0, -1).toUpperCase()}
-            >
-              {result.data.artists.map((a, i) => (
-                <span key={a.id}>
-                  {i > 0 && ", "}
-                  <Link to={musicLink("artists", a.id, params)}>{a.name}</Link>
-                </span>
-              ))}
-              {result.data.album_id && (
-                <>
-                  {" "}
-                  ·{" "}
-                  <Link to={musicLink("albums", result.data.album_id, params)}>
-                    {result.data.album}
-                  </Link>
-                </>
-              )}
-            </Heading>
+            <div className="music-header-content" ref={introduction}>
+              <div className="music-title-row">
+                <Heading
+                  title={result.data.name}
+                  eyebrow={kind.slice(0, -1).toUpperCase()}
+                >
+                  {kind === "albums"
+                    ? "Album by "
+                    : kind === "tracks"
+                      ? "Track by "
+                      : ""}
+                  {result.data.artists.map((a, i) => (
+                    <span key={a.id}>
+                      {i > 0 && ", "}
+                      <Link to={musicLink("artists", a.id, params)}>
+                        {a.name}
+                      </Link>
+                    </span>
+                  ))}
+                  {result.data.album_id && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <Link
+                        to={musicLink("albums", result.data.album_id, params)}
+                      >
+                        {result.data.album}
+                      </Link>
+                    </>
+                  )}
+                </Heading>
+                <BackButton
+                  fallback={`/rankings/${kind}?${context(selection.params)}`}
+                />
+              </div>
+              <MusicActions kind={kind} id={id} />
+              <div className="music-period">
+                <PeriodFilters selection={selection} />
+              </div>
+            </div>
           </div>
           <Stats totals={result.data.totals} />
-          <Chart
-            params={params}
-            update={selection.update}
-            version={preferences.version}
-          />
-          {kind === "artists" && (
-            <RankingsPanel
-              kind="albums"
-              params={params}
-              showView={false}
-              version={preferences.version}
-              title="Albums in this period"
-            />
-          )}
-          {kind !== "tracks" && (
-            <RankingsPanel
-              kind="tracks"
-              params={params}
-              title="Tracks in this period"
-              version={preferences.version}
-            />
-          )}
-          <h2>Listening history</h2>
-          <HistoryPage
-            preferences={preferences}
-            visible
-            params={params}
-            embedded
-          />
         </>
       ) : (
         !result.error && <p role="status">Loading music page…</p>
       )}
+      <Chart params={params} version={preferences.version} />
+      <ListeningPatterns params={params} version={preferences.version} />
+      {kind !== "tracks" && (
+        <div className={kind === "artists" ? "music-collections" : undefined}>
+          {kind === "artists" && (
+            <RankingsPanel
+              kind="albums"
+              params={params}
+              version={preferences.version}
+              title="Albums in this period"
+            />
+          )}
+          <RankingsPanel
+            kind="tracks"
+            params={params}
+            title="Tracks in this period"
+            version={preferences.version}
+            scrolling={kind === "albums"}
+          />
+        </div>
+      )}
+      <h2>Listening history</h2>
+      <HistoryPage
+        preferences={preferences}
+        visible
+        params={params}
+        embedded
+        musicKind={kind}
+      />
     </>
   );
 }

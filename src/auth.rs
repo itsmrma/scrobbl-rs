@@ -114,12 +114,16 @@ pub async fn status(
         .fetch_one(&state.private_db)
         .await?
         == 0;
+    let username: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='owner_username'")
+            .fetch_optional(&state.private_db)
+            .await?;
     match session(&state, &headers).await {
         Ok(s) => Ok(Json(
-            json!({"setup_required":setup_required,"authenticated":true,"csrf":s.csrf}),
+            json!({"setup_required":setup_required,"authenticated":true,"csrf":s.csrf,"username_required":username.is_some(),"username_setup_required":username.is_none(),"username":username}),
         )),
         Err(AppError::Unauthorized) => Ok(Json(
-            json!({"setup_required":setup_required,"authenticated":false}),
+            json!({"setup_required":setup_required,"authenticated":false,"username_required":username.is_some()}),
         )),
         Err(e) => Err(e),
     }
@@ -127,8 +131,105 @@ pub async fn status(
 #[derive(Deserialize)]
 pub struct PasswordForm {
     pub password: String,
+    pub username: Option<String>,
 }
-async fn rate_limit(state: &AppState) -> Result<()> {
+fn validate_username(username: &str) -> Result<&str> {
+    let username = username.trim();
+    if !(3..=40).contains(&username.len())
+        || !username
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+    {
+        return Err(AppError::BadRequest(
+            "Choose a username of 3–40 letters, numbers, dots, underscores or hyphens.".into(),
+        ));
+    }
+    Ok(username)
+}
+pub fn validate_password(password: &str, username: Option<&str>) -> Result<()> {
+    if password.chars().count() < 8 || password.len() > 1024 {
+        return Err(AppError::BadRequest(
+            "Choose a password of at least 8 characters (maximum 1024 bytes).".into(),
+        ));
+    }
+    if !password.chars().any(char::is_alphabetic)
+        || !password.chars().any(char::is_numeric)
+        || !password
+            .chars()
+            .any(|c| !c.is_alphanumeric() && !c.is_whitespace())
+    {
+        return Err(AppError::BadRequest(
+            "Include at least one letter, one number and one special character.".into(),
+        ));
+    }
+    let compact: String = password
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    let lower = password.to_lowercase();
+    let sequential = [
+        "abcdefghijklmnopqrstuvwxyz",
+        "0123456789",
+        "qwertyuiop",
+        "asdfghjkl",
+        "zxcvbnm",
+    ]
+    .iter()
+    .any(|sequence| {
+        [sequence.to_string(), sequence.chars().rev().collect()]
+            .iter()
+            .any(|order| {
+                order
+                    .as_bytes()
+                    .windows(3)
+                    .any(|part| lower.contains(std::str::from_utf8(part).unwrap()))
+            })
+    });
+    let chars: Vec<_> = password.chars().collect();
+    let repeats = (1..=4).any(|n| {
+        chars.len().is_multiple_of(n) && chars.iter().enumerate().all(|(i, c)| *c == chars[i % n])
+    });
+    let account_password = username.is_some_and(|u| {
+        let u: String = u
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect();
+        [u.clone(), format!("{u}password"), format!("{u}123456789")].contains(&compact)
+    });
+    if sequential || repeats || account_password {
+        return Err(AppError::BadRequest(
+            "Use a password without sequences or repeating patterns, different from your username."
+                .into(),
+        ));
+    }
+    Ok(())
+}
+#[derive(Deserialize)]
+pub struct UsernameForm {
+    pub username: String,
+}
+pub async fn set_username(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(form): Json<UsernameForm>,
+) -> Result<Json<serde_json::Value>> {
+    require_write(&state, &headers).await?;
+    let username = validate_username(&form.username)?;
+    let result =
+        sqlx::query("INSERT OR IGNORE INTO settings(key,value) VALUES('owner_username',?)")
+            .bind(username)
+            .execute(&state.private_db)
+            .await?;
+    if result.rows_affected() == 0 {
+        return Err(AppError::Conflict(
+            "A username is already configured. Sign in with that username.".into(),
+        ));
+    }
+    Ok(Json(json!({"saved":true})))
+}
+pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
     let mut attempts = state.login_attempts.lock().await;
     let now = Instant::now();
     while attempts
@@ -148,11 +249,8 @@ pub async fn setup(
     Json(form): Json<PasswordForm>,
 ) -> Result<Response> {
     rate_limit(&state).await?;
-    if form.password.chars().count() < 12 || form.password.len() > 1024 {
-        return Err(AppError::BadRequest(
-            "Choose a password of at least 12 characters (maximum 1024 bytes).".into(),
-        ));
-    }
+    let username = validate_username(form.username.as_deref().unwrap_or(""))?.to_owned();
+    validate_password(&form.password, Some(&username))?;
     let hash = tokio::task::spawn_blocking(move || {
         Argon2::default()
             .hash_password(form.password.as_bytes())
@@ -161,18 +259,24 @@ pub async fn setup(
     })
     .await
     .map_err(|_| AppError::Internal)??;
+    let mut tx = state.private_db.begin().await?;
     let result = sqlx::query(
         "INSERT OR IGNORE INTO owner(id, password_hash, created_at_ms) VALUES (1, ?, ?)",
     )
     .bind(hash)
     .bind(now_ms())
-    .execute(&state.private_db)
+    .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 0 {
         return Err(AppError::Conflict(
             "The owner password is already configured. Please sign in.".into(),
         ));
     }
+    sqlx::query("INSERT INTO settings(key,value) VALUES('owner_username',?)")
+        .bind(username)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     new_session(&state).await
 }
 pub async fn login(
@@ -187,6 +291,15 @@ pub async fn login(
         .fetch_optional(&state.private_db)
         .await?;
     let hash = hash.ok_or(AppError::Unauthorized)?;
+    let username: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='owner_username'")
+            .fetch_optional(&state.private_db)
+            .await?;
+    let username_valid = username.as_deref().is_none_or(|u| {
+        form.username
+            .as_deref()
+            .is_some_and(|given| given.trim().eq_ignore_ascii_case(u))
+    });
     let valid = tokio::task::spawn_blocking(move || {
         PasswordHash::new(&hash).is_ok_and(|hash| {
             Argon2::default()
@@ -196,7 +309,7 @@ pub async fn login(
     })
     .await
     .map_err(|_| AppError::Internal)?;
-    if !valid {
+    if !valid || !username_valid {
         return Err(AppError::Unauthorized);
     }
     new_session(&state).await

@@ -21,12 +21,18 @@ import type {
   ApiKeySettings,
   CreateApiKey,
   CreatedApiKey,
+  Limits,
+  Details,
+  Edit,
+  GroupPage,
+  Listen,
 } from "./generated";
 
 export class SessionExpired extends Error {}
 let csrf: string | null = null;
 export function setCsrf(value: string | null) {
   csrf = value;
+  if (value === null) window.dispatchEvent(new Event("read-cache-cleared"));
 }
 // Explicit cancellation before document teardown avoids WebKit reporting pending
 // same-origin reads as access-control errors when the old document disappears.
@@ -41,6 +47,24 @@ window.addEventListener("pagehide", leaveDocument);
 window.addEventListener("pageshow", () => {
   leavingDocument = false;
 });
+// Artwork downloads survive SPA navigation but must be cancelled before the
+// document disappears, just like the JSON reads below (not left to WebKit).
+export async function downloadArtwork(path: string) {
+  if (leavingDocument)
+    throw new DOMException("The page is being left.", "AbortError");
+  const controller = new AbortController();
+  pendingRequests.add(controller);
+  try {
+    const response = await fetch(path, {
+      signal: controller.signal,
+      credentials: "same-origin",
+    });
+    if (!response.ok) throw new Error("Artwork download failed");
+    await response.arrayBuffer();
+  } finally {
+    pendingRequests.delete(controller);
+  }
+}
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
@@ -51,7 +75,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   pendingRequests.add(controller);
   try {
     const headers = new Headers(options.headers);
-    if (options.body && !(options.body instanceof FormData))
+    if (
+      options.body &&
+      !(options.body instanceof FormData) &&
+      !(options.body instanceof Blob)
+    )
       headers.set("Content-Type", "application/json");
     if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
     const response = await fetch(path, {
@@ -71,6 +99,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     if (!response.ok)
       throw new Error(data.error || `Request failed (${response.status}).`);
+    if (options.method === "POST")
+      window.dispatchEvent(new Event("read-data-changed"));
     return data;
   } finally {
     pendingRequests.delete(controller);
@@ -87,12 +117,107 @@ export type Session = {
   authenticated: boolean;
   setup_required: boolean;
   csrf: string | null;
+  username_required?: boolean;
+  username_setup_required?: boolean;
+  username?: string;
+};
+export type AccountProfile = {
+  username: string | null;
+  name: string;
+  avatar_url: string | null;
 };
 export type ConnectOutcome = {
   outcome: "pending" | "processing" | "connected" | "error";
   message: string | null;
 };
+export type ReviewPage = {
+  total: number;
+  page: number;
+  decisions_total: number;
+  groups: { id: string; items: (Listen & { revision: number })[] }[];
+  recent: { id: string; at_ms: number; count: number; removed: number }[];
+};
 export const api = {
+  account: () => request<AccountProfile>("/api/v1/account"),
+  saveAccount: (name: string) =>
+    post<AccountProfile>("/api/v1/account", { name }),
+  uploadAvatar: (image: Blob) =>
+    request<AccountProfile>("/api/v1/account/avatar", {
+      method: "POST",
+      body: image,
+    }),
+  removeAvatar: () => post<AccountProfile>("/api/v1/account/avatar/remove"),
+  changePassword: (current_password: string, password: string) =>
+    post("/api/v1/account/password", { current_password, password }),
+  application: () => request<{ boot_id: string }>("/api/v1/application"),
+  controlApplication: (action: "restart" | "stop") =>
+    post("/api/v1/application", { action, confirmed: true }),
+  listeningPatterns: (params: URLSearchParams) =>
+    request<{
+      total: number;
+      series: Record<string, { label: string; count: number }[]>;
+      coverage: Record<
+        string,
+        { known: number; unknown: number; conflicting: number }
+      >;
+    }>(`/api/v1/consultation/patterns?${params}`),
+  reviewTrash: (page = 0) =>
+    request<{
+      total: number;
+      items: (Listen & { decision_id: string | null; trashed_at_ms: number })[];
+    }>(`/api/v1/review/trash?page=${page}`),
+  automaticReview: () =>
+    request<{
+      token: string;
+      groups: number;
+      records: number;
+      remaining: number;
+    }>("/api/v1/review/automatic"),
+  executeAutomaticReview: (token: string) =>
+    post<{ removed: number }>("/api/v1/review/automatic", { token }),
+  review: (page = 0, decisionsPage = 0) =>
+    request<ReviewPage>(
+      `/api/v1/review?page=${page}&decisions_page=${decisionsPage}`,
+    ),
+  decideReview: (ids: string[], revisions: number[], keep_id: string | null) =>
+    post<{ decision_id: string; removed: number }>("/api/v1/review", {
+      ids,
+      revisions,
+      keep_id,
+    }),
+  undoReview: (id: string) =>
+    post(`/api/v1/review/${encodeURIComponent(id)}/undo`),
+  nameGroup: (kind: string, id: string, q: string, page: number) =>
+    request<GroupPage>(
+      `/api/v1/library/${kind}/${id}/group?${new URLSearchParams({ q, page: String(page) })}`,
+    ),
+  changeNameGroup: (
+    kind: string,
+    id: string,
+    action: string,
+    member_ids: string[],
+  ) =>
+    post<{ group_id: string }>(`/api/v1/library/${kind}/${id}/group`, {
+      action,
+      member_ids,
+    }),
+  listenBrainzLimits: () => request<Limits>("/api/v1/listenbrainz/limits"),
+  importListenBrainz: (form: FormData) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/upload", form),
+  fetchListenBrainz: (form: { username: string; from: string; to: string }) =>
+    post<{ jobs: string[] }>("/api/v1/listenbrainz/fetch", form),
+  libraryDetails: (kind: string, id: string) =>
+    request<Details>(`/api/v1/library/${kind}/${encodeURIComponent(id)}`),
+  editMusic: (kind: string, id: string, form: Edit) =>
+    post(`/api/v1/library/${kind}/${encodeURIComponent(id)}`, form),
+  uploadArtwork: (kind: string, id: string, file: File) =>
+    request(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}/upload`, {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": file.type || "application/octet-stream" },
+    }),
+  artworkUrl: (kind: string, id: string, url: string | null) =>
+    post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, { url }),
   apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),
   createApiKey: (form: CreateApiKey) =>
     post<CreatedApiKey>("/api/v1/api-keys", form),
@@ -101,8 +226,12 @@ export const api = {
   saveApiOrigins: (origins: string[]) =>
     post("/api/v1/api-keys/cors", { origins }),
   session: () => request<Session>("/api/session"),
-  login: (password: string, setup: boolean) =>
-    post<{ csrf: string }>(setup ? "/api/setup" : "/api/login", { password }),
+  login: (password: string, setup: boolean, username?: string) =>
+    post<{ csrf: string }>(setup ? "/api/setup" : "/api/login", {
+      password,
+      username,
+    }),
+  setUsername: (username: string) => post("/api/owner/username", { username }),
   logout: () => post("/api/logout"),
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>
@@ -160,7 +289,9 @@ export const api = {
       `/api/v1/activities/${encodeURIComponent(id)}${issuesPage ? `?issues_page=${issuesPage}` : ""}`,
     ),
   activityAction: (id: string, action: string) =>
-    post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
+    action === "cancel"
+      ? post(`/api/v1/activities/${encodeURIComponent(id)}/cancel`)
+      : post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
   recovery: () =>
     request<{ assets: Asset[]; paused: boolean; restart_required: boolean }>(
       "/api/v1/recovery",

@@ -91,6 +91,150 @@ async fn json_get(state: &AppState, token: &str, path: &str) -> Value {
 }
 
 #[tokio::test]
+async fn listening_patterns_preserve_context_reimport_and_assigned_dst_without_double_counting() {
+    let (_dir, state, token) = setup().await;
+    let mut first = event(
+        1,
+        at("2025-10-26T00:30:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("a", "Artist")],
+    );
+    first.source = "spotify_import";
+    first.raw["platform"] = json!("Android");
+    first.raw["shuffle"] = json!(false);
+    first.raw["offline"] = json!(true);
+    first.raw["skipped"] = json!(false);
+    first.raw["conn_country"] = json!("IT");
+    first.raw["reason_end"] = json!("trackdone");
+    first.raw["ip_addr"] = json!("192.0.2.99");
+    first.raw["username"] = json!("private user");
+    let mut second = first.clone();
+    second.source_key = "second".into();
+    second.played_at_ms = at("2025-10-26T01:30:00Z");
+    second.source_timestamp_ms = second.played_at_ms;
+    second.raw["platform"] = json!("Windows");
+    second.raw["shuffle"] = json!(true);
+    let unknown = event(
+        3,
+        at("2025-10-27T23:30:00Z"),
+        None,
+        DurationKind::Unknown,
+        &[("a", "Artist")],
+    );
+    let short = event(
+        4,
+        at("2025-10-26T02:30:00Z"),
+        Some(1000),
+        DurationKind::Actual,
+        &[("a", "Artist")],
+    );
+    save(
+        &state.storage,
+        &[first.clone(), second.clone(), unknown, short],
+    )
+    .await;
+    let path = "/api/v1/consultation/patterns?period=all";
+    assert_eq!(
+        get(&state, "invalid", path).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let patterns = json_get(&state, &token, path).await;
+    assert_eq!(patterns["total"], 3);
+    for bins in patterns["series"].as_object().unwrap().values() {
+        assert_eq!(
+            bins.as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["count"].as_i64().unwrap())
+                .sum::<i64>(),
+            3
+        );
+    }
+    assert_eq!(patterns["series"]["hours"][2]["count"], 2); // Repeated 02:30 across DST fallback.
+    assert_eq!(patterns["series"]["hours"][0]["count"], 1);
+    assert_eq!(patterns["series"]["weekdays"][6]["count"], 2);
+    assert_eq!(patterns["coverage"]["devices"]["known"], 2);
+    assert_eq!(patterns["coverage"]["shuffle"]["unknown"], 1);
+    let saved: Vec<String> = sqlx::query_scalar("SELECT context_json FROM observation_variants")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        saved
+            .iter()
+            .all(|s| !s.contains("private user") && !s.contains("192.0.2.99"))
+    );
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM listens ORDER BY id")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE observation_variants SET context_json='{}'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    save(&state.storage, &[first.clone(), second.clone()]).await;
+    assert_eq!(
+        json_get(&state, &token, path).await["coverage"]["devices"]["known"],
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT id FROM listens ORDER BY id")
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+        ids
+    );
+    let dashboard = json_get(&state, &token, "/api/dashboard?period=all").await;
+    for (kind, filter) in [
+        ("artists", "artist"),
+        ("albums", "album"),
+        ("tracks", "track"),
+    ] {
+        let id = dashboard["rankings"][kind][0]["id"].as_str().unwrap();
+        let scoped = json_get(&state, &token, &format!("{path}&{filter}={id}")).await;
+        assert_eq!(scoped["total"], if kind == "artists" { 3 } else { 2 });
+    }
+    let mut conflict = first.clone();
+    conflict.raw["platform"] = json!("iOS");
+    save(&state.storage, &[conflict]).await;
+    assert_eq!(
+        json_get(&state, &token, path).await["coverage"]["devices"]["conflicting"],
+        1
+    );
+    assert_eq!(
+        json_get(&state, &token, &format!("{path}&source=spotify_import")).await["total"],
+        2
+    );
+    assert_eq!(
+        json_get(&state, &token, &format!("{path}&from=2026-01-01")).await["total"],
+        0
+    );
+    let frozen = _dir.path().join("patterns-snapshot.db");
+    scrobbl_rs::recovery::freeze(&state.storage, &frozen)
+        .await
+        .unwrap();
+    let exported = _dir.path().join("patterns-export.json");
+    scrobbl_rs::exports::write(&frozen, &exported, "json", &Default::default())
+        .await
+        .unwrap();
+    let exported = std::fs::read_to_string(exported).unwrap();
+    assert!(exported.contains("\"platform\":\"Android\""));
+    assert!(!exported.contains("192.0.2.99") && !exported.contains("private user"));
+    let mut tx = state.db.begin().await.unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM listens WHERE played_at_ms=?")
+        .bind(first.played_at_ms)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    db::set_trashed(&mut tx, &[id], Some(auth::now_ms()))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(json_get(&state, &token, path).await["total"], 2);
+}
+
+#[tokio::test]
 async fn rankings_keep_primary_ties_across_pages_secondary_order_precision_and_full_attribution() {
     let (_dir, state, token) = setup().await;
     let mut events = Vec::new();
@@ -246,6 +390,12 @@ async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_t
     let track = listen["track_id"].as_str().unwrap();
     let filtered=json_get(&state,&token,&format!("/api/history?from=2025-06-02&to=2025-06-02&artist={artist}&album={album}&q=Track&source=spotify_api")).await;
     assert_eq!(filtered["total"], 1);
+    assert!(
+        filtered["items"][0]["first_acquired_at_ms"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
     assert_eq!(
         json_get(
             &state,
@@ -263,8 +413,10 @@ async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_t
         )
         .await;
         assert!(page["totals"]["listens"].as_i64().unwrap() > 0);
-        if kind == "tracks" {
+        if kind != "artists" {
             assert_eq!(page["artists"].as_array().unwrap().len(), 2);
+        }
+        if kind == "tracks" {
             assert_eq!(page["album_id"], album);
         }
     }
@@ -416,6 +568,24 @@ async fn assigned_calendars_rolling_dst_current_periods_and_recalculation_stay_c
         .await
         .unwrap();
     assert_eq!(chart.buckets[0].listens, 2); // Whole inclusive date includes the future fixture.
+    // The GUI's automatic scale must never combine overlapping assigned weeks.
+    for (from, to, expected) in [
+        ("2025-03-01", "2025-04-30", "day"),
+        ("2020-01-01", "2025-12-31", "month"),
+        ("1980-01-01", "2025-12-31", "year"),
+    ] {
+        let automatic = Filters {
+            period: Some("custom".into()),
+            from: Some(from.into()),
+            to: Some(to.into()),
+            ..Default::default()
+        };
+        let automatic = browse::activity_chart(&mut conn.transaction, &automatic, now)
+            .await
+            .unwrap();
+        assert_eq!(automatic.grain, expected);
+        assert!(!automatic.mixed_week_starts);
+    }
     let weeks = Filters {
         grain: Some("week".into()),
         ..Default::default()
@@ -628,4 +798,54 @@ async fn history_typeahead_can_select_identities_with_only_short_listens_and_exc
         0
     );
     state.storage.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires SCROBBL_BROWSE_BENCH_DB pointing to a read-only archive"]
+async fn music_browse_latency() {
+    use sqlx::{Connection, Row};
+    let path = std::env::var("SCROBBL_BROWSE_BENCH_DB").expect("archive path");
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .pragma("query_only", "ON");
+    let mut conn = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    let row = sqlx::query(
+        "SELECT track_id FROM listens GROUP BY track_id ORDER BY COUNT(*) DESC LIMIT 1",
+    )
+    .fetch_one(&mut conn)
+    .await
+    .unwrap();
+    let track: String = row.get("track_id");
+    let album: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='albums' AND entity_id=(SELECT album_id FROM main.tracks WHERE id=?)").bind(&track).fetch_one(&mut conn).await.unwrap();
+    let artist: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=(SELECT artist_id FROM main.track_artists WHERE track_id=? LIMIT 1)").bind(&track).fetch_one(&mut conn).await.unwrap();
+    for filters in [
+        Filters {
+            track: Some(track),
+            ..Default::default()
+        },
+        Filters {
+            album: Some(album),
+            ..Default::default()
+        },
+        Filters {
+            artist: Some(artist),
+            ..Default::default()
+        },
+    ] {
+        let start = std::time::Instant::now();
+        let chart = browse::activity_chart(&mut conn, &filters, auth::now_ms())
+            .await
+            .unwrap();
+        eprintln!(
+            "activity: {:?}, {} buckets",
+            start.elapsed(),
+            chart.buckets.len()
+        );
+        // This opt-in benchmark reports host-dependent timings; the deterministic
+        // provider-queue and delayed-navigation regressions enforce responsiveness.
+        assert!(!chart.buckets.is_empty());
+    }
 }

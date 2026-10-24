@@ -1,11 +1,22 @@
+import { AccountSettings, ApplicationSettings } from "./account-settings";
+import { Select } from "./select";
+import { SpotifyNotice } from "./spotify-status";
 import { useEffect, useState } from "react";
 import type { CalendarScope, Preferences, SpotifyStatus } from "./generated";
 import { api } from "./api";
-import { date, ErrorText, Heading, Icon, Modal, useToast } from "./ui";
+import {
+  CopyButton,
+  date,
+  ErrorText,
+  Heading,
+  Icon,
+  Modal,
+  useToast,
+} from "./ui";
 import { SpotifyConnectButton } from "./spotify-connect";
 import { defaultAccent, ink, isHex, periods } from "./preferences";
 import type { useAppearance } from "./preferences";
-import { Link } from "./navigation";
+import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
 import { ApiKeys } from "./api-keys";
 
@@ -88,47 +99,51 @@ export function General({
         <div className="form-grid">
           <label>
             Initial dashboard period
-            <select
+            <Select
+              aria-label="Initial dashboard period"
               value={draft.initial_period}
-              onChange={(e) => update("initial_period", e.target.value)}
+              onChange={(value) => update("initial_period", value)}
             >
               {periods.map(([value, text]) => (
                 <option key={value} value={value}>
                   {text}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Time format
-            <select
+            <Select
+              aria-label="Time format"
               value={draft.hour_format}
-              onChange={(e) => update("hour_format", e.target.value)}
+              onChange={(value) => update("hour_format", value)}
             >
               <option value="24">24-hour</option>
               <option value="12">12-hour</option>
-            </select>
+            </Select>
           </label>
           <label>
             Time zone
-            <input
+            <Select
+              searchable
+              aria-label="Time zone"
               value={draft.timezone}
-              required
-              list="timezones"
-              onChange={(e) => update("timezone", e.target.value)}
-            />
-            <datalist id="timezones">
-              <option value="UTC" />
+              onChange={(value) => update("timezone", value)}
+            >
+              <option value="UTC">UTC</option>
               {Intl.supportedValuesOf("timeZone").map((zone) => (
-                <option key={zone} value={zone} />
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
               ))}
-            </datalist>
+            </Select>
           </label>
           <label>
             Week starts on
-            <select
+            <Select
+              aria-label="Week starts on"
               value={draft.week_start}
-              onChange={(e) => update("week_start", Number(e.target.value))}
+              onChange={(value) => update("week_start", Number(value))}
             >
               {[
                 "Monday",
@@ -143,7 +158,7 @@ export function General({
                   {day}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
         <p>
@@ -260,16 +275,16 @@ export function Appearance({
       </p>
       <label>
         Theme
-        <select
+        <Select
           aria-label="Theme"
           id="theme"
           value={theme}
-          onChange={(e) => setTheme(e.target.value)}
+          onChange={(value) => setTheme(value)}
         >
           <option value="auto">System</option>
           <option value="light">Light</option>
           <option value="dark">Dark</option>
-        </select>
+        </Select>
       </label>
       <fieldset>
         <legend>Accent colour</legend>
@@ -336,14 +351,24 @@ export function Appearance({
 function HttpsGuide() {
   return (
     <details className="guide">
-      <summary>Connect on a private server with HTTPS</summary>
+      <summary>
+        <Icon>lock</Icon>
+        <span>
+          <strong>Connect on a private server with HTTPS</strong>
+          <small>Private address, certificate and reverse proxy</small>
+        </span>
+        <Icon>expand_more</Icon>
+      </summary>
       <p>
         Use a trusted HTTPS name reachable over LAN or VPN. Keep scrobbl.rs
         private; this setup does not require router port forwarding. Local use
         on 127.0.0.1 can continue with its loopback callback.
       </p>
       <details>
-        <summary>I don’t have a domain — use DuckDNS</summary>
+        <summary>
+          <span>Use a free DuckDNS name</span>
+          <Icon>expand_more</Icon>
+        </summary>
         <ol>
           <li>
             Register a free name at{" "}
@@ -360,13 +385,18 @@ function HttpsGuide() {
           </li>
           <li>
             Resolve that exact hostname to your reverse proxy’s private LAN
-            address. In AdGuard Home, add a DNS rewrite for the exact name. VPN
-            clients must use DNS that resolves and reaches that address.
+            address. Configure a local DNS record in your router, DNS resolver
+            or VPN DNS settings. Use whichever service manages DNS on your
+            network; all clients must resolve the name to that reachable private
+            address.
           </li>
         </ol>
       </details>
       <details>
-        <summary>I already have a domain</summary>
+        <summary>
+          <span>Use your own domain</span>
+          <Icon>expand_more</Icon>
+        </summary>
         <ol>
           <li>
             Choose a subdomain you control and resolve it to your proxy’s
@@ -550,8 +580,10 @@ export function Connections({
     [client, setClient] = useState(""),
     [secret, setSecret] = useState("");
   const toast = useToast();
+  const waiting = !!status?.retry_at_ms && status.retry_at_ms > Date.now();
   const needsAction =
-    status?.connection === "action_required" || !!status?.last_error;
+    status?.connection === "action_required" ||
+    (!!status?.last_error && !waiting);
   useEffect(() => {
     if (needsAction || (status && !status.configured)) setOpen(true);
   }, [needsAction, status?.configured, status?.last_error]);
@@ -610,220 +642,323 @@ export function Connections({
         onToggle={(e) => setOpen(e.currentTarget.open)}
       >
         <summary>
-          <strong>Spotify</strong>
-          <span id="connection-badge">Connection: {connection}</span>
-          <span>Collection: {collection}</span>
-          {status.last_error && (
-            <span className="form-error">{status.last_error}</span>
-          )}
+          <div className="connection-identity">
+            <span className="connection-provider-icon">
+              <Icon>headphones</Icon>
+            </span>
+            <div>
+              <strong className="connection-title">Spotify</strong>
+              <span className="connection-collection">{collection}</span>
+            </div>
+          </div>
+          <span
+            id="connection-badge"
+            className={`connection-badge ${status.connected && status.connection === "verified" ? "connection-verified" : ""}`}
+          >
+            <Icon>
+              {status.connected && status.connection === "verified"
+                ? "check_circle"
+                : status.connection === "action_required"
+                  ? "error_outline"
+                  : "link"}
+            </Icon>
+            <span>
+              {status.connected && status.connection === "verified" ? (
+                <>
+                  <strong>Connected</strong>
+                  <small>Verified on last request</small>
+                </>
+              ) : (
+                connection
+              )}
+            </span>
+          </span>
+          <Icon>expand_more</Icon>
           {needsAction && (
             <span>Review the details and the available actions.</span>
           )}
         </summary>
         <div className="spotify-details">
-          <dl className="diagnostics">
-            <dt>Authorization last verified</dt>
-            <dd>{date(status.verified_at_ms, preferences)}</dd>
-            <dt>Last collection attempt</dt>
-            <dd>{date(status.last_attempt_ms, preferences)}</dd>
-            <dt>Last successful collection</dt>
-            <dd>{date(status.last_sync_ms, preferences)}</dd>
-            <dt>New listens in last successful collection</dt>
-            <dd>
-              {status.last_added === null
-                ? "Not yet known"
-                : status.last_added === 0
-                  ? "0 — successful, no new listens"
-                  : status.last_added}
-            </dd>
-            <dt>Collection interval</dt>
-            <dd>Every {status.sync_seconds} seconds</dd>
-            <dt>Next attempt / request limit</dt>
-            <dd>
-              {status.retry_at_ms && status.retry_at_ms > Date.now()
-                ? date(status.retry_at_ms, preferences)
-                : status.connected && status.last_attempt_ms
-                  ? date(
-                      Math.max(
-                        Date.now(),
-                        status.last_attempt_ms + status.sync_seconds * 1000,
-                      ),
-                      preferences,
-                    )
-                  : "After authorization"}
-            </dd>
-          </dl>
-          {status.now_playing_timing && (
-            <details>
-              <summary>Last now-playing sample timing</summary>
-              <p>
-                Request:{" "}
-                {date(
-                  status.now_playing_timing.source_requested_at_ms,
-                  preferences,
+          <SpotifyNotice status={status} preferences={preferences} />
+          <ol
+            className="connection-steps"
+            aria-label="Spotify connection steps"
+          >
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">1</span>
+                <div>
+                  <h3>Prepare your private address</h3>
+                  <p>
+                    On a server, use trusted HTTPS over LAN or VPN. Local
+                    127.0.0.1 works directly.
+                  </p>
+                </div>
+              </div>
+              <HttpsGuide />
+            </li>
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">2</span>
+                <div>
+                  <h3>Set up your Spotify app</h3>
+                  {status.configured && (
+                    <span className="credentials-saved" role="status">
+                      <Icon>check_circle</Icon>App credentials saved
+                    </span>
+                  )}
+                  <p>
+                    {status.configured
+                      ? "Open the setup guide to review or replace your saved app credentials."
+                      : "Register the redirect URI, save it in Spotify, then save your app credentials here."}
+                  </p>
+                </div>
+              </div>
+              <details className="guide" open={!status.configured}>
+                <summary>
+                  <Icon>settings</Icon>
+                  <span>
+                    <strong>Create or configure your Spotify app</strong>
+                    <small>Redirect URI and app credentials</small>
+                  </span>
+                  <Icon>expand_more</Icon>
+                </summary>
+                <p>
+                  Complete these steps in order. Keep the Developer Dashboard
+                  open alongside scrobbl.rs.
+                </p>
+                <ol>
+                  <li>
+                    Open the{" "}
+                    <a
+                      href="https://developer.spotify.com/dashboard"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Spotify Developer Dashboard
+                    </a>{" "}
+                    and create an app for your listening archive, selecting Web
+                    API.
+                  </li>
+                  <li>
+                    Register this exact redirect URI:
+                    <code id="redirect-uri">{status.redirect_uri}</code>
+                    <CopyButton value={status.redirect_uri} disabled={busy}>
+                      Copy redirect URI
+                    </CopyButton>
+                  </li>
+                  <li>
+                    Click <strong>Save</strong> in the Spotify Developer
+                    Dashboard after adding the redirect URI. Unsaved changes
+                    cause “redirect_uri: Not matching configuration”. Check app
+                    eligibility and permitted users, then copy the Client ID and
+                    Client Secret into the fields below.
+                  </li>
+                </ol>
+                {status.credentials_from_env ? (
+                  <p>
+                    Spotify app credentials are managed by the server
+                    environment. Change both values there and restart the
+                    server.
+                  </p>
+                ) : (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void action(async () => {
+                        await api.credentials(client, secret);
+                        setClient("");
+                        setSecret("");
+                        return "Spotify app saved. Choose Connect Spotify to authorize your account.";
+                      });
+                    }}
+                  >
+                    <label>
+                      Client ID
+                      <input
+                        value={client}
+                        required
+                        maxLength={256}
+                        autoComplete="off"
+                        onChange={(e) => setClient(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      Client Secret
+                      <input
+                        type="password"
+                        value={secret}
+                        required
+                        maxLength={256}
+                        autoComplete="off"
+                        onChange={(e) => setSecret(e.target.value)}
+                      />
+                    </label>
+                    <p className="subtle">
+                      Stored on the server. Saved credentials are never returned
+                      to the browser.
+                    </p>
+                    <button className="secondary" disabled={busy}>
+                      Save Spotify app
+                    </button>
+                  </form>
                 )}
-                . Response:{" "}
-                {date(
-                  status.now_playing_timing.response_received_at_ms,
-                  preferences,
-                )}
-                .
-              </p>
-              <p>
-                Server queue:{" "}
-                {status.now_playing_timing.source_requested_at_ms -
-                  status.now_playing_timing.requested_at_ms}{" "}
-                ms. Provider request:{" "}
-                {status.now_playing_timing.response_received_at_ms -
-                  status.now_playing_timing.source_requested_at_ms}{" "}
-                ms.
-              </p>
-              <p>
-                Source playback-state change:{" "}
-                {date(
-                  status.now_playing_timing.source_timestamp_ms,
-                  preferences,
-                )}
-                . This source timestamp does not measure propagation delay. Now
-                playing never creates listens.
-              </p>
-            </details>
-          )}
-          <Link to="/activities">Collection and import reports</Link>
-          {status.coverage_warning && (
-            <p className="warning">{status.coverage_warning}</p>
-          )}
-          {status.review_count > 0 && (
-            <p className="warning">
-              {status.review_count} records need review. Use Possible duplicates
-              in <Link to="/history">Listening history</Link>.
-            </p>
-          )}
-          <ErrorText>{error}</ErrorText>
-          <div className="connection-actions">
-            <SpotifyConnectButton
-              connected={status.connected}
-              disabled={busy || !status.configured}
-              refresh={refresh}
-            />
-            <button
-              className="secondary"
-              disabled={
-                busy ||
-                !status.connected ||
-                (!!status.retry_at_ms && status.retry_at_ms > Date.now())
-              }
-              onClick={() =>
-                void action(async () => {
-                  const result = await api.sync();
-                  return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
-                })
-              }
-            >
-              Verify & sync now
-            </button>
-            <button
-              className="secondary danger"
-              disabled={busy || !status.connected}
-              onClick={() =>
-                void action(async () => {
-                  await api.disconnect();
-                  return "Spotify disconnected. Your listening archive is kept.";
-                })
-              }
-            >
-              Disconnect
-            </button>
-          </div>
-          <p className="subtle">
-            Saved credentials alone do not prove the connection is healthy.
-            Verification reports the last successful request. Now playing has
-            its own status and never proves background collection.
-          </p>
-          <RefreshIntervals status={status} refresh={refresh} />
-          <HttpsGuide />
-          <details className="guide" open={!status.configured}>
-            <summary>Create or configure your Spotify app</summary>
-            <ol>
-              <li>
-                Open the{" "}
-                <a
-                  href="https://developer.spotify.com/dashboard"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Spotify Developer Dashboard
-                </a>{" "}
-                and create an app for your listening archive, selecting Web API.
-              </li>
-              <li>
-                Register this exact redirect URI:
-                <code id="redirect-uri">{status.redirect_uri}</code>
+              </details>
+            </li>
+            <li className="connection-step">
+              <div className="step-heading">
+                <span className="step-number">3</span>
+                <div>
+                  <h3>Authorize your account</h3>
+                  <p>
+                    {status.connected
+                      ? "Authorization is saved. Review collection status below, or reconnect when needed."
+                      : status.configured
+                        ? "Ready to connect. Spotify opens in a separate tab; this page shows the result."
+                        : "Save your app credentials in step 2 to enable Connect Spotify."}
+                  </p>
+                </div>
+              </div>
+              <ErrorText>{error}</ErrorText>
+              <div className="connection-actions">
+                <SpotifyConnectButton
+                  connected={status.connected}
+                  disabled={busy || !status.configured}
+                  refresh={refresh}
+                />
                 <button
                   className="secondary"
+                  disabled={
+                    busy ||
+                    !status.connected ||
+                    (!!status.retry_at_ms && status.retry_at_ms > Date.now())
+                  }
                   onClick={() =>
                     void action(async () => {
-                      await navigator.clipboard.writeText(status.redirect_uri);
-                      return "Redirect URI copied.";
+                      const result = await api.sync();
+                      return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
                     })
                   }
                 >
-                  Copy redirect URI
+                  Verify & sync now
                 </button>
-              </li>
-              <li>
-                Save the app. Check current Spotify eligibility and permitted
-                users for your app. Enter the Client ID and Client Secret, save,
-                then Connect Spotify and grant access.
-              </li>
-            </ol>
-            {status.credentials_from_env ? (
-              <p>
-                Spotify app credentials are managed by the server environment.
-                Change both values there and restart the server.
-              </p>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void action(async () => {
-                    await api.credentials(client, secret);
-                    setClient("");
-                    setSecret("");
-                    return "Spotify app saved. Choose Connect Spotify to authorize your account.";
-                  });
-                }}
-              >
-                <label>
-                  Client ID
-                  <input
-                    value={client}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setClient(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Client Secret
-                  <input
-                    type="password"
-                    value={secret}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </label>
-                <p className="subtle">
-                  Stored on the server. Saved credentials are never returned to
-                  the browser.
+                <button
+                  className="secondary danger"
+                  disabled={busy || !status.connected}
+                  onClick={() =>
+                    void action(async () => {
+                      await api.disconnect();
+                      return "Spotify disconnected. Your listening archive is kept.";
+                    })
+                  }
+                >
+                  Disconnect
+                </button>
+              </div>
+            </li>
+          </ol>
+          <details className="connection-monitor" open={status.connected}>
+            <summary>
+              <span>Collection status &amp; diagnostics</span>
+              <Icon>expand_more</Icon>
+            </summary>
+            <p>
+              Authorization and collection are separate. A saved authorization
+              is not a continuous health check.
+            </p>
+            <dl className="diagnostics">
+              <dt>Authorization last verified</dt>
+              <dd>{date(status.verified_at_ms, preferences)}</dd>
+              <dt>Last collection attempt</dt>
+              <dd>{date(status.last_attempt_ms, preferences)}</dd>
+              <dt>Last successful collection</dt>
+              <dd>{date(status.last_sync_ms, preferences)}</dd>
+              <dt>New listens in last successful collection</dt>
+              <dd>
+                {status.last_added === null
+                  ? "Not yet known"
+                  : status.last_added === 0
+                    ? "0 — successful, no new listens"
+                    : status.last_added}
+              </dd>
+              <dt>Collection interval</dt>
+              <dd>Every {status.sync_seconds} seconds</dd>
+              <dt>Next attempt / request limit</dt>
+              <dd>
+                {status.retry_at_ms && status.retry_at_ms > Date.now()
+                  ? date(status.retry_at_ms, preferences)
+                  : status.connected && status.last_attempt_ms
+                    ? date(
+                        Math.max(
+                          Date.now(),
+                          status.last_attempt_ms + status.sync_seconds * 1000,
+                        ),
+                        preferences,
+                      )
+                    : "After authorization"}
+              </dd>
+            </dl>
+            {status.now_playing_timing && (
+              <details>
+                <summary>Last now-playing sample timing</summary>
+                <p>
+                  Request:{" "}
+                  {date(
+                    status.now_playing_timing.source_requested_at_ms,
+                    preferences,
+                  )}
+                  . Response:{" "}
+                  {date(
+                    status.now_playing_timing.response_received_at_ms,
+                    preferences,
+                  )}
+                  .
                 </p>
-                <button className="secondary" disabled={busy}>
-                  Save Spotify app
-                </button>
-              </form>
+                <p>
+                  Server queue:{" "}
+                  {status.now_playing_timing.source_requested_at_ms -
+                    status.now_playing_timing.requested_at_ms}{" "}
+                  ms. Provider request:{" "}
+                  {status.now_playing_timing.response_received_at_ms -
+                    status.now_playing_timing.source_requested_at_ms}{" "}
+                  ms.
+                </p>
+                <p>
+                  Source playback-state change:{" "}
+                  {date(
+                    status.now_playing_timing.source_timestamp_ms,
+                    preferences,
+                  )}
+                  . This source timestamp does not measure propagation delay.
+                  Now playing never creates listens.
+                </p>
+              </details>
             )}
+            <div className="connection-report-actions">
+              <Link className="button secondary" to="/activities">
+                <Icon>receipt_long</Icon>Collection and import reports
+              </Link>
+            </div>
+            {status.coverage_warning && (
+              <p className="warning">{status.coverage_warning}</p>
+            )}
+            {status.review_count > 0 && (
+              <div className="connection-review-actions">
+                <span className="warning">
+                  {status.review_count} records need review.
+                </span>
+                <Link className="button secondary" to="/review">
+                  <Icon>rule</Icon>Review possible duplicates
+                </Link>
+              </div>
+            )}
+          </details>
+          <details className="connection-monitor">
+            <summary>
+              <span>Refresh intervals</span>
+              <Icon>expand_more</Icon>
+            </summary>
+            <RefreshIntervals status={status} refresh={refresh} />
           </details>
           <p>
             You can also revoke access in your Spotify account’s Apps settings.
@@ -892,13 +1027,31 @@ export function Settings({
   statusError: string;
 }) {
   return (
-    <>
+    <div className="settings-page">
       <Heading eyebrow="MAKE YOURSELF AT HOME" title="Settings & connections">
         Preferences for your instance and this browser.
       </Heading>
+      <label className="settings-section-select">
+        Settings section
+        <Select
+          aria-label="Settings section"
+          value={section}
+          onChange={(value) => navigate(`/settings/${value}`)}
+        >
+          <option value="general">General</option>
+          <option value="account">Account</option>
+          <option value="application">Application</option>
+          <option value="appearance">Appearance</option>
+          <option value="connections">Connections</option>
+          <option value="data">Data &amp; recovery</option>
+          <option value="api-keys">API keys</option>
+        </Select>
+      </label>
       <nav className="settings-tabs" aria-label="Settings sections">
         {[
           ["general", "General"],
+          ["account", "Account"],
+          ["application", "Application"],
           ["appearance", "Appearance"],
           ["connections", "Connections"],
           ["data", "Data & recovery"],
@@ -913,6 +1066,8 @@ export function Settings({
           </Link>
         ))}
       </nav>
+      {section === "account" && <AccountSettings />}
+      {section === "application" && <ApplicationSettings />}
       <div hidden={section !== "general"}>
         <General preferences={preferences} saved={saved} />
       </div>
@@ -933,6 +1088,6 @@ export function Settings({
       <div hidden={section !== "api-keys"}>
         {section === "api-keys" && <ApiKeys preferences={preferences} />}
       </div>
-    </>
+    </div>
   );
 }

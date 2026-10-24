@@ -1,3 +1,5 @@
+import { Select } from "./select";
+import { passwordChecks, PasswordFeedback } from "./account";
 import { useRef, useState } from "react";
 import { api } from "./api";
 import type {
@@ -96,10 +98,14 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
         <div className="form-grid">
           <label>
             Export format
-            <select value={format} onChange={(e) => setFormat(e.target.value)}>
+            <Select
+              aria-label="Export format"
+              value={format}
+              onChange={(value) => setFormat(value)}
+            >
               <option value="json">JSON — observations and provenance</option>
               <option value="csv">CSV — one row per listen</option>
-            </select>
+            </Select>
           </label>
           <label>
             From date
@@ -133,10 +139,11 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
           </label>
           <label>
             Listen selection
-            <select
+            <Select
+              aria-label="Listen selection"
               value={selection.status || "all"}
-              onChange={(e) =>
-                setSelection((s) => ({ ...s, status: e.target.value }))
+              onChange={(value) =>
+                setSelection((s) => ({ ...s, status: value }))
               }
             >
               <option value="all">All listens, including short</option>
@@ -145,7 +152,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               <option value="actual">Actual listening time</option>
               <option value="estimated">Estimated or unknown time</option>
               <option value="review">Needs review</option>
-            </select>
+            </Select>
           </label>
         </div>
         <p>
@@ -349,9 +356,42 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
             and explicitly resume.
           </p>
           <p>
-            After confirmation, preparation cannot be cancelled. The next
-            restart activates the replacement.
+            Preparation can be cancelled until it is ready for restart. Once
+            ready, the next restart activates the replacement.
           </p>
+          {busy && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={async () => {
+                try {
+                  const jobs = await api.activities();
+                  const pending = jobs.find(
+                    (job) =>
+                      job.kind === "recovery_restore" &&
+                      ["queued", "running", "waiting"].includes(job.state),
+                  );
+                  if (pending) {
+                    await api.activityAction(pending.id, "cancel");
+                    setRestore(null);
+                    toast(
+                      "Restore cancellation requested. The live archive remains unchanged.",
+                    );
+                  } else
+                    toast(
+                      "No running preparation found. Check Activities for its current state.",
+                    );
+                } catch (error) {
+                  toast(
+                    error instanceof Error ? error.message : String(error),
+                    true,
+                  );
+                }
+              }}
+            >
+              Cancel preparation
+            </button>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -369,13 +409,14 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               <input
                 autoComplete="new-password"
                 type="password"
-                minLength={12}
+                minLength={8}
                 maxLength={1024}
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </label>
+            <PasswordFeedback password={password} />
             <label>
               Repeat new password
               <input
@@ -400,7 +441,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
               disabled={
                 busy ||
                 !confirmed ||
-                password.length < 12 ||
+                !passwordChecks(password).every((check) => check.met) ||
                 password !== repeat
               }
             >

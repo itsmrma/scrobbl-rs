@@ -117,16 +117,16 @@ accepts bytes before queuing persistent inspection.
    configure destination origin/HTTPS/storage and create its owner password.
 2. Upload a ZIP or select a saved backup. Wait for inspection. Review snapshot
    date, versions, revision and count. Run **Verify backup** if desired.
-3. Choose **Restore…**, review the summary, enter/repeat a **new owner password**
+3. Choose **Restore…**, review the summary, enter/repeat a **new owner password** of at least 8 characters, including a letter, a number and a special character, without sequences or repeating patterns and different from the username
    and explicitly confirm replacement. The operation replaces; it does not merge.
    Confirmation commits to activation at the next restart; there is no cancellation
    after preparation. Close the confirmation dialog beforehand to leave it unchanged.
 4. Preparation repeats isolated restoration/migrations, creates fresh private
-   storage containing only the new password verifier, changes generation and
+   storage containing the new password verifier and the destination owner username, changes generation and
    publishes a recovery journal. New writes stop and the UI reports restart
    required. Restart the same container/image or local application.
 5. Startup activates the prepared archive, access store and spool before pools or
-   workers start. Sign in with the new password. Old sessions, keys, OAuth state,
+   workers start. Sign in with the destination username and the new password. Old sessions, keys, OAuth state,
    tokens and snapshot cursors cannot be reused. API clients must reload a full copy.
 6. Inspect counts, source observations/fingerprints, calendars, preferences and imports. Configure Spotify
    credentials and connect again; recreate API keys when available. Explicitly

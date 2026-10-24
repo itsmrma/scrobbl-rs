@@ -78,6 +78,18 @@ The read-only root filesystem and dropped capabilities in Compose are supported;
 only `/data` and the temporary directory need writes. `SIGTERM` shuts down the
 service and closes database pools before container replacement.
 
+The account menu provides **Restart application** and **Stop application**.
+Restart closes the archive and starts a fresh application instance inside the same
+container. Stop closes the archive and exits successfully, stopping that container;
+it does not stop the Docker daemon, host, or other containers. The supplied Compose
+uses `restart: on-failure` so a deliberate clean stop stays stopped while crashes
+can restart automatically. Start a stopped service with `docker compose start scrobbl`
+or the equivalent action in your container manager. With this policy, start the
+service explicitly after a host/daemon restart; use your host's service manager if
+you also need startup at boot. An existing deployment with `always` or
+`unless-stopped` must adopt `on-failure` for the in-app Stop action to remain stopped.
+These controls do not need a Docker socket or host-management privileges.
+
 Private HTTP supports browsing and imports. To connect Spotify on a server, finish
 HTTPS below: Spotify only permits plain HTTP callbacks on explicit loopback IPs.
 A VPN provides reachability; it does not change the registered callback requirement.

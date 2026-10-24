@@ -4,3 +4,4 @@ static/dist/*.html text eol=lf
 static/dist/*.js text eol=lf
 static/dist/*.css text eol=lf
 static/dist/*.txt text eol=lf
+tests/fixtures/listenbrainz/*.jsonl text eol=lf

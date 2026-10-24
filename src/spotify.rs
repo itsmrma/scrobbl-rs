@@ -15,6 +15,7 @@ use reqwest::{Client, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::Row;
+use std::collections::BTreeMap;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 
@@ -26,6 +27,8 @@ pub struct Spotify {
     now_gate: Arc<Mutex<()>>,
     wake: Arc<Notify>,
     cache: Arc<Mutex<Option<(i64, Value)>>>,
+    catalogue_next: Arc<Mutex<tokio::time::Instant>>,
+    catalogue_tracks: Arc<Mutex<BTreeMap<String, (i64, Value)>>>,
     // Fixed production endpoints. Tests substitute a local HTTP server, never user-controlled URLs.
     pub(crate) api_base: String,
     pub(crate) token_url: String,
@@ -51,6 +54,8 @@ impl Spotify {
             now_gate: Default::default(),
             wake: Default::default(),
             cache: Default::default(),
+            catalogue_next: Arc::new(Mutex::new(tokio::time::Instant::now())),
+            catalogue_tracks: Default::default(),
             api_base: "https://api.spotify.com/v1".into(),
             token_url: "https://accounts.spotify.com/api/token".into(),
         }
@@ -191,9 +196,11 @@ pub async fn status(
         coverage_warning: setting(conn, "coverage_warning").await?,
         retry_at_ms,
         imports,
-        review_count: sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE needs_review=1")
-            .fetch_one(&mut *conn)
-            .await?,
+        review_count: sqlx::query_scalar(
+            "SELECT COUNT(*) FROM listens WHERE needs_review=1 AND trashed_at_ms IS NULL",
+        )
+        .fetch_one(&mut *conn)
+        .await?,
     }))
 }
 #[derive(Deserialize)]
@@ -507,11 +514,45 @@ async fn access_token(state: &AppState, force_refresh: bool) -> Result<String> {
         .ok_or(AppError::Internal)?
         .into())
 }
-async fn api_get(state: &AppState, path: &str, params: &[(&str, String)]) -> Result<Value> {
+pub(crate) async fn api_get(
+    state: &AppState,
+    path: &str,
+    params: &[(&str, String)],
+) -> Result<Value> {
+    // An imported track supplies both album art and artist IDs. Reuse that
+    // public metadata across those lookups instead of paying the catalogue
+    // cooldown again. Keep the cache bounded and never cache provider errors.
+    let cache_track = path.starts_with("/tracks/") && params.is_empty();
+    if cache_track {
+        let mut tracks = state.spotify.catalogue_tracks.lock().await;
+        tracks.retain(|_, (at, _)| auth::now_ms() - *at < 300_000);
+        if let Some((_, value)) = tracks.get(path) {
+            return Ok(value.clone());
+        }
+    }
+    if path.starts_with("/artists/") || path.starts_with("/albums/") || path.starts_with("/tracks/")
+    {
+        // Optional images yield to collection and now playing while waiting.
+        let mut next = state.spotify.catalogue_next.lock().await;
+        tokio::time::sleep_until(*next).await;
+        *next = tokio::time::Instant::now() + Duration::from_secs(1);
+    }
     let _gate = state.spotify.gate.lock().await;
-    api_get_locked(state, path, params)
-        .await
-        .map(|(value, _, _)| value)
+    let (value, _, _) = api_get_locked(state, path, params).await?;
+    if cache_track {
+        let mut tracks = state.spotify.catalogue_tracks.lock().await;
+        if tracks.len() >= 64 {
+            let oldest = tracks
+                .iter()
+                .min_by_key(|(_, (at, _))| at)
+                .map(|(path, _)| path.clone());
+            if let Some(oldest) = oldest {
+                tracks.remove(&oldest);
+            }
+        }
+        tracks.insert(path.to_owned(), (auth::now_ms(), value.clone()));
+    }
+    Ok(value)
 }
 async fn api_get_locked(
     state: &AppState,
@@ -545,12 +586,43 @@ async fn api_get_locked(
                 AppError::Spotify("Could not reach Spotify. Collection will retry.".into())
             })?;
     }
+    // Artwork enrichment is optional. An app lacking a catalogue endpoint must
+    // not turn a healthy collection authorization into an action-required state.
+    if (path.starts_with("/artists/")
+        || path.starts_with("/albums/")
+        || path.starts_with("/tracks/"))
+        && matches!(
+            response.status(),
+            StatusCode::FORBIDDEN | StatusCode::NOT_FOUND
+        )
+    {
+        return Err(AppError::NotFound);
+    }
     let value = checked_json(state, response).await?;
     let response_received_at_ms = auth::now_ms();
-    diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
-    diagnostic(state, "spotify_action_required", "").await?;
+    if !(path.starts_with("/artists/")
+        || path.starts_with("/albums/")
+        || path.starts_with("/tracks/"))
+    {
+        diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
+        diagnostic(state, "spotify_action_required", "").await?;
+    }
     Ok((value, source_requested_at_ms, response_received_at_ms))
 }
+pub(crate) fn best_image(images: &Value) -> Option<String> {
+    images
+        .as_array()?
+        .iter()
+        .filter(|image| {
+            image["url"]
+                .as_str()
+                .is_some_and(|url| url.starts_with("https://i.scdn.co/"))
+        })
+        .max_by_key(|image| image["width"].as_u64().unwrap_or(0))
+        .and_then(|image| image["url"].as_str())
+        .map(str::to_owned)
+}
+
 pub fn parse_track(row: &Value) -> Result<Track> {
     let id = row
         .get("uri")
@@ -574,14 +646,7 @@ pub fn parse_track(row: &Value) -> Result<Track> {
         .and_then(|v| v.get("name"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cover_url = album
-        .and_then(|v| v.get("images"))
-        .and_then(Value::as_array)
-        .and_then(|a| a.last())
-        .and_then(|v| v.get("url"))
-        .and_then(Value::as_str)
-        .filter(|url| url.starts_with("https://i.scdn.co/"))
-        .map(str::to_owned);
+    let cover_url = album.and_then(|v| best_image(&v["images"]));
     let mut artists = Vec::new();
     if let Some(items) = row.get("artists").and_then(Value::as_array) {
         for item in items {
@@ -645,6 +710,9 @@ pub async fn sync(state: &AppState) -> Result<Value> {
     diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
     let result = sync_locked(state, &job).await;
     if let Err(ref error) = result {
+        if state.storage.job(&job.id).await?.state == "cancelled" {
+            return Err(AppError::Conflict("Collection cancelled. Saved listens and the previous cursor are kept; future scheduled collections remain enabled.".into()));
+        }
         diagnostic(state, "collection_error", &error.to_string()).await?;
         let retry = db::setting(&state.db, "retry_at_ms")
             .await?
@@ -666,6 +734,9 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     let mut warning = None;
     // Walk backwards using our own cursors. Never follow arbitrary upstream URLs with a bearer token.
     for page in 0..20 {
+        let mut checkpoint = state.db.begin().await?;
+        crate::jobs::validate_lease(&mut checkpoint, job).await?;
+        checkpoint.commit().await?;
         let mut params = vec![("limit", "50".into())];
         if let Some(cursor) = before {
             params.push(("before", cursor.to_string()));
@@ -775,6 +846,16 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
     result.map(Json)
 }
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
+    now_playing_in_window(state, headers, None).await
+}
+
+// A fixed poll time lets cache tests exercise the same/new window independently
+// of the wall clock crossing a boundary while the HTTP/SQLite calls run.
+async fn now_playing_in_window(
+    state: AppState,
+    headers: HeaderMap,
+    poll_at_ms: Option<i64>,
+) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
     if state.storage.directory.join("recovery.pending").exists()
         || crate::recovery::paused(&state.storage).await
@@ -785,11 +866,21 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let _now = state.spotify.now_gate.lock().await;
     let interval = intervals(&state).await?.now_playing_seconds as i64 * 1000;
     if let Some((time, value)) = &*state.spotify.cache.lock().await
-        && auth::now_ms() / interval == time / interval
+        && poll_at_ms.unwrap_or_else(auth::now_ms) / interval == time / interval
     {
         let mut value = value.clone();
+        let external = value["spotify_url"]
+            .as_str()
+            .and_then(|url| url.strip_prefix("https://open.spotify.com/track/"))
+            .map(|id| format!("spotify:track:{id}"));
+        let track_id: Option<String> = if let Some(external) = external {
+            sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(external).fetch_optional(&state.read_db).await?
+        } else {
+            None
+        };
         if let Some(object) = value.as_object_mut() {
             object.insert("served_at_ms".into(), json!(auth::now_ms()));
+            object.insert("track_id".into(), json!(track_id));
         }
         return Ok(Json(value));
     }
@@ -811,7 +902,9 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let value = if row["is_playing"] == true && row["currently_playing_type"] == "track" {
         match parse_track(&row["item"]) {
             Ok(track) => {
-                json!({"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
+                let track_id: Option<String> = sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(&track.id).fetch_optional(&state.read_db).await?;
+
+                json!({"track_id":track_id,"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
             }
             Err(_) => Value::Null,
         }
@@ -966,6 +1059,68 @@ mod tests {
             body,
             retry: None,
         }
+    }
+    #[test]
+    fn track_artwork_uses_largest_image_regardless_of_provider_order() {
+        let mut row = track();
+        for images in [
+            json!([
+                {"url":"https://i.scdn.co/image/full", "width":640},
+                {"url":"https://i.scdn.co/image/thumb", "width":64},
+                {"url":"https://i.scdn.co/image/medium", "width":300}
+            ]),
+            json!([
+                {"url":"https://i.scdn.co/image/thumb", "width":64},
+                {"url":"https://i.scdn.co/image/full", "width":640}
+            ]),
+        ] {
+            row["album"]["images"] = images;
+            assert_eq!(
+                parse_track(&row).unwrap().cover_url.as_deref(),
+                Some("https://i.scdn.co/image/full")
+            );
+        }
+    }
+    #[tokio::test]
+    async fn artwork_reuses_track_metadata_without_another_provider_wait() {
+        let (_dir, state, _mock, handle) =
+            fixture(vec![reply("/v1/tracks/one", track())], false).await;
+        let first = api_get(&state, "/tracks/one", &[]).await.unwrap();
+        let again = tokio::time::timeout(
+            Duration::from_millis(500),
+            api_get(&state, "/tracks/one", &[]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(again, first);
+        assert_eq!(state.spotify.catalogue_tracks.lock().await.len(), 1);
+        state.storage.close().await;
+        handle.abort();
+    }
+    #[tokio::test]
+    async fn cold_catalogue_images_do_not_pay_a_three_second_local_delay() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                reply("/v1/artists/one", json!({"images":[]})),
+                reply("/v1/artists/two", json!({"images":[]})),
+            ],
+            false,
+        )
+        .await;
+        api_get(&state, "/artists/one", &[]).await.unwrap();
+        let second = tokio::time::timeout(
+            Duration::from_millis(1800),
+            api_get(&state, "/artists/two", &[]),
+        )
+        .await;
+        handle.abort();
+        assert!(
+            second.is_ok(),
+            "cold images are delayed by a fixed three-second local wait"
+        );
+        second.unwrap().unwrap();
+        state.storage.close().await;
     }
     fn track() -> Value {
         json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Test track","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"Artist"}]})
@@ -1293,6 +1448,57 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        handle.abort();
+    }
+    #[tokio::test]
+    async fn cancelling_collection_stops_before_the_next_page_and_keeps_the_cursor() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let (_dir, state, mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/recently-played",
+                json!({"items":batch,"_test_delay_ms":200}),
+            )],
+            false,
+        )
+        .await;
+        let collector = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state).await }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while mock.calls.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let id: String = sqlx::query_scalar(
+            "SELECT id FROM jobs WHERE kind='spotify_collection' AND state='running'",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        state.storage.cancel(&id).await.unwrap();
+        assert!(collector.await.unwrap().is_err());
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        assert!(
+            db::setting(&state.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let status: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
         handle.abort();
     }
     #[tokio::test]
@@ -1640,7 +1846,10 @@ mod tests {
         let headers = owner_headers(&state).await;
         let bucket = auth::now_ms() / 30000 * 30000;
         *state.spotify.cache.lock().await = Some((bucket - 1, json!({"title":"stale sample"})));
-        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        let sample = now_playing_in_window(state.clone(), headers, Some(bucket))
+            .await
+            .unwrap()
+            .0;
         assert_eq!(sample["title"], "Test track");
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
@@ -1665,7 +1874,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.0["title"], "Test track");
-        let _ = now_playing(State(state.clone()), headers).await.unwrap();
+        assert!(first.0["track_id"].is_null());
+        sqlx::query("INSERT INTO tracks(id,title,metadata_rank) VALUES('local-now-track','Test track','spotify')").execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO entity_links VALUES('track','spotify','spotify:track:0000000000000000000001','local-now-track',0,'{}')").execute(&state.db).await.unwrap();
+        let poll_at = first.0["source_requested_at_ms"].as_i64().unwrap();
+        let cached = now_playing_in_window(state.clone(), headers, Some(poll_at))
+            .await
+            .unwrap();
+        assert_eq!(cached.0["track_id"], "local-now-track");
         assert_eq!(mock.calls.lock().await.len(), 1);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
             .fetch_one(&state.db)
@@ -1673,5 +1889,55 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         handle.abort();
+    }
+    #[tokio::test]
+    async fn optional_artwork_does_not_change_collection_health_or_clear_action_required() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/artists/0000000000000000000001",
+                    status: StatusCode::FORBIDDEN,
+                    body: json!({}),
+                    retry: None,
+                },
+                reply("/v1/albums/0000000000000000000002", json!({"images":[]})),
+            ],
+            false,
+        )
+        .await;
+        diagnostic(
+            &state,
+            "spotify_action_required",
+            "collection permission needs review",
+        )
+        .await
+        .unwrap();
+        diagnostic(&state, "spotify_verified_at_ms", "123")
+            .await
+            .unwrap();
+        assert!(
+            api_get(&state, "/artists/0000000000000000000001", &[])
+                .await
+                .is_err()
+        );
+        api_get(&state, "/albums/0000000000000000000002", &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            db::setting(&state.db, "spotify_action_required")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("collection permission needs review")
+        );
+        assert_eq!(
+            db::setting(&state.db, "spotify_verified_at_ms")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("123")
+        );
+        handle.abort();
+        state.storage.close().await;
     }
 }

@@ -69,10 +69,13 @@ test("confirmed restore survives restart and requires new access and explicit re
   try {
     await start();
     await page.goto("/");
+    await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
-      .fill("original browser password");
-    await page.getByLabel("Confirm password").fill("original browser password");
+      .fill("original browser password 7!");
+    await page
+      .getByLabel("Confirm password")
+      .fill("original browser password 7!");
     await page.getByRole("button", { name: "Create your archive" }).click();
     await expect(
       page.getByRole("heading", { name: "Your listening, at a glance." }),
@@ -92,10 +95,10 @@ test("confirmed restore survives restart and requires new access and explicit re
     await backup.getByRole("button", { name: "Restore…", exact: true }).click();
     await page
       .getByLabel("New owner password", { exact: true })
-      .fill("new browser recovery password");
+      .fill("new browser recovery password 7!");
     await page
       .getByLabel("Repeat new password", { exact: true })
-      .fill("new browser recovery password");
+      .fill("new browser recovery password 7!");
     await page
       .getByLabel("I confirm replacement of the current archive")
       .check();
@@ -125,9 +128,10 @@ test("confirmed restore survives restart and requires new access and explicit re
     await expect(
       page.getByRole("button", { name: "Sign in", exact: true }),
     ).toBeVisible();
+    await page.getByLabel("Username", { exact: true }).fill("owner");
     await page
       .getByLabel("Password", { exact: true })
-      .fill("new browser recovery password");
+      .fill("new browser recovery password 7!");
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Sign in", exact: true }),

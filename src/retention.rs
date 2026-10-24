@@ -109,13 +109,15 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     }
     let pinned = legacy_pins(store)?;
     let mut tx = store.writer.begin().await?;
+    sqlx::query("DELETE FROM artwork WHERE source='spotify' AND expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
+        .bind(crate::auth::now_ms()).execute(&mut *tx).await?;
     // A source may be shared by several uploads/jobs. Only discard bytes once ALL
     // references have completed successfully. Partial, failed and cancelled work
     // remains retryable. Unattached uploads are retained, too.
     let candidates: Vec<String> = sqlx::query_scalar(
         "SELECT f.id FROM source_files f WHERE
-         EXISTS(SELECT 1 FROM jobs j WHERE j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id))
-         AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id))
+         EXISTS(SELECT 1 FROM jobs j WHERE j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id) OR EXISTS(SELECT 1 FROM listenbrainz_pages p WHERE p.job_id=j.id AND p.file_id=f.id))
+         AND NOT EXISTS(SELECT 1 FROM jobs j WHERE (j.file_id=f.id OR EXISTS(SELECT 1 FROM job_inputs i WHERE i.job_id=j.id AND i.file_id=f.id) OR EXISTS(SELECT 1 FROM job_members m WHERE m.job_id=j.id AND m.file_id=f.id) OR EXISTS(SELECT 1 FROM listenbrainz_pages p WHERE p.job_id=j.id AND p.file_id=f.id))
          AND (j.state!='completed' OR COALESCE(j.outcome,'complete') NOT IN ('complete','no_music')))",
     ).fetch_all(&mut *tx).await?;
     for id in candidates {

@@ -25,6 +25,9 @@ La conservazione dei dati normalizzati degli ascolti, delle impronte e della pro
 **Riconciliazione di ascolti**:
 L'associazione delle osservazioni originali che descrivono lo stesso ascolto, rappresentato una sola volta nell'archivio. È distinta dall'unione di identità musicali e dal raggruppamento di edizioni.
 
+**Possibile duplicato di ascolto**:
+Un record per cui le informazioni disponibili non bastano a stabilire se descriva un ascolto già presente. I record restano separati fino a una revisione esplicita, individuale o automatica su richiesta dell'utente, che può mantenerli distinti oppure conservarne uno e spostare gli altri nel cestino con possibilità di annullamento.
+
 **Variante originale**:
 Una versione dell'osservazione originale che differisce nei dati ricevuti dalla fonte pur riferendosi allo stesso ascolto.
 
@@ -51,6 +54,9 @@ Un artista, album o brano identificato con informazioni incomplete, in attesa di
 **Correzione locale**:
 Una modifica dell'utente ai metadati della propria libreria, distinta dai valori ricevuti dalle fonti.
 
+**Voto personale**:
+La valutazione dell'utente per un artista, un album o un brano, da mezza a cinque stelle con passi di mezza stella. È distinta dal numero degli ascolti e dalla posizione in classifica; l'assenza di voto non equivale a zero stelle.
+
 **Regola di pulizia**:
 Un criterio scelto dall'utente per uniformare metadati o interpretare nomi e featuring nei dati importati.
 
@@ -59,3 +65,10 @@ L'insieme degli ascolti cancellati che possono ancora essere recuperati prima de
 
 **Calendario assegnato**:
 Il fuso orario e il giorno di inizio settimana usati per collocare un ascolto nei giorni e nelle settimane della consultazione. È distinto dall’istante originale dell’ascolto e può differire fra ascolti acquisiti con impostazioni diverse.
+
+**Raggruppamento per nome**:
+La consultazione congiunta di schede artista con lo stesso nome, o album con lo stesso titolo e artista. Non dimostra che le identità originali coincidano e può essere modificata senza perdere le schede sorgente.
+
+**Separazione dal gruppo**:
+La scelta di consultare separatamente una o più schede prima raggruppate per nome, per distinguere per esempio degli omonimi. È reversibile e non cancella ascolti o informazioni originali.
+_Avoid_: Decoupling, cancellazione di duplicati.

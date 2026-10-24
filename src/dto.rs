@@ -41,6 +41,7 @@ pub struct Listen {
     pub cover_url: Option<String>,
     pub spotify_url: Option<String>,
     pub played_at_ms: i64,
+    pub first_acquired_at_ms: i64,
     pub listened_ms: Option<i64>,
     pub duration_kind: DurationKind,
     pub counted: bool,
@@ -134,6 +135,7 @@ pub struct ActivityChart {
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
+    pub track_id: Option<String>,
     pub title: String,
     pub artists: Vec<Artist>,
     pub album: Option<String>,
@@ -192,6 +194,7 @@ pub struct SpotifyStatus {
 #[derive(Serialize, TS)]
 pub struct Activity {
     pub id: String,
+    pub created_at_ms: i64,
     pub kind: String,
     pub state: String,
     pub filename: Option<String>,
@@ -234,6 +237,8 @@ pub struct ActivityMember {
 }
 #[derive(Serialize, TS)]
 pub struct ActivityDetail {
+    #[ts(type = "unknown")]
+    pub source_parameters: Option<serde_json::Value>,
     pub issues: Vec<RowIssue>,
     pub activity: Activity,
     pub members: Vec<ActivityMember>,
@@ -280,6 +285,11 @@ mod tests {
             ActivityMember::decl(&config),
             ActivityDetail::decl(&config),
             RowIssue::decl(&config),
+            crate::listenbrainz::Limits::decl(&config),
+            crate::name_groups::GroupMember::decl(&config),
+            crate::name_groups::GroupPage::decl(&config),
+            crate::library::Details::decl(&config),
+            crate::library::Edit::decl(&config),
             crate::imports::ImportLimits::decl(&config),
             crate::imports::ImportResponse::decl(&config),
             crate::exports::ExportSelection::decl(&config),

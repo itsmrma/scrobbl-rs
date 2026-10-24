@@ -1,14 +1,24 @@
-﻿const { test, expect } = require("@playwright/test");
+const { chooseOption } = require("./controls.cjs");
+const { test, expect } = require("@playwright/test");
 const path = require("node:path");
 test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry survive navigation", async ({
   page,
 }) => {
   await page.goto("/import");
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByText("Upload limit:")).toBeVisible();
+  await page.getByText("Which files can I upload?", { exact: true }).click();
+  await expect(
+    page.getByText("Leave ZIP files zipped", { exact: false }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/gui-sixth-import-help.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   await page
     .locator("#import-files")
     .setInputFiles(path.join(__dirname, "fixtures/spotify-history.zip"));
@@ -65,11 +75,11 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
   expect(after.activity.added).toBe(1);
   expect(after.activity.duplicates).toBe(1);
   await page.setViewportSize({ width: 390, height: 844 });
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
   await page.screenshot({
     path: "test-results/spotify-import-mobile.png",
     fullPage: true,
@@ -80,7 +90,7 @@ test("ZIP receipt, saved partial report, invalid rows, exclusions and safe retry
     fullPage: true,
   });
   await page.getByRole("link", { name: "All activities", exact: true }).click();
-  await page.getByLabel("Activity type").selectOption("spotify_import");
+  await chooseOption(page.getByLabel("Activity type"), "spotify_import");
   await expect(
     page.getByRole("main").locator(`a[href="/activities/${job_id}"]`),
   ).toBeVisible();

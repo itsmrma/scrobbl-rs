@@ -13,7 +13,9 @@ listening history. See [exploring your archive](docs/consultation.md) for filter
 counting rules. For generic Docker,
 Compose and private HTTPS configuration, see [Docker installation](docs/docker.md).
 Read-only API keys, coherent copies and incremental synchronization are available; see the
-[read API guide](docs/read-api.md). Advanced library management remains future work; see the [development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
+[read API guide](docs/read-api.md). Reversible artist/album name groups, personal name/title corrections, images and
+half-star ratings are available; advanced library management remains future work. See the
+[development map](https://github.com/itsmrma/scrobbl-rs/issues/1)
 for requirements, confirmed choices, prototype status and open decisions.
 
 ## Run locally
@@ -25,8 +27,8 @@ system (on macOS: Xcode Command Line Tools). Then, from this repository:
 ./scripts/run-local.sh
 ```
 
-Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, set your owner password
-(at least 12 characters), and open **Settings** to configure Spotify. The service binds only to
+Or run `cargo run --locked` directly. Open **http://127.0.0.1:3210**, create your owner username and password
+(at least 8 characters, including a letter, a number and a special character, without sequences or repeating patterns and different from the username), and open **Settings** to configure Spotify. The service binds only to
 `127.0.0.1`; use that exact address, including the port, rather than `localhost`.
 
 The archive foundations require Rust 1.94 or later and a **new data directory** when moving from
@@ -49,13 +51,19 @@ For the Spotify procedure, see [Spotify setup](docs/spotify-setup.md), or the in
 - Owner password stored with Argon2id; expiring, revocable browser sessions and CSRF checks.
 - Spotify authorization code flow, refresh tokens, background synchronization (every 120 seconds by
   default), bounded recent-history recovery and persistent diagnostics.
-- Now playing, cached and fetched only while the overview is open (every 30 seconds by default).
+- Shared now playing in Overview and the sidebar, fetched while the archive is open
+  (every 30 seconds by default).
 - Spotify **Extended Streaming History** ZIP or multiple JSON uploads, including nested folders.
   Receipt precedes durable background processing, with restart recovery, inventory and saved reports.
   Configurable defaults: 256 MiB uploaded, 1 GiB expanded, 256 MiB per file and 2 MiB per row.
   See [Spotify import and timing](docs/spotify-import.md) for limits, retries and verification.
 - Idempotent repeated imports and collection; conservative reconciliation between the two sources.
 - Actual, estimated and unavailable durations are distinguished. Short imports remain searchable.
+- ListenBrainz JSON/JSONL/ZIP imports and bounded manual public-history recovery,
+  with persistent reports and safe reimport. See [ListenBrainz import](docs/listenbrainz.md).
+- Personal artist/album images from file or public HTTPS URL, cached Spotify artwork,
+  name/title corrections and 1–5 star ratings in half-star steps. See the
+  [GUI audit and personal library guide](docs/gui-audit.md).
 - Dashboard previews and complete artist/album/track rankings, with shared positions,
   listen/time ordering, search, 10/25/50/100-row pagination and browser list/grid preferences.
 - Artist, album and track pages with statistics, album galleries, track lists and history.
@@ -195,8 +203,8 @@ collection and now playing. An interrupted recovery does not advance the durable
 Generic Docker and private LAN/VPN/HTTPS configuration are implemented; live server/browser,
 Spotify and certificate-renewal acceptance still require recorded evidence. The read API and
 key management have local automatic coverage; the real `spotify_analysis` connection remains
-in its dedicated follow-up. Public hosting, Maloja/Last.fm imports, editing/merging, custom images
-and scheduled backups are outside this implementation.
+in its dedicated follow-up. Public hosting, Maloja/Last.fm imports, identity merging, edition grouping
+and scheduled backups remain outside this implementation.
 
 ## License
 

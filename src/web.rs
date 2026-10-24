@@ -23,6 +23,20 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/healthz", get(health))
+        .route("/api/owner/username", post(auth::set_username))
+        .route(
+            "/api/v1/account",
+            get(crate::account::profile).post(crate::account::edit_profile),
+        )
+        .route("/api/v1/account/password", post(crate::account::password))
+        .route(
+            "/api/v1/account/avatar/remove",
+            post(crate::account::remove_avatar),
+        )
+        .route(
+            "/api/v1/application",
+            get(crate::account::application).post(crate::account::control),
+        )
         .route("/license", get(license))
         .route("/licenses", get(licenses))
         .route("/app.js", get(js))
@@ -33,6 +47,21 @@ pub fn router(state: AppState) -> Router {
         .route("/spotify/connect-result/{attempt}", get(index))
         .route("/dashboard", get(index))
         .route("/history", get(index))
+        .route("/review", get(index))
+        .route(
+            "/api/v1/review",
+            get(crate::review::list).post(crate::review::decide),
+        )
+        .route("/api/v1/review/{id}/undo", post(crate::review::undo))
+        .route("/api/v1/review/trash", get(crate::review::trash))
+        .route(
+            "/api/v1/consultation/patterns",
+            get(crate::listening_patterns::get),
+        )
+        .route(
+            "/api/v1/review/automatic",
+            get(crate::review::automatic_preview).post(crate::review::automatic_execute),
+        )
         .route("/rankings/{kind}", get(index))
         .route(
             "/api/v1/consultation/choices/{kind}",
@@ -51,6 +80,19 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/consultation/activity",
             get(crate::browse::activity),
         )
+        .route("/music/{kind}/{id}/edit", get(index))
+        .route(
+            "/api/v1/library/{kind}/{id}",
+            get(crate::library::details).post(crate::library::edit),
+        )
+        .route(
+            "/api/v1/artwork/{kind}/{id}",
+            get(crate::library::artwork).post(crate::library::image_url),
+        )
+        .route(
+            "/api/v1/library/{kind}/{id}/group",
+            get(crate::name_groups::members).post(crate::name_groups::change),
+        )
         .route("/import", get(index))
         .route("/activities", get(index))
         .route("/activities/{id}", get(index))
@@ -62,6 +104,22 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/preferences",
             get(crate::preferences::get).post(crate::preferences::save),
+        )
+        .route(
+            "/api/v1/listenbrainz/limits",
+            get(crate::listenbrainz::limits),
+        )
+        .route(
+            "/api/v1/listenbrainz/fetch",
+            post(crate::listenbrainz::fetch),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/originals",
+            get(crate::listenbrainz::originals),
+        )
+        .route(
+            "/api/v1/listenbrainz/jobs/{id}/files/{file_id}",
+            get(crate::listenbrainz::original_file),
         )
         .route("/api/v1/activities", get(crate::activities::list))
         .route("/api/v1/info", get(crate::read_api::info))
@@ -96,6 +154,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/activities/{id}",
             get(crate::activities::detail).post(crate::activities::action),
         )
+        .route(
+            "/api/v1/activities/{id}/cancel",
+            post(crate::activities::cancel),
+        )
         .route("/api/v1/import/limits", get(imports::limits))
         .route("/api/session", get(auth::status))
         .route("/api/setup", post(auth::setup))
@@ -117,16 +179,30 @@ pub fn router(state: AppState) -> Router {
         .route("/auth/spotify/callback", get(spotify::callback))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .route(
+            "/api/v1/account/avatar",
+            get(crate::account::avatar)
+                .post(crate::account::upload_avatar)
+                .layer(DefaultBodyLimit::max(5 * 1024 * 1024)),
+        )
+        .route(
             "/api/v1/recovery/upload",
             post(crate::recovery_http::upload).layer(DefaultBodyLimit::max(
                 crate::recovery::PACKED_LIMIT as usize + 65536,
             )),
         )
         .route(
+            "/api/v1/artwork/{kind}/{id}/upload",
+            post(crate::library::upload_image).layer(DefaultBodyLimit::max(5 * 1024 * 1024)),
+        )
+        .route(
             "/api/import/spotify",
             post(imports::upload).layer(DefaultBodyLimit::max(
                 upload_limit.saturating_add(state.config.import_limits.files.saturating_mul(1024)),
             )),
+        )
+        .route(
+            "/api/v1/listenbrainz/upload",
+            post(crate::listenbrainz::upload).layer(DefaultBodyLimit::disable()),
         )
         .fallback(|| async {
             (
@@ -185,7 +261,15 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     let gate = state.storage.requests.clone();
     let exclusive =
         request.uri().path() == "/api/v1/recovery/restore" && request.method() == Method::POST;
-    let _read = if exclusive {
+    // Status reads and owner/CSRF-protected cancellation only touch job controls,
+    // so they remain available during restore preparation's exclusive barrier.
+    let activity_control = (request.method() == Method::GET
+        && (request.uri().path() == "/api/v1/activities"
+            || request.uri().path().starts_with("/api/v1/activities/")))
+        || (request.method() == Method::POST
+            && request.uri().path().starts_with("/api/v1/activities/")
+            && request.uri().path().ends_with("/cancel"));
+    let _read = if exclusive || activity_control {
         None
     } else {
         Some(gate.read().await)
@@ -320,7 +404,7 @@ pub fn bounds(filters: &Filters) -> Result<(Option<i64>, Option<i64>)> {
     ))
 }
 pub(crate) fn listen_json(r: sqlx::sqlite::SqliteRow) -> Value {
-    json!({"id":r.get::<String,_>("id"),"track_id":r.get::<String,_>("track_id"),"title":r.get::<String,_>("title"),"album_id":r.get::<Option<String>,_>("album_id"),"timezone":r.get::<String,_>("timezone"),"local_date":r.get::<String,_>("local_date"),"week_date":r.get::<String,_>("week_date"),"album":r.get::<Option<String>,_>("album"),"cover_url":r.get::<Option<String>,_>("cover_url"),"spotify_url":r.get::<Option<String>,_>("spotify_url"),"played_at_ms":r.get::<i64,_>("played_at_ms"),"listened_ms":r.get::<Option<i64>,_>("listened_ms"),"duration_kind":r.get::<String,_>("duration_kind"),"counted":r.get::<bool,_>("counted"),"needs_review":r.get::<bool,_>("needs_review"),
+    json!({"id":r.get::<String,_>("id"),"track_id":r.get::<String,_>("track_id"),"title":r.get::<String,_>("title"),"album_id":r.get::<Option<String>,_>("album_id"),"timezone":r.get::<String,_>("timezone"),"local_date":r.get::<String,_>("local_date"),"week_date":r.get::<String,_>("week_date"),"album":r.get::<Option<String>,_>("album"),"cover_url":r.get::<Option<String>,_>("cover_url"),"spotify_url":r.get::<Option<String>,_>("spotify_url"),"played_at_ms":r.get::<i64,_>("played_at_ms"),"first_acquired_at_ms":r.get::<i64,_>("first_acquired_at_ms"),"listened_ms":r.get::<Option<i64>,_>("listened_ms"),"duration_kind":r.get::<String,_>("duration_kind"),"counted":r.get::<bool,_>("counted"),"needs_review":r.get::<bool,_>("needs_review"),
         "artists":serde_json::from_str::<Value>(&r.get::<String,_>("artists")).unwrap_or(json!([])),"sources":serde_json::from_str::<Value>(&r.get::<String,_>("sources")).unwrap_or(json!([]))})
 }
 pub(crate) const LISTEN_COLUMNS: &str = "SELECT s.*, (SELECT timezone FROM calendars WHERE id=s.calendar_id) AS timezone, (SELECT json_group_array(json_object('id',id,'name',name)) FROM (SELECT ar.id, ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artists, (SELECT json_group_array(source) FROM observations o WHERE o.listen_id=s.id) AS sources FROM selected s ";

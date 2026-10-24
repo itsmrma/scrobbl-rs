@@ -1,3 +1,4 @@
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const rows = [
   {
@@ -45,12 +46,25 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(
     page.getByRole("heading", { name: "Make this space yours" }),
   ).toBeVisible();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
+  await page.getByLabel("Password", { exact: true }).fill("aaaaaaaaaaaaaaa");
+  await page.getByLabel("Confirm password").fill("aaaaaaaaaaaaaaa");
+  await expect(
+    page.getByRole("button", { name: "Create your archive" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Show password" }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute(
+    "type",
+    "text",
+  );
+  await page.getByRole("button", { name: "Hide password" }).click();
+
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page
     .getByLabel("Confirm password")
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: "Create your archive" }).click();
   await expect(
     page.getByRole("heading", { name: "Your listening, at a glance." }),
@@ -107,9 +121,11 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
-  await page.locator("#history-status").selectOption("short");
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
+  await chooseOption(page.locator("#history-status"), "short");
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(page.locator("#history-total")).toHaveText("1 records");
+  await expect(page.locator("#history-total")).toHaveText("1 record");
   await expect(page.locator("#history-list")).toContainText("Short song");
   await page.getByRole("button", { name: "Reset", exact: true }).click();
   await page.locator("#history-q").fill("Earth, Wind & Fire");
@@ -133,6 +149,9 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(page.locator("#connection-badge")).toContainText(
     "Ready to connect",
   );
+  await expect(page.locator(".credentials-saved")).toContainText(
+    "App credentials saved",
+  );
   await expect(page.getByLabel("Client Secret", { exact: true })).toHaveValue(
     "",
   );
@@ -141,7 +160,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   );
   expect(JSON.stringify(status)).not.toContain("testsecret");
   await page.getByRole("link", { name: "Appearance", exact: true }).click();
-  await page.locator("#theme").selectOption("light");
+  await chooseOption(page.locator("#theme"), "light");
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/theme-light/);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
@@ -157,13 +176,15 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     fullPage: true,
   });
   await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "Account menu", exact: true }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("a local browser test password");
+    .fill("a local browser test password 7!");
   await page.getByRole("button", { name: /^Sign in/ }).click();
   await expect(page.locator("#total-listens")).toHaveText("3");
   expect(errors).toEqual([]);

@@ -1,3 +1,4 @@
+const { chooseOption } = require("./controls.cjs");
 const { expect } = require("@playwright/test");
 
 module.exports = async function recoveryFlow(page) {
@@ -11,11 +12,18 @@ module.exports = async function recoveryFlow(page) {
   expect(denied.status()).toBe(403);
   await page.getByLabel("From date").fill("2026-01-01");
   await page.getByLabel("Through date").fill("2026-12-31");
-  await page.getByLabel("Export format").selectOption("json");
+  await chooseOption(page.getByLabel("Export format"), "json");
+  const accepted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/recovery") &&
+      response.request().method() === "POST",
+  );
   await page
     .getByRole("button", { name: "Create export", exact: true })
     .click();
-  // Navigate away: generation must continue independently of the page's lifetime.
+  expect((await accepted).status()).toBe(200);
+  // Once receipt is confirmed, generation must continue independently of the
+  // page. A hard navigation before receipt can cancel the POST in WebKit.
   await page.goto("/activities");
   await page.goto("/settings/data");
   const exportRow = page
@@ -64,10 +72,10 @@ module.exports = async function recoveryFlow(page) {
   await expect(confirm).toBeDisabled();
   await page
     .getByLabel("New owner password", { exact: true })
-    .fill("a different recovery password");
+    .fill("a different recovery password 7!");
   await page
     .getByLabel("Repeat new password", { exact: true })
-    .fill("a different recovery password");
+    .fill("a different recovery password 7!");
   await expect(confirm).toBeDisabled();
   await page.getByLabel("I confirm replacement of the current archive").check();
   await expect(confirm).toBeEnabled();
