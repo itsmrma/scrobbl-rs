@@ -1,4 +1,4 @@
-const { chooseOption } = require("./controls.cjs");
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
@@ -184,6 +184,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
     await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await settleDisclosure(page.locator(".history-filter-disclosure"));
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(page.getByLabel("Results per page")).toHaveAttribute(
       "data-value",

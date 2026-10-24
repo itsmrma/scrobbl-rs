@@ -1313,6 +1313,7 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
     .check();
   await page.getByRole("button", { name: /Keep selected/ }).click();
   await page.getByText("Review decisions · Undo", { exact: true }).click();
+  await settleDisclosure(page.locator(".review-decisions"));
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator(".review-record")).toHaveCount(2);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1352,6 +1353,7 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
   ).toBeVisible();
   await expect(automatic.getByRole("button")).toBeDisabled();
   await page.getByText("Review decisions · Undo", { exact: true }).click();
+  await settleDisclosure(page.locator(".review-decisions"));
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator(".review-record")).toHaveCount(2);
   await page
@@ -1961,11 +1963,13 @@ test("history filters collapse without clearing the selection and music history 
   const disclosure = page.locator(".history-filter-disclosure");
   await expect(disclosure).not.toHaveAttribute("open");
   await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await expect(page.getByLabel("Source", { exact: true })).toHaveAttribute(
     "data-value",
     "spotify_import",
   );
   await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await expect(page.getByLabel("Source", { exact: true })).toBeHidden();
   await expect(page).toHaveURL(/source=spotify_import/);
   await page.reload();
@@ -2099,6 +2103,7 @@ test("selected filters and source-entry checkboxes stay compact", async ({
 }) => {
   await login(page, "/history?period=all");
   await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await page.getByLabel("Find artist").fill("Seed");
   await page
     .getByRole("button", { name: "Seed artist · Seed song", exact: true })

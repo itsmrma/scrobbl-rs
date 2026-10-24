@@ -1,4 +1,4 @@
-const { chooseOption } = require("./controls.cjs");
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const password = "a local browser test password 7!";
 async function login(page, path = "/settings/general") {
@@ -141,8 +141,10 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await page.getByLabel("Search", { exact: true }).fill("Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(page).toHaveURL(/(?:\?|&)q=Earth(?:&|$)/);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page
     .getByRole("link", { name: "Listening history", exact: true })

@@ -1,4 +1,4 @@
-const { chooseOption } = require("./controls.cjs");
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test, expect } = require("@playwright/test");
 const rows = [
   {
@@ -122,6 +122,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await settleDisclosure(page.locator(".history-filter-disclosure"));
   await chooseOption(page.locator("#history-status"), "short");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.locator("#history-total")).toHaveText("1 record");
