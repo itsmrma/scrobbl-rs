@@ -20,4 +20,18 @@ async function chooseOption(control, value) {
   }
   throw new Error(`No option ${value}`);
 }
-module.exports = { chooseOption };
+// A button inside native details can be visible before the card stops growing.
+// WebKit can finish its scroll/click while that growth moves the hit target.
+async function settleDisclosure(disclosure) {
+  await disclosure.evaluate((element) =>
+    Promise.all(
+      element
+        .getAnimations({ subtree: true })
+        .filter((animation) =>
+          Number.isFinite(animation.effect?.getTiming().iterations),
+        )
+        .map((animation) => animation.finished.catch(() => {})),
+    ),
+  );
+}
+module.exports = { chooseOption, settleDisclosure };

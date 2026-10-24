@@ -1,4 +1,4 @@
-const { chooseOption } = require("./controls.cjs");
+const { chooseOption, settleDisclosure } = require("./controls.cjs");
 const { test: base, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
@@ -1330,10 +1330,23 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
     name: "Automatic duplicate review",
   });
   await automatic.locator(":scope > summary").click();
+  await settleDisclosure(automatic);
   await expect(automatic).toContainText("1 matching pair");
-  await automatic
-    .getByRole("button", { name: "Resolve 1 pair automatically", exact: true })
-    .click();
+  const [resolution] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/api/v1/review/automatic" &&
+        response.request().method() === "POST",
+      { timeout: 5000 },
+    ),
+    automatic
+      .getByRole("button", {
+        name: "Resolve 1 pair automatically",
+        exact: true,
+      })
+      .click(),
+  ]);
+  expect(resolution.ok()).toBe(true);
   await expect(
     page.getByRole("heading", { name: "All caught up" }),
   ).toBeVisible();
