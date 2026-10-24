@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">scrobbl.rs</title>
+  <rect width="64" height="64" rx="16" fill="#caef78" />
+  <g stroke="#18251e" stroke-width="6" stroke-linecap="round">
+    <path d="M17 27v10M27 17v30M37 23v18M47 29v6" />
+  </g>
+</svg>
