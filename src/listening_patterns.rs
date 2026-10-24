@@ -10,6 +10,7 @@ use axum::{
     http::HeaderMap,
 };
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use futures_util::TryStreamExt;
 use serde_json::{Value, json};
 use sqlx::Row;
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,8 +62,9 @@ pub async fn get(
     let conn = &mut *view.transaction;
     let mut query = consultation::selection_at(conn, &filters, false, auth::now_ms()).await?;
     query.push("SELECT s.played_at_ms,c.timezone,(SELECT json_group_array(json(v.context_json)) FROM observations o JOIN observation_variants v ON v.observation_id=o.id WHERE o.listen_id=s.id AND o.source='spotify_import') AS contexts,s.duration_kind FROM selected s JOIN calendars c ON c.id=s.calendar_id WHERE s.counted=1");
-    let rows = query.build().fetch_all(&mut *conn).await?;
-    let total = rows.len();
+    let statement = query.build();
+    let mut rows = statement.fetch(&mut *conn);
+    let mut total = 0u64;
     let mut series: BTreeMap<&str, BTreeMap<String, u64>> = BTreeMap::new();
     series.insert(
         "hours",
@@ -84,7 +86,8 @@ pub async fn get(
         .collect(),
     );
     let mut zones = BTreeMap::<String, chrono_tz::Tz>::new();
-    for row in rows {
+    while let Some(row) = rows.try_next().await? {
+        total += 1;
         let zone: String = row.get("timezone");
         let tz = if let Some(tz) = zones.get(&zone) {
             *tz
@@ -127,7 +130,7 @@ pub async fn get(
     let series: BTreeMap<_,_> = series.into_iter().map(|(metric, bins)| {
         let unknown = bins.get("Unknown").copied().unwrap_or(0);
         let conflicting = bins.get("Conflicting values").copied().unwrap_or(0);
-        coverage.insert(metric,json!({"known":total as u64 - unknown - conflicting,"unknown":unknown,"conflicting":conflicting}));
+        coverage.insert(metric,json!({"known":total - unknown - conflicting,"unknown":unknown,"conflicting":conflicting}));
         let mut bins: Vec<_> = bins.into_iter().collect();
         if metric != "hours" && metric != "weekdays" { bins.sort_by(|a,b| b.1.cmp(&a.1).then_with(||a.0.cmp(&b.0))); }
         // Bound categorical output while preserving every listen in the total.

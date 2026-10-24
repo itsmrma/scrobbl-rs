@@ -2,7 +2,9 @@
 
 `Checks` runs for every PR targeting `main` on opening, a new commit, reopening
 and becoming ready for review, including drafts. Pushes to `main` and `v*` tags
-run the same verification. No path filters can strand a required check. A new
+run the same verification. A detection job skips the heavy jobs when every changed
+path is under `docs/` or ends in `.md`; version tags always run the full suite.
+The workflow itself always runs, so required checks are not stranded. A new
 PR run cancels the superseded run for that PR; separate PRs and trusted pushes
 have separate concurrency groups. Running trusted push workflows are allowed to finish.
 
@@ -20,9 +22,11 @@ and requires a PR with **zero** additional approving reviews:
 | `Browser (firefox)` | The same frontend checks in Firefox |
 | `Browser (webkit)` | The same frontend checks in WebKit |
 | `Docker / linux/amd64` | Image build, generic Compose startup and persistent-volume smoke |
-| `PR checks` | Always runs; fails unless every verification above actually succeeded |
+| `PR checks` | Always runs; requires successful verification for application changes or the explicit documentation-only skip |
 
-A failed, canceled or skipped dependency cannot make `PR checks` pass. Only the
+A failed or canceled verification cannot make `PR checks` pass. For application
+changes, every verification must succeed; for documentation-only changes, all
+three job groups must be skipped and the detector must report `false`. Only the
 current PR revision can satisfy required checks. GitHub's up-to-date requirement
 also prevents using checks against an obsolete base. Keep these names and the
 repository protection synchronized when changing the workflow.
@@ -32,8 +36,9 @@ From a PR branch, inspect its current required results with `gh pr checks
 merging, even if an older run succeeded. To retry an infrastructure failure,
 use the run's **Re-run failed jobs** action; download its diagnostics first.
 
-The workflows use Rust **1.99.1** (matching Docker) and Node **24**. npm caches
-use `package-lock.json`; Cargo caches use OS/toolchain/`Cargo.lock` and separate
+The workflows use Rust **1.99.1** (matching Docker) and Node **24**; the pinned
+Docker frontend stage uses Node **25**. Both builds must reproduce `static/dist`.
+npm caches use `package-lock.json`; Cargo caches use OS/toolchain/`Cargo.lock` and separate
 browser/load keys. Jobs have timeouts. Actions are pinned by commit; update the
 pin and its version comment together. No separate frontend lint script exists;
 TypeScript and the production build are the project's frontend checks.

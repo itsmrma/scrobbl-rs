@@ -846,10 +846,11 @@ pub async fn upload(
             ));
         }
         let mut reader = tokio_util::io::StreamReader::new(field.map_err(std::io::Error::other));
-        let id=state.storage.receive(&mut reader,limits.upload_bytes).await.map_err(|_|AppError::BadRequest("Upload incomplete, exceeds the configured limit, or could not be saved. Complete files remain in Activities; reload this file.".into()))?;
+        let _files = state.storage.spool_operations.read().await;
+        let id=state.storage.receive_locked(&mut reader,limits.upload_bytes).await.map_err(|_|AppError::BadRequest("Upload incomplete, exceeds the configured limit, or could not be saved. Complete files remain in Activities; reload this file.".into()))?;
         let job = state
             .storage
-            .enqueue(
+            .enqueue_locked(
                 "listenbrainz_file",
                 Some(&id),
                 Some(&filename),
@@ -1177,12 +1178,17 @@ async fn fetch_page(
         bytes.extend_from_slice(&chunk);
     }
     // A fully received page is retained even if its JSON/order cannot be interpreted.
-    let file_id = storage
-        .receive(&mut bytes.as_slice(), 8 * 1024 * 1024)
-        .await
-        .map_err(|_| AppError::Internal)?;
     let member = format!("page-{}-attempt-{}", params.pages + 1, lease.attempt);
-    sqlx::query("INSERT INTO listenbrainz_pages(job_id,member,file_id) VALUES(?,?,?) ON CONFLICT(job_id,member) DO UPDATE SET file_id=excluded.file_id").bind(&lease.id).bind(&member).bind(file_id).execute(&storage.writer).await?;
+    {
+        // A repeated page can share a hash with a completed acquisition. Keep
+        // receipt and attachment under one lease, just like multipart uploads.
+        let _files = storage.spool_operations.read().await;
+        let file_id = storage
+            .receive_locked(&mut bytes.as_slice(), 8 * 1024 * 1024)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        sqlx::query("INSERT INTO listenbrainz_pages(job_id,member,file_id) VALUES(?,?,?) ON CONFLICT(job_id,member) DO UPDATE SET file_id=excluded.file_id").bind(&lease.id).bind(&member).bind(file_id).execute(&storage.writer).await?;
+    }
     let value = match serde_json::from_slice::<Value>(&bytes) {
         Ok(v) => v,
         Err(_) => {
