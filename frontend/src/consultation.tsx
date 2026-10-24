@@ -1188,7 +1188,7 @@ export function HistoryPage({
   useEffect(() => () => filterAnimation.current?.cancel(), []);
   const [draft, setDraft] = useState(params.get("q") || "");
   const search = useSearch();
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (visible) setDraft(params.get("q") || "");
   }, [search, visible]);
   params.set("page_size", String(list.size));

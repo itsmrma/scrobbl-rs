@@ -178,6 +178,23 @@ test("music listening patterns switch within one compact chart and header filter
       .toBeLessThan(1);
     await expect(page.locator(".music-personal > a")).toHaveCount(2);
     await expect
+      .poll(() =>
+        cover.evaluate((node) => {
+          const controls = node.parentElement.querySelectorAll(
+            ".music-period .select-control",
+          );
+          return Math.max(
+            ...Array.from(controls, (control) =>
+              Math.abs(
+                control.getBoundingClientRect().bottom -
+                  node.getBoundingClientRect().bottom,
+              ),
+            ),
+          );
+        }),
+      )
+      .toBeLessThan(1);
+    await expect
       .poll(async () => {
         const buttons = await page
           .locator(".music-personal > a")
