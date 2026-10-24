@@ -2489,12 +2489,18 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeGreaterThan(compactHeight + 100);
+  await expect(widget.locator(":scope > .cover")).toBeHidden();
+  await expect(widget.locator(".playback-copy > a")).toHaveCSS(
+    "font-size",
+    "16px",
+  );
   await widget
     .getByRole("button", { name: "Collapse now playing artwork", exact: true })
     .click();
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeLessThan(compactHeight + 1);
+  await expect(widget.locator(":scope > .cover")).toBeVisible();
   await page.screenshot({
     path: `test-results/gui-${browserName}-sidebar-playback.png`,
     fullPage: true,
