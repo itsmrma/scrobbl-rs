@@ -353,8 +353,18 @@ pub(crate) fn ingest(
     )?;
     for event in events {
         let fingerprint = db::payload_fingerprint(&event.raw);
+        let context = crate::listening_patterns::context(event.source, &event.raw);
         let existing=rows(conn,"SELECT o.id,o.listen_id,EXISTS(SELECT 1 FROM observation_variants v WHERE v.observation_id=o.id AND fingerprint=?) AS same FROM observations o WHERE source=? AND source_key=?",params![fingerprint,event.source,event.source_key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?)))?.pop();
         if existing.as_ref().is_some_and(|r| r.2) {
+            let (observation, listen, _) = existing.as_ref().ok_or(AppError::Internal)?;
+            if execute(
+                conn,
+                "UPDATE observation_variants SET context_json=? WHERE observation_id=? AND fingerprint=? AND context_json!=?",
+                params![context, observation, fingerprint, context],
+            )? > 0
+            {
+                affected.insert(listen.clone());
+            }
             report.duplicates += 1;
             continue;
         }
@@ -525,7 +535,7 @@ pub(crate) fn ingest(
         };
         execute(
             conn,
-            "INSERT INTO observation_variants(id,observation_id,fingerprint,payload_id,played_at_ms,listened_ms,duration_kind,counted,policy_version) VALUES(?,?,?,?,?,?,?,?,1)",
+            "INSERT INTO observation_variants(id,observation_id,fingerprint,payload_id,played_at_ms,listened_ms,duration_kind,counted,policy_version,context_json) VALUES(?,?,?,?,?,?,?,?,1,?)",
             params![
                 archive_id(),
                 observation_id,
@@ -534,7 +544,8 @@ pub(crate) fn ingest(
                 event.played_at_ms,
                 event.listened_ms,
                 kind,
-                event.counted
+                event.counted,
+                context
             ],
         )?;
         // A fresh event's only variant is exactly the state just inserted. Re-run

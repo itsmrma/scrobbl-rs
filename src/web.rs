@@ -42,6 +42,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/review/{id}/undo", post(crate::review::undo))
         .route("/api/v1/review/trash", get(crate::review::trash))
         .route(
+            "/api/v1/consultation/patterns",
+            get(crate::listening_patterns::get),
+        )
+        .route(
             "/api/v1/review/automatic",
             get(crate::review::automatic_preview).post(crate::review::automatic_execute),
         )

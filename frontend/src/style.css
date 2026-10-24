@@ -5020,6 +5020,29 @@ dialog {
 .music-header-content {
   align-content: start;
 }
+.music-heading {
+  margin-top: 0;
+}
+.music-period .filters {
+  display: grid;
+  grid-template-columns: minmax(0, var(--music-edit-width, 140px)) minmax(
+      0,
+      var(--music-spotify-width, 140px)
+    );
+  width: var(--music-actions-width, 292px);
+  max-width: 100%;
+}
+.music-period .filters > label {
+  min-width: 0;
+}
+.music-period .filters > .period-rank-filter {
+  grid-row: 1;
+  grid-column: 2;
+}
+.music-period .select-control {
+  width: 100%;
+  min-width: 0;
+}
 .music-heading > .cover.large {
   height: auto;
   min-height: 0;

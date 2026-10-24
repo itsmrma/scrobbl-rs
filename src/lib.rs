@@ -16,6 +16,7 @@ mod ingest;
 pub mod jobs;
 pub mod library;
 pub mod listenbrainz;
+pub mod listening_patterns;
 pub mod name_groups;
 pub mod preferences;
 pub mod read_api;

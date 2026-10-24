@@ -183,7 +183,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page.getByLabel("Through", { exact: true }).fill("2025-06-02");
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
-    await page.locator(".history-filter-disclosure > summary").click();
+    await page.getByRole("button", { name: "Filters", exact: true }).click();
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(page.getByLabel("Results per page")).toHaveAttribute(
       "data-value",

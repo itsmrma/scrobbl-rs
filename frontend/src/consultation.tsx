@@ -22,6 +22,7 @@ import { ListenList } from "./listens";
 import { Collage } from "./collage";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
+import { ListeningPatterns } from "./listening-patterns";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
@@ -271,7 +272,7 @@ function PeriodFilters({
         </>
       )}
       {sort && (
-        <label>
+        <label className="period-rank-filter">
           Rank by
           <Select
             aria-label="Rank by"
@@ -1585,6 +1586,7 @@ export function MusicPage({
         !result.error && <p role="status">Loading music page…</p>
       )}
       <Chart params={params} version={preferences.version} />
+      <ListeningPatterns params={params} version={preferences.version} />
       {kind !== "tracks" && (
         <div className={kind === "artists" ? "music-collections" : undefined}>
           {kind === "artists" && (

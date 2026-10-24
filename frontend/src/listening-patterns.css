@@ -1,0 +1,84 @@
+.listening-patterns .panel-title {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.listening-patterns h2 {
+  margin: 0;
+}
+.listening-patterns .select-control {
+  width: 220px;
+  max-width: 100%;
+}
+.pattern-summary,
+.pattern-readout {
+  color: var(--muted);
+  font-size: 12px;
+}
+.pattern-bars {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.pattern-row {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(40px, 3fr) 64px;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+.pattern-label {
+  overflow-wrap: anywhere;
+}
+.pattern-track {
+  display: block;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.pattern-track > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.pattern-row strong {
+  text-align: right;
+  font-size: 12px;
+}
+.pattern-row strong small {
+  display: block;
+  color: var(--muted);
+  font-weight: 400;
+}
+.pattern-temporal {
+  display: grid;
+  gap: 3px;
+  overflow: visible;
+}
+.pattern-temporal .pattern-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+.pattern-temporal .pattern-track {
+  display: flex;
+  align-items: end;
+  height: 132px;
+  width: 100%;
+  order: 0;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+.pattern-temporal .pattern-track > span {
+  width: 100%;
+}
+.pattern-temporal .pattern-label {
+  order: 1;
+  font-size: 10px;
+}
+.pattern-row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

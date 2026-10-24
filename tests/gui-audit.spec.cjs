@@ -75,6 +75,12 @@ const test = base.extend({
                       master_metadata_album_artist_name: "Seed artist",
                       master_metadata_album_album_name: "Seed album",
                       spotify_track_uri: "spotify:track:0000000000000000000088",
+                      platform: "Android app",
+                      conn_country: "IT",
+                      shuffle: false,
+                      offline: false,
+                      skipped: false,
+                      reason_end: "trackdone",
                     },
                   ]),
                 ),
@@ -133,6 +139,96 @@ async function login(page, path = "/dashboard") {
     .click();
   await expect(page.locator("#main")).toBeVisible();
 }
+
+test("music listening patterns switch within one compact chart and header filters match action widths", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  await page.route("**/api/v1/library/*/*", async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      json: {
+        ...(await response.json()),
+        spotify_url: "https://open.spotify.com/track/0000000000000000000088",
+      },
+    });
+  });
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const kind of ["artists", "albums", "tracks"]) {
+    await page.goto(
+      `/music/${kind}/${archive.rankings[kind][0].id}?period=all`,
+    );
+    const cover = page.locator(".music-heading > .cover");
+    await expect(cover).toBeVisible();
+    await expect
+      .poll(() =>
+        cover.evaluate((node) => {
+          const main = document.querySelector("#main");
+          return Math.abs(
+            node.getBoundingClientRect().top -
+              main.getBoundingClientRect().top -
+              parseFloat(getComputedStyle(main).paddingTop),
+          );
+        }),
+      )
+      .toBeLessThan(1);
+    await expect(page.locator(".music-personal > a")).toHaveCount(2);
+    await expect
+      .poll(async () => {
+        const buttons = await page
+          .locator(".music-personal > a")
+          .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect()));
+        const controls = await page
+          .locator(".music-period .select-control")
+          .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect()));
+        return Math.max(
+          ...buttons.map((b, i) => Math.abs(b.width - controls[i].width)),
+          Math.abs(buttons[1].right - controls[1].right),
+        );
+      })
+      .toBeLessThan(1);
+    const chart = page.getByRole("article", {
+      name: "Listening patterns",
+      exact: true,
+    });
+    await expect(chart).toContainText("1 listens");
+    await expect(chart.getByRole("listitem")).toHaveCount(24);
+    expect((await chart.boundingBox()).height).toBeLessThan(450);
+    await chooseOption(chart.getByRole("combobox"), "devices");
+    await expect(chart.getByRole("listitem")).toHaveAccessibleName(
+      "Android app: 1 listens",
+    );
+    await chooseOption(chart.getByRole("combobox"), "shuffle");
+    await expect(chart.getByRole("listitem")).toHaveAccessibleName(
+      "No: 1 listens",
+    );
+    await chooseOption(chart.getByRole("combobox"), "weekdays");
+    await expect(chart.getByRole("listitem")).toHaveCount(7);
+    if (kind === "tracks") {
+      await page.evaluate(() => {
+        if (document.activeElement instanceof HTMLElement)
+          document.activeElement.blur();
+        window.scrollTo(0, 0);
+      });
+      await page.screenshot({
+        path: `test-results/gui-listening-patterns-${browserName}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+});
 
 test("review controls share a row and automatic review collapses with aligned animated content", async ({
   page,

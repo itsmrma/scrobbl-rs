@@ -1,5 +1,5 @@
 import { NameGroup } from "./name-groups";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
 import { useLoad } from "./load";
@@ -121,6 +121,7 @@ function Stars({
 }
 
 export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
+  const actions = useRef<HTMLDivElement>(null);
   const [version, setVersion] = useState(0);
   const details = useLoad<Details>(
     () => api.libraryDetails(kind, id),
@@ -129,8 +130,28 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const toast = useToast();
+  useLayoutEffect(() => {
+    const node = actions.current;
+    const header = node?.closest<HTMLElement>(".music-header-content");
+    const buttons = node?.querySelectorAll<HTMLAnchorElement>(":scope > a");
+    if (!header || !buttons?.length) return;
+    const measure = () => {
+      const first = buttons[0].getBoundingClientRect().width;
+      const second = buttons[1]?.getBoundingClientRect().width || first;
+      header.style.setProperty("--music-edit-width", `${first}px`);
+      header.style.setProperty("--music-spotify-width", `${second}px`);
+      header.style.setProperty(
+        "--music-actions-width",
+        `${first + second + 12}px`,
+      );
+    };
+    const observer = new ResizeObserver(measure);
+    buttons.forEach((button) => observer.observe(button));
+    measure();
+    return () => observer.disconnect();
+  }, [details.data?.spotify_url, kind]);
   return (
-    <div className="music-personal">
+    <div className="music-personal" ref={actions}>
       {details.data && (
         <Stars
           value={details.data.rating}
@@ -194,7 +215,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
   const initialized = useRef("");
   const toast = useToast();
   const back = `/music/${kind}/${id}`;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (details.data && initialized.current !== `${kind}:${id}`) {
       initialized.current = `${kind}:${id}`;
       setName(details.data.name);

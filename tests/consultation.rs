@@ -91,6 +91,150 @@ async fn json_get(state: &AppState, token: &str, path: &str) -> Value {
 }
 
 #[tokio::test]
+async fn listening_patterns_preserve_context_reimport_and_assigned_dst_without_double_counting() {
+    let (_dir, state, token) = setup().await;
+    let mut first = event(
+        1,
+        at("2025-10-26T00:30:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("a", "Artist")],
+    );
+    first.source = "spotify_import";
+    first.raw["platform"] = json!("Android");
+    first.raw["shuffle"] = json!(false);
+    first.raw["offline"] = json!(true);
+    first.raw["skipped"] = json!(false);
+    first.raw["conn_country"] = json!("IT");
+    first.raw["reason_end"] = json!("trackdone");
+    first.raw["ip_addr"] = json!("192.0.2.99");
+    first.raw["username"] = json!("private user");
+    let mut second = first.clone();
+    second.source_key = "second".into();
+    second.played_at_ms = at("2025-10-26T01:30:00Z");
+    second.source_timestamp_ms = second.played_at_ms;
+    second.raw["platform"] = json!("Windows");
+    second.raw["shuffle"] = json!(true);
+    let unknown = event(
+        3,
+        at("2025-10-27T23:30:00Z"),
+        None,
+        DurationKind::Unknown,
+        &[("a", "Artist")],
+    );
+    let short = event(
+        4,
+        at("2025-10-26T02:30:00Z"),
+        Some(1000),
+        DurationKind::Actual,
+        &[("a", "Artist")],
+    );
+    save(
+        &state.storage,
+        &[first.clone(), second.clone(), unknown, short],
+    )
+    .await;
+    let path = "/api/v1/consultation/patterns?period=all";
+    assert_eq!(
+        get(&state, "invalid", path).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let patterns = json_get(&state, &token, path).await;
+    assert_eq!(patterns["total"], 3);
+    for bins in patterns["series"].as_object().unwrap().values() {
+        assert_eq!(
+            bins.as_array()
+                .unwrap()
+                .iter()
+                .map(|b| b["count"].as_i64().unwrap())
+                .sum::<i64>(),
+            3
+        );
+    }
+    assert_eq!(patterns["series"]["hours"][2]["count"], 2); // Repeated 02:30 across DST fallback.
+    assert_eq!(patterns["series"]["hours"][0]["count"], 1);
+    assert_eq!(patterns["series"]["weekdays"][6]["count"], 2);
+    assert_eq!(patterns["coverage"]["devices"]["known"], 2);
+    assert_eq!(patterns["coverage"]["shuffle"]["unknown"], 1);
+    let saved: Vec<String> = sqlx::query_scalar("SELECT context_json FROM observation_variants")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    assert!(
+        saved
+            .iter()
+            .all(|s| !s.contains("private user") && !s.contains("192.0.2.99"))
+    );
+    let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM listens ORDER BY id")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE observation_variants SET context_json='{}'")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    save(&state.storage, &[first.clone(), second.clone()]).await;
+    assert_eq!(
+        json_get(&state, &token, path).await["coverage"]["devices"]["known"],
+        2
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT id FROM listens ORDER BY id")
+            .fetch_all(&state.db)
+            .await
+            .unwrap(),
+        ids
+    );
+    let dashboard = json_get(&state, &token, "/api/dashboard?period=all").await;
+    for (kind, filter) in [
+        ("artists", "artist"),
+        ("albums", "album"),
+        ("tracks", "track"),
+    ] {
+        let id = dashboard["rankings"][kind][0]["id"].as_str().unwrap();
+        let scoped = json_get(&state, &token, &format!("{path}&{filter}={id}")).await;
+        assert_eq!(scoped["total"], if kind == "artists" { 3 } else { 2 });
+    }
+    let mut conflict = first.clone();
+    conflict.raw["platform"] = json!("iOS");
+    save(&state.storage, &[conflict]).await;
+    assert_eq!(
+        json_get(&state, &token, path).await["coverage"]["devices"]["conflicting"],
+        1
+    );
+    assert_eq!(
+        json_get(&state, &token, &format!("{path}&source=spotify_import")).await["total"],
+        2
+    );
+    assert_eq!(
+        json_get(&state, &token, &format!("{path}&from=2026-01-01")).await["total"],
+        0
+    );
+    let frozen = _dir.path().join("patterns-snapshot.db");
+    scrobbl_rs::recovery::freeze(&state.storage, &frozen)
+        .await
+        .unwrap();
+    let exported = _dir.path().join("patterns-export.json");
+    scrobbl_rs::exports::write(&frozen, &exported, "json", &Default::default())
+        .await
+        .unwrap();
+    let exported = std::fs::read_to_string(exported).unwrap();
+    assert!(exported.contains("\"platform\":\"Android\""));
+    assert!(!exported.contains("192.0.2.99") && !exported.contains("private user"));
+    let mut tx = state.db.begin().await.unwrap();
+    let id: String = sqlx::query_scalar("SELECT id FROM listens WHERE played_at_ms=?")
+        .bind(first.played_at_ms)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    db::set_trashed(&mut tx, &[id], Some(auth::now_ms()))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(json_get(&state, &token, path).await["total"], 2);
+}
+
+#[tokio::test]
 async fn rankings_keep_primary_ties_across_pages_secondary_order_precision_and_full_attribution() {
     let (_dir, state, token) = setup().await;
     let mut events = Vec::new();

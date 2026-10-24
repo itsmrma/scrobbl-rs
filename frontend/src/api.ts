@@ -133,6 +133,15 @@ export type ReviewPage = {
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 export const api = {
+  listeningPatterns: (params: URLSearchParams) =>
+    request<{
+      total: number;
+      series: Record<string, { label: string; count: number }[]>;
+      coverage: Record<
+        string,
+        { known: number; unknown: number; conflicting: number }
+      >;
+    }>(`/api/v1/consultation/patterns?${params}`),
   reviewTrash: (page = 0) =>
     request<{
       total: number;
