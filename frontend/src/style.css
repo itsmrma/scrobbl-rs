@@ -3911,6 +3911,11 @@ dialog {
   margin-top: auto;
   padding: 16px 0 0;
 }
+.scrolling-rankings .ranking-results {
+  max-height: 520px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
 @media (min-width: 1200px) {
   .music-collections {
     align-items: stretch;
@@ -5063,6 +5068,10 @@ dialog {
   align-self: start;
 }
 @media (min-width: 601px) {
+  .music-header-content {
+    /* Mirror the title's optical top inset beneath the filter controls. */
+    padding-bottom: clamp(7.5px, 0.75vw, 11px);
+  }
   .music-heading {
     grid-template-columns: var(--music-artwork-size, 280px) minmax(0, 1fr);
   }

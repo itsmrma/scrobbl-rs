@@ -183,11 +183,14 @@ test("music listening patterns switch within one compact chart and header filter
           const controls = node.parentElement.querySelectorAll(
             ".music-period .select-control",
           );
+          const title = node.parentElement.querySelector("h1");
+          const inset = parseFloat(getComputedStyle(title).fontSize) / 4;
           return Math.max(
             ...Array.from(controls, (control) =>
               Math.abs(
-                control.getBoundingClientRect().bottom -
-                  node.getBoundingClientRect().bottom,
+                node.getBoundingClientRect().bottom -
+                  control.getBoundingClientRect().bottom -
+                  inset,
               ),
             ),
           );
@@ -244,6 +247,68 @@ test("music listening patterns switch within one compact chart and header filter
       ),
     ).toBe(true);
     await page.setViewportSize({ width: 1440, height: 1000 });
+  }
+});
+
+test("album tracks scroll inside their card without pagination or missing later results", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  let seed;
+  await page.route(
+    "**/api/v1/consultation/rankings/tracks?*",
+    async (route) => {
+      const response = await route.fetch();
+      const data = await response.json();
+      const pageNumber = Number(
+        new URL(route.request().url()).searchParams.get("page"),
+      );
+      seed ??= data.items[0];
+      await route.fulfill({
+        json: {
+          ...data,
+          total: 40,
+          page: pageNumber,
+          page_size: 20,
+          items: Array.from({ length: 20 }, (_, i) => ({
+            ...seed,
+            id: `album-track-${(pageNumber - 1) * 20 + i}`,
+            name: `Album track ${(pageNumber - 1) * 20 + i + 1}`,
+            position: (pageNumber - 1) * 20 + i + 1,
+          })),
+        },
+      });
+    },
+  );
+  await page.goto(
+    `/music/albums/${archive.rankings.albums[0].id}?tracks_page=2`,
+  );
+  const card = page.getByRole("article", { name: "tracks rankings" });
+  await expect(card.locator(".ranking-row")).toHaveCount(40);
+  await expect(
+    card.getByRole("button", { name: "Next", exact: true }),
+  ).toHaveCount(0);
+  await expect(card.getByText("Results per page", { exact: true })).toHaveCount(
+    0,
+  );
+  for (const view of ["List", "Grid"]) {
+    await card.getByRole("button", { name: view, exact: true }).click();
+    const results = card.locator(".ranking-results");
+    await expect
+      .poll(() =>
+        results.evaluate((node) => node.scrollHeight > node.clientHeight),
+      )
+      .toBe(true);
+    await results.evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+    });
+    await expect(
+      card.getByText("Album track 40", { exact: true }),
+    ).toBeInViewport();
   }
 });
 

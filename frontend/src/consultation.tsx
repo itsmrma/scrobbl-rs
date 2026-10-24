@@ -447,6 +447,7 @@ function RankingsPanel({
   title,
   version = 0,
   standalone = false,
+  scrolling = false,
 }: {
   kind: Kind;
   params: URLSearchParams;
@@ -455,6 +456,7 @@ function RankingsPanel({
   title?: string;
   version?: number;
   standalone?: boolean;
+  scrolling?: boolean;
 }) {
   const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
   const [cardSize, setCardSize] = useBrowserPreference(
@@ -469,11 +471,26 @@ function RankingsPanel({
   useEffect(() => setDraft(params.get("q") || ""), [search]);
   const pageKey = `${kind}_page`;
   const query = new URLSearchParams(params);
-  query.set("page", params.get(pageKey) || params.get("page") || "1");
-  query.set("page_size", String(list.size));
+  query.set(
+    "page",
+    scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
+  );
+  query.set("page_size", scrolling ? "100" : String(list.size));
   const result = useLoad(
-    () => api.rankings(kind, query),
-    `rankings:${query}:${kind}:${version}`,
+    async () => {
+      const first = await api.rankings(kind, query);
+      if (!scrolling) return first;
+      const items = [...first.items];
+      for (let page = 2; items.length < first.total; page++) {
+        const next = new URLSearchParams(query);
+        next.set("page", String(page));
+        const batch = await api.rankings(kind, next);
+        if (!batch.items.length) break;
+        items.push(...batch.items);
+      }
+      return { ...first, items };
+    },
+    `rankings:${scrolling ? "scroll" : "page"}:${query}:${kind}:${version}`,
     visible,
     undefined,
     true,
@@ -505,7 +522,7 @@ function RankingsPanel({
     });
   return (
     <article
-      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""}`}
+      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""} ${scrolling ? "scrolling-rankings" : ""}`}
       aria-label={`${kind} rankings`}
     >
       <div className="ranking-panel-heading">
@@ -616,14 +633,16 @@ function RankingsPanel({
               />
             </div>
           )}
-          <Pager
-            list={list}
-            resize={reset}
-            total={result.data.total}
-            page={result.data.page}
-            pageSize={result.data.page_size}
-            change={(n) => update({ [pageKey]: String(n) }, false)}
-          />
+          {!scrolling && (
+            <Pager
+              list={list}
+              resize={reset}
+              total={result.data.total}
+              page={result.data.page}
+              pageSize={result.data.page_size}
+              change={(n) => update({ [pageKey]: String(n) }, false)}
+            />
+          )}
         </>
       ) : (
         !result.error && <p role="status">Loading rankings…</p>
@@ -1602,6 +1621,7 @@ export function MusicPage({
             params={params}
             title="Tracks in this period"
             version={preferences.version}
+            scrolling={kind === "albums"}
           />
         </div>
       )}
