@@ -5453,7 +5453,52 @@ dialog {
   min-height: 36px;
   padding: 6px 10px;
   font-size: 12px;
-  margin-bottom: 12px;
+  flex-shrink: 0;
+  margin: 0;
+}
+.music-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+.music-title-row > .page-heading {
+  min-width: 0;
+  flex: 1;
+}
+.history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-bottom: 20px;
+}
+.history-heading > .page-heading {
+  margin: 0;
+  min-width: 0;
+}
+.history-heading .history-actions {
+  margin: 0;
+  flex-shrink: 0;
+}
+.history-section:not(.embedded-history) > .history-filter-disclosure > summary,
+.history-section:not(.embedded-history)
+  > .history-filter-disclosure:not([open]) {
+  display: none;
+}
+.history-section:not(.embedded-history)
+  > .history-filter-disclosure
+  .history-filters {
+  padding-top: 20px;
+}
+@media (max-width: 900px) {
+  .history-heading {
+    flex-wrap: wrap;
+  }
+  .history-heading .history-actions {
+    flex-shrink: 1;
+  }
 }
 .music-back .material-icons-outlined {
   font-size: 18px;

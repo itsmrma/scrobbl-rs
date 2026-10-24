@@ -209,6 +209,7 @@ test("review controls share a row and automatic review collapses with aligned an
 
 test("music page back preserves source filters across child filters reload and forward navigation", async ({
   page,
+  browserName,
 }) => {
   await login(page);
   const archive = await (
@@ -221,6 +222,20 @@ test("music page back preserves source filters across child filters reload and f
     .getByRole("link", { name: "Seed album", exact: true })
     .click();
   await expect(page).toHaveURL(/\/music\/albums\//);
+  const backBox = await page
+    .getByRole("button", { name: "Back", exact: true })
+    .boundingBox();
+  const coverBox = await page.locator(".music-heading > .cover").boundingBox();
+  const headingBox = await page.locator(".music-heading").boundingBox();
+  expect(Math.abs(backBox.y - coverBox.y)).toBeLessThan(1);
+  expect(
+    Math.abs(backBox.x + backBox.width - headingBox.x - headingBox.width),
+  ).toBeLessThan(1);
+  await page.screenshot({
+    path: `test-results/gui-music-back-right-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
   const albumURL = page.url();
   await chooseOption(
     page.locator(".music-period [role=combobox]").first(),
@@ -1508,14 +1523,30 @@ test("history filters collapse without clearing the selection and music history 
     localStorage.setItem("scrobbl:accent", JSON.stringify("#c5a3ee")),
   );
   await login(page, "/history?period=all&source=spotify_import");
+  const titleBox = await page
+    .getByRole("heading", { name: "Listening history." })
+    .boundingBox();
+  for (const control of [
+    page.getByRole("button", { name: "Filters", exact: true }),
+    page.getByRole("link", { name: "Review possible duplicates", exact: true }),
+  ]) {
+    const box = await control.boundingBox();
+    expect(box.y).toBeGreaterThanOrEqual(titleBox.y);
+    expect(box.y).toBeLessThan(titleBox.y + titleBox.height);
+  }
+  await page.screenshot({
+    path: `test-results/gui-history-heading-actions-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
   const disclosure = page.locator(".history-filter-disclosure");
   await expect(disclosure).not.toHaveAttribute("open");
-  await disclosure.locator(":scope > summary").click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(page.getByLabel("Source", { exact: true })).toHaveAttribute(
     "data-value",
     "spotify_import",
   );
-  await disclosure.locator(":scope > summary").click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(page.getByLabel("Source", { exact: true })).toBeHidden();
   await expect(page).toHaveURL(/source=spotify_import/);
   await page.reload();
@@ -1648,7 +1679,7 @@ test("selected filters and source-entry checkboxes stay compact", async ({
   page,
 }) => {
   await login(page, "/history?period=all");
-  await page.locator(".history-filter-disclosure > summary").click();
+  await page.getByRole("button", { name: "Filters", exact: true }).click();
   await page.getByLabel("Find artist").fill("Seed");
   await page
     .getByRole("button", { name: "Seed artist · Seed song", exact: true })

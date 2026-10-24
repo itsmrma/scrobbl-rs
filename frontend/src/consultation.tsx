@@ -1182,6 +1182,8 @@ export function HistoryPage({
     isBool,
   );
   const filterAnimation = useRef<Animation | null>(null);
+  const filterDetails = useRef<HTMLDetailsElement | null>(null);
+  const filtersId = useId();
   useEffect(() => () => filterAnimation.current?.cancel(), []);
   const [draft, setDraft] = useState(params.get("q") || "");
   const search = useSearch();
@@ -1205,19 +1207,61 @@ export function HistoryPage({
       albums_page: "1",
       tracks_page: "1",
     });
+  function toggleFilters() {
+    const details = filterDetails.current;
+    if (!details) return;
+    const form = details.querySelector("form")!;
+    const opening = !filtersOpen;
+    const from = details.open ? form.getBoundingClientRect().height : 0;
+    filterAnimation.current?.cancel();
+    details.open = true;
+    const to = opening ? form.scrollHeight : 0;
+    setFiltersOpen(opening);
+    details.open = true;
+    form.style.overflow = "hidden";
+    const animation = form.animate(
+      [
+        { height: `${from}px`, opacity: opening ? 0 : 1 },
+        { height: `${to}px`, opacity: opening ? 1 : 0 },
+      ],
+      {
+        duration: matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? 0
+          : 160,
+        easing: "ease-out",
+      },
+    );
+    filterAnimation.current = animation;
+    animation.finished
+      .then(() => {
+        details.open = opening;
+        form.style.overflow = "";
+        filterAnimation.current = null;
+      })
+      .catch(() => {});
+  }
   if (!visible) return null;
   return (
     <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
-        <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
-          Search and combine period, artist, album and source filters.{" "}
-        </Heading>
-      )}
-      {!embedded && (
-        <div className="history-actions">
-          <Link className="button secondary" to="/review">
-            <Icon>rule</Icon>Review possible duplicates
-          </Link>
+        <div className="history-heading">
+          <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
+            Search and combine period, artist, album and source filters.
+          </Heading>
+          <div className="history-actions">
+            <Link className="button secondary" to="/review">
+              <Icon>rule</Icon>Review possible duplicates
+            </Link>
+            <button
+              className="secondary"
+              aria-expanded={filtersOpen}
+              aria-controls={filtersId}
+              onClick={toggleFilters}
+            >
+              <Icon>tune</Icon>Filters
+              <Icon>{filtersOpen ? "expand_less" : "expand_more"}</Icon>
+            </button>
+          </div>
         </div>
       )}
       {!embedded && params.get("track") && (
@@ -1227,46 +1271,17 @@ export function HistoryPage({
         />
       )}
       <details
+        id={filtersId}
         className="history-filter-disclosure panel"
         ref={(node) => {
+          filterDetails.current = node;
           if (node && !filterAnimation.current) node.open = filtersOpen;
         }}
       >
         <summary
           onClick={(event) => {
             event.preventDefault();
-            const details = event.currentTarget
-              .parentElement as HTMLDetailsElement;
-            const form = details.querySelector("form")!;
-            const opening = !filtersOpen;
-            const from = details.open ? form.getBoundingClientRect().height : 0;
-            filterAnimation.current?.cancel();
-            details.open = true;
-            const to = opening ? form.scrollHeight : 0;
-            setFiltersOpen(opening);
-            // Keep native details open during closing; collapse only after the motion.
-            details.open = true;
-            form.style.overflow = "hidden";
-            const animation = form.animate(
-              [
-                { height: `${from}px`, opacity: opening ? 0 : 1 },
-                { height: `${to}px`, opacity: opening ? 1 : 0 },
-              ],
-              {
-                duration: matchMedia("(prefers-reduced-motion: reduce)").matches
-                  ? 0
-                  : 160,
-                easing: "ease-out",
-              },
-            );
-            filterAnimation.current = animation;
-            animation.finished
-              .then(() => {
-                details.open = opening;
-                form.style.overflow = "";
-                filterAnimation.current = null;
-              })
-              .catch(() => {});
+            toggleFilters();
           }}
         >
           <Icon>tune</Icon>
@@ -1518,42 +1533,46 @@ export function MusicPage({
   }, [result.data?.id]);
   return (
     <>
-      <BackButton fallback={`/rankings/${kind}?${context(selection.params)}`} />
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <>
           <div className="music-heading">
             <Cover url={result.data.cover_url} large />
             <div className="music-header-content" ref={introduction}>
-              <Heading
-                title={result.data.name}
-                eyebrow={kind.slice(0, -1).toUpperCase()}
-              >
-                {kind === "albums"
-                  ? "Album by "
-                  : kind === "tracks"
-                    ? "Track by "
-                    : ""}
-                {result.data.artists.map((a, i) => (
-                  <span key={a.id}>
-                    {i > 0 && ", "}
-                    <Link to={musicLink("artists", a.id, params)}>
-                      {a.name}
-                    </Link>
-                  </span>
-                ))}
-                {result.data.album_id && (
-                  <>
-                    {" "}
-                    ·{" "}
-                    <Link
-                      to={musicLink("albums", result.data.album_id, params)}
-                    >
-                      {result.data.album}
-                    </Link>
-                  </>
-                )}
-              </Heading>
+              <div className="music-title-row">
+                <Heading
+                  title={result.data.name}
+                  eyebrow={kind.slice(0, -1).toUpperCase()}
+                >
+                  {kind === "albums"
+                    ? "Album by "
+                    : kind === "tracks"
+                      ? "Track by "
+                      : ""}
+                  {result.data.artists.map((a, i) => (
+                    <span key={a.id}>
+                      {i > 0 && ", "}
+                      <Link to={musicLink("artists", a.id, params)}>
+                        {a.name}
+                      </Link>
+                    </span>
+                  ))}
+                  {result.data.album_id && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <Link
+                        to={musicLink("albums", result.data.album_id, params)}
+                      >
+                        {result.data.album}
+                      </Link>
+                    </>
+                  )}
+                </Heading>
+                <BackButton
+                  fallback={`/rankings/${kind}?${context(selection.params)}`}
+                />
+              </div>
               <MusicActions kind={kind} id={id} />
               <div className="music-period">
                 <PeriodFilters selection={selection} />
