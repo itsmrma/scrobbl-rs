@@ -135,6 +135,45 @@ export function Now({
   const { data, error, browserTiming, browserCommit } = useContext(NowContext);
   const [expanded, setExpanded] = useState(false);
   const [clock, setClock] = useState(Date.now());
+  const titleText = useRef<HTMLSpanElement>(null);
+  useLayoutEffect(() => {
+    const text = titleText.current;
+    const container = text?.parentElement;
+    if (!compact || !text || !container) return;
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)");
+    let animation: Animation | undefined;
+    const update = () => {
+      animation?.cancel();
+      const distance = text.scrollWidth - container.clientWidth;
+      if (reduced.matches || !container.clientWidth || distance < 1) return;
+      const end = `translateX(-${distance}px)`;
+      animation = text.animate(
+        [
+          { transform: "translateX(0)", offset: 0 },
+          { transform: "translateX(0)", offset: 0.1 },
+          { transform: end, offset: 0.45 },
+          { transform: end, offset: 0.55 },
+          { transform: "translateX(0)", offset: 0.9 },
+          { transform: "translateX(0)", offset: 1 },
+        ],
+        {
+          duration: Math.max(5000, Math.min(30000, 2000 + distance * 80)),
+          iterations: Infinity,
+          easing: "linear",
+        },
+      );
+    };
+    const observer = new ResizeObserver(update);
+    observer.observe(text);
+    observer.observe(container);
+    reduced.addEventListener("change", update);
+    update();
+    return () => {
+      observer.disconnect();
+      reduced.removeEventListener("change", update);
+      animation?.cancel();
+    };
+  }, [compact, data?.title]);
   useEffect(() => {
     if (!compact || !data) return;
     setClock(Date.now());
@@ -153,26 +192,28 @@ export function Now({
   if (compact)
     return (
       <div
-        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded ? "artwork-expanded" : ""}`}
+        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""}`}
         aria-label="Now playing"
       >
         <Cover url={data?.cover_url} />
-        <button
-          className="icon-button now-expand-toggle nav-copy"
-          aria-label={
-            expanded
-              ? "Collapse now playing artwork"
-              : "Expand now playing artwork"
-          }
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
-        </button>
+        {data?.cover_url && (
+          <button
+            className="icon-button now-expand-toggle nav-copy"
+            aria-label={
+              expanded
+                ? "Collapse now playing artwork"
+                : "Expand now playing artwork"
+            }
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
+          </button>
+        )}
         <div
           className="now-artwork-expansion nav-copy"
-          aria-hidden={!expanded}
-          inert={!expanded}
+          aria-hidden={!expanded || !data?.cover_url}
+          inert={!expanded || !data?.cover_url}
         >
           <div>
             {data?.cover_url ? (
@@ -195,13 +236,20 @@ export function Now({
           {data ? (
             <>
               <Link
+                className="playback-title"
                 to={
                   data.track_id
                     ? musicLink("tracks", data.track_id)
                     : "/music/now-playing"
                 }
               >
-                {data.title}
+                <span
+                  className="playback-title-text"
+                  ref={titleText}
+                  title={data.title}
+                >
+                  {data.title}
+                </span>
               </Link>
               <span>{data.artists.map((a) => a.name).join(", ")}</span>
             </>

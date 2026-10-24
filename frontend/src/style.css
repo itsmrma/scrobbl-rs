@@ -4424,6 +4424,18 @@ dialog {
 .sidebar-now .playback-copy > a {
   font-size: 12px;
 }
+.sidebar-now .playback-copy > .playback-title {
+  text-overflow: clip;
+}
+.sidebar-now .playback-copy .playback-title-text {
+  display: block;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
+  white-space: nowrap;
+  font-size: inherit;
+  line-height: inherit;
+}
 .sidebar-now .playback-copy > span {
   font-size: 11px;
 }
@@ -6261,5 +6273,126 @@ dialog {
 @media (max-width: 600px) {
   .profile-photo-row {
     gap: 16px;
+  }
+}
+
+/* Delay the resize affordance until the pointer settles at the edge. */
+.sidebar-resizer {
+  background: transparent;
+  transition: background-color 100ms;
+}
+.sidebar-resizer:hover {
+  transition-delay: 350ms;
+}
+.sidebar-resizer:focus-visible,
+.sidebar-resizer:active {
+  transition-delay: 0ms;
+  background: var(--focus);
+}
+.spotify-details .connection-monitor > summary > span:first-child,
+.spotify-details .guide details > summary > span:first-child {
+  flex: 1;
+}
+.spotify-details .guide details > summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  list-style: none;
+  padding: 18px;
+  font-weight: 600;
+}
+.spotify-details .guide details > summary::-webkit-details-marker {
+  display: none;
+}
+.spotify-details .guide details > summary::marker {
+  content: "";
+}
+.spotify-details
+  .connection-monitor
+  > summary
+  > .material-icons-outlined:last-child,
+.spotify-details
+  .guide
+  details
+  > summary
+  > .material-icons-outlined:last-child {
+  transition: transform 160ms ease;
+}
+.spotify-details
+  .connection-monitor[open]
+  > summary
+  > .material-icons-outlined:last-child,
+.spotify-details
+  .guide
+  details[open]
+  > summary
+  > .material-icons-outlined:last-child {
+  transform: rotate(180deg);
+}
+.listenbrainz-method,
+.listenbrainz-import .import-help,
+.activity-detail > p {
+  max-width: none;
+}
+.review-views {
+  padding: 0;
+  border: 0;
+  gap: 4px;
+}
+.review-views button {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.collage-body {
+  display: grid;
+  grid-template-columns: minmax(0, 600px) minmax(220px, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.collage-tile > .cover.large {
+  aspect-ratio: auto;
+  object-fit: cover;
+}
+.collage-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 600px;
+  overflow: auto;
+}
+.collage-legend li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.collage-legend a {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  text-decoration: none;
+  font-size: 12px;
+}
+.collage-legend a > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.collage-legend strong {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.collage-legend progress {
+  width: 100%;
+  height: 3px;
+  margin-top: 8px;
+  accent-color: var(--chart-accent);
+}
+@media (max-width: 1000px) {
+  .collage-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .collage-legend {
+    max-height: 320px;
   }
 }

@@ -2446,6 +2446,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   page,
   browserName,
 }) => {
+  let songTitle = "A song with a long title for the sidebar";
   await page.route("**/api/spotify/status", async (route) => {
     const response = await route.fetch();
     await route.fulfill({
@@ -2456,25 +2457,51 @@ test("sidebar playback card displays artwork, progress and remains usable collap
       },
     });
   });
+  await page.route("https://i.scdn.co/image/sidebar", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#7c9bac"/></svg>',
+    }),
+  );
   await page.route("**/api/spotify/now-playing", (route) =>
     route.fulfill({
-      json: {
-        title: "A song with a long title for the sidebar",
-        artists: [{ id: "artist", name: "An artist with a long name" }],
-        album: "Album",
-        cover_url: null,
-        spotify_url: "https://open.spotify.com/track/0000000000000000000088",
-        duration_ms: 180000,
-        progress_ms: 45000,
-        response_received_at_ms: Date.now(),
-        observed_at_ms: Date.now(),
-      },
+      json: songTitle
+        ? {
+            title: songTitle,
+            artists: [{ id: "artist", name: "An artist with a long name" }],
+            album: "Album",
+            cover_url: "https://i.scdn.co/image/sidebar",
+            spotify_url:
+              "https://open.spotify.com/track/0000000000000000000088",
+            duration_ms: 180000,
+            progress_ms: 45000,
+            response_received_at_ms: Date.now(),
+            observed_at_ms: Date.now(),
+          }
+        : null,
     }),
   );
   await login(page);
   const widget = page.locator(".sidebar-now");
   await expect(widget.getByRole("link")).toContainText("A song");
   await expect(widget.getByRole("progressbar")).toBeVisible();
+  const titleText = widget.locator(".playback-title-text");
+  await expect
+    .poll(() => titleText.evaluate((node) => node.getAnimations().length))
+    .toBe(1);
+  const frames = await titleText.evaluate((node) =>
+    node
+      .getAnimations()[0]
+      .effect.getKeyframes()
+      .map((frame) => frame.transform),
+  );
+  expect(frames[0]).toBe(frames.at(-1));
+  expect(frames.some((frame) => frame.includes("translateX(-"))).toBe(true);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() => titleText.evaluate((node) => node.getAnimations().length))
+    .toBe(0);
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   const lefts = await widget
     .locator(".playback-copy")
     .locator(":scope > small, :scope > a, :scope > span")
@@ -2533,6 +2560,26 @@ test("sidebar playback card displays artwork, progress and remains usable collap
     .getByRole("button", { name: "Collapse sidebar", exact: true })
     .click();
   await expect(widget.getByRole("progressbar")).toBeHidden();
+  songTitle = "Short";
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Expand sidebar", exact: true })
+    .click();
+  await expect(
+    widget.getByRole("link", { name: "Short", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => titleText.evaluate((node) => node.getAnimations().length))
+    .toBe(0);
+  // No song after the expanded state: never leave a large empty music-note panel.
+  await widget
+    .getByRole("button", { name: "Expand now playing artwork", exact: true })
+    .click();
+  songTitle = "";
+  await page.reload();
+  await expect(widget).toContainText("Nothing playing");
+  await expect(widget.locator(".now-expand-toggle")).toHaveCount(0);
+  expect((await widget.boundingBox()).height).toBeLessThan(110);
 });
 test("first star accepts half a star and album listen rows stay compact", async ({
   page,
@@ -2673,10 +2720,9 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
     })),
   );
   expect(cells.reduce((sum, t) => sum + t.w * t.h, 0)).toBeCloseTo(1, 5);
-  for (const cell of await collage.locator(".collage-tile").all()) {
-    const box = await cell.boundingBox();
-    expect(Math.abs(box.width - box.height)).toBeLessThan(1);
-  }
+  await expect(
+    collage.getByRole("list", { name: "Collage listening shares" }),
+  ).toBeVisible();
   await expect(
     albums.getByRole("button", { name: "Collage", exact: true }),
   ).toHaveCSS("outline-style", "solid");
@@ -3270,7 +3316,7 @@ test("album evidence aligns with closed columns and disclosures animate", async 
   expect(reduced).toEqual({ open: false, animations: 0 });
 });
 
-test("weighted collages retain square tiles across sizes and exports", async ({
+test("weighted collages preserve listening share across sizes and exports", async ({
   page,
   browserName,
 }) => {
@@ -3324,7 +3370,11 @@ test("weighted collages retain square tiles across sizes and exports", async ({
     );
     expect(boxes[0].w).toBeGreaterThan(boxes.at(-1).w * 1.5);
     for (let i = 0; i < boxes.length; i++) {
-      expect(Math.abs(boxes[i].w - boxes[i].h)).toBeLessThan(1);
+      const expectedRatio = Math.max(1, Math.round(400 / 2 ** (i / 2))) / 400;
+      expect((boxes[i].w * boxes[i].h) / (boxes[0].w * boxes[0].h)).toBeCloseTo(
+        expectedRatio,
+        3,
+      );
       for (let j = i + 1; j < boxes.length; j++)
         expect(
           Math.max(
@@ -3358,4 +3408,124 @@ test("weighted collages retain square tiles across sizes and exports", async ({
   expect(png.readUInt32BE(20)).toBe(
     Math.round((box.height / box.width) * 1200) + 120,
   );
+});
+
+test("returning from music edits keeps the original back destination", async ({
+  page,
+}) => {
+  await login(page, "/rankings/artists?period=all&sort=time");
+  for (const action of ["Back to artist", "Cancel", "Save details"]) {
+    await page
+      .getByRole("link", { name: "Seed artist", exact: true })
+      .first()
+      .click();
+    const artistURL = page.url();
+    await page
+      .getByRole("link", { name: "Edit details & image", exact: true })
+      .click();
+    await page
+      .getByRole(action === "Save details" ? "button" : "link", {
+        name: action,
+        exact: true,
+      })
+      .click();
+    await expect(page).toHaveURL(artistURL);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(page).toHaveURL(/rankings\/artists\?period=all&sort=time$/);
+  }
+});
+
+test("artwork reports expose a saved pause and a slow completion estimate", async ({
+  page,
+}) => {
+  await login(page, "/activities");
+  const jobs = await (await page.request.get("/api/v1/activities")).json();
+  const job = jobs.find((j) => j.kind === "artwork");
+  await page.goto("/activities/" + job.id);
+  await expect(page.locator(".artwork-estimate")).toContainText(
+    "Estimated finish:",
+  );
+  await page
+    .getByRole("button", { name: "Pause downloads", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Resume downloads", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".artwork-estimate")).toContainText(
+    "after you resume",
+  );
+  await page
+    .getByRole("button", { name: "Resume downloads", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Pause downloads", exact: true }),
+  ).toBeVisible();
+});
+
+test("connection disclosures and import layout use the available card width", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await login(page, "/settings/connections");
+  const card = page.locator(".spotify-card");
+  if (!(await card.evaluate((e) => e.open)))
+    await card.locator("summary").first().click();
+  for (const label of [
+    "Collection status & diagnostics",
+    "Refresh intervals",
+  ]) {
+    const summary = card.getByText(label, { exact: true }).locator("..");
+    await expect(summary.locator(".material-icons-outlined")).toHaveText(
+      "expand_more",
+    );
+  }
+  await card
+    .getByText("Connect on a private server with HTTPS", { exact: true })
+    .click();
+  const guide = card
+    .locator(".guide")
+    .filter({ hasText: "Connect on a private server with HTTPS" });
+  await expect(guide).not.toContainText("AdGuard");
+  await expect(
+    guide.getByText("Use a free DuckDNS name", { exact: true }),
+  ).toBeVisible();
+  await page.goto("/import");
+  const panel = page.locator(".listenbrainz-import");
+  const drop = panel.locator(".upload-dropzone");
+  await expect(drop).toBeVisible();
+  expect((await drop.boundingBox()).width).toBeGreaterThan(
+    (await panel.boundingBox()).width * 0.9,
+  );
+  const resize = page.locator(".sidebar-resizer");
+  await resize.hover();
+  await expect(resize).toHaveCSS("transition-delay", "0.35s");
+  await page.screenshot({
+    path: "test-results/gui-wide-import.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+});
+
+test("duplicate review controls share a height with flagged history first", async ({
+  page,
+}) => {
+  await login(page, "/review");
+  const controls = page.locator(".review-controls");
+  const history = controls.getByRole("link", {
+    name: "Flagged history",
+    exact: true,
+  });
+  const comparisons = controls.getByRole("button", {
+    name: "Comparisons",
+    exact: true,
+  });
+  const trash = controls.getByRole("button", { name: "Trash", exact: true });
+  await expect(history).toBeVisible();
+  const boxes = await Promise.all(
+    [history, comparisons, trash].map((e) => e.boundingBox()),
+  );
+  expect(boxes[0].x).toBeLessThan(boxes[1].x);
+  expect(Math.abs(boxes[0].height - boxes[1].height)).toBeLessThan(1);
+  expect(Math.abs(boxes[0].height - boxes[2].height)).toBeLessThan(1);
 });

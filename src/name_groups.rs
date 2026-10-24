@@ -122,14 +122,14 @@ pub async fn members(
         "main.albums e JOIN main.tracks t ON t.album_id=e.id"
     };
     let sql = format!(
-        "SELECT e.id,e.name,MIN(t.title) AS sample,COUNT(DISTINCT t.id) AS tracks,COUNT(DISTINCT l.id) AS listens FROM {source} JOIN name_group_members m ON m.entity_id=e.id AND m.kind=? LEFT JOIN listens l ON l.track_id=t.id AND l.trashed_at_ms IS NULL AND l.counted=1 WHERE m.group_id=? AND (e.name LIKE ? ESCAPE '\\' OR t.title LIKE ? ESCAPE '\\') GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 25 OFFSET ?"
+        "SELECT e.id,e.name,MIN(t.title) AS sample,COUNT(DISTINCT t.id) AS tracks,COUNT(DISTINCT l.id) AS listens FROM {source} JOIN name_group_members m ON m.entity_id=e.id AND m.kind=? LEFT JOIN listens l ON l.track_id=t.id AND l.trashed_at_ms IS NULL AND l.counted=1 WHERE m.group_id=? AND (e.name LIKE ? ESCAPE '\\' OR t.title LIKE ? ESCAPE '\\') GROUP BY e.id ORDER BY e.name COLLATE NOCASE,e.id LIMIT 24 OFFSET ?"
     );
     let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&kind)
         .bind(&id)
         .bind(&pattern)
         .bind(&pattern)
-        .bind((page - 1) * 25)
+        .bind((page - 1) * 24)
         .fetch_all(&mut *conn)
         .await?;
     let total:i64=sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(DISTINCT e.id) FROM {source} JOIN name_group_members m ON m.entity_id=e.id AND m.kind=? WHERE m.group_id=? AND (e.name LIKE ? ESCAPE '\\' OR t.title LIKE ? ESCAPE '\\')"))).bind(&kind).bind(&id).bind(&pattern).bind(&pattern).fetch_one(&mut *conn).await?;

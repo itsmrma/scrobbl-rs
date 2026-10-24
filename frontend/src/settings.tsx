@@ -365,7 +365,10 @@ function HttpsGuide() {
         on 127.0.0.1 can continue with its loopback callback.
       </p>
       <details>
-        <summary>I don’t have a domain — use DuckDNS</summary>
+        <summary>
+          <span>Use a free DuckDNS name</span>
+          <Icon>expand_more</Icon>
+        </summary>
         <ol>
           <li>
             Register a free name at{" "}
@@ -382,13 +385,18 @@ function HttpsGuide() {
           </li>
           <li>
             Resolve that exact hostname to your reverse proxy’s private LAN
-            address. In AdGuard Home, add a DNS rewrite for the exact name. VPN
-            clients must use DNS that resolves and reaches that address.
+            address. Configure a local DNS record in your router, DNS resolver
+            or VPN DNS settings. Use whichever service manages DNS on your
+            network; all clients must resolve the name to that reachable private
+            address.
           </li>
         </ol>
       </details>
       <details>
-        <summary>I already have a domain</summary>
+        <summary>
+          <span>Use your own domain</span>
+          <Icon>expand_more</Icon>
+        </summary>
         <ol>
           <li>
             Choose a subdomain you control and resolve it to your proxy’s
@@ -850,7 +858,10 @@ export function Connections({
             </li>
           </ol>
           <details className="connection-monitor" open={status.connected}>
-            <summary>Collection status &amp; diagnostics</summary>
+            <summary>
+              <span>Collection status &amp; diagnostics</span>
+              <Icon>expand_more</Icon>
+            </summary>
             <p>
               Authorization and collection are separate. A saved authorization
               is not a continuous health check.
@@ -943,7 +954,10 @@ export function Connections({
             )}
           </details>
           <details className="connection-monitor">
-            <summary>Refresh intervals</summary>
+            <summary>
+              <span>Refresh intervals</span>
+              <Icon>expand_more</Icon>
+            </summary>
             <RefreshIntervals status={status} refresh={refresh} />
           </details>
           <p>

@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
 import { useLoad } from "./load";
-import { Link, navigate } from "./navigation";
+import { Link, returnTo } from "./navigation";
 import { Cover, ErrorText, Heading, Icon, useToast } from "./ui";
 import type { Kind } from "./selection";
 
@@ -231,7 +231,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
   }, [file]);
   return (
     <>
-      <Link to={back} className="back-link button secondary">
+      <Link to={back} back className="back-link button secondary">
         <Icon>arrow_back</Icon>Back to{" "}
         {kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}
       </Link>
@@ -257,7 +257,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                     rating,
                   });
                   toast("Details saved.");
-                  navigate(back);
+                  returnTo(back);
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e));
                 } finally {
@@ -295,7 +295,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                 <button className="primary" disabled={busy}>
                   {busy ? "Saving…" : "Save details"}
                 </button>
-                <Link className="button secondary" to={back}>
+                <Link className="button secondary" to={back} back>
                   Cancel
                 </Link>
               </div>

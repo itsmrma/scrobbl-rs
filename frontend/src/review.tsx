@@ -320,6 +320,12 @@ export function ReviewPage({
         stay saved, and you can undo each decision below.
       </Heading>
       <div className="review-toolbar review-controls">
+        <Link
+          className="button secondary"
+          to="/history?status=review&period=all"
+        >
+          <Icon>arrow_back</Icon>Flagged history
+        </Link>
         <div className="review-views" role="group" aria-label="Review views">
           <button
             className="secondary"
@@ -336,12 +342,6 @@ export function ReviewPage({
             <Icon>delete_outline</Icon>Trash
           </button>
         </div>
-        <Link
-          className="button secondary"
-          to="/history?status=review&period=all"
-        >
-          <Icon>arrow_back</Icon>Flagged history
-        </Link>
         <button
           className="secondary icon-button"
           aria-label="Refresh review"

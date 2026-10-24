@@ -53,6 +53,19 @@ export function navigate(path: string) {
   );
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
+export function returnTo(path: string) {
+  const current = navigationState();
+  if (
+    current.back &&
+    new URL(current.back.url, location.href).pathname ===
+      new URL(path, location.href).pathname
+  ) {
+    history.go(current.back.index - current.index);
+  } else {
+    history.replaceState({ scrobblNavigation: current }, "", destination(path));
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  }
+}
 export function BackButton({ fallback }: { fallback: string }) {
   const current = navigationState();
   return (
@@ -71,9 +84,11 @@ export function BackButton({ fallback }: { fallback: string }) {
 export function Link({
   to,
   children,
+  back = false,
   ...props
 }: {
   to: string;
+  back?: boolean;
   children: ReactNode;
   className?: string;
   style?: CSSProperties;
@@ -99,7 +114,8 @@ export function Link({
         )
           return;
         event.preventDefault();
-        navigate(to);
+        if (back) returnTo(to);
+        else navigate(to);
       }}
     >
       {children}

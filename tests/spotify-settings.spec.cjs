@@ -7,10 +7,24 @@ async function openSpotify(page) {
   if (!(await card.evaluate((element) => element.open)))
     await card.locator("summary").first().click();
   const intervals = card.locator(".connection-monitor").filter({
-    has: page.locator("summary").filter({ hasText: /^Refresh intervals$/ }),
+    has: page
+      .locator("summary > span")
+      .filter({ hasText: /^Refresh intervals$/ }),
   });
   if (!(await intervals.evaluate((element) => element.open)))
     await intervals.locator("summary").click();
+  // Inputs can be visible before WebKit finishes resizing the enclosing details.
+  // Wait for the finite disclosure animations before clicking the form controls.
+  await card.evaluate((element) =>
+    Promise.all(
+      element
+        .getAnimations({ subtree: true })
+        .filter((animation) =>
+          Number.isFinite(animation.effect?.getTiming().iterations),
+        )
+        .map((animation) => animation.finished.catch(() => {})),
+    ),
+  );
 }
 
 test("Spotify intervals save on the server, survive reload and are shared; API keys belongs to Settings", async ({

@@ -137,8 +137,19 @@ impl Storage {
         {
             return Ok(None);
         }
-        Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
+        Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
             .bind(auth::now_ms()).bind(kind).bind(auth::now_ms()).fetch_optional(&self.writer).await?)
+    }
+    /// User pause is a durable waiting state, excluded from automatic claims.
+    pub async fn pause_artwork(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_paused',attempt=attempt+1,updated_at_ms=? WHERE id=? AND kind='artwork' AND state IN ('queued','running','waiting')")
+            .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+        Ok(())
+    }
+    pub async fn resume_artwork(&self, id: &str) -> Result<()> {
+        sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_pacing',updated_at_ms=? WHERE id=? AND kind='artwork' AND state='waiting' AND error_code='artwork_paused'")
+            .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+        Ok(())
     }
     pub async fn cancel(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE jobs SET cancel_requested=1,state='cancelled',updated_at_ms=? WHERE id=? AND state IN ('queued','waiting','running')")

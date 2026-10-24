@@ -127,7 +127,7 @@ pub async fn detail(
     }
 
     Ok(Json(ActivityDetail {
-        source_parameters: if job.kind.starts_with("listenbrainz_") {Some(serde_json::from_str(&job.parameters_json).map_err(|_|AppError::Internal)?)}else{None},
+        source_parameters: if job.kind == "artwork" { Some(serde_json::json!({"interval_ms": crate::artwork::IMAGE_INTERVAL_MS, "next_at_ms": crate::db::setting(&state.db,"artwork_background_next_at_ms").await?.and_then(|v|v.parse::<i64>().ok())})) } else if job.kind.starts_with("listenbrainz_") {Some(serde_json::from_str(&job.parameters_json).map_err(|_|AppError::Internal)?)}else{None},
         issues: sqlx::query_as("SELECT member,row_number,reason FROM source_occurrences WHERE job_id=? AND (outcome='invalid' OR (? LIKE 'listenbrainz_%' AND reason IS NOT NULL)) ORDER BY member,row_number LIMIT 100 OFFSET ?").bind(&id).bind(&job.kind).bind(i64::from(query.issues_page)*100).fetch_all(&mut *view.transaction).await?,
         activity: present(&mut view.transaction, job).await?,
         members,
@@ -182,6 +182,8 @@ pub async fn action(
             .await?;
     }
     match form.action.as_str() {
+        "pause" if job.kind == "artwork" => state.storage.pause_artwork(&id).await?,
+        "resume" if job.kind == "artwork" => state.storage.resume_artwork(&id).await?,
         "cancel" => state.storage.cancel(&id).await?,
         "retry" => state.storage.retry(&id).await?,
         _ => return Err(AppError::BadRequest("Unknown activity action.".into())),

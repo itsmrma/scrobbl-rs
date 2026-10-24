@@ -122,11 +122,11 @@ export function NameGroup({ kind, id }: { kind: string; id: string }) {
               Previous entries
             </button>
             <span>
-              Page {page} of {Math.max(1, Math.ceil(result.data.total / 25))}
+              Page {page} of {Math.max(1, Math.ceil(result.data.total / 24))}
             </span>
             <button
               className="secondary"
-              disabled={busy || page * 25 >= result.data.total}
+              disabled={busy || page * 24 >= result.data.total}
               onClick={() => {
                 setPage((p) => p + 1);
                 setSelected([]);

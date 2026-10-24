@@ -52,7 +52,8 @@ export function passwordChecks(password: string, username = "") {
           ].includes(compact)),
     },
     {
-      label: "Within the 1024-byte limit",
+      label: "Password is too long. Try a shorter passphrase.",
+      hidden: true,
       met: new TextEncoder().encode(password).length <= 1024,
     },
   ];
@@ -68,12 +69,14 @@ export function PasswordFeedback({
     <div className="password-guidance" id="password-guidance">
       <p>Choose a unique password. You can paste from a password manager.</p>
       <ul>
-        {passwordChecks(password, username).map(({ label, met }) => (
-          <li key={label} className={met ? "requirement-met" : ""}>
-            <Icon>{met ? "check_circle" : "radio_button_unchecked"}</Icon>
-            {label}
-          </li>
-        ))}
+        {passwordChecks(password, username)
+          .filter((check) => !check.hidden || !check.met)
+          .map(({ label, met }) => (
+            <li key={label} className={met ? "requirement-met" : ""}>
+              <Icon>{met ? "check_circle" : "radio_button_unchecked"}</Icon>
+              {label}
+            </li>
+          ))}
       </ul>
     </div>
   );

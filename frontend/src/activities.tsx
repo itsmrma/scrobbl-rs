@@ -13,6 +13,10 @@ const jobMessage = (code: string) => {
       "Connect Spotify in Settings to download the queued artwork. The queue is saved and resumes automatically.",
     artwork_provider_wait:
       "Spotify or its image server requested a pause, or could not be reached. Saved images remain available; downloads resume automatically.",
+    artwork_paused:
+      "Downloads are paused. Saved images and progress are kept, including after an application restart.",
+    artwork_pacing:
+      "Downloading slowly in the background to leave capacity for live listening updates.",
     artwork_capacity_wait: "Waiting for another artwork download to finish.",
     coverage_uncertain_use_official_zip:
       "Coverage is uncertain. Saved listens are retained. Upload the official ListenBrainz ZIP to complete this interval safely.",
@@ -78,24 +82,28 @@ export const activityName = (job: Activity) =>
     ? "Recalculate assigned calendar"
     : job.filename || `${job.kind.replaceAll("_", " ")} activity`;
 const stateLabel = (job: Activity) =>
-  ({
-    queued: "Queued",
-    running: "In progress",
-    waiting: "Waiting to retry",
-    completed:
-      job.outcome === "partial"
-        ? "Partially complete — review report"
-        : job.outcome === "no_music"
-          ? "No music found"
-          : "Complete",
-    failed: "Needs attention",
-    cancelled: "Cancelled",
-  })[job.state] || job.state;
+  job.error_code === "artwork_paused"
+    ? "Paused"
+    : {
+        queued: "Queued",
+        running: "In progress",
+        waiting: "Waiting to retry",
+        completed:
+          job.outcome === "partial"
+            ? "Partially complete — review report"
+            : job.outcome === "no_music"
+              ? "No music found"
+              : "Complete",
+        failed: "Needs attention",
+        cancelled: "Cancelled",
+      }[job.state] || job.state;
 const phaseLabel = (job: Activity) =>
   job.kind === "artwork" && job.state === "waiting" && job.error_code
     ? {
         artwork_connection_required: "Waiting for Spotify connection",
         artwork_provider_wait: "Waiting before the next download",
+        artwork_paused: "Paused",
+        artwork_pacing: "Slow background download",
         artwork_capacity_wait: "Waiting for the download slot",
       }[job.error_code] || "Waiting to resume artwork"
     : {
@@ -225,6 +233,36 @@ export function ArtworkWork({
         {progress}
       </div>
     </article>
+  );
+}
+function ArtworkSchedule({
+  job,
+  params,
+  preferences,
+}: {
+  job: Activity;
+  params: unknown;
+  preferences: Preferences;
+}) {
+  const remaining = Math.max(0, (job.expected_rows || 0) - job.processed);
+  const schedule = params as {
+    interval_ms?: number;
+    next_at_ms?: number;
+  } | null;
+  const interval = schedule?.interval_ms;
+  if (!remaining || !interval) return null;
+  const hours = Math.ceil((remaining * interval) / 3600000);
+  const estimate =
+    Math.max(Date.now(), job.retry_at_ms || 0, schedule?.next_at_ms || 0) +
+    remaining * interval;
+  return (
+    <p className="artwork-estimate">
+      {job.error_code === "artwork_paused"
+        ? `About ${hours} hours of background work remaining after you resume.`
+        : `Estimated finish: ${date(estimate, preferences)} (about ${hours} hours remaining).`}{" "}
+      This is an estimate at one image per minute; Spotify cooldowns, time
+      offline and additional imports can extend it.
+    </p>
   );
 }
 export function Activities({
@@ -364,12 +402,25 @@ export function Activities({
                   </Link>
                 )}
               {job.kind === "artwork" && (
-                <p>
-                  Artwork is downloaded one image at a time and saved on this
-                  server. Spotify request limits are shared with browsing;
-                  requested pauses are respected. This continues with the
-                  browser closed and resumes after a server restart.
-                </p>
+                <>
+                  <p>
+                    Artwork downloads run slowly in the background, at most one
+                    image per minute, to reduce the risk of Spotify limiting
+                    requests and delaying live listening updates. Large
+                    libraries can take several days. Spotify shares its limits
+                    across requests, so additional cooldowns are always
+                    respected.
+                  </p>
+                  <p>
+                    You can close the browser. Saved images, progress and your
+                    pause choice survive application restarts.
+                  </p>
+                  <ArtworkSchedule
+                    job={job}
+                    params={detail.data?.source_parameters}
+                    preferences={preferences}
+                  />
+                </>
               )}
               {job.target_timezone && (
                 <p>
@@ -474,7 +525,13 @@ export function Activities({
                 job.phase !== "receiving" && (
                   <div className="connection-actions">
                     {(isActive(job)
-                      ? ["cancel"]
+                      ? job.kind === "artwork"
+                        ? [
+                            job.error_code === "artwork_paused"
+                              ? "resume"
+                              : "pause",
+                          ]
+                        : ["cancel"]
                       : ["failed", "cancelled"].includes(job.state) ||
                           (job.outcome === "partial" &&
                             job.kind !== "listenbrainz_fetch")
@@ -492,9 +549,13 @@ export function Activities({
                             await api.activityAction(job.id, action);
                             await refresh();
                             toast(
-                              action === "cancel"
-                                ? "Cancellation requested. Confirmed changes remain saved."
-                                : "Activity queued again. Confirmed rows will not be repeated.",
+                              action === "pause"
+                                ? "Artwork downloads paused. Saved progress is kept."
+                                : action === "resume"
+                                  ? "Artwork downloads resumed from saved progress."
+                                  : action === "cancel"
+                                    ? "Cancellation requested. Confirmed changes remain saved."
+                                    : "Activity queued again. Confirmed rows will not be repeated.",
                             );
                           } catch (e) {
                             setActionError(
@@ -509,17 +570,21 @@ export function Activities({
                           }
                         }}
                       >
-                        {action === "cancel"
-                          ? job.kind === "artwork"
-                            ? "Cancel downloads"
-                            : job.kind === "calendar"
-                              ? "Cancel recalculation"
-                              : "Cancel import"
-                          : job.kind === "artwork"
+                        {action === "pause"
+                          ? "Pause downloads"
+                          : action === "resume"
                             ? "Resume downloads"
-                            : job.kind === "calendar"
-                              ? "Retry recalculation"
-                              : "Retry import"}
+                            : action === "cancel"
+                              ? job.kind === "artwork"
+                                ? "Cancel downloads"
+                                : job.kind === "calendar"
+                                  ? "Cancel recalculation"
+                                  : "Cancel import"
+                              : job.kind === "artwork"
+                                ? "Resume downloads"
+                                : job.kind === "calendar"
+                                  ? "Retry recalculation"
+                                  : "Retry import"}
                       </button>
                     ))}
                   </div>

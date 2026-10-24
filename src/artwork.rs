@@ -8,6 +8,40 @@ use crate::{
 use sqlx::Row;
 use std::time::Duration;
 
+// Optional enrichment must remain a trickle beside live playback/collection.
+pub const IMAGE_INTERVAL_MS: i64 = 60_000;
+
+async fn background_slot(state: &AppState, lease: &Job, kind: &str, id: &str) -> Result<bool> {
+    let mut tx = state.db.begin().await?;
+    jobs::validate_lease(&mut tx, lease).await?;
+    let cached: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?))")
+        .bind(kind).bind(id).bind(auth::now_ms()).fetch_one(&mut *tx).await?;
+    if cached {
+        return Ok(true);
+    }
+    let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
+        .fetch_one(&state.private_db)
+        .await?;
+    if !connected {
+        return Ok(true);
+    }
+    let next: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='artwork_background_next_at_ms'")
+            .fetch_optional(&mut *tx)
+            .await?;
+    let next = next.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+    let now = auth::now_ms();
+    if next > now {
+        tx.rollback().await?;
+        wait(state, lease, "artwork_pacing", next - now).await?;
+        return Ok(false);
+    }
+    sqlx::query("INSERT INTO settings(key,value) VALUES('artwork_background_next_at_ms',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(now.saturating_add(IMAGE_INTERVAL_MS).to_string()).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Called inside the import's final transaction. Multiple imports share a queue.
 pub(crate) async fn enqueue_missing(conn: &mut sqlx::SqliteConnection) -> Result<()> {
     let pending: Option<String> = sqlx::query_scalar("SELECT id FROM jobs WHERE kind='artwork' AND state IN ('queued','running','waiting') ORDER BY created_at_ms,id LIMIT 1").fetch_optional(&mut *conn).await?;
@@ -70,7 +104,12 @@ pub async fn step(state: &AppState, lease: &Job) -> Result<bool> {
         .ok_or(AppError::Internal)?;
     let id = crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, id).await;
     let result = match id {
-        Ok(id) => library::ensure_artwork(state, &kind, &id).await,
+        Ok(id) => {
+            if !background_slot(state, lease, &kind, &id).await? {
+                return Ok(false);
+            }
+            library::ensure_artwork(state, &kind, &id).await
+        }
         Err(AppError::NotFound) => Ok(ArtworkFetch::Missing),
         Err(error) => Err(error),
     };
@@ -181,6 +220,67 @@ mod tests {
     }
     async fn cache_all(state: &AppState) {
         sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) SELECT kind,id,'spotify',x'89504E470D0A1A0A','image/png',0 FROM name_groups WHERE kind IN ('artists','albums')").execute(&state.db).await.unwrap();
+    }
+    #[tokio::test]
+    async fn background_cadence_and_user_pause_survive_restart_without_losing_progress() {
+        let (dir, state) = setup().await;
+        enqueue(&state).await;
+        cache_all(&state).await;
+        let lease = state.storage.claim("artwork").await.unwrap().unwrap();
+        assert!(step(&state, &lease).await.unwrap());
+        let lease = state.storage.job(&lease.id).await.unwrap();
+        sqlx::query("DELETE FROM artwork")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'test','test',9999999999999)")
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let before = auth::now_ms();
+        assert!(
+            background_slot(&state, &lease, "albums", "one")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !background_slot(&state, &lease, "albums", "two")
+                .await
+                .unwrap()
+        );
+        let paced = state.storage.job(&lease.id).await.unwrap();
+        assert_eq!(paced.error_code.as_deref(), Some("artwork_pacing"));
+        assert!(paced.retry_at_ms.unwrap() >= before + IMAGE_INTERVAL_MS);
+        state.storage.pause_artwork(&lease.id).await.unwrap();
+        assert!(step(&state, &lease).await.is_err());
+        let id = lease.id;
+        let config = state.config.clone();
+        state.storage.close().await;
+        drop(state);
+        let state = AppState::new(storage::open(dir.path()).await.unwrap(), config);
+        enqueue(&state).await;
+        let paused = state.storage.job(&id).await.unwrap();
+        assert_eq!(paused.error_code.as_deref(), Some("artwork_paused"));
+        assert_eq!(paused.processed, 1);
+        assert!(state.storage.claim("artwork").await.unwrap().is_none());
+        state.storage.resume_artwork(&id).await.unwrap();
+        assert!(
+            state.storage.claim("artwork").await.unwrap().is_none(),
+            "resuming must not bypass the saved cooldown"
+        );
+        sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE id=?")
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let resumed = state.storage.claim("artwork").await.unwrap().unwrap();
+        assert_eq!(resumed.processed, 1);
+        assert!(
+            !background_slot(&state, &resumed, "albums", "two")
+                .await
+                .unwrap(),
+            "the saved cadence survives restart too"
+        );
     }
     #[tokio::test]
     async fn queue_coalesces_imports_reuses_saved_images_and_completes_without_spotify() {
