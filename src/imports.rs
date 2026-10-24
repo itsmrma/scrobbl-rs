@@ -213,14 +213,20 @@ pub async fn upload(
     };
     let result = receive_fields(&state, &id, &mut multipart).await;
     if let Err(error) = result {
-        sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code=?,retry_at_ms=NULL WHERE id=?")
+        sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code=?,retry_at_ms=NULL WHERE id=? AND cancel_requested=0 AND state='waiting'")
             .bind(error.to_string()).bind(&id).execute(&state.db).await?;
         return Err(AppError::BadRequest(format!(
             "{error} Upload report is in Activities. Fully received files are retained; upload the complete selection again to process it."
         )));
     }
-    sqlx::query("UPDATE jobs SET state='queued',phase='inventory',retry_at_ms=NULL,parameters_json=? WHERE id=?")
-        .bind(json!(state.config.import_limits).to_string()).bind(&id).execute(&state.db).await?;
+    let queued=sqlx::query("UPDATE jobs SET state='queued',phase='inventory',retry_at_ms=NULL,parameters_json=? WHERE id=? AND state='waiting' AND cancel_requested=0")
+        .bind(json!(state.config.import_limits).to_string()).bind(&id).execute(&state.db).await?.rows_affected();
+    if queued != 1 {
+        return Err(AppError::Conflict(
+            "Upload cancelled. Received files remain saved; upload again to start another import."
+                .into(),
+        ));
+    }
     Ok(Json(ImportResponse { job_id: id }))
 }
 async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -> Result<()> {
@@ -230,6 +236,7 @@ async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -
     let mut total = 0u64;
     let mut ordinal = 0usize;
     while let Some(field)=multipart.next_field().await.map_err(|_|AppError::BadRequest("Upload incomplete or request byte limit exceeded. Send the entire ZIP or selection again.".into()))? {
+        if state.storage.job(id).await?.cancel_requested { return Err(AppError::Conflict("Upload cancelled.".into())); }
         ordinal+=1;
         if ordinal>state.config.import_limits.files {return Err(AppError::BadRequest("Configured file-count limit exceeded.".into()));}
         let filename=field.file_name().unwrap_or("history.json").rsplit(['/', '\\']).next().unwrap_or("history.json").chars().filter(|c|!c.is_control()).take(200).collect::<String>();

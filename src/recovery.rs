@@ -19,6 +19,14 @@ use std::{
 pub const PACKED_LIMIT: u64 = 2 * 1024 * 1024 * 1024;
 const EXPANDED_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
 pub fn public_error(error: &anyhow::Error) -> &'static str {
+    if error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<crate::error::AppError>(),
+            Some(crate::error::AppError::Conflict(_))
+        )
+    }) {
+        return "Operation stopped before publication. Saved listens and completed copies remain available.";
+    }
     let full = error.chain().any(|cause| {
         cause
             .downcast_ref::<std::io::Error>()
@@ -550,10 +558,23 @@ pub async fn enqueue_asset(
     tx.commit().await?;
     Ok(id)
 }
+async fn active_job<'a>(
+    store: &'a Storage,
+    job: &crate::jobs::Job,
+) -> anyhow::Result<sqlx::Transaction<'a, sqlx::Sqlite>> {
+    let mut tx = store.writer.begin().await?;
+    crate::jobs::validate_lease(&mut tx, job).await?;
+    Ok(tx)
+}
+async fn finish_in(conn: &mut SqliteConnection, job: &crate::jobs::Job) -> anyhow::Result<()> {
+    sqlx::query("UPDATE jobs SET state='completed',phase='finished',outcome='complete',updated_at_ms=? WHERE id=? AND state='running' AND cancel_requested=0 AND attempt=?")
+        .bind(auth::now_ms()).bind(&job.id).bind(job.attempt).execute(conn).await?;
+    Ok(())
+}
 async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Result<()> {
     let parameters: serde_json::Value = serde_json::from_str(&job.parameters_json)?;
     if job.kind == "recovery_verify" {
-        phase(store, &job.id, "isolated_restore").await?;
+        phase(store, job, "isolated_restore").await?;
         let id = parameters["asset_id"]
             .as_str()
             .context("Missing backup identifier")?;
@@ -563,6 +584,7 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
             "Backup is unavailable"
         );
         let result = trial_restore(&asset_path(store, &asset)?, work).await;
+        let mut tx = active_job(store, job).await?;
         sqlx::query("UPDATE recovery_assets SET verified_at_ms=?,verification_error=? WHERE id=?")
             .bind(if result.is_ok() {
                 Some(auth::now_ms())
@@ -575,8 +597,12 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
                 None
             })
             .bind(id)
-            .execute(&store.writer)
+            .execute(&mut *tx)
             .await?;
+        if result.is_ok() {
+            finish_in(&mut tx, job).await?;
+        }
+        tx.commit().await?;
         result?;
         return Ok(());
     }
@@ -588,60 +614,80 @@ async fn run(store: &Storage, job: &crate::jobs::Job, work: &Path) -> anyhow::Re
         return Ok(());
     }
     if job.kind == "recovery_inspect" {
-        phase(store, &job.id, "inspecting_backup").await?;
+        phase(store, job, "inspecting_backup").await?;
         let path = asset_path(store, &asset)?;
         let manifest = trial_restore(&path, work).await?;
+        let mut tx = active_job(store, job).await?;
         sqlx::query("UPDATE recovery_assets SET state='ready',manifest_json=? WHERE id=?")
             .bind(serde_json::to_string(&manifest)?)
             .bind(&asset.id)
-            .execute(&store.writer)
+            .execute(&mut *tx)
             .await?;
+        finish_in(&mut tx, job).await?;
+        tx.commit().await?;
         return Ok(());
     }
     let output = work.join("output.partial");
     let manifest = if job.kind == "recovery_backup" {
-        phase(store, &job.id, "creating_backup").await?;
+        phase(store, job, "creating_backup").await?;
         let manifest = create_backup(store, work, &output).await?;
         // The package owns the frozen bytes now. Release this extra database before
         // extracting a complete trial, so two expanded databases do not overlap.
         std::fs::remove_file(work.join("archive.db"))?;
-        phase(store, &job.id, "checking_backup").await?;
+        phase(store, job, "checking_backup").await?;
         let check = work.join("creation-check");
         std::fs::create_dir(&check)?;
         check_backup(&output, &check).await?;
         Some(serde_json::to_string(&manifest)?)
     } else {
-        phase(store, &job.id, "freezing_archive").await?;
+        phase(store, job, "freezing_archive").await?;
         let selection: crate::exports::ExportSelection = serde_json::from_value(parameters)?;
         let snapshot = work.join("archive.db");
         freeze(store, &snapshot).await?;
-        phase(store, &job.id, "writing_export").await?;
+        phase(store, job, "writing_export").await?;
         let count = crate::exports::write(&snapshot, &output, &asset.format, &selection).await?;
         Some(json!({"selection":selection,"listens":count,"format_version":crate::exports::FORMAT_VERSION}).to_string())
     };
-    let path = asset_path(store, &asset)?;
+    publish_asset(store, job, &asset, &output, manifest).await
+}
+async fn publish_asset(
+    store: &Storage,
+    job: &crate::jobs::Job,
+    asset: &Asset,
+    output: &Path,
+    manifest: Option<String>,
+) -> anyhow::Result<()> {
+    // Hold the writer reservation through the short publication: cancellation
+    // either wins first, or sees an already-completed job and ready file.
+    let mut tx = active_job(store, job).await?;
+    let path = asset_path(store, asset)?;
     if path.exists() {
         std::fs::remove_file(&path)?;
     }
-    std::fs::rename(&output, &path)?;
+    std::fs::rename(output, &path)?;
     storage::sync_directory(&store.directory.join("backups"))?;
     sqlx::query("UPDATE recovery_assets SET state='ready',size_bytes=?,manifest_json=? WHERE id=?")
         .bind(i64::try_from(std::fs::metadata(&path)?.len())?)
         .bind(manifest)
         .bind(&asset.id)
-        .execute(&store.writer)
+        .execute(&mut *tx)
         .await?;
+    finish_in(&mut tx, job).await?;
+    tx.commit().await?;
     Ok(())
 }
-async fn phase(store: &Storage, id: &str, phase: &str) -> anyhow::Result<()> {
+async fn phase(store: &Storage, job: &crate::jobs::Job, phase: &str) -> anyhow::Result<()> {
+    let mut tx = active_job(store, job).await?;
     sqlx::query("UPDATE jobs SET phase=?,updated_at_ms=? WHERE id=?")
         .bind(phase)
         .bind(auth::now_ms())
-        .bind(id)
-        .execute(&store.writer)
+        .bind(&job.id)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
+
 pub async fn worker(store: Storage) {
     loop {
         for kind in [
@@ -661,21 +707,18 @@ pub async fn worker(store: Storage) {
                     .join(format!("work-{}", db::new_id()));
                 let result = async {
                     std::fs::create_dir(&work)?;
-                    sqlx::query("UPDATE jobs SET phase='preparing' WHERE id=?")
-                        .bind(&job.id)
-                        .execute(&store.writer)
-                        .await?;
+                    phase(&store, &job, "preparing").await?;
                     run(&store, &job, &work).await
                 }
                 .await;
                 // Only this freshly generated work directory is removed, never the data root.
                 let _ = std::fs::remove_dir_all(&work);
                 if result.is_ok() {
-                    let _=sqlx::query("UPDATE jobs SET state='completed',phase='finished',outcome='complete',updated_at_ms=? WHERE id=?").bind(auth::now_ms()).bind(&job.id).execute(&store.writer).await;
+                    let _=sqlx::query("UPDATE jobs SET state='completed',phase='finished',outcome='complete',updated_at_ms=? WHERE id=? AND state='running' AND cancel_requested=0").bind(auth::now_ms()).bind(&job.id).execute(&store.writer).await;
                 } else {
                     let _=sqlx::query("UPDATE recovery_assets SET state='failed' WHERE job_id=? AND state!='ready'").bind(&job.id).execute(&store.writer).await;
                     let message = public_error(result.as_ref().expect_err("failed operation"));
-                    let _=sqlx::query("UPDATE jobs SET state='failed',phase='finished',outcome='error',error_code=?,updated_at_ms=? WHERE id=?").bind(message).bind(auth::now_ms()).bind(&job.id).execute(&store.writer).await;
+                    let _=sqlx::query("UPDATE jobs SET state='failed',phase='finished',outcome='error',error_code=?,updated_at_ms=? WHERE id=? AND state='running' AND cancel_requested=0").bind(message).bind(auth::now_ms()).bind(&job.id).execute(&store.writer).await;
                 }
             }
         }
@@ -702,7 +745,31 @@ impl Drop for RestorePreparation {
 /// Confirmation is authenticated by the destination owner. A fresh verifier is prepared
 /// before the journal is published, so recovery never opens unauthenticated setup.
 pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> anyhow::Result<()> {
+    let job_id = store
+        .enqueue(
+            "recovery_restore",
+            None,
+            Some("Prepare archive restore"),
+            &json!({"asset_id":id}),
+        )
+        .await?;
+    sqlx::query("UPDATE jobs SET state='running',attempt=1,phase='preparing' WHERE id=? AND cancel_requested=0").bind(&job_id).execute(&store.writer).await?;
+    let job = store.job(&job_id).await?;
+    let result = prepare_restore_job(store, id, password, &job).await;
+    if let Err(ref error) = result {
+        sqlx::query("UPDATE jobs SET state='failed',phase='finished',outcome='error',error_code=? WHERE id=? AND state='running' AND cancel_requested=0")
+            .bind(public_error(error)).bind(&job_id).execute(&store.writer).await?;
+    }
+    result
+}
+async fn prepare_restore_job(
+    store: &Storage,
+    id: &str,
+    password: String,
+    job: &crate::jobs::Job,
+) -> anyhow::Result<()> {
     let _operation = store.recovery_operations.lock().await;
+    phase(store, job, "validating_backup").await?;
     ensure!(
         !store.directory.join("recovery.pending").exists(),
         "A restore is already awaiting restart"
@@ -734,6 +801,7 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     // Until journal publication, failure or cancellation releases this attempt's staging.
     // The live databases remain untouched.
     trial_restore(&asset_path(store, &asset)?, &new).await?;
+    phase(store, job, "preparing_access").await?;
     let mut conn = connect(&new.join("archive.db"), false).await?;
     sqlx::query("UPDATE archive_state SET maintenance=0,generation=?,retained_from=revision")
         .bind(db::new_id())
@@ -803,6 +871,7 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     }
     conn.close().await?;
     storage::sync_file(&new.join("archive.db"))?;
+    let mut publication = active_job(store, job).await?;
     let marker = stage.join("ready");
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
@@ -816,9 +885,13 @@ pub async fn prepare_restore(store: &Storage, id: &str, password: String) -> any
     preparation.published = true;
     storage::sync_directory(&stage)?;
     storage::sync_directory(&store.directory)?;
-    // From here startup can finish even if the process dies before the barrier commits.
-    // Middleware refuses writes immediately when the durable marker exists.
-    store.maintenance(true).await?;
+    // The job finishes atomically with the publication barrier; it is no longer
+    // an in-progress activity once startup owns the durable activation journal.
+    finish_in(&mut publication, job).await?;
+    sqlx::query("UPDATE archive_state SET maintenance=1")
+        .execute(&mut *publication)
+        .await?;
+    publication.commit().await?;
     Ok(())
 }
 
@@ -997,4 +1070,69 @@ pub async fn recover_upgrade(
             .unwrap_or(&serde_json::Value::Null)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancelled_recovery_cannot_publish_an_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = storage::open(dir.path()).await.unwrap();
+        let id = enqueue_asset(&store, "export", "json", json!({}))
+            .await
+            .unwrap();
+        let lease = store.claim("recovery_export").await.unwrap().unwrap();
+        let asset = asset(&store, &id).await.unwrap();
+        let output = dir.path().join("cancelled-output.partial");
+        std::fs::write(&output, b"unfinished").unwrap();
+        store.cancel(&lease.id).await.unwrap();
+        assert!(
+            publish_asset(&store, &lease, &asset, &output, None)
+                .await
+                .is_err()
+        );
+        assert!(!asset_path(&store, &asset).unwrap().exists());
+        assert_eq!(store.job(&lease.id).await.unwrap().state, "cancelled");
+        assert_eq!(super::asset(&store, &id).await.unwrap().state, "failed");
+        store.close().await;
+    }
+    #[tokio::test]
+    async fn restore_waiting_for_a_safe_slot_can_be_cancelled_without_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = storage::open(dir.path()).await.unwrap();
+        let gate = store.recovery_operations.lock().await;
+        let worker_store = store.clone();
+        let preparing = tokio::spawn(async move {
+            prepare_restore(&worker_store, "missing-asset", "Test-7!restore".into()).await
+        });
+        let job = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(job) = store
+                    .activities()
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|job| job.kind == "recovery_restore")
+                {
+                    break job;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        store.cancel(&job.id).await.unwrap();
+        drop(gate);
+        assert!(preparing.await.unwrap().is_err());
+        assert_eq!(store.job(&job.id).await.unwrap().state, "cancelled");
+        assert!(!store.directory.join("recovery.pending").exists());
+        assert!(
+            !sqlx::query_scalar::<_, bool>("SELECT maintenance FROM archive_state")
+                .fetch_one(&store.readers)
+                .await
+                .unwrap()
+        );
+        store.close().await;
+    }
 }

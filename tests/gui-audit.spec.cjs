@@ -3568,3 +3568,104 @@ test("duplicate review controls share a height with flagged history first", asyn
   await expect(group).toHaveCSS("border-top-width", "1px");
   await expect(comparisons).toHaveCSS("border-top-width", "0px");
 });
+
+test("listening pattern values reserve room beside the scrollbar", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/consultation/patterns?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.series.devices = Array.from({ length: 30 }, (_, i) => ({
+      label: `Device ${i + 1}`,
+      count: 10000 - i,
+    }));
+    data.total = data.series.devices.reduce((sum, bin) => sum + bin.count, 0);
+    return route.fulfill({ json: data });
+  });
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto("/music/artists/" + archive.rankings.artists[0].id);
+  const panel = page.getByRole("article", {
+    name: "Listening patterns",
+    exact: true,
+  });
+  await chooseOption(panel.getByRole("combobox"), "devices");
+  await expect(panel.getByRole("listitem")).toHaveCount(30);
+  const geometry = await panel.locator(".pattern-bars").evaluate((node) => ({
+    scrolls: node.scrollHeight > node.clientHeight,
+    gap:
+      node.getBoundingClientRect().left +
+      node.clientWidth -
+      Math.max(
+        ...Array.from(
+          node.querySelectorAll("strong"),
+          (text) => text.getBoundingClientRect().right,
+        ),
+      ),
+  }));
+  expect(geometry.scrolls).toBe(true);
+  expect(geometry.gap).toBeGreaterThanOrEqual(16);
+});
+
+test("every active activity offers cancellation in the list and report", async ({
+  page,
+}) => {
+  await login(page, "/activities");
+  const template = (
+    await (await page.request.get("/api/v1/activities")).json()
+  ).find((job) => job.kind === "artwork");
+  let job = {
+    ...template,
+    id: "cancel-any-kind",
+    filename: "Test activity",
+    state: "running",
+    phase: "processing",
+    error_code: null,
+    retry_at_ms: null,
+  };
+  await page.route("**/api/v1/activities**", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() === "POST" && path.endsWith("/cancel")) {
+      job = { ...job, state: "cancelled" };
+      return route.fulfill({ json: { ok: true } });
+    }
+    return route.fulfill({
+      json:
+        path === "/api/v1/activities"
+          ? [job]
+          : { activity: job, members: [], issues: [], source_parameters: null },
+    });
+  });
+  for (const kind of [
+    "spotify_collection",
+    "recovery_export",
+    "recovery_backup",
+    "recovery_verify",
+    "recovery_inspect",
+    "recovery_restore",
+    "calendar",
+    "spotify_import",
+    "listenbrainz_file",
+    "listenbrainz_fetch",
+  ]) {
+    job = { ...job, kind, state: "running" };
+    await page.goto("/activities");
+    await page
+      .getByRole("button", {
+        name: /^Cancel (Test activity|Recalculate assigned calendar)$/,
+      })
+      .click();
+    await expect(page.locator(".activity-row .state-badge")).toContainText(
+      "Cancelled",
+    );
+    job = { ...job, state: "running" };
+    await page.goto("/activities/" + job.id);
+    await page
+      .getByRole("button", { name: /^Cancel (activity|import|recalculation)$/ })
+      .click();
+    await expect(page.locator(".activity-detail .state-badge")).toContainText(
+      "Cancelled",
+    );
+  }
+});

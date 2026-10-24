@@ -154,6 +154,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/activities/{id}",
             get(crate::activities::detail).post(crate::activities::action),
         )
+        .route(
+            "/api/v1/activities/{id}/cancel",
+            post(crate::activities::cancel),
+        )
         .route("/api/v1/import/limits", get(imports::limits))
         .route("/api/session", get(auth::status))
         .route("/api/setup", post(auth::setup))
@@ -257,7 +261,15 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     let gate = state.storage.requests.clone();
     let exclusive =
         request.uri().path() == "/api/v1/recovery/restore" && request.method() == Method::POST;
-    let _read = if exclusive {
+    // Status reads and owner/CSRF-protected cancellation only touch job controls,
+    // so they remain available during restore preparation's exclusive barrier.
+    let activity_control = (request.method() == Method::GET
+        && (request.uri().path() == "/api/v1/activities"
+            || request.uri().path().starts_with("/api/v1/activities/")))
+        || (request.method() == Method::POST
+            && request.uri().path().starts_with("/api/v1/activities/")
+            && request.uri().path().ends_with("/cancel"));
+    let _read = if exclusive || activity_control {
         None
     } else {
         Some(gate.read().await)

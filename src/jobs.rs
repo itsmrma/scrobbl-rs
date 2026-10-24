@@ -152,8 +152,12 @@ impl Storage {
         Ok(())
     }
     pub async fn cancel(&self, id: &str) -> Result<()> {
+        let mut tx = self.writer.begin().await?;
         sqlx::query("UPDATE jobs SET cancel_requested=1,state='cancelled',updated_at_ms=? WHERE id=? AND state IN ('queued','waiting','running')")
-            .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+            .bind(auth::now_ms()).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE recovery_assets SET state='failed' WHERE job_id=? AND state='pending' AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND state='cancelled')")
+            .bind(id).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     /// Persist a provider wait or a terminal failure without losing the last checkpoint.

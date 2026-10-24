@@ -356,9 +356,42 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
             and explicitly resume.
           </p>
           <p>
-            After confirmation, preparation cannot be cancelled. The next
-            restart activates the replacement.
+            Preparation can be cancelled until it is ready for restart. Once
+            ready, the next restart activates the replacement.
           </p>
+          {busy && (
+            <button
+              type="button"
+              className="secondary"
+              onClick={async () => {
+                try {
+                  const jobs = await api.activities();
+                  const pending = jobs.find(
+                    (job) =>
+                      job.kind === "recovery_restore" &&
+                      ["queued", "running", "waiting"].includes(job.state),
+                  );
+                  if (pending) {
+                    await api.activityAction(pending.id, "cancel");
+                    setRestore(null);
+                    toast(
+                      "Restore cancellation requested. The live archive remains unchanged.",
+                    );
+                  } else
+                    toast(
+                      "No running preparation found. Check Activities for its current state.",
+                    );
+                } catch (error) {
+                  toast(
+                    error instanceof Error ? error.message : String(error),
+                    true,
+                  );
+                }
+              }}
+            >
+              Cancel preparation
+            </button>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();

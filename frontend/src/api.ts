@@ -289,7 +289,9 @@ export const api = {
       `/api/v1/activities/${encodeURIComponent(id)}${issuesPage ? `?issues_page=${issuesPage}` : ""}`,
     ),
   activityAction: (id: string, action: string) =>
-    post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
+    action === "cancel"
+      ? post(`/api/v1/activities/${encodeURIComponent(id)}/cancel`)
+      : post(`/api/v1/activities/${encodeURIComponent(id)}`, { action }),
   recovery: () =>
     request<{ assets: Asset[]; paused: boolean; restart_required: boolean }>(
       "/api/v1/recovery",

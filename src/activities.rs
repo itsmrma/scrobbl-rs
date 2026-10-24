@@ -144,7 +144,12 @@ pub async fn action(
     Json(form): Json<Action>,
 ) -> Result<Json<serde_json::Value>> {
     auth::require_write(&state, &headers).await?;
-    // Only expose controls for the worker available in this block. Source adapters own their controls.
+    if form.action == "cancel" {
+        state.storage.job(&id).await?;
+        state.storage.cancel(&id).await?;
+        return Ok(Json(serde_json::json!({"ok":true})));
+    }
+    // Retry/other controls remain owned by their source workflow.
     let job = state.storage.job(&id).await?;
     if !matches!(
         job.kind.as_str(),
@@ -189,4 +194,78 @@ pub async fn action(
         _ => return Err(AppError::BadRequest("Unknown activity action.".into())),
     }
     Ok(Json(serde_json::json!({"ok":true})))
+}
+
+/// Separate cancellation route stays available while restore drains other writes.
+pub async fn cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>> {
+    auth::require_write(&state, &headers).await?;
+    state.storage.job(&id).await?;
+    state.storage.cancel(&id).await?;
+    Ok(Json(serde_json::json!({"ok":true})))
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    #[tokio::test]
+    async fn cancellation_and_status_remain_available_during_exclusive_restore() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = crate::storage::open(dir.path()).await.unwrap();
+        let state = AppState::new(
+            store,
+            crate::config::Config {
+                bind_ip: "127.0.0.1".parse().unwrap(),
+                port: 3210,
+                data_dir: dir.path().into(),
+                external_origin: None,
+                sync_seconds: 120,
+                now_playing_seconds: 30,
+                import_limits: Default::default(),
+                api_snapshot_limits: Default::default(),
+                env_client_id: None,
+                env_client_secret: None,
+            },
+        );
+        let token = auth::random_secret();
+        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
+            .bind(auth::digest(&token))
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let id = state
+            .storage
+            .enqueue("recovery_restore", None, None, &serde_json::json!({}))
+            .await
+            .unwrap();
+        let _exclusive = state.storage.requests.write().await;
+        for (method, path) in [
+            ("GET", format!("/api/v1/activities/{id}")),
+            ("POST", format!("/api/v1/activities/{id}/cancel")),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "csrf")
+                .body(Body::empty())
+                .unwrap();
+            let response = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                crate::web::router(state.clone()).oneshot(request),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+        }
+        assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    }
 }

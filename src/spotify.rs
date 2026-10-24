@@ -710,6 +710,9 @@ pub async fn sync(state: &AppState) -> Result<Value> {
     diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
     let result = sync_locked(state, &job).await;
     if let Err(ref error) = result {
+        if state.storage.job(&job.id).await?.state == "cancelled" {
+            return Err(AppError::Conflict("Collection cancelled. Saved listens and the previous cursor are kept; future scheduled collections remain enabled.".into()));
+        }
         diagnostic(state, "collection_error", &error.to_string()).await?;
         let retry = db::setting(&state.db, "retry_at_ms")
             .await?
@@ -731,6 +734,9 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     let mut warning = None;
     // Walk backwards using our own cursors. Never follow arbitrary upstream URLs with a bearer token.
     for page in 0..20 {
+        let mut checkpoint = state.db.begin().await?;
+        crate::jobs::validate_lease(&mut checkpoint, job).await?;
+        checkpoint.commit().await?;
         let mut params = vec![("limit", "50".into())];
         if let Some(cursor) = before {
             params.push(("before", cursor.to_string()));
@@ -840,6 +846,16 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
     result.map(Json)
 }
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
+    now_playing_in_window(state, headers, None).await
+}
+
+// A fixed poll time lets cache tests exercise the same/new window independently
+// of the wall clock crossing a boundary while the HTTP/SQLite calls run.
+async fn now_playing_in_window(
+    state: AppState,
+    headers: HeaderMap,
+    poll_at_ms: Option<i64>,
+) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
     if state.storage.directory.join("recovery.pending").exists()
         || crate::recovery::paused(&state.storage).await
@@ -850,7 +866,7 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     let _now = state.spotify.now_gate.lock().await;
     let interval = intervals(&state).await?.now_playing_seconds as i64 * 1000;
     if let Some((time, value)) = &*state.spotify.cache.lock().await
-        && auth::now_ms() / interval == time / interval
+        && poll_at_ms.unwrap_or_else(auth::now_ms) / interval == time / interval
     {
         let mut value = value.clone();
         let external = value["spotify_url"]
@@ -1435,6 +1451,57 @@ mod tests {
         handle.abort();
     }
     #[tokio::test]
+    async fn cancelling_collection_stops_before_the_next_page_and_keeps_the_cursor() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let (_dir, state, mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/recently-played",
+                json!({"items":batch,"_test_delay_ms":200}),
+            )],
+            false,
+        )
+        .await;
+        let collector = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state).await }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while mock.calls.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let id: String = sqlx::query_scalar(
+            "SELECT id FROM jobs WHERE kind='spotify_collection' AND state='running'",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+        state.storage.cancel(&id).await.unwrap();
+        assert!(collector.await.unwrap().is_err());
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        assert!(
+            db::setting(&state.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let status: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+        handle.abort();
+    }
+    #[tokio::test]
     async fn paginates_backwards_and_does_not_advance_after_partial_failure() {
         let at = 1_749_000_000_000;
         let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
@@ -1779,7 +1846,10 @@ mod tests {
         let headers = owner_headers(&state).await;
         let bucket = auth::now_ms() / 30000 * 30000;
         *state.spotify.cache.lock().await = Some((bucket - 1, json!({"title":"stale sample"})));
-        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        let sample = now_playing_in_window(state.clone(), headers, Some(bucket))
+            .await
+            .unwrap()
+            .0;
         assert_eq!(sample["title"], "Test track");
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
@@ -1807,7 +1877,10 @@ mod tests {
         assert!(first.0["track_id"].is_null());
         sqlx::query("INSERT INTO tracks(id,title,metadata_rank) VALUES('local-now-track','Test track','spotify')").execute(&state.db).await.unwrap();
         sqlx::query("INSERT INTO entity_links VALUES('track','spotify','spotify:track:0000000000000000000001','local-now-track',0,'{}')").execute(&state.db).await.unwrap();
-        let cached = now_playing(State(state.clone()), headers).await.unwrap();
+        let poll_at = first.0["source_requested_at_ms"].as_i64().unwrap();
+        let cached = now_playing_in_window(state.clone(), headers, Some(poll_at))
+            .await
+            .unwrap();
         assert_eq!(cached.0["track_id"], "local-now-track");
         assert_eq!(mock.calls.lock().await.len(), 1);
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")

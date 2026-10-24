@@ -6385,3 +6385,13 @@ dialog {
     max-height: 320px;
   }
 }
+
+.activity-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.activity-cancel {
+  position: relative;
+  z-index: 2;
+}

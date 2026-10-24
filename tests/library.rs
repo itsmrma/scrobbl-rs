@@ -1275,3 +1275,65 @@ async fn downloaded_spotify_artwork_survives_cleanup_restart_and_backup() {
     assert_eq!(saved, png);
     state.storage.close().await;
 }
+
+#[tokio::test]
+async fn owner_can_cancel_every_job_kind() {
+    let (_dir, state, token) = setup().await;
+    for kind in [
+        "calendar",
+        "spotify_import",
+        "listenbrainz_file",
+        "listenbrainz_fetch",
+        "artwork",
+        "spotify_collection",
+        "recovery_export",
+        "recovery_backup",
+        "recovery_verify",
+        "recovery_inspect",
+        "recovery_restore",
+    ] {
+        let id = state
+            .storage
+            .enqueue(kind, None, None, &json!({}))
+            .await
+            .unwrap();
+        let uri = format!("/api/v1/activities/{id}/cancel");
+        assert_eq!(
+            call(&state, &token, "POST", &uri, vec![], false).await.0,
+            StatusCode::FORBIDDEN
+        );
+
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                call(&state, &token, "POST", &uri, vec![], true)
+            )
+            .await
+            .unwrap()
+            .0,
+            StatusCode::OK
+        );
+        if kind == "recovery_restore" {
+            assert_eq!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    call(
+                        &state,
+                        &token,
+                        "GET",
+                        &format!("/api/v1/activities/{id}"),
+                        vec![],
+                        false
+                    )
+                )
+                .await
+                .unwrap()
+                .0,
+                StatusCode::OK
+            );
+        }
+
+        assert_eq!(state.storage.job(&id).await.unwrap().state, "cancelled");
+    }
+    state.storage.close().await;
+}

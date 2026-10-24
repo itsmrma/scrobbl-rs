@@ -117,7 +117,8 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         PRIVATE_MIGRATOR.run(&private).await?;
         sqlx::query("INSERT INTO settings(key,value) VALUES('app_build',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development")}).to_string()).execute(&writer).await?;
         recover_access(&writer, &private).await?;
-        sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code='upload_incomplete',retry_at_ms=NULL WHERE kind='spotify_import' AND phase='receiving'").execute(&writer).await?;
+        sqlx::query("UPDATE jobs SET state='failed',outcome='error',error_code='upload_incomplete',retry_at_ms=NULL WHERE kind='spotify_import' AND phase='receiving' AND cancel_requested=0").execute(&writer).await?;
+        sqlx::query("UPDATE jobs SET state='failed',phase='finished',outcome='error',error_code='Restore preparation interrupted. Confirm restore again with a new password.' WHERE kind='recovery_restore' AND state IN ('queued','running','waiting') AND cancel_requested=0").execute(&writer).await?;
         sqlx::query("UPDATE jobs SET state=CASE WHEN cancel_requested=1 THEN 'cancelled' ELSE 'queued' END, updated_at_ms=? WHERE state='running'")
             .bind(crate::auth::now_ms()).execute(&writer).await?;
         sqlx::query("UPDATE jobs SET state='cancelled' WHERE cancel_requested=1 AND state IN ('queued','waiting')").execute(&writer).await?;

@@ -17,6 +17,8 @@
 .pattern-bars {
   max-height: 280px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-right: 18px;
 }
 .pattern-row {
   display: grid;
@@ -54,6 +56,8 @@
   display: grid;
   gap: 3px;
   overflow: visible;
+  padding-right: 0;
+  scrollbar-gutter: auto;
 }
 .pattern-temporal .pattern-row {
   display: flex;

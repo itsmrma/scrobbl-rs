@@ -422,6 +422,13 @@ export function Activities({
                   />
                 </>
               )}
+              {job.state === "cancelled" && (
+                <p className="subtle">
+                  Cancellation requested. Any current file or network step
+                  finishes safely before cleanup; saved progress and completed
+                  copies are kept.
+                </p>
+              )}
               {job.target_timezone && (
                 <p>
                   Requested calendar: {job.target_timezone} · week starts{" "}
@@ -515,81 +522,85 @@ export function Activities({
                   </dl>
                 </details>
               )}
-              {[
-                "calendar",
-                "spotify_import",
-                "listenbrainz_file",
-                "listenbrainz_fetch",
-                "artwork",
-              ].includes(job.kind) &&
-                job.phase !== "receiving" && (
-                  <div className="connection-actions">
-                    {(isActive(job)
-                      ? job.kind === "artwork"
-                        ? [
-                            job.error_code === "artwork_paused"
-                              ? "resume"
-                              : "pause",
-                            "cancel",
-                          ]
-                        : ["cancel"]
-                      : ["failed", "cancelled"].includes(job.state) ||
-                          (job.outcome === "partial" &&
-                            job.kind !== "listenbrainz_fetch")
-                        ? ["retry"]
-                        : []
-                    ).map((action) => (
-                      <button
-                        key={action}
-                        className="secondary"
-                        disabled={busy}
-                        onClick={async () => {
-                          setBusy(true);
-                          setActionError("");
-                          try {
-                            await api.activityAction(job.id, action);
-                            await refresh();
-                            toast(
-                              action === "pause"
-                                ? "Artwork downloads paused. Saved progress is kept."
-                                : action === "resume"
-                                  ? "Artwork downloads resumed from saved progress."
-                                  : action === "cancel"
-                                    ? "Cancellation requested. Confirmed changes remain saved."
-                                    : "Activity queued again. Confirmed rows will not be repeated.",
-                            );
-                          } catch (e) {
-                            setActionError(
-                              e instanceof Error ? e.message : String(e),
-                            );
-                            toast(
-                              e instanceof Error ? e.message : String(e),
-                              true,
-                            );
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        {action === "pause"
-                          ? "Pause downloads"
-                          : action === "resume"
-                            ? "Resume downloads"
-                            : action === "cancel"
-                              ? job.kind === "artwork"
-                                ? "Cancel downloads"
-                                : job.kind === "calendar"
-                                  ? "Cancel recalculation"
-                                  : "Cancel import"
-                              : job.kind === "artwork"
-                                ? "Resume downloads"
-                                : job.kind === "calendar"
-                                  ? "Retry recalculation"
-                                  : "Retry import"}
-                      </button>
-                    ))}
-                  </div>
-                )}
+              {(isActive(job) ||
+                [
+                  "calendar",
+                  "spotify_import",
+                  "listenbrainz_file",
+                  "listenbrainz_fetch",
+                  "artwork",
+                ].includes(job.kind)) && (
+                <div className="connection-actions">
+                  {(isActive(job)
+                    ? job.kind === "artwork"
+                      ? [
+                          job.error_code === "artwork_paused"
+                            ? "resume"
+                            : "pause",
+                          "cancel",
+                        ]
+                      : ["cancel"]
+                    : ["failed", "cancelled"].includes(job.state) ||
+                        (job.outcome === "partial" &&
+                          job.kind !== "listenbrainz_fetch")
+                      ? ["retry"]
+                      : []
+                  ).map((action) => (
+                    <button
+                      key={action}
+                      className="secondary"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setActionError("");
+                        try {
+                          await api.activityAction(job.id, action);
+                          if (action === "cancel") void refresh();
+                          else await refresh();
+                          toast(
+                            action === "pause"
+                              ? "Artwork downloads paused. Saved progress is kept."
+                              : action === "resume"
+                                ? "Artwork downloads resumed from saved progress."
+                                : action === "cancel"
+                                  ? "Cancellation requested. Confirmed changes remain saved."
+                                  : "Activity queued again. Confirmed rows will not be repeated.",
+                          );
+                        } catch (e) {
+                          setActionError(
+                            e instanceof Error ? e.message : String(e),
+                          );
+                          toast(
+                            e instanceof Error ? e.message : String(e),
+                            true,
+                          );
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      {action === "pause"
+                        ? "Pause downloads"
+                        : action === "resume"
+                          ? "Resume downloads"
+                          : action === "cancel"
+                            ? job.kind === "artwork"
+                              ? "Cancel downloads"
+                              : job.kind === "calendar"
+                                ? "Cancel recalculation"
+                                : job.kind === "spotify_import" ||
+                                    job.kind.startsWith("listenbrainz_")
+                                  ? "Cancel import"
+                                  : "Cancel activity"
+                            : job.kind === "artwork"
+                              ? "Resume downloads"
+                              : job.kind === "calendar"
+                                ? "Retry recalculation"
+                                : "Retry import"}
+                    </button>
+                  ))}
+                </div>
+              )}
               {detail.data && detail.data.issues?.length > 0 && (
                 <div>
                   <h3>Invalid source rows (page {issuesPage + 1})</h3>
@@ -829,9 +840,41 @@ export function Activities({
                     <p>Next attempt: {date(job.retry_at_ms, preferences)}</p>
                   )}
                 </div>
-                <span className="activity-open" aria-hidden="true">
-                  <Icon>arrow_forward</Icon>
-                </span>
+                <div className="activity-row-actions">
+                  {isActive(job) && (
+                    <button
+                      className="secondary icon-button activity-cancel"
+                      aria-label={`Cancel ${activityName(job)}`}
+                      title="Cancel activity"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setActionError("");
+                        try {
+                          await api.activityAction(job.id, "cancel");
+                          await refresh();
+                          toast(
+                            "Cancellation requested. Saved progress is kept; the current step stops at a safe boundary.",
+                          );
+                        } catch (error) {
+                          toast(
+                            error instanceof Error
+                              ? error.message
+                              : String(error),
+                            true,
+                          );
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      <Icon>close</Icon>
+                    </button>
+                  )}
+                  <span className="activity-open" aria-hidden="true">
+                    <Icon>arrow_forward</Icon>
+                  </span>
+                </div>
               </article>
             ))
           ) : (
