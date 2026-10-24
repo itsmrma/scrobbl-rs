@@ -2,7 +2,8 @@
 services:
   scrobbl:
     image: ${SCROBBL_IMAGE:?Set SCROBBL_IMAGE to ghcr.io/itsmrma/scrobbl-rs:sha-COMMIT}
-    restart: unless-stopped
+    # Clean exits from Account > Stop application remain stopped.
+    restart: on-failure
     init: true
     user: "${SCROBBL_UID:-10001}:${SCROBBL_GID:-10001}"
     environment:

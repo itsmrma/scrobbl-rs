@@ -377,8 +377,10 @@ function RankingRows({
   cardSize?: number;
   bars?: boolean;
 }) {
-  const metric = (row: Ranking) =>
-    params.get("sort") === "time" ? row.listened_ms : row.plays;
+  const byTime = params.get("sort") === "time";
+  const Plays = byTime ? "span" : "strong";
+  const Time = byTime ? "strong" : "span";
+  const metric = (row: Ranking) => (byTime ? row.listened_ms : row.plays);
   const maximum = Math.max(1, ...items.map(metric));
   return items.length ? (
     <ol
@@ -426,10 +428,15 @@ function RankingRows({
             </span>
           )}
           <div className="rank-value">
-            <strong className="rank-plays">
-              {number.format(item.plays)} <small>listens</small>
-            </strong>
-            <span className="rank-time">{timeValue(item)}</span>
+            <span className="rank-metrics">
+              <Plays className="rank-plays">
+                {number.format(item.plays)} <small>listens</small>
+              </Plays>
+              <span className="rank-separator" aria-hidden="true">
+                ·
+              </span>
+              <Time className="rank-time">{timeValue(item)}</Time>
+            </span>
             <Composition value={item} />
           </div>
         </li>

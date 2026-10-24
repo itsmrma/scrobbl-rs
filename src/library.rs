@@ -193,7 +193,7 @@ pub async fn edit(
 fn valid_spotify_id(id: &str) -> bool {
     id.len() == 22 && id.bytes().all(|c| c.is_ascii_alphanumeric())
 }
-fn image_type(bytes: &[u8]) -> Result<&'static str> {
+pub(crate) fn image_type(bytes: &[u8]) -> Result<&'static str> {
     if bytes.len() > IMAGE_LIMIT {
         return Err(AppError::BadRequest(
             "Images must be 5 MB or smaller.".into(),

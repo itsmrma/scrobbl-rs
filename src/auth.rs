@@ -229,7 +229,7 @@ pub async fn set_username(
     }
     Ok(Json(json!({"saved":true})))
 }
-async fn rate_limit(state: &AppState) -> Result<()> {
+pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
     let mut attempts = state.login_attempts.lock().await;
     let now = Instant::now();
     while attempts

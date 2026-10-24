@@ -121,6 +121,11 @@ export type Session = {
   username_setup_required?: boolean;
   username?: string;
 };
+export type AccountProfile = {
+  username: string | null;
+  name: string;
+  avatar_url: string | null;
+};
 export type ConnectOutcome = {
   outcome: "pending" | "processing" | "connected" | "error";
   message: string | null;
@@ -133,6 +138,20 @@ export type ReviewPage = {
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 export const api = {
+  account: () => request<AccountProfile>("/api/v1/account"),
+  saveAccount: (name: string) =>
+    post<AccountProfile>("/api/v1/account", { name }),
+  uploadAvatar: (image: Blob) =>
+    request<AccountProfile>("/api/v1/account/avatar", {
+      method: "POST",
+      body: image,
+    }),
+  removeAvatar: () => post<AccountProfile>("/api/v1/account/avatar/remove"),
+  changePassword: (current_password: string, password: string) =>
+    post("/api/v1/account/password", { current_password, password }),
+  application: () => request<{ boot_id: string }>("/api/v1/application"),
+  controlApplication: (action: "restart" | "stop") =>
+    post("/api/v1/application", { action, confirmed: true }),
   listeningPatterns: (params: URLSearchParams) =>
     request<{
       total: number;

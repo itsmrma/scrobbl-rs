@@ -1,3 +1,4 @@
+pub mod account;
 pub mod activities;
 pub mod api_keys;
 pub mod artwork;
@@ -35,6 +36,7 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub application: account::Application,
     pub db: SqlitePool,
     pub private_db: SqlitePool,
     pub read_db: SqlitePool,
@@ -50,6 +52,7 @@ pub struct AppState {
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
         Self {
+            application: account::Application::new(),
             db: storage.writer.clone(),
             private_db: storage.private.clone(),
             read_db: storage.readers.clone(),

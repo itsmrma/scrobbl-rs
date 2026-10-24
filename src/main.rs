@@ -1,7 +1,21 @@
 use scrobbl_rs::{AppState, config::Config, db, spotify, web};
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    loop {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        let result = runtime.block_on(start());
+        // Wait for blocking parsers/file copies from the old instance before
+        // opening the archive again. Aborting an async worker alone cannot do this.
+        drop(runtime);
+        if result? != scrobbl_rs::account::Action::Restart {
+            return Ok(());
+        }
+    }
+}
+
+async fn start() -> anyhow::Result<scrobbl_rs::account::Action> {
     if std::env::args().nth(1).as_deref() == Some("--version") {
         // These SQLite functions return static, NUL-terminated strings.
         let (sqlite, source) = unsafe {
@@ -16,7 +30,7 @@ async fn main() -> anyhow::Result<()> {
             sqlite.to_string_lossy(),
             source.to_string_lossy()
         );
-        return Ok(());
+        return Ok(scrobbl_rs::account::Action::Stop);
     }
     let config = Config::from_env()?;
     if std::env::args().nth(1).as_deref() == Some("--recover-upgrade") {
@@ -31,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
             std::path::Path::new(&args[4]),
         )
         .await?;
-        return Ok(());
+        return Ok(scrobbl_rs::account::Action::Stop);
     }
     if std::env::args().nth(1).as_deref() == Some("--healthcheck") {
         let ip = if config.bind_ip.is_unspecified() {
@@ -53,8 +67,12 @@ async fn main() -> anyhow::Result<()> {
             .send()
             .await?
             .error_for_status()?;
-        return Ok(());
+        return Ok(scrobbl_rs::account::Action::Stop);
     }
+    run(config).await
+}
+
+async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
     scrobbl_rs::listenbrainz::Limits::from_env()?;
     let pool = db::open(&config.data_dir).await?;
     let state = AppState::new(pool, config.clone());
@@ -69,8 +87,14 @@ async fn main() -> anyhow::Result<()> {
     println!("scrobbl.rs is running at {}", config.origin());
     println!("Data: {}", config.data_dir.canonicalize()?.display());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
+    let mut control = state.application.action.subscribe();
     let result = axum::serve(listener, web::router(state.clone()))
-        .with_graceful_shutdown(shutdown())
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = shutdown() => {},
+                _ = control.changed() => {},
+            }
+        })
         .await;
     worker.abort();
     let _ = worker.await;
@@ -88,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = artwork_worker.await;
     state.storage.close().await;
     result?;
-    Ok(())
+    Ok(*state.application.action.borrow())
 }
 
 async fn shutdown() {

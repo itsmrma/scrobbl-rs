@@ -46,9 +46,9 @@
   --bg: color-mix(in oklab, #f5f6fa 95%, var(--accent));
   --surface: color-mix(in oklab, #ffffff 97%, var(--accent));
   --surface-raised: color-mix(in oklab, #e9ecf3 90%, var(--accent));
-  --border: color-mix(in oklab, #bcc3d0 94%, var(--accent));
-  --text: #202632;
-  --muted: #515e70;
+  --border: color-mix(in oklab, #9da7b6 94%, var(--accent));
+  --text: #18212d;
+  --muted: #425065;
   --sidebar: color-mix(in oklab, #eef0f6 94%, var(--accent));
   --error: #a22620;
   --warning: #795609;
@@ -5963,4 +5963,273 @@ dialog {
 }
 .activity-chart.chart-compact .chart-segment small {
   overflow-wrap: anywhere;
+}
+
+/* Ranking metrics share a baseline and emphasize the selected measure. */
+.rank-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 4px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.rank-value .rank-metrics .rank-plays,
+.rank-value .rank-metrics .rank-time,
+.rank-value .rank-metrics .rank-plays small {
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+.rank-value .rank-metrics .rank-plays small {
+  font-weight: inherit;
+}
+.rank-metrics > strong {
+  font-weight: 700;
+}
+.rank-metrics > span,
+.rank-separator {
+  font-weight: 400;
+}
+
+/* Larger overview artwork keeps both text rows aligned beside the cover. */
+.overview-rankings .ranking-row {
+  grid-template-columns: 2ch 56px minmax(0, 1fr);
+  column-gap: 12px;
+}
+.overview-rankings .ranking-row .cover {
+  width: 56px;
+  height: 56px;
+}
+.theme-light :is(.ranking-meter > span, .pattern-track > span, .actual-bar) {
+  background: color-mix(in oklab, var(--accent) 50%, #17351b);
+}
+.theme-light :is(.accent, .rating-input) {
+  color: color-mix(in oklab, var(--accent) 40%, #17351b);
+}
+.theme-light .icon-button:not(:disabled):hover {
+  color: color-mix(in oklab, var(--accent) 40%, #17351b);
+}
+.topbar .account-trigger {
+  margin-left: auto;
+  padding: 0;
+  flex: 0 0 44px;
+}
+.account-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+.account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.account-avatar.large {
+  width: 104px;
+  height: 104px;
+}
+.account-avatar.large .material-icons-outlined {
+  font-size: 44px;
+}
+.account-menu {
+  position: fixed;
+  inset: 64px 20px auto auto;
+  width: min(290px, calc(100vw - 28px));
+  max-height: calc(100dvh - 84px);
+  overflow-y: auto;
+  padding: 10px;
+  margin: 0;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 12px 32px #0003;
+}
+.account-menu::backdrop {
+  background: transparent;
+}
+.account-menu-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+.account-menu-heading .account-avatar {
+  width: 48px;
+  height: 48px;
+}
+.account-menu-heading .account-avatar .material-icons-outlined {
+  font-size: 28px;
+}
+.account-menu-heading > div {
+  display: grid;
+  gap: 4px;
+  line-height: 20px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.account-menu-heading small {
+  display: block;
+  color: var(--muted);
+  margin: 0;
+  line-height: 18px;
+}
+.account-menu nav {
+  display: grid;
+}
+.account-menu nav :is(a, button) {
+  display: flex;
+  align-items: center;
+  justify-content: start;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  background: transparent;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+.account-menu nav :is(a, button):hover {
+  background: var(--surface-raised);
+  color: var(--text);
+  filter: none;
+  box-shadow: none;
+  transform: none;
+  text-decoration: none;
+}
+.account-menu nav :is(a, button) {
+  transition: background-color 150ms ease-out;
+}
+.account-menu hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 6px 0;
+}
+.account-settings {
+  display: grid;
+  gap: 24px;
+}
+.profile-photo-row {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 24px 0;
+}
+.profile-photo-row > div {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.profile-photo-row input {
+  width: 100%;
+}
+.profile-photo-row small {
+  color: var(--muted);
+}
+.profile-upload {
+  display: grid;
+  gap: 8px;
+}
+.application-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px;
+  padding: 24px 0;
+  border-top: 1px solid var(--border);
+}
+.application-action > div {
+  flex: 1 1 240px;
+}
+.application-action h3 {
+  margin: 0;
+}
+.application-action p {
+  color: var(--muted);
+  margin-bottom: 0;
+}
+.sidebar-now {
+  position: relative;
+  row-gap: 0;
+}
+.sidebar-now .sidebar-playback {
+  margin-top: 10px;
+}
+.sidebar-now .playback-copy {
+  padding-right: 20px;
+}
+.sidebar-now .now-expand-toggle {
+  z-index: 2;
+  position: absolute;
+  top: 6px;
+  right: 2px;
+  width: 28px;
+  min-width: 28px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+.now-artwork-expansion {
+  display: grid;
+  grid-template-rows: 0fr;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  margin-bottom: 0;
+  align-self: stretch;
+  min-height: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 160ms ease-out,
+    margin 160ms ease-out,
+    visibility 160ms;
+}
+.now-artwork-expansion > div {
+  min-height: 0;
+  overflow: hidden;
+}
+.now-artwork-expansion img,
+.sidebar-now .now-artwork-placeholder {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  object-fit: contain;
+  background: var(--surface-raised);
+}
+.sidebar-now .now-artwork-placeholder {
+  display: grid;
+  place-items: center;
+}
+.now-artwork-placeholder .material-icons-outlined {
+  font-size: 56px;
+}
+.artwork-expanded .now-artwork-expansion {
+  grid-template-rows: 1fr;
+  margin-bottom: 12px;
+  visibility: visible;
+}
+.collapsed .now-artwork-expansion,
+.collapsed .now-expand-toggle {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .now-artwork-expansion {
+    transition: none;
+  }
+}
+@media (max-width: 600px) {
+  .profile-photo-row {
+    gap: 16px;
+  }
 }

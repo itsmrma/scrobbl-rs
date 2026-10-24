@@ -133,6 +133,7 @@ export function Now({
   compact?: boolean;
 }) {
   const { data, error, browserTiming, browserCommit } = useContext(NowContext);
+  const [expanded, setExpanded] = useState(false);
   const [clock, setClock] = useState(Date.now());
   useEffect(() => {
     if (!compact || !data) return;
@@ -152,10 +153,37 @@ export function Now({
   if (compact)
     return (
       <div
-        className={`sidebar-now ${data ? "is-playing" : "is-idle"}`}
+        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded ? "artwork-expanded" : ""}`}
         aria-label="Now playing"
       >
         <Cover url={data?.cover_url} />
+        <button
+          className="icon-button now-expand-toggle nav-copy"
+          aria-label={
+            expanded
+              ? "Collapse now playing artwork"
+              : "Expand now playing artwork"
+          }
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
+        </button>
+        <div
+          className="now-artwork-expansion nav-copy"
+          aria-hidden={!expanded}
+          inert={!expanded}
+        >
+          <div>
+            {data?.cover_url ? (
+              <img src={data.cover_url} alt="Now playing artwork" />
+            ) : (
+              <span className="now-artwork-placeholder">
+                <Icon>music_note</Icon>
+              </span>
+            )}
+          </div>
+        </div>
         <div className="nav-copy playback-copy">
           <small>
             {error

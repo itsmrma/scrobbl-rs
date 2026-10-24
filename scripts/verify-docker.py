@@ -186,6 +186,34 @@ def main():
             stack("up", "-d", "--pull", "never")
             ready()
             assert hashlib.sha256(download(backup_id)).hexdigest() == package_hash
+            # Owner controls affect only this application: restart preserves access/data,
+            # while a clean stop remains stopped under the supplied restart policy.
+            original_boot = request("/api/v1/application")["boot_id"]
+            original_totals = request("/api/dashboard?period=all")["totals"]
+            request("/api/v1/application", {"action": "restart", "confirmed": True})
+            for _ in range(90):
+                try:
+                    if request("/api/v1/application")["boot_id"] != original_boot:
+                        break
+                except (OSError, urllib.error.URLError):
+                    pass
+                time.sleep(1)
+            else:
+                raise RuntimeError("Application restart did not finish")
+            assert request("/api/dashboard?period=all")["totals"] == original_totals
+            container_id = stack("ps", "-q", "scrobbl", capture=True)
+            assert docker("inspect", "--format", "{{.HostConfig.RestartPolicy.Name}}", container_id, capture=True) == "on-failure"
+            request("/api/v1/application", {"action": "stop", "confirmed": True})
+            for _ in range(60):
+                if docker("inspect", "--format", "{{.State.Running}}", container_id, capture=True) == "false":
+                    break
+                time.sleep(1)
+            else:
+                raise RuntimeError("Application stop did not stop its container")
+            time.sleep(2)
+            assert docker("inspect", "--format", "{{.State.Running}} {{.State.ExitCode}}", container_id, capture=True) == "false 0"
+            stack("start", "scrobbl")
+            ready()
             stack("stop")
             print("Docker smoke passed: import, persistence, portable backup/export, isolated verification, uploaded restore, fresh owner access, pause/resume, actual disk-full refusal, retained copies, source notices and SIGTERM")
         finally:

@@ -1,3 +1,4 @@
+import { AccountSettings, ApplicationSettings } from "./account-settings";
 import { Select } from "./select";
 import { SpotifyNotice } from "./spotify-status";
 import { useEffect, useState } from "react";
@@ -1024,6 +1025,8 @@ export function Settings({
           onChange={(value) => navigate(`/settings/${value}`)}
         >
           <option value="general">General</option>
+          <option value="account">Account</option>
+          <option value="application">Application</option>
           <option value="appearance">Appearance</option>
           <option value="connections">Connections</option>
           <option value="data">Data &amp; recovery</option>
@@ -1033,6 +1036,8 @@ export function Settings({
       <nav className="settings-tabs" aria-label="Settings sections">
         {[
           ["general", "General"],
+          ["account", "Account"],
+          ["application", "Application"],
           ["appearance", "Appearance"],
           ["connections", "Connections"],
           ["data", "Data & recovery"],
@@ -1047,6 +1052,8 @@ export function Settings({
           </Link>
         ))}
       </nav>
+      {section === "account" && <AccountSettings />}
+      {section === "application" && <ApplicationSettings />}
       <div hidden={section !== "general"}>
         <General preferences={preferences} saved={saved} />
       </div>

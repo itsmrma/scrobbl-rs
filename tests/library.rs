@@ -93,6 +93,281 @@ async fn get(state: &AppState, token: &str, path: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 #[tokio::test]
+async fn account_profile_and_application_controls_require_owner_and_csrf() {
+    let (_dir, state, token) = setup().await;
+    for path in [
+        "/api/v1/account",
+        "/api/v1/account/avatar",
+        "/api/v1/application",
+    ] {
+        assert_eq!(
+            call(&state, "invalid", "GET", path, vec![], false).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let edit = serde_json::to_vec(&json!({"name":"Music owner"})).unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account",
+            edit.clone(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(&state, &token, "POST", "/api/v1/account", edit, true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let mut png = b"\x89PNG\r\n\x1a\nprofile image".to_vec();
+    png.resize(32 * 1024, 0);
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/avatar",
+            b"<svg/>".to_vec(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/avatar",
+            png.clone(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/avatar",
+            png.clone(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "GET",
+            "/api/v1/account/avatar",
+            vec![],
+            false
+        )
+        .await
+        .1,
+        png
+    );
+    let profile = get(&state, &token, "/api/v1/account").await;
+    assert_eq!(profile["name"], "Music owner");
+    assert!(
+        profile["avatar_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("/api/v1/account/avatar?v=")
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM settings WHERE key LIKE 'profile_%'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+        0
+    );
+    for (body, status) in [
+        (
+            json!({"action":"restart","confirmed":false}),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({"action":"running","confirmed":true}),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        assert_eq!(
+            call(
+                &state,
+                &token,
+                "POST",
+                "/api/v1/application",
+                serde_json::to_vec(&body).unwrap(),
+                true
+            )
+            .await
+            .0,
+            status
+        );
+    }
+    let body = serde_json::to_vec(&json!({"action":"restart","confirmed":true})).unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/application",
+            body.clone(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        *state.application.action.borrow(),
+        scrobbl_rs::account::Action::Running
+    );
+    assert_eq!(
+        call(&state, &token, "POST", "/api/v1/application", body, true)
+            .await
+            .0,
+        StatusCode::ACCEPTED
+    );
+    assert_eq!(
+        *state.application.action.borrow(),
+        scrobbl_rs::account::Action::Restart
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/avatar/remove",
+            b"{}".to_vec(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "GET",
+            "/api/v1/account/avatar",
+            vec![],
+            false
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
+async fn changing_owner_password_revokes_other_sessions_and_preserves_current_access() {
+    use argon2::PasswordHasher;
+    let (_dir, state, token) = setup().await;
+    let old = "a local browser test password 7!";
+    let new = "new personal music pass 9!";
+    let hash = argon2::Argon2::default()
+        .hash_password(old.as_bytes())
+        .unwrap()
+        .to_string();
+    sqlx::query("INSERT INTO owner VALUES(1,?,0)")
+        .bind(hash)
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO settings VALUES('owner_username','owner')")
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    let other = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'other-csrf',9999999999999)")
+        .bind(auth::digest(&other))
+        .execute(&state.private_db)
+        .await
+        .unwrap();
+    let body = serde_json::to_vec(&json!({"current_password":"wrong","password":new})).unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/password",
+            body,
+            true
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(&state, &other, "GET", "/api/v1/account", vec![], false)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let body = serde_json::to_vec(&json!({"current_password":old,"password":new})).unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/password",
+            body.clone(),
+            false
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/account/password",
+            body,
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&state, &token, "GET", "/api/v1/account", vec![], false)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&state, &other, "GET", "/api/v1/account", vec![], false)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    for (password, status) in [(old, StatusCode::UNAUTHORIZED), (new, StatusCode::OK)] {
+        let body = serde_json::to_vec(&json!({"username":"owner","password":password})).unwrap();
+        assert_eq!(
+            call(&state, "", "POST", "/api/login", body, false).await.0,
+            status
+        );
+    }
+}
+
+#[tokio::test]
 async fn duplicate_review_is_explicit_recoverable_and_keeps_originals() {
     let (_dir, state, token) = setup().await;
     let raw = json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Source title","duration_ms":180000,"album":{"id":"0000000000000000000002","name":"Source album","images":[]},"artists":[{"id":"0000000000000000000003","name":"Source artist"}]});

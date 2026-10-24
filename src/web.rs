@@ -24,6 +24,19 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/healthz", get(health))
         .route("/api/owner/username", post(auth::set_username))
+        .route(
+            "/api/v1/account",
+            get(crate::account::profile).post(crate::account::edit_profile),
+        )
+        .route("/api/v1/account/password", post(crate::account::password))
+        .route(
+            "/api/v1/account/avatar/remove",
+            post(crate::account::remove_avatar),
+        )
+        .route(
+            "/api/v1/application",
+            get(crate::account::application).post(crate::account::control),
+        )
         .route("/license", get(license))
         .route("/licenses", get(licenses))
         .route("/app.js", get(js))
@@ -161,6 +174,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/spotify/now-playing", get(spotify::now_playing))
         .route("/auth/spotify/callback", get(spotify::callback))
         .layer(DefaultBodyLimit::max(16 * 1024))
+        .route(
+            "/api/v1/account/avatar",
+            get(crate::account::avatar)
+                .post(crate::account::upload_avatar)
+                .layer(DefaultBodyLimit::max(5 * 1024 * 1024)),
+        )
         .route(
             "/api/v1/recovery/upload",
             post(crate::recovery_http::upload).layer(DefaultBodyLimit::max(

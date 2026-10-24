@@ -250,6 +250,208 @@ test("music listening patterns switch within one compact chart and header filter
   }
 });
 
+test("owner account menu saves a private photo and password and moves sign out from the sidebar", async ({
+  page,
+  browserName,
+}) => {
+  await login(page);
+  const trigger = page.getByRole("button", {
+    name: "Account menu",
+    exact: true,
+  });
+  await expect(
+    page.locator(".sidebar-bottom").getByRole("button", { name: "Sign out" }),
+  ).toHaveCount(0);
+  await trigger.click();
+  await expect(
+    page.getByRole("navigation", { name: "Account actions" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.screenshot({
+    path: `test-results/gui-account-menu-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("link", { name: "Account settings", exact: true })
+    .click();
+  await expect(page.getByLabel("Username", { exact: true })).toHaveValue(
+    "owner",
+  );
+  await page
+    .getByLabel("Display name", { exact: true })
+    .fill("My music profile");
+  await page.getByRole("button", { name: "Save profile", exact: true }).click();
+  await expect(page.getByLabel("Profile photo", { exact: true })).toBeEnabled();
+  const largePhoto = Buffer.from(
+    await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1024;
+      const context = canvas.getContext("2d");
+      const image = context.createImageData(1024, 1024);
+      for (let i = 0; i < image.data.length; i += 65536)
+        crypto.getRandomValues(image.data.subarray(i, i + 65536));
+      context.putImageData(image, 0, 0);
+      return canvas.toDataURL("image/png").split(",")[1];
+    }),
+    "base64",
+  );
+  expect(largePhoto.length).toBeGreaterThan(1024 * 1024);
+  await page.getByLabel("Profile photo", { exact: true }).setInputFiles({
+    name: "profile.png",
+    mimeType: "image/png",
+    buffer: largePhoto,
+  });
+  await expect(page.locator(".account-avatar.large img")).toBeVisible();
+  await expect(trigger.locator("img")).toBeVisible();
+  await expect
+    .poll(() => trigger.locator("img").evaluate((image) => image.naturalWidth))
+    .toBe(512);
+  await page.reload();
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveValue(
+    "My music profile",
+  );
+  await expect(trigger.locator("img")).toBeVisible();
+  await page.screenshot({
+    path: `test-results/gui-account-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByLabel("Current password", { exact: true })
+    .fill("wrong password");
+  await page
+    .getByLabel("New password", { exact: true })
+    .fill("new personal music pass 9!");
+  await page
+    .getByLabel("Confirm new password", { exact: true })
+    .fill("new personal music pass 9!");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page.getByText("The current password is incorrect.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Current password", { exact: true })
+    .fill("a local browser test password 7!");
+  await page
+    .getByRole("button", { name: "Change password", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Current password", { exact: true }),
+  ).toHaveValue("");
+  await page.getByRole("button", { name: "Remove photo", exact: true }).click();
+  await expect(trigger.locator("img")).toHaveCount(0);
+  await trigger.click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+  await page.getByLabel("Username", { exact: true }).fill("owner");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("new personal music pass 9!");
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(trigger).toBeVisible();
+});
+
+test("application controls restart the disposable app and stop only its process", async ({
+  page,
+}) => {
+  await login(page, "/settings/application");
+  const original = await (await page.request.get("/api/v1/application")).json();
+  await page
+    .getByRole("button", { name: "Restart application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(
+    (await (await page.request.get("/api/v1/application")).json()).boot_id,
+  ).toBe(original.boot_id);
+  await page
+    .getByRole("button", { name: "Restart application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Restart now", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "scrobbl.rs has restarted",
+    { timeout: 30000 },
+  );
+  const restarted = await (
+    await page.request.get("/api/v1/application")
+  ).json();
+  expect(restarted.boot_id).not.toBe(original.boot_id);
+  expect(
+    (await (await page.request.get("/api/dashboard?period=all")).json()).totals
+      .listens,
+  ).toBe(1);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Stop application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Stop now", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Stop accepted");
+  await expect
+    .poll(async () => {
+      try {
+        return (await page.request.get("/healthz", { timeout: 1000 })).ok();
+      } catch {
+        return false;
+      }
+    })
+    .toBe(false);
+});
+
+test("ranking metrics share type size and emphasize the chosen comparison measure", async ({
+  page,
+  browserName,
+}) => {
+  await login(page);
+  async function verify(byTime) {
+    const rows = page.locator(".rank-metrics");
+    await expect(rows.first()).toBeVisible();
+    for (const row of await rows.all()) {
+      await expect(row.locator(".rank-separator")).toHaveText("·");
+      await expect(row.locator("strong")).toHaveClass(
+        byTime ? "rank-time" : "rank-plays",
+      );
+      const styles = await row.evaluate((node) => {
+        const plays = getComputedStyle(node.querySelector(".rank-plays"));
+        const time = getComputedStyle(node.querySelector(".rank-time"));
+        return {
+          playsSize: plays.fontSize,
+          timeSize: time.fontSize,
+          playsWeight: Number(plays.fontWeight),
+          timeWeight: Number(time.fontWeight),
+        };
+      });
+      expect(styles.playsSize).toBe(styles.timeSize);
+      expect(byTime ? styles.timeWeight : styles.playsWeight).toBeGreaterThan(
+        byTime ? styles.playsWeight : styles.timeWeight,
+      );
+    }
+  }
+  await verify(false);
+  await chooseOption(page.getByLabel("Rank by", { exact: true }), "time");
+  await verify(true);
+  await page.screenshot({
+    path: `test-results/gui-rank-metrics-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  for (const kind of ["artists", "albums", "tracks"]) {
+    await page.goto(`/rankings/${kind}?sort=time`);
+    await verify(true);
+    await page.getByRole("button", { name: "Grid", exact: true }).click();
+    await verify(true);
+    await chooseOption(page.getByLabel("Rank by", { exact: true }), "plays");
+    await verify(false);
+  }
+});
+
 test("album tracks scroll inside their card without pagination or missing later results", async ({
   page,
 }) => {
@@ -298,6 +500,7 @@ test("album tracks scroll inside their card without pagination or missing later 
   for (const view of ["List", "Grid"]) {
     await card.getByRole("button", { name: view, exact: true }).click();
     const results = card.locator(".ranking-results");
+    await results.scrollIntoViewIfNeeded();
     await expect
       .poll(() =>
         results.evaluate((node) => node.scrollHeight > node.clientHeight),
@@ -1305,6 +1508,8 @@ test("release routes fit phone and tablet viewports in both orientations", async
     "/import",
     "/activities",
     "/settings/general",
+    "/settings/account",
+    "/settings/application",
     "/settings/appearance",
     "/settings/connections",
     "/settings/data",
@@ -2248,8 +2453,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await expect(widget.getByRole("link")).toContainText("A song");
   await expect(widget.getByRole("progressbar")).toBeVisible();
   const lefts = await widget
-    .locator(".nav-copy")
-    .first()
+    .locator(".playback-copy")
     .locator(":scope > small, :scope > a, :scope > span")
     .evaluateAll((nodes) =>
       nodes.map((node) => node.getBoundingClientRect().left),
@@ -2263,6 +2467,34 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await expect(collapse).toHaveCSS("box-shadow", "none");
   await expect(page.locator(".sidebar .wordmark > .accent")).toHaveText(".");
   expect((await widget.boundingBox()).height).toBeLessThan(155);
+  const compactHeight = (await widget.boundingBox()).height;
+  expect(
+    await widget.evaluate((node) => {
+      const cover = node
+        .querySelector(":scope > .cover")
+        .getBoundingClientRect();
+      const copy = node.querySelector(".playback-copy").getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return Math.abs(
+        Math.min(cover.top, copy.top) -
+          node.getBoundingClientRect().top -
+          parseFloat(style.borderTopWidth) -
+          parseFloat(style.paddingTop),
+      );
+    }),
+  ).toBeLessThan(1);
+  await widget
+    .getByRole("button", { name: "Expand now playing artwork", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await widget.boundingBox()).height)
+    .toBeGreaterThan(compactHeight + 100);
+  await widget
+    .getByRole("button", { name: "Collapse now playing artwork", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await widget.boundingBox()).height)
+    .toBeLessThan(compactHeight + 1);
   await page.screenshot({
     path: `test-results/gui-${browserName}-sidebar-playback.png`,
     fullPage: true,
@@ -2527,13 +2759,27 @@ test("music header and history disclosure keep their geometry", async ({
     await expect(row.locator("details")).not.toHaveAttribute("open");
     const heading = page.locator(".music-heading");
     await heading.scrollIntoViewIfNeeded();
-    const cover = await heading.locator(":scope > .cover").boundingBox();
-    const title = await heading.locator(".page-heading").boundingBox();
-    const filters = await heading.locator(".music-period").boundingBox();
-    expect(Math.abs(cover.y - title.y)).toBeLessThan(1);
-    expect(
-      Math.abs(cover.y + cover.height - filters.y - filters.height),
-    ).toBeLessThan(1);
+    await expect
+      .poll(() =>
+        heading.evaluate((node) => {
+          const cover = node
+            .querySelector(":scope > .cover")
+            .getBoundingClientRect();
+          const title = node
+            .querySelector(".page-heading")
+            .getBoundingClientRect();
+          const filters = node
+            .querySelector(".music-period")
+            .getBoundingClientRect();
+          const inset =
+            parseFloat(getComputedStyle(node.querySelector("h1")).fontSize) / 4;
+          return Math.max(
+            Math.abs(cover.top - title.top),
+            Math.abs(cover.bottom - filters.bottom - inset),
+          );
+        }),
+      )
+      .toBeLessThan(1);
     await page.screenshot({
       path: "test-results/gui-sixth-" + kind + ".png",
       fullPage: true,

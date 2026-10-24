@@ -32,19 +32,18 @@ import {
   Heading,
   Icon,
   Toasts,
-  useToast,
   Wordmark,
 } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
 import { Auth, UsernameSetup } from "./account";
+import { AccountMenu } from "./account-settings";
 
 function Shell({ logout }: { logout: () => void }) {
   useDisclosureMotion();
   const artworkWork = useArtworkActivity();
   const path = useLocation(),
-    appearance = useAppearance(),
-    toast = useToast();
+    appearance = useAppearance();
   const [preferences, setPreferences] = useState<Preferences | null>(null),
     [loadError, setLoadError] = useState("");
   const [status, setStatus] = useState<SpotifyStatus | null>(null),
@@ -195,6 +194,8 @@ function Shell({ logout }: { logout: () => void }) {
   const page =
     path === "/" || path === "/dashboard" ? "dashboard" : path.split("/")[1];
   const settingsSection = [
+    "account",
+    "application",
     "general",
     "appearance",
     "connections",
@@ -359,23 +360,6 @@ function Shell({ logout }: { logout: () => void }) {
             </div>
             <div className="sidebar-bottom">
               <Now status={status} compact />
-              <button
-                className="secondary"
-                aria-label="Sign out"
-                onClick={async () => {
-                  try {
-                    await api.logout();
-                    setCsrf(null);
-                    logout();
-                  } catch (e) {
-                    toast(e instanceof Error ? e.message : String(e), true);
-                  }
-                }}
-              >
-                <Icon>logout</Icon>
-                <span className="nav-copy">Sign out</span>
-              </button>
-              <p className="subtle nav-copy">Made for the music you keep.</p>
             </div>
           </aside>
           {!collapsed && (
@@ -447,6 +431,7 @@ function Shell({ logout }: { logout: () => void }) {
               <Link to="/activities" className="mobile-activities">
                 <Icon>pending_actions</Icon>Activities ({activeCount})
               </Link>
+              <AccountMenu logout={logout} />
             </header>
             <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
               <section hidden={page !== "dashboard"}>

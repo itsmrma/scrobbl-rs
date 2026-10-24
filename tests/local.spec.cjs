@@ -175,6 +175,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     fullPage: true,
   });
   await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "Account menu", exact: true }).click();
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
