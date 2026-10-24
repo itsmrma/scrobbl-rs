@@ -1,0 +1,1 @@
+Introducing scrobbl.rs: your searchable music listening archive, kept on your own server. Built with Rust, SQLite, React, and TypeScript.

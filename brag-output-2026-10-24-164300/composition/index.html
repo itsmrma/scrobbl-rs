@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>scrobbl.rs — your listening history</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #14171c;
+        --surface: #1c1f27;
+        --raised: #292d38;
+        --border: #454a58;
+        --text: #f2f3f7;
+        --muted: #bac0cc;
+        --accent: #c9ee8b;
+        --ink: #192912;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); }
+      #root { position: relative; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(ellipse at 76% 44%, #28302a 0%, var(--bg) 47%); }
+      .clip { position: absolute; inset: 0; overflow: hidden; }
+      .eyebrow { color: var(--accent); text-transform: uppercase; font-size: 22px; font-weight: 700; letter-spacing: .16em; }
+      .demo { position: absolute; right: 64px; top: 48px; color: #d8e8bd; border: 1px solid #607151; background: #273126; border-radius: 999px; padding: 10px 16px; font-size: 18px; font-weight: 700; letter-spacing: .12em; }
+      .wordmark { display: inline-flex; align-items: center; gap: 15px; font-size: 29px; font-weight: 700; letter-spacing: -.04em; }
+      .logo-mark { display: inline-block; width: 46px; height: 46px; flex: 0 0 auto; background: url("assets/scrobbl-logo.svg") center / contain no-repeat; }
+      .copy { position: absolute; left: 124px; top: 294px; width: 510px; }
+      h1 { margin: 21px 0 15px; font-size: 74px; line-height: 1.04; letter-spacing: -.055em; font-weight: 650; }
+      .subtitle { color: var(--muted); font-size: 25px; line-height: 1.5; }
+      .app { position: absolute; right: 104px; top: 161px; width: 1045px; height: 720px; border: 1px solid #444956; border-radius: 22px; background: var(--surface); box-shadow: 0 36px 120px #0008; overflow: hidden; }
+      .app-bar { height: 61px; display: flex; align-items: center; gap: 8px; padding: 0 24px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 18px; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: #727985; }
+      .app-name { margin-left: auto; color: var(--text); font-weight: 650; }
+      .app-body { display: flex; height: calc(100% - 61px); }
+      .nav { width: 206px; padding: 28px 19px; border-right: 1px solid var(--border); background: #191c24; color: var(--muted); font-size: 19px; }
+      .nav-logo { display: flex; align-items: center; gap: 10px; margin: 0 0 34px 6px; color: var(--text); font-size: 18px; font-weight: 700; }
+      .nav-logo .logo-mark { width: 31px; height: 31px; }
+      .nav-item { margin: 5px 0; padding: 12px 13px; border-radius: 8px; }
+      .nav-item.active { color: var(--ink); background: var(--accent); font-weight: 700; }
+      .main { flex: 1; min-width: 0; padding: 35px 39px; }
+      .main h2 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.035em; }
+      .muted { color: var(--muted); }
+      .small { font-size: 18px; }
+      .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 26px; }
+      .stat { background: var(--raised); border: 1px solid #3c414d; border-radius: 11px; padding: 17px 18px; }
+      .stat label { display: block; color: var(--muted); font-size: 18px; }
+      .stat strong { display: block; margin-top: 8px; font-size: 31px; }
+      .lower { display: grid; grid-template-columns: 1.13fr .87fr; gap: 16px; margin-top: 17px; }
+      .panel { min-height: 236px; padding: 20px; border-radius: 11px; border: 1px solid #3c414d; background: #22252d; }
+      .panel-title { font-size: 20px; font-weight: 700; }
+      .chart { height: 141px; margin-top: 13px; display: flex; align-items: end; gap: 11px; border-bottom: 1px solid #5c626d; padding: 0 7px; }
+      .bar { flex: 1; min-width: 16px; border-radius: 5px 5px 0 0; background: linear-gradient(180deg, #c9ee8b, #83a95a); }
+      .recent-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #3c414d; font-size: 18px; }
+      .cover { width: 39px; height: 39px; border-radius: 6px; display: grid; place-items: center; color: #152319; font-weight: 800; background: linear-gradient(145deg,#c9ee8b,#6e9475); }
+      .recent-row .meta { flex: 1; }
+      .pill { border-radius: 999px; color: var(--accent); background: #33402b; padding: 6px 10px; font-size: 15px; }
+      .import-card { position: absolute; left: 475px; top: 205px; width: 970px; border: 1px solid #424752; border-radius: 22px; background: var(--surface); padding: 44px 52px; box-shadow: 0 36px 120px #0008; }
+      .import-head { display: flex; align-items: flex-start; gap: 24px; }
+      .import-icon { width: 78px; height: 78px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 18px; background: var(--raised); color: var(--accent); font-size: 38px; }
+      .import-head h2 { margin: 3px 0 7px; font-size: 35px; letter-spacing: -.04em; }
+      .file { display: flex; align-items: center; gap: 17px; margin-top: 35px; padding: 19px 20px; border: 1px solid var(--border); background: #171a20; border-radius: 12px; }
+      .file-icon { color: var(--accent); font-size: 28px; }
+      .file-name { font-size: 18px; font-weight: 650; }
+      .file-sub { color: var(--muted); margin-top: 4px; font-size: 18px; }
+      .complete { margin-left: auto; color: var(--accent); font-size: 15px; font-weight: 700; }
+      .progress { height: 10px; margin-top: 25px; border-radius: 99px; background: #414651; overflow: hidden; }
+      .progress-fill { width: 100%; height: 100%; background: var(--accent); border-radius: inherit; transform-origin: left; }
+      .report { display: flex; gap: 26px; margin-top: 18px; color: var(--muted); font-size: 18px; }
+      .report b { color: var(--text); }
+      .feature-line { position: absolute; left: 155px; bottom: 119px; color: var(--muted); font-size: 19px; }
+      .artist { display: flex; gap: 25px; align-items: center; margin: 8px 0 28px; }
+      .artist-art { width: 112px; height: 112px; border-radius: 13px; display: grid; place-items: center; background: linear-gradient(135deg,#d9f69c,#56715a); color: #17221a; font-size: 44px; font-weight: 750; }
+      .artist h2 { font-size: 36px; margin: 0 0 7px; }
+      .list { margin-top: 19px; border: 1px solid #3c414d; border-radius: 10px; overflow: hidden; }
+      .list-head, .listen { display: grid; grid-template-columns: 42px 1fr 1fr 145px; align-items: center; gap: 12px; padding: 13px 17px; font-size: 18px; }
+      .list-head { color: var(--muted); background: #252933; font-size: 16px; text-transform: uppercase; letter-spacing: .08em; }
+      .listen > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .listen { border-top: 1px solid #383d48; }
+      .listen strong { font-weight: 650; }
+      .final { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+      .final-inner { display: grid; justify-items: center; gap: 27px; }
+      .final-logo { display: block; width: 110px; height: 110px; background: url("assets/scrobbl-logo.svg") center / contain no-repeat; filter: drop-shadow(0 0 36px #c9ee8b44); }
+      .final-name { font-size: 75px; font-weight: 750; letter-spacing: -.065em; }
+      .final-tag { color: var(--muted); font-size: 29px; }
+      .server { position: absolute; right: 220px; bottom: 115px; color: #849078; font-size: 16px; }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-md8n" id="root" data-composition-id="scrobbl-brag" data-start="0" data-width="1920" data-height="1080" data-duration="22.37">
+      <audio data-hf-id="hf-z0vb" id="music" data-start="0" data-duration="22.37" data-track-index="6" data-automation="{&quot;version&quot;:1,&quot;lanes&quot;:[{&quot;target&quot;:&quot;volume&quot;,&quot;points&quot;:[{&quot;t&quot;:0,&quot;v&quot;:0},{&quot;t&quot;:0.8,&quot;v&quot;:0.22},{&quot;t&quot;:21.2,&quot;v&quot;:0.22},{&quot;t&quot;:22.37,&quot;v&quot;:0}]}]}" src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3"></audio>
+
+      <section data-hf-id="hf-6ab7" id="scene-hook" class="clip" data-start="0" data-duration="3.55">
+        <div data-hf-id="hf-ga2o" class="demo">DEMO ARCHIVE</div>
+        <div data-hf-id="hf-s2dq" class="copy" id="hook-copy">
+          <div data-hf-id="hf-ba4n" class="wordmark"><i data-hf-id="hf-2op2" class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div>
+          <div data-hf-id="hf-8ek8" class="eyebrow" style="margin-top: 50px">A personal listening archive</div>
+          <h1 data-hf-id="hf-dmnu">Your listening<br data-hf-id="hf-x5px" />history.</h1>
+          <div data-hf-id="hf-j4vk" class="subtitle">Collected and kept in one place.</div>
+        </div>
+        <div data-hf-id="hf-wgq8" class="app" id="hook-app">
+          <div data-hf-id="hf-tyxl" class="app-bar"><span data-hf-id="hf-9gry" class="dot"></span><span data-hf-id="hf-zcc2" class="dot"></span><span data-hf-id="hf-zqn3" class="dot"></span><span data-hf-id="hf-3vja" class="app-name">scrobbl.rs</span></div>
+          <div data-hf-id="hf-fgvm" class="app-body">
+            <aside data-hf-id="hf-d926" class="nav"><div data-hf-id="hf-ckhp" class="nav-logo"><i data-hf-id="hf-fczu" class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div><div data-hf-id="hf-5flm" class="nav-item active">Overview</div><div data-hf-id="hf-cp5q" class="nav-item">Listening history</div><div data-hf-id="hf-89ji" class="nav-item">Rankings</div><div data-hf-id="hf-bdlc" class="nav-item">Settings</div></aside>
+            <main data-hf-id="hf-g3rz" class="main"><h2 data-hf-id="hf-hdrs">Overview</h2><div data-hf-id="hf-y74k" class="muted small">Your listening, at a glance</div>
+              <div data-hf-id="hf-rhep" class="stats"><div data-hf-id="hf-xa0m" class="stat"><label data-hf-id="hf-8gnb">Listens</label><strong data-hf-id="hf-mfk1">12,480</strong></div><div data-hf-id="hf-tx7e" class="stat"><label data-hf-id="hf-ip3j">Artists</label><strong data-hf-id="hf-jpo0">684</strong></div><div data-hf-id="hf-ubif" class="stat"><label data-hf-id="hf-7gdb">Listening time</label><strong data-hf-id="hf-mnlx">812 h</strong></div></div>
+              <div data-hf-id="hf-d9jj" class="lower"><div data-hf-id="hf-owjm" class="panel"><div data-hf-id="hf-iapk" class="panel-title">Listening activity · 7 days</div><div data-hf-id="hf-ntnc" class="chart"><i data-hf-id="hf-hzl2" class="bar" style="height:36%"></i><i data-hf-id="hf-qrwz" class="bar" style="height:62%"></i><i data-hf-id="hf-d5gw" class="bar" style="height:49%"></i><i data-hf-id="hf-4ga6" class="bar" style="height:83%"></i><i data-hf-id="hf-1jnc" class="bar" style="height:56%"></i><i data-hf-id="hf-zdou" class="bar" style="height:72%"></i><i data-hf-id="hf-zxqd" class="bar" style="height:95%"></i></div></div><div data-hf-id="hf-gxly" class="panel"><div data-hf-id="hf-ljt5" class="panel-title">Recent listening</div><div data-hf-id="hf-bfu2" class="recent-row"><div data-hf-id="hf-waen" class="cover">D</div><div data-hf-id="hf-puvz" class="meta"><b data-hf-id="hf-czeb">Paper Moons</b><div data-hf-id="hf-uhui" class="muted small">Demo Artist</div></div><span data-hf-id="hf-h2px" class="pill">Today</span></div><div data-hf-id="hf-3w6m" class="recent-row"><div data-hf-id="hf-sbcd" class="cover">N</div><div data-hf-id="hf-zjfj" class="meta"><b data-hf-id="hf-zhkb">Night Window</b><div data-hf-id="hf-9vy6" class="muted small">Demo Artist</div></div><span data-hf-id="hf-8220" class="pill">Yesterday</span></div></div></div>
+            </main>
+          </div>
+        </div>
+        <div data-hf-id="hf-3t7g" class="feature-line" id="hook-foot">Searchable listening history · private, single-owner archive</div>
+      </section>
+
+      <section data-hf-id="hf-93rz" id="scene-import" class="clip" data-start="3.55" data-duration="4.24">
+        <div data-hf-id="hf-81ko" class="demo">DEMO ARCHIVE</div>
+        <div data-hf-id="hf-o2i8" class="eyebrow" id="import-eyebrow" style="position:absolute;left:0;right:0;top:132px;text-align:center">Bring the archive in</div>
+        <div data-hf-id="hf-lfj6" class="import-card" id="import-card">
+          <div data-hf-id="hf-ldoe" class="import-head"><div data-hf-id="hf-ajfc" class="import-icon">↓</div><div data-hf-id="hf-yeow"><h2 data-hf-id="hf-yosz">Import listening history</h2><div data-hf-id="hf-7p02" class="muted">Spotify Extended Streaming History</div></div></div>
+          <div data-hf-id="hf-s7w2" class="file"><span data-hf-id="hf-vht0" class="file-icon">▣</span><div data-hf-id="hf-y7yw"><div data-hf-id="hf-a1ki" class="file-name">Streaming_History_Audio_2019-2025.zip</div><div data-hf-id="hf-p2hd" class="file-sub">Demo file · import report saved</div></div><span data-hf-id="hf-pjlg" class="complete">✓ Complete</span></div>
+          <div data-hf-id="hf-31j5" class="progress"><div data-hf-id="hf-cq24" class="progress-fill" id="progress-fill"></div></div>
+          <div data-hf-id="hf-bw92" class="report"><span data-hf-id="hf-8jlv"><b data-hf-id="hf-el0q">12,480</b> listens</span><span data-hf-id="hf-6h0r"><b data-hf-id="hf-d0id">684</b> artists</span><span data-hf-id="hf-h28w">Repeated imports are safe</span></div>
+        </div>
+        <div data-hf-id="hf-fqxb" class="feature-line" id="import-foot" style="left:0;right:0;text-align:center">Import extended listening history.</div>
+      </section>
+
+      <section data-hf-id="hf-lsn3" id="scene-overview" class="clip" data-start="7.79" data-duration="4.77">
+        <div data-hf-id="hf-6unl" class="demo">DEMO ARCHIVE</div>
+        <div data-hf-id="hf-2o28" class="copy" id="overview-copy" style="left:155px;top:253px;width:490px"><div data-hf-id="hf-9ouv" class="eyebrow">A living archive</div><h1 data-hf-id="hf-hbx3" style="font-size:67px">History.<br data-hf-id="hf-rsrt" />Rankings.<br data-hf-id="hf-szow" />Activity.</h1><div data-hf-id="hf-lnyw" class="subtitle">See listening patterns over time.</div></div>
+        <div data-hf-id="hf-2o08" class="app" id="overview-app" style="right:114px;top:195px;width:1105px;height:650px">
+          <div data-hf-id="hf-rzl9" class="app-bar"><span data-hf-id="hf-04y4" class="dot"></span><span data-hf-id="hf-0j95" class="dot"></span><span data-hf-id="hf-0xk6" class="dot"></span><span data-hf-id="hf-itii" class="app-name">scrobbl.rs</span></div>
+          <div data-hf-id="hf-d33q" class="app-body"><aside data-hf-id="hf-qaki" class="nav"><div data-hf-id="hf-u9xt" class="nav-logo"><i data-hf-id="hf-frav" class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div><div data-hf-id="hf-km3i" class="nav-item active">Overview</div><div data-hf-id="hf-orwi" class="nav-item">Listening history</div><div data-hf-id="hf-yxqq" class="nav-item">Rankings</div><div data-hf-id="hf-1jzc" class="nav-item">Settings</div></aside>
+            <main data-hf-id="hf-x7rz" class="main"><h2 data-hf-id="hf-bc9c">Overview</h2><div data-hf-id="hf-nc6j" class="muted small">This week · all listening</div><div data-hf-id="hf-q31x" class="stats"><div data-hf-id="hf-uptg" class="stat"><label data-hf-id="hf-5947">Listens</label><strong data-hf-id="hf-tf23">146</strong></div><div data-hf-id="hf-v44h" class="stat"><label data-hf-id="hf-55b3">Listening time</label><strong data-hf-id="hf-rp8u">9 h 24 m</strong></div><div data-hf-id="hf-vifi" class="stat"><label data-hf-id="hf-2dmn">Top artist</label><strong data-hf-id="hf-aqwq" style="font-size:22px">Demo Artist</strong></div></div>
+              <div data-hf-id="hf-jiop" class="panel" style="margin-top:17px;height:294px"><div data-hf-id="hf-59bx" class="panel-title">Listening activity</div><div data-hf-id="hf-isow" class="chart" style="height:205px"><i data-hf-id="hf-9dt7" class="bar" style="height:26%"></i><i data-hf-id="hf-cb9x" class="bar" style="height:51%"></i><i data-hf-id="hf-y6ne" class="bar" style="height:43%"></i><i data-hf-id="hf-5kr4" class="bar" style="height:74%"></i><i data-hf-id="hf-lwf2" class="bar" style="height:58%"></i><i data-hf-id="hf-142w" class="bar" style="height:92%"></i><i data-hf-id="hf-s2qj" class="bar" style="height:79%"></i></div></div>
+            </main>
+          </div>
+        </div>
+      </section>
+
+      <section data-hf-id="hf-bquw" id="scene-history" class="clip" data-start="12.56" data-duration="5.99">
+        <div data-hf-id="hf-78ym" class="demo">DEMO ARCHIVE</div>
+        <div data-hf-id="hf-dako" class="eyebrow" id="history-eyebrow" style="position:absolute;left:155px;top:125px">Browse the detail</div>
+        <div data-hf-id="hf-eioq" class="app" id="history-app" style="left:330px;top:185px;width:1260px;height:710px">
+          <div data-hf-id="hf-t6ic" class="app-bar"><span data-hf-id="hf-1bv7" class="dot"></span><span data-hf-id="hf-1q68" class="dot"></span><span data-hf-id="hf-vrkt" class="dot"></span><span data-hf-id="hf-j7tj" class="app-name">scrobbl.rs</span></div>
+          <div data-hf-id="hf-dher" class="app-body"><aside data-hf-id="hf-qovj" class="nav"><div data-hf-id="hf-vguw" class="nav-logo"><i data-hf-id="hf-g5lw" class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div><div data-hf-id="hf-3ade" class="nav-item">Overview</div><div data-hf-id="hf-bfti" class="nav-item active">Listening history</div><div data-hf-id="hf-zc1r" class="nav-item">Rankings</div><div data-hf-id="hf-0d29" class="nav-item">Settings</div></aside>
+            <main data-hf-id="hf-wtgy" class="main"><div data-hf-id="hf-4crt" class="artist"><div data-hf-id="hf-kjbv" class="artist-art">D</div><div data-hf-id="hf-x11t"><div data-hf-id="hf-je0i" class="eyebrow">Artist</div><h2 data-hf-id="hf-tdvj">Demo Artist</h2><div data-hf-id="hf-b743" class="muted">284 listens · 18 albums · demo archive</div></div></div><div data-hf-id="hf-743h" class="panel-title">Recent listening</div>
+              <div data-hf-id="hf-33o8" class="list"><div data-hf-id="hf-2sxz" class="list-head"><span data-hf-id="hf-uckh"></span><span data-hf-id="hf-7e60">Track</span><span data-hf-id="hf-olx4">Album</span><span data-hf-id="hf-tmvn">Listened</span></div><div data-hf-id="hf-hqpd" class="listen"><span data-hf-id="hf-mdca" class="cover">D</span><strong data-hf-id="hf-hnv6">Paper Moons</strong><span data-hf-id="hf-iwq3" class="muted">Soft Signals</span><span data-hf-id="hf-spca" class="muted">Today, 10:24</span></div><div data-hf-id="hf-wdph" class="listen"><span data-hf-id="hf-qcek" class="cover">N</span><strong data-hf-id="hf-wkq0">Night Window</strong><span data-hf-id="hf-0xb3" class="muted">After Hours</span><span data-hf-id="hf-mea2" class="muted">Yesterday</span></div><div data-hf-id="hf-xkmk" class="listen"><span data-hf-id="hf-hzyz" class="cover">S</span><strong data-hf-id="hf-q2mp">Small Satellites</strong><span data-hf-id="hf-fj0r" class="muted">Soft Signals</span><span data-hf-id="hf-kdji" class="muted">Yesterday</span></div><div data-hf-id="hf-x6bj" class="listen"><span data-hf-id="hf-geqv" class="cover">W</span><strong data-hf-id="hf-reff">Warm Static</strong><span data-hf-id="hf-4ra7" class="muted">After Hours</span><span data-hf-id="hf-d9yi" class="muted">Monday</span></div></div>
+            </main>
+          </div>
+        </div>
+        <div data-hf-id="hf-via1" class="feature-line" id="history-foot" style="left:0;right:0;text-align:center">Searchable history, artist pages, and activity charts.</div>
+      </section>
+
+      <section data-hf-id="hf-j2i0" id="scene-outro" class="clip" data-start="18.55" data-duration="3.82">
+        <div data-hf-id="hf-0n3c" class="final"><div data-hf-id="hf-7ff4" class="final-inner" id="final-inner"><i data-hf-id="hf-b931" class="final-logo" aria-hidden="true"></i><div data-hf-id="hf-0ofo" class="final-name">scrobbl.rs</div><div data-hf-id="hf-lu6k" class="final-tag">A listening archive, on your server.</div></div></div>
+        <div data-hf-id="hf-i1b7" class="server" id="server-mark">Rust · SQLite · React</div>
+      </section>
+    </div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      tl.fromTo("#hook-copy", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 0.22);
+      tl.fromTo("#hook-app", { x: 40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.75, ease: "power3.out" }, 0.48);
+      tl.fromTo("#hook-foot", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.5 }, 1.45);
+      tl.fromTo("#import-eyebrow", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 3.78);
+      tl.fromTo("#import-card", { y: 32, opacity: 0 }, { y: 0, opacity: 1, duration: 0.65, ease: "power3.out" }, 3.92);
+      tl.fromTo("#progress-fill", { scaleX: 0 }, { scaleX: 1, duration: 1.15, ease: "power2.inOut" }, 5.18);
+      tl.fromTo("#import-foot", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 6.35);
+      tl.fromTo("#overview-copy", { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 8.02);
+      tl.fromTo("#overview-app", { x: 35, opacity: 0 }, { x: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 8.12);
+      tl.fromTo("#overview-app .bar", { scaleY: 0.55, opacity: 0.7 }, { scaleY: 1, opacity: 1, duration: 0.5, stagger: 0.12, transformOrigin: "bottom", ease: "power2.out" }, 9.2);
+      tl.fromTo("#history-eyebrow", { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 12.9);
+      tl.fromTo("#history-app", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 13.02);
+      tl.fromTo("#history-foot", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 14.6);
+      tl.fromTo("#history-app .listen", { x: 16, opacity: 0.6 }, { x: 0, opacity: 1, duration: 0.35, stagger: 0.22, ease: "power2.out" }, 15.1);
+      tl.fromTo("#server-mark", { y: 12, opacity: 0 }, { y: 0, opacity: 0.65, duration: 0.45 }, 18.75);
+      tl.fromTo("#final-inner", { scale: 0.95, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.8, ease: "power3.out" }, 20.19);
+      window.__timelines["scrobbl-brag"] = tl;
+    </script>
+  </body>
+</html>

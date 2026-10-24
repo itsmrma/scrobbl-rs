@@ -1,0 +1,6 @@
+Track: “Happy Beats & Business Moves Vol. 10” by Sascha Ende, ENDE.APP
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Source: https://ende.app/en
+License: https://creativecommons.org/licenses/by/4.0/
+Use: shortened and faded as background music in the scrobbl.rs launch video.
+Credit: Music by Sascha Ende at ende.app.
