@@ -17,6 +17,19 @@ async function openSpotify(page) {
   await settleDisclosure(card);
 }
 
+async function saveIntervals(page) {
+  const saved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/spotify/intervals" &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Save intervals" }).click();
+  expect((await saved).status()).toBe(200);
+  await expect(
+    page.getByRole("button", { name: "Save intervals" }),
+  ).toBeDisabled();
+}
+
 test("Spotify intervals save on the server, survive reload and are shared; API keys belongs to Settings", async ({
   page,
   browser,
@@ -63,10 +76,7 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   ).toContainText("Save unavailable");
   await expect(collection).toHaveValue("90");
   await page.unroute("**/api/spotify/intervals");
-  await page.getByRole("button", { name: "Save intervals" }).click();
-  await expect(
-    page.getByRole("button", { name: "Save intervals" }),
-  ).toBeDisabled();
+  await saveIntervals(page);
   let effective = await (await page.request.get("/api/spotify/status")).json();
   expect([effective.sync_seconds, effective.now_playing_seconds]).toEqual([
     90, 20,
@@ -99,19 +109,13 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
     otherPage.getByLabel("Collection interval (seconds)"),
   ).toHaveValue("90");
   await otherPage.getByLabel("Now playing interval (seconds)").fill("25");
-  await otherPage.getByRole("button", { name: "Save intervals" }).click();
-  await expect(
-    otherPage.getByRole("button", { name: "Save intervals" }),
-  ).toBeDisabled();
+  await saveIntervals(otherPage);
   await expect(now).toHaveValue("25", { timeout: 10000 });
   await other.close();
 
   await collection.fill("60");
   await now.fill("15");
-  await page.getByRole("button", { name: "Save intervals" }).click();
-  await expect(
-    page.getByRole("button", { name: "Save intervals" }),
-  ).toBeDisabled();
+  await saveIntervals(page);
   if (browserName === "chromium") {
     mkdirSync("docs/screenshots", { recursive: true });
     await collection.scrollIntoViewIfNeeded();
