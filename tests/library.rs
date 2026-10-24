@@ -146,6 +146,27 @@ async fn duplicate_review_is_explicit_recoverable_and_keeps_originals() {
     .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let decision: Value = serde_json::from_slice(&body).unwrap();
+    let trash = get(&state, &token, "/api/v1/review/trash").await;
+    assert_eq!(trash["total"], 1);
+    assert_eq!(trash["items"][0]["decision_id"], decision["decision_id"]);
+    assert_eq!(trash["items"][0]["title"], "Source title");
+    assert_eq!(
+        get(&state, &token, "/api/v1/review/trash?page=1").await["items"],
+        json!([])
+    );
+    assert_eq!(
+        call(
+            &state,
+            "invalid",
+            "GET",
+            "/api/v1/review/trash",
+            vec![],
+            false
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
     assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
     assert_eq!(
         get(&state, &token, "/api/history?period=all&status=all").await["total"],
@@ -196,6 +217,10 @@ async fn duplicate_review_is_explicit_recoverable_and_keeps_originals() {
         StatusCode::OK
     );
     assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 2);
+    assert_eq!(
+        get(&state, &token, "/api/v1/review/trash").await["total"],
+        0
+    );
     assert_eq!(
         get(&state, &token, "/api/history?period=all&status=all").await["total"],
         2
@@ -412,6 +437,15 @@ async fn automatic_review_revalidates_preserves_originals_and_undoes_whole_batch
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let result: Value = serde_json::from_slice(&body).unwrap();
     assert_eq!(result["removed"], 2);
+    let trash = get(&state, &token, "/api/v1/review/trash").await;
+    assert_eq!(trash["total"], 2);
+    assert!(
+        trash["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["decision_id"] == result["decision_id"])
+    );
     assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
     assert_eq!(
         get(&state, &token, "/api/history?period=all&status=all").await["total"],

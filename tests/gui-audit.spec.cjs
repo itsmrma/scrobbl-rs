@@ -716,6 +716,38 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
       ).json()
     ).total,
   ).toBe(1);
+  await page.getByRole("button", { name: /Trash/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Trash", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".trash-record")).toHaveCount(1);
+  await expect(page.locator(".trash-record")).toContainText("Seed song");
+  await page.screenshot({
+    path: `test-results/gui-trash-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `test-results/gui-trash-mobile-${browserName}.png`,
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.reload();
+  await page.getByRole("button", { name: /Trash/ }).click();
+  await page.getByRole("button", { name: /Restore decision/ }).click();
+  await expect(page.getByText("Trash is empty", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: /Comparisons/ }).click();
+  await expect(page.locator(".review-record")).toHaveCount(2);
+  await page
+    .getByRole("radio", { name: "Keep spotify_import record", exact: true })
+    .check();
+  await page.getByRole("button", { name: /Keep selected/ }).click();
   await page.getByText("Review decisions · Undo", { exact: true }).click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator(".review-record")).toHaveCount(2);
@@ -2370,6 +2402,57 @@ test("period notices do not move controls and music artwork stays square", async
         fullPage: true,
         animations: "disabled",
       });
+    }
+  }
+});
+
+test("music artwork is square from the first frame through delayed image loading", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.addInitScript(() => {
+    window.artworkFrames = [];
+    const sample = () => {
+      const node = document.querySelector(".music-heading > .cover");
+      if (node) {
+        const box = node.getBoundingClientRect();
+        window.artworkFrames.push({
+          tag: node.tagName,
+          width: box.width,
+          height: box.height,
+        });
+      }
+      requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  });
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200"><rect width="600" height="200" fill="#7c9bac"/></svg>',
+    });
+  });
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const kind of ["artists", "albums", "tracks"]) {
+      await page.goto("/music/" + kind + "/" + archive.rankings[kind][0].id);
+      await expect(page.locator(".music-heading > img")).toBeVisible();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.querySelector(".music-heading > img")?.complete,
+          ),
+        )
+        .toBe(true);
+      const frames = await page.evaluate(() => window.artworkFrames);
+      expect(frames.some((frame) => frame.tag === "SPAN")).toBe(true);
+      expect(
+        frames.filter((frame) => Math.abs(frame.width - frame.height) > 1),
+      ).toEqual([]);
     }
   }
 });

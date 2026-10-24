@@ -1343,7 +1343,9 @@ footer {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .track-scope-chip .track-scope-clear:hover {
   color: var(--text);
@@ -5023,6 +5025,7 @@ dialog {
   min-height: 0;
   aspect-ratio: 1;
   object-fit: contain;
+  align-self: start;
 }
 @media (min-width: 601px) {
   .music-heading {
@@ -5369,6 +5372,38 @@ dialog {
 .review-comparison {
   margin-bottom: 20px;
   overflow: hidden;
+}
+.trash-record {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(140px, auto) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.review-views {
+  justify-content: flex-start;
+}
+.review-views button[aria-pressed="true"] {
+  background: var(--surface-raised);
+  color: var(--text);
+  outline: 1px solid var(--text);
+  outline-offset: -1px;
+}
+.trash-record small {
+  display: block;
+  color: var(--muted);
+  margin-top: 6px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .trash-record {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+  .trash-record > div:last-of-type,
+  .trash-record > button {
+    grid-column: 2;
+  }
 }
 .review-comparison > header {
   display: flex;

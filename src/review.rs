@@ -16,6 +16,51 @@ use std::collections::BTreeSet;
 mod automatic;
 pub use automatic::{execute as automatic_execute, preview as automatic_preview};
 
+/// Read recoverable records independently from the flagged-record selection.
+/// Restoration reuses decision Undo, including its evidence and revision checks.
+pub async fn trash(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(page): Query<Page>,
+) -> Result<Json<Value>> {
+    auth::session(&state, &headers).await?;
+    let mut view = state.storage.read_view().await?;
+    let conn = &mut *view.transaction;
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM listens WHERE trashed_at_ms IS NOT NULL")
+            .fetch_one(&mut *conn)
+            .await?;
+    let mut query = sqlx::QueryBuilder::new(format!(
+        "{}, selected AS (SELECT l.*,t.title,t.album_id,t.spotify_url,a.name AS album,a.cover_url,
+        (SELECT d.id FROM identity_decisions d JOIN json_each(d.evidence_json,'$.before') b
+        WHERE d.kind='listen_review' AND json_extract(b.value,'$.id')=l.id
+        AND COALESCE(json_extract(d.evidence_json,'$.at_ms'),d.created_at_ms)=l.trashed_at_ms
+        AND NOT EXISTS(SELECT 1 FROM identity_decisions u WHERE u.kind='listen_review_undo' AND u.to_id=d.id)
+        ORDER BY d.created_at_ms DESC,d.id DESC LIMIT 1) AS decision_id
+        FROM listens l JOIN tracks t ON t.id=l.track_id LEFT JOIN albums a ON a.id=t.album_id
+        WHERE l.trashed_at_ms IS NOT NULL ORDER BY l.trashed_at_ms DESC,l.id DESC LIMIT 50 OFFSET ",
+        crate::library::METADATA
+    ));
+    query
+        .push_bind(i64::from(page.page) * 50)
+        .push(") ")
+        .push(crate::web::LISTEN_COLUMNS)
+        .push(" ORDER BY s.trashed_at_ms DESC,s.id DESC");
+    let rows = query.build().fetch_all(&mut *conn).await?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            let decision_id: Option<String> = row.get("decision_id");
+            let at: i64 = row.get("trashed_at_ms");
+            let mut item = crate::web::listen_json(row);
+            item["decision_id"] = json!(decision_id);
+            item["trashed_at_ms"] = json!(at);
+            item
+        })
+        .collect();
+    Ok(Json(json!({"total":total,"page":page.page,"items":items})))
+}
+
 #[derive(Default, Deserialize)]
 pub struct Page {
     #[serde(default)]

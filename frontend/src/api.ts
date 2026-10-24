@@ -133,6 +133,11 @@ export type ReviewPage = {
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 export const api = {
+  reviewTrash: (page = 0) =>
+    request<{
+      total: number;
+      items: (Listen & { decision_id: string | null; trashed_at_ms: number })[];
+    }>(`/api/v1/review/trash?page=${page}`),
   automaticReview: () =>
     request<{
       token: string;
