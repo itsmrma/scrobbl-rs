@@ -1297,6 +1297,9 @@ footer {
 .music-heading h1 {
   overflow-wrap: anywhere;
 }
+.music-heading .page-heading p {
+  overflow-wrap: anywhere;
+}
 .view-toggle,
 .search-inline {
   display: flex;
@@ -2423,6 +2426,7 @@ dialog {
 }
 .connection-steps {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .connection-step {
@@ -2753,6 +2757,10 @@ dialog {
   gap: 12px;
   min-height: 44px;
   cursor: pointer;
+}
+.group-members .check > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .group-members small,
 .group-members code {
@@ -3605,6 +3613,7 @@ dialog {
   flex-direction: column;
   gap: 14px;
   padding-left: 46px;
+  overflow-wrap: anywhere;
 }
 .api-step-content > form {
   display: flex;
