@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { CSSProperties } from "react";
 import "./listening-patterns.css";
 import { api } from "./api";
 import { useLoad } from "./load";
@@ -110,12 +111,12 @@ export function ListeningPatterns({
             <p>No counted listens in this selection.</p>
           ) : (
             <div
-              className={`pattern-bars ${temporal ? "pattern-temporal" : ""}`}
+              className={`pattern-bars ${temporal ? "pattern-temporal" : ""} ${view === "hours" ? "pattern-hours" : ""}`}
               style={
                 temporal
-                  ? {
-                      gridTemplateColumns: `repeat(${bins.length}, minmax(0, 1fr))`,
-                    }
+                  ? ({
+                      "--pattern-columns": bins.length,
+                    } as CSSProperties)
                   : undefined
               }
               role="list"
