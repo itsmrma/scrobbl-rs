@@ -78,28 +78,6 @@ const providers: Record<
       ],
     ],
   },
-  spotify: {
-    name: "Spotify",
-    coverage:
-      "Album covers and artist images when the archive has a usable Spotify identity. Used only after enabled public sources have no image.",
-    access:
-      "Requires the instance’s Spotify connection. Public sources work without it.",
-    limits:
-      "Uses the shared Spotify request limiter and respects Retry-After. New images expire after 14 days and are excluded from portable backups. This is the app’s cache policy; Spotify does not publish a numeric TTL.",
-    rights:
-      "Spotify Content remains subject to Spotify terms. Images retain their proportions, with Spotify attribution and a direct link. This cache policy does not establish a separate image licence.",
-    sources: [
-      ["Spotify terms", "https://developer.spotify.com/terms"],
-      [
-        "Spotify image requirements",
-        "https://developer.spotify.com/documentation/web-api/reference/get-an-artist",
-      ],
-      [
-        "Spotify request limits",
-        "https://developer.spotify.com/documentation/web-api/concepts/rate-limits",
-      ],
-    ],
-  },
 };
 
 function ProviderForm({
@@ -148,7 +126,8 @@ function ProviderForm({
       <h2>Image providers</h2>
       <p>
         Choose sources for missing album and artist images, in the order shown.
-        These settings belong to this instance and apply across browsers.
+        These settings belong to this instance and apply across browsers. Image
+        retrieval uses public sources and does not call the Spotify API.
       </p>
       <p>
         Saved images stay in your library. Personal images always take priority.
@@ -184,9 +163,7 @@ function ProviderForm({
                     type="button"
                     className="button secondary"
                     aria-label={`Move ${info.name} up`}
-                    disabled={
-                      busy || index === 0 || item.provider === "spotify"
-                    }
+                    disabled={busy || index === 0}
                     onClick={() => move(index, -1)}
                   >
                     <Icon>arrow_upward</Icon>
@@ -195,7 +172,7 @@ function ProviderForm({
                     type="button"
                     className="button secondary"
                     aria-label={`Move ${info.name} down`}
-                    disabled={busy || index >= draft.providers.length - 2}
+                    disabled={busy || index >= draft.providers.length - 1}
                     onClick={() => move(index, 1)}
                   >
                     <Icon>arrow_downward</Icon>
@@ -203,9 +180,6 @@ function ProviderForm({
                 </div>
               </div>
               <p>{info.coverage}</p>
-              {item.provider === "spotify" && (
-                <p className="subtle">Always last: Spotify is a fallback.</p>
-              )}
               <details>
                 <summary>Access, limits &amp; image rights</summary>
                 <dl>

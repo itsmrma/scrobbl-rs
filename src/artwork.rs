@@ -19,18 +19,6 @@ async fn background_slot(state: &AppState, lease: &Job, kind: &str, id: &str) ->
     if cached {
         return Ok(true);
     }
-    let settings = crate::artwork_settings::read(&mut tx).await?;
-    if !settings
-        .enabled(kind)
-        .any(|p| p != crate::artwork_settings::ImageProvider::Spotify)
-    {
-        let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-            .fetch_one(&state.private_db)
-            .await?;
-        if !connected {
-            return Ok(true);
-        }
-    }
     let next: Option<String> =
         sqlx::query_scalar("SELECT value FROM settings WHERE key='artwork_background_next_at_ms'")
             .fetch_optional(&mut *tx)
@@ -175,20 +163,6 @@ async fn step_with(
             wait(state, lease, "artwork_capacity_wait", 1000).await?;
             return Ok(false);
         }
-        Err(AppError::Unauthorized) => {
-            defer(
-                state,
-                lease,
-                &member,
-                "artwork_connection_required",
-                // Do not repeat confirmed public-source misses every few minutes
-                // merely because Spotify is disconnected. Connecting or changing
-                // providers wakes these items immediately; otherwise check daily.
-                Some(auth::now_ms() + 86_400_000),
-            )
-            .await?;
-            return Ok(true);
-        }
         Err(AppError::ArtworkWait { retry_at_ms }) => {
             defer(
                 state,
@@ -216,25 +190,8 @@ async fn step_with(
     Ok(true)
 }
 
-async fn wake_connected(state: &AppState) -> Result<()> {
-    let mut tx = state.db.begin().await?;
-    sqlx::query("UPDATE job_members SET artwork_retry_at_ms=0,error_code=NULL WHERE error_code='artwork_connection_required' AND job_id IN (SELECT id FROM jobs WHERE kind='artwork' AND state IN ('queued','running','waiting') AND COALESCE(error_code,'')!='artwork_paused')").execute(&mut *tx).await?;
-    sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code='artwork_connection_required'").execute(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
 pub async fn worker(state: AppState) {
     loop {
-        // Connecting Spotify wakes retained work immediately, without repeating
-        // failed authentication requests or waiting out an artificial cooldown.
-        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-            .fetch_one(&state.private_db)
-            .await
-            .unwrap_or(false)
-        {
-            let _ = wake_connected(&state).await;
-        }
         if let Ok(Some(mut lease)) = state.storage.claim("artwork").await {
             loop {
                 match step(&state, &lease).await {
@@ -245,8 +202,8 @@ pub async fn worker(state: AppState) {
                         break;
                     }
                 }
-                // One download at a time; the existing shared Spotify limiter
-                // also paces each catalogue request and respects Retry-After.
+                // One download at a time; public providers retain their own
+                // durable request pace and Retry-After.
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 match state.storage.job(&lease.id).await {
                     Ok(current) if current.state == "running" => lease = current,
@@ -366,10 +323,7 @@ mod tests {
             kind: &str,
             _: &str,
         ) -> Result<crate::artwork_sources::Lookup> {
-            use crate::{
-                artwork_settings::ImageProvider,
-                artwork_sources::{FoundImage, ImageCredit, Lookup},
-            };
+            use crate::artwork_sources::{FoundImage, ImageCredit, Lookup};
             self.calls.lock().unwrap().push((provider, kind.into()));
             if kind == "albums" && self.album_outage.load(std::sync::atomic::Ordering::SeqCst) {
                 return Err(AppError::ArtworkWait {
@@ -377,11 +331,7 @@ mod tests {
                 });
             }
             if kind == "albums" {
-                return if provider == ImageProvider::Spotify {
-                    Err(AppError::Unauthorized)
-                } else {
-                    Ok(Lookup::Missing)
-                };
+                return Ok(Lookup::Missing);
             }
             Ok(Lookup::Found(FoundImage {
                 bytes: b"\x89PNG\r\n\x1a\npublic".to_vec(),
@@ -398,80 +348,20 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn disconnected_fallback_does_not_block_public_images_and_wait_survives_restart() {
-        let (dir, state) = setup().await;
+    async fn confirmed_missing_album_completes_without_a_spotify_connection() {
+        let (_dir, state) = setup().await;
         enqueue(&state).await;
         let sources = Sources {
             calls: Default::default(),
             album_outage: Default::default(),
         };
-        let lease = state.storage.claim("artwork").await.unwrap().unwrap();
-        assert!(step_with(&state, &lease, &sources).await.unwrap());
-        // The first album has no public image and needs Spotify. It stays pending.
-        assert_eq!(state.storage.job(&lease.id).await.unwrap().processed, 0);
-        let album_retry: i64 = sqlx::query_scalar(
-            "SELECT artwork_retry_at_ms FROM job_members WHERE job_id=? AND kind='albums'",
-        )
-        .bind(&lease.id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap();
-        // Even a due retry must not jump ahead of an image never attempted.
-        sqlx::query(
-            "UPDATE job_members SET artwork_retry_at_ms=? WHERE job_id=? AND kind='albums'",
-        )
-        .bind(auth::now_ms() - 1)
-        .bind(&lease.id)
-        .execute(&state.db)
-        .await
-        .unwrap();
-        sqlx::query("DELETE FROM settings WHERE key='artwork_background_next_at_ms'")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        assert!(step_with(&state, &lease, &sources).await.unwrap());
-        let lease = state.storage.job(&lease.id).await.unwrap();
-        assert_eq!((lease.processed, lease.added), (1, 1));
-        sqlx::query(
-            "UPDATE job_members SET artwork_retry_at_ms=? WHERE job_id=? AND kind='albums'",
-        )
-        .bind(album_retry)
-        .bind(&lease.id)
-        .execute(&state.db)
-        .await
-        .unwrap();
-        assert!(!step_with(&state, &lease, &sources).await.unwrap());
-        let waiting = state.storage.job(&lease.id).await.unwrap();
-        assert_eq!(
-            waiting.error_code.as_deref(),
-            Some("artwork_connection_required")
-        );
-        assert!(waiting.retry_at_ms.unwrap() > auth::now_ms() + 86_390_000);
-        assert_eq!(sources.calls.lock().unwrap().len(), 3);
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
-                .fetch_one(&state.db)
-                .await
-                .unwrap(),
-            0
-        );
-        let config = state.config.clone();
-        state.storage.close().await;
-        drop(state);
-        let state = AppState::new(storage::open(dir.path()).await.unwrap(), config);
-        assert!(state.storage.claim("artwork").await.unwrap().is_none());
-        let bytes: Vec<u8> =
-            sqlx::query_scalar("SELECT bytes FROM artwork WHERE source='musicbrainz_image'")
-                .fetch_one(&state.db)
-                .await
-                .unwrap();
-        assert!(bytes.ends_with(b"public"));
-        // A personal upload during the wait wins, without another source request.
-        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) SELECT 'albums',id,'custom',x'89504E470D0A1A0A','image/png',0 FROM name_groups WHERE kind='albums'").execute(&state.db).await.unwrap();
-        wake_connected(&state).await.unwrap();
         let mut lease = state.storage.claim("artwork").await.unwrap().unwrap();
         while step_with(&state, &lease, &sources).await.unwrap() {
             lease = state.storage.job(&lease.id).await.unwrap();
+            sqlx::query("DELETE FROM settings WHERE key='artwork_background_next_at_ms'")
+                .execute(&state.db)
+                .await
+                .unwrap();
         }
         let done = state.storage.job(&lease.id).await.unwrap();
         assert_eq!(
@@ -479,11 +369,131 @@ mod tests {
                 done.state.as_str(),
                 done.processed,
                 done.added,
-                done.duplicates
+                done.skipped
             ),
             ("completed", 2, 1, 1)
         );
-        assert_eq!(sources.calls.lock().unwrap().len(), 3);
+        assert_eq!(sources.calls.lock().unwrap().len(), 2);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            1
+        );
+        assert!(
+            crate::db::setting(&state.db, "retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn upgrade_retires_spotify_settings_and_waits_preserving_images_pauses_and_api_limits() {
+        let (dir, state) = setup().await;
+        enqueue(&state).await;
+        cache_all(&state).await;
+        let legacy = json!({"version":7,"providers":[
+            {"provider":"wikidata","enabled":false},
+            {"provider":"cover_art_archive","enabled":true},
+            {"provider":"musicbrainz_image","enabled":false},
+            {"provider":"spotify","enabled":true}
+        ]});
+        let until = auth::now_ms() + 72_000_000;
+        crate::db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_providers",
+            &legacy.to_string(),
+        )
+        .await
+        .unwrap();
+        crate::db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "retry_at_ms",
+            &until.to_string(),
+        )
+        .await
+        .unwrap();
+        crate::db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_host_retry:musicbrainz.org",
+            &until.to_string(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_connection_required',retry_at_ms=? WHERE kind='artwork'").bind(until).execute(&state.db).await.unwrap();
+        sqlx::query("UPDATE job_members SET error_code='artwork_connection_required',artwork_retry_at_ms=?,current_provider='spotify'").bind(until).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO jobs(id,kind,state,created_at_ms,updated_at_ms,error_code,retry_at_ms) VALUES('user-paused','artwork','waiting',0,0,'artwork_paused',?)").bind(until).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES('artists','personal','custom',x'89504E470D0A1A0A','image/png',0)").execute(&state.db).await.unwrap();
+        // Schema 19 only changes data. Recreate the state immediately before it.
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=19")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let config = state.config.clone();
+        state.storage.close().await;
+        drop(state);
+        let state = AppState::new(storage::open(dir.path()).await.unwrap(), config);
+        let settings = crate::artwork_settings::read(&mut state.db.acquire().await.unwrap())
+            .await
+            .unwrap();
+        assert_eq!(settings.version, 8);
+        assert_eq!(
+            settings
+                .providers
+                .iter()
+                .map(|p| (p.provider.key(), p.enabled))
+                .collect::<Vec<_>>(),
+            vec![
+                ("wikidata", false),
+                ("cover_art_archive", true),
+                ("musicbrainz_image", false)
+            ]
+        );
+        assert_eq!(
+            crate::db::setting(&state.db, "retry_at_ms").await.unwrap(),
+            Some(until.to_string())
+        );
+        assert_eq!(
+            crate::db::setting(&state.db, "artwork_host_retry:musicbrainz.org")
+                .await
+                .unwrap(),
+            Some(until.to_string())
+        );
+        let paused = state.storage.job("user-paused").await.unwrap();
+        assert_eq!(paused.error_code.as_deref(), Some("artwork_paused"));
+        assert_eq!(paused.retry_at_ms, Some(until));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM artwork WHERE bytes=x'89504E470D0A1A0A'"
+            )
+            .fetch_one(&state.db)
+            .await
+            .unwrap(),
+            3
+        );
+        assert_eq!(sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM job_members WHERE artwork_retry_at_ms=0 AND error_code IS NULL AND current_provider IS NULL").fetch_one(&state.db).await.unwrap(), 2);
+        let mut lease = state.storage.claim("artwork").await.unwrap().unwrap();
+        while step(&state, &lease).await.unwrap() {
+            lease = state.storage.job(&lease.id).await.unwrap();
+        }
+        assert_eq!(
+            state.storage.job(&lease.id).await.unwrap().state,
+            "completed"
+        );
+        state.storage.close().await;
+        let state = AppState::new(
+            storage::open(dir.path()).await.unwrap(),
+            state.config.clone(),
+        );
+        assert_eq!(
+            crate::artwork_settings::read(&mut state.db.acquire().await.unwrap())
+                .await
+                .unwrap()
+                .version,
+            8
+        );
         state.storage.close().await;
     }
     #[tokio::test]
@@ -782,101 +792,5 @@ mod tests {
         let complete = state.storage.job(&id).await.unwrap();
         assert_eq!(complete.processed, 2);
         assert_eq!(complete.duplicates, 2);
-    }
-    #[tokio::test]
-    async fn queue_waits_for_connection_and_respects_shared_provider_retry_after() {
-        let (_dir, mut state) = setup().await;
-        let mut settings = crate::artwork_settings::ArtworkSettings::default();
-        for p in &mut settings.providers {
-            p.enabled = p.provider == crate::artwork_settings::ImageProvider::Spotify;
-        }
-        db::set_setting(
-            &mut state.db.acquire().await.unwrap(),
-            "artwork_providers",
-            &serde_json::to_string(&settings).unwrap(),
-        )
-        .await
-        .unwrap();
-        enqueue(&state).await;
-        let lease = state.storage.claim("artwork").await.unwrap().unwrap();
-        let mut current = lease.clone();
-        while step(&state, &current).await.unwrap() {
-            current = state.storage.job(&lease.id).await.unwrap();
-            sqlx::query("DELETE FROM settings WHERE key='artwork_background_next_at_ms'")
-                .execute(&state.db)
-                .await
-                .unwrap();
-        }
-        let waiting = state.storage.job(&lease.id).await.unwrap();
-        assert_eq!(waiting.state, "waiting");
-        assert_eq!(
-            waiting.error_code.as_deref(),
-            Some("artwork_connection_required")
-        );
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork")
-                .fetch_one(&state.db)
-                .await
-                .unwrap(),
-            0
-        );
-        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let counter = calls.clone();
-        let app = axum::Router::new().route(
-            "/{*path}",
-            axum::routing::get(move || {
-                let counter = counter.clone();
-                async move {
-                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        [("retry-after", "1200")],
-                        axum::Json(json!({"error":"wait"})),
-                    )
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        state.spotify.api_base = format!("http://{}", listener.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'test','test',9999999999999)")
-            .execute(&state.private_db)
-            .await
-            .unwrap();
-        state.storage.cancel(&lease.id).await.unwrap();
-        state.storage.retry(&lease.id).await.unwrap();
-        let lease = state.storage.claim("artwork").await.unwrap().unwrap();
-        sqlx::query("UPDATE job_members SET artwork_retry_at_ms=0 WHERE job_id=?")
-            .bind(&lease.id)
-            .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM settings WHERE key='artwork_background_next_at_ms'")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        let started = auth::now_ms();
-        let mut current = lease.clone();
-        while step(&state, &current).await.unwrap() {
-            current = state.storage.job(&lease.id).await.unwrap();
-            sqlx::query("DELETE FROM settings WHERE key='artwork_background_next_at_ms'")
-                .execute(&state.db)
-                .await
-                .unwrap();
-        }
-        let waiting = state.storage.job(&lease.id).await.unwrap();
-        assert_eq!(waiting.state, "waiting");
-        assert!(waiting.retry_at_ms.unwrap() >= started + 1_199_000);
-        assert!(state.storage.claim("artwork").await.unwrap().is_none());
-        assert!(step(&state, &lease).await.is_err());
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork")
-                .fetch_one(&state.db)
-                .await
-                .unwrap(),
-            0
-        );
-        server.abort();
     }
 }

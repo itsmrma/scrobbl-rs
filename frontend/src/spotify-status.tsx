@@ -17,8 +17,8 @@ export function SpotifyNotice({
     return (
       <Notice tone="warning" title="Spotify requests are paused">
         <p>
-          Spotify has asked this app to wait. Collection, now playing and new
-          artwork will resume automatically in about {minutes}{" "}
+          Spotify has asked this app to wait. Collection and now playing will
+          resume automatically in about {minutes}{" "}
           {minutes === 1 ? "minute" : "minutes"}
           {preferences ? ` (${date(status.retry_at_ms, preferences)})` : ""}.
         </p>

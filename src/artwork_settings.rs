@@ -1,4 +1,4 @@
-//! Instance-wide ordered providers. Spotify remains a fallback to public sources.
+//! Instance-wide ordered public image providers, independent of Spotify collection.
 use crate::{
     AppState, auth, db,
     error::{AppError, Result},
@@ -13,7 +13,6 @@ pub enum ImageProvider {
     CoverArtArchive,
     MusicbrainzImage,
     Wikidata,
-    Spotify,
 }
 impl ImageProvider {
     pub fn key(self) -> &'static str {
@@ -21,14 +20,12 @@ impl ImageProvider {
             Self::CoverArtArchive => "cover_art_archive",
             Self::MusicbrainzImage => "musicbrainz_image",
             Self::Wikidata => "wikidata",
-            Self::Spotify => "spotify",
         }
     }
     pub fn supports(self, kind: &str) -> bool {
         match self {
             Self::CoverArtArchive => kind == "albums",
             Self::MusicbrainzImage | Self::Wikidata => kind == "artists",
-            Self::Spotify => matches!(kind, "albums" | "artists"),
         }
     }
 }
@@ -52,7 +49,6 @@ impl Default for ArtworkSettings {
                 ImageProvider::CoverArtArchive,
                 ImageProvider::MusicbrainzImage,
                 ImageProvider::Wikidata,
-                ImageProvider::Spotify,
             ]
             .into_iter()
             .map(|provider| ProviderPreference {
@@ -83,11 +79,6 @@ impl ArtworkSettings {
         {
             return Err(AppError::BadRequest(
                 "Include each supported image provider exactly once.".into(),
-            ));
-        }
-        if self.providers.last().map(|p| p.provider) != Some(ImageProvider::Spotify) {
-            return Err(AppError::BadRequest(
-                "Spotify must remain the last provider, as a fallback.".into(),
             ));
         }
         Ok(())
@@ -145,7 +136,7 @@ pub async fn save(
     // New settings can make previously unavailable work takeable, retaining user pauses.
     sqlx::query("UPDATE job_members SET artwork_retry_at_ms=0,artwork_attempts=0,error_code=NULL WHERE state='pending' AND job_id IN (SELECT id FROM jobs WHERE kind='artwork')").execute(&mut *tx).await?;
     crate::artwork::enqueue_missing(&mut tx).await?;
-    sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code IN ('artwork_connection_required','artwork_provider_wait')").execute(&mut *tx).await?;
+    sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code='artwork_provider_wait'").execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(form))
 }

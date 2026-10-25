@@ -1,5 +1,7 @@
 # Release GUI audit
 
+Current image retrieval uses public sources only. [Issue #84](https://github.com/itsmrma/scrobbl-rs/issues/84) retires the Spotify fallback described in the historical audit below. See [Image providers](image-providers.md) for current settings, retention and upgrade behavior.
+
 The source requirements and owner feedback live in [Controllare e rifinire tutta la GUI con Impeccable](https://github.com/itsmrma/scrobbl-rs/issues/26), including its comments and the [explicit scope extension](https://github.com/itsmrma/scrobbl-rs/issues/26#issuecomment-6349443163). This document records implementation evidence, not another product specification.
 
 ## Workflow and findings

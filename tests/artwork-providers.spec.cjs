@@ -144,7 +144,10 @@ test("image providers save instance order, handle conflicts and fit mobile setti
     "MusicBrainz → Wikidata → Commons",
   );
   await second
-    .getByRole("checkbox", { name: "Spotify", exact: true })
+    .getByRole("checkbox", {
+      name: "MusicBrainz → Cover Art Archive",
+      exact: true,
+    })
     .uncheck();
   await second
     .getByRole("button", { name: "Save image providers", exact: true })
@@ -152,7 +155,12 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await expect(
     second.getByRole("button", { name: "Save image providers", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("checkbox", { name: "Spotify", exact: true }).uncheck();
+  await page
+    .getByRole("checkbox", {
+      name: "MusicBrainz → Cover Art Archive",
+      exact: true,
+    })
+    .uncheck();
   await save.click();
   await expect(page.getByRole("alert").first()).toContainText(
     "changed in another session",
@@ -160,11 +168,14 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await page.getByRole("button", { name: "Reload saved settings" }).click();
   await expect(save).toBeDisabled();
   await expect(
-    page.getByRole("checkbox", { name: "Spotify", exact: true }),
+    page.getByRole("checkbox", {
+      name: "MusicBrainz → Cover Art Archive",
+      exact: true,
+    }),
   ).not.toBeChecked();
   await expect(
-    page.getByRole("button", { name: "Move Spotify up", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("checkbox", { name: "Spotify", exact: true }),
+  ).toHaveCount(0);
   await page.locator(".artwork-provider").first().locator("summary").click();
   await settleDisclosure(
     page.locator(".artwork-provider").first().locator("details"),
@@ -202,7 +213,12 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await page
     .getByRole("checkbox", { name: "MusicBrainz → Commons image", exact: true })
     .check();
-  await page.getByRole("checkbox", { name: "Spotify", exact: true }).check();
+  await page
+    .getByRole("checkbox", {
+      name: "MusicBrainz → Cover Art Archive",
+      exact: true,
+    })
+    .check();
   await save.click();
   await expect(save).toBeDisabled();
   await other.close();

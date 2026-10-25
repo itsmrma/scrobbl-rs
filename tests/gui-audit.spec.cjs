@@ -70,7 +70,7 @@ const test = base.extend({
             ...providers,
             providers: providers.providers.map((p) => ({
               ...p,
-              enabled: p.provider === "spotify",
+              enabled: false,
             })),
           },
           headers: { Origin: baseURL, "X-CSRF-Token": session.csrf },
@@ -2097,6 +2097,12 @@ test("connection cards show a verified check and a readable automatic wait", asy
   await expect(
     page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
   ).toContainText("resume automatically");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
+  ).toContainText("Collection and now playing");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
+  ).not.toContainText("new artwork");
   await expect(page.locator(".spotify-card > summary")).not.toContainText(
     "2100 seconds",
   );
@@ -3782,58 +3788,38 @@ test("returning from music edits keeps the original back destination", async ({
   }
 });
 
-test("artwork reports expose saved pauses and provider-dependent progress", async ({
+test("completed artwork reports show missing images without Spotify waits", async ({
   page,
 }) => {
   await login(page, "/activities");
   const jobs = await (await page.request.get("/api/v1/activities")).json();
   const job = jobs.find((j) => j.kind === "artwork");
+  await expect
+    .poll(async () => {
+      const detail = await (
+        await page.request.get("/api/v1/activities/" + job.id)
+      ).json();
+      return detail.activity.state;
+    })
+    .toBe("completed");
   await page.goto("/activities/" + job.id);
-  await expect(page.locator(".artwork-estimate")).toContainText(
-    "Completion time depends on matching images",
-  );
   await expect(page.locator(".activity-detail")).toContainText(
-    "public sources work without it",
-  );
-  await expect(page.locator(".activity-detail")).toContainText(
-    "The remaining images need the Spotify fallback.",
+    "work independently of Spotify",
   );
   await expect(page.locator(".activity-detail")).not.toContainText(
-    "Waiting for Spotify fallback",
+    "Spotify fallback",
   );
-  await expect(page.locator(".activity-detail")).not.toContainText(
-    "one image per minute",
-  );
+  await expect(
+    page.getByRole("link", { name: "Connect Spotify", exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Cancel downloads", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Pause downloads", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Resume downloads", exact: true }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(page.locator(".artwork-estimate")).toContainText(
-    "after you resume",
-  );
-  await page
-    .getByRole("button", { name: "Resume downloads", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Pause downloads", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Cancel downloads", exact: true })
-    .click();
-  await expect(
-    page.getByRole("button", { name: "Resume downloads", exact: true }),
-  ).toBeVisible();
-  const cancelled = await (
+  ).toHaveCount(0);
+  const completed = await (
     await page.request.get("/api/v1/activities/" + job.id)
   ).json();
-  expect(cancelled.activity.state).toBe("cancelled");
-  expect(cancelled.activity.processed).toBe(job.processed);
+  expect(completed.activity.processed).toBe(completed.activity.expected_rows);
+  expect(completed.activity.skipped).toBeGreaterThan(0);
 });
 
 test("connection disclosures and import layout use the available card width", async ({
