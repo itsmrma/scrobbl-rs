@@ -1805,11 +1805,13 @@ test("release routes fit phone and tablet viewports in both orientations", async
     "/rankings/tracks",
     "/import",
     "/activities",
+    "/review",
     "/settings/general",
     "/settings/account",
     "/settings/application",
     "/settings/appearance",
     "/settings/connections",
+    "/settings/images",
     "/settings/data",
     "/settings/api-keys",
   ];
@@ -1825,6 +1827,12 @@ test("release routes fit phone and tablet viewports in both orientations", async
     [375, 812],
     [390, 844],
     [430, 932],
+    [600, 900],
+    [601, 900],
+    [900, 900],
+    [901, 900],
+    [1100, 900],
+    [1101, 900],
     [844, 390],
     [768, 1024],
     [1024, 768],
@@ -1854,11 +1862,19 @@ test("release routes fit phone and tablet viewports in both orientations", async
         () => document.documentElement.scrollWidth > innerWidth + 1,
       );
       expect(overflow, `${path} at ${width}x${height}`).toBe(false);
+      await expectContentFits(
+        // The transparent time-help hit area intentionally extends beyond its icon.
+        page.locator(
+          "#main button:visible:not(.info-button), #main .button:visible",
+        ),
+        ".panel, #main",
+      );
       if (
         [
           "/dashboard",
           "/import",
           "/activities",
+          "/review",
           "/settings/connections",
         ].includes(path)
       )
@@ -3992,5 +4008,184 @@ test("every active activity offers cancellation in the list and report", async (
     await expect(page.locator(".activity-detail .state-badge")).toContainText(
       "Cancelled",
     );
+  }
+});
+
+// A page can have no horizontal scrollbar while text escapes a clipped panel.
+// Check each affected container as well as the document width.
+async function expectContentFits(locator, boundarySelector) {
+  const escaped = await locator.evaluateAll(
+    (nodes, selector) =>
+      nodes.flatMap((node) => {
+        if (!node.getClientRects().length) return [];
+        const box = node.getBoundingClientRect();
+        const parent = node.parentElement.closest(selector);
+        const bounds = parent.getBoundingClientRect();
+        return node.scrollWidth > node.clientWidth + 1 ||
+          box.left < bounds.left - 1 ||
+          box.right > bounds.right + 1
+          ? [
+              {
+                text: node.textContent.slice(0, 80),
+                width: box.width,
+                scrollWidth: node.scrollWidth,
+                available: bounds.width,
+              },
+            ]
+          : [];
+      }),
+    boundarySelector,
+  );
+  expect.soft(escaped, `${locator} content bounds`).toEqual([]);
+}
+
+test("expanded connection steps and API help keep text and buttons within their panels", async ({
+  page,
+  browserName,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+  for (const width of [320, 600, 601, 900, 901, 1100, 1101, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/settings/connections");
+    const spotify = page.locator(".spotify-card");
+    if (!(await spotify.evaluate((node) => node.open)))
+      await spotify.locator(":scope > summary").click();
+    await expect(page.locator(".connection-step").first()).toBeVisible();
+    for (const disclosure of await spotify.locator("details").all()) {
+      if (!(await disclosure.evaluate((node) => node.open)))
+        await disclosure.locator(":scope > summary").click();
+    }
+    await page.evaluate(() => document.fonts.ready);
+    await expectContentFits(
+      page.locator(".connection-step"),
+      ".spotify-details",
+    );
+    await expectContentFits(
+      page.locator(".connection-step button:visible"),
+      ".connection-step",
+    );
+    if (width === 320) {
+      // Fit the full setup card in one capture without compositor stitching.
+      await page.setViewportSize({ width, height: 2000 });
+      await page
+        .locator(".connection-step")
+        .nth(1)
+        .screenshot({
+          path: `test-results/responsive-${browserName}-spotify-setup.png`,
+          animations: "disabled",
+          // Chromium can composite this offscreen fixed link into a tall crop.
+          style: ".skip-link:not(:focus-visible) { visibility: hidden; }",
+        });
+    }
+    await page.goto("/settings/api-keys");
+    await expect(page.locator(".api-step-card")).toHaveCount(3);
+    await expectContentFits(
+      page.locator(".api-step-content > p"),
+      ".api-step-content",
+    );
+    await expectContentFits(
+      page.locator(".api-step-content button"),
+      ".api-step-content",
+    );
+    if (width === 320)
+      await page
+        .locator(".api-step-card")
+        .nth(1)
+        .screenshot({
+          path: `test-results/responsive-${browserName}-api-origins.png`,
+          animations: "disabled",
+        });
+  }
+});
+
+test("long original metadata wraps inside music credits and source-entry controls", async ({
+  page,
+  browserName,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+  const names = {
+    artists: "AReallyLongUnbrokenArtistName".repeat(5),
+    albums: "AReallyLongUnbrokenAlbumTitle".repeat(5),
+    tracks: "AReallyLongUnbrokenSongTitle".repeat(5),
+  };
+  const session = await (await page.request.get("/api/session")).json();
+  const upload = await page.request.post("/api/import/spotify", {
+    headers: {
+      Origin: new URL(page.url()).origin,
+      "X-CSRF-Token": session.csrf,
+    },
+    multipart: {
+      files: {
+        name: "long-metadata.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(
+          JSON.stringify([
+            {
+              ts: "2025-05-02T12:03:00Z",
+              ms_played: 180000,
+              master_metadata_track_name: names.tracks,
+              master_metadata_album_artist_name: names.artists,
+              master_metadata_album_album_name: names.albums,
+              spotify_track_uri: "spotify:track:0000000000000000000099",
+            },
+          ]),
+        ),
+      },
+    },
+  });
+  expect(upload.ok()).toBeTruthy();
+  const { job_id } = await upload.json();
+  await expect
+    .poll(
+      async () =>
+        (await (await page.request.get(`/api/v1/activities/${job_id}`)).json())
+          .activity.state,
+    )
+    .toBe("completed");
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  for (const width of [320, 601, 901, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const kind of ["artists", "albums", "tracks"]) {
+      const id = archive.rankings[kind].find(
+        (item) => item.name === names[kind],
+      ).id;
+      await page.goto(`/music/${kind}/${id}?period=all`);
+      await expect(page.locator(".music-heading h1")).toContainText(
+        names[kind],
+      );
+      await expectContentFits(
+        page.locator(".music-heading .page-heading p"),
+        ".page-heading",
+      );
+      await expectContentFits(
+        page.locator(".music-personal > a"),
+        ".music-personal",
+      );
+      if (width === 320 && kind === "albums")
+        await page.locator(".music-heading").screenshot({
+          path: `test-results/responsive-${browserName}-music-credits.png`,
+          animations: "disabled",
+        });
+      if (kind === "tracks") continue;
+      await page.goto(`/music/${kind}/${id}/edit`);
+      await expect(page.locator(".group-members .check")).toHaveCount(1);
+      await expectContentFits(
+        page.locator(".group-members .check > span"),
+        ".check",
+      );
+      await expectContentFits(
+        page.locator(".name-group-editor button"),
+        ".name-group-editor",
+      );
+      if (width === 320 && kind === "artists")
+        await page.locator(".name-group-editor").screenshot({
+          path: `test-results/responsive-${browserName}-source-entries.png`,
+          animations: "disabled",
+        });
+    }
   }
 });
