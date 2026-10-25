@@ -127,13 +127,48 @@ test("API key lifecycle, one-time secret, explicit origins and mobile layout", a
   await expect(page.getByLabel("API base URL", { exact: true })).toHaveValue(
     `${baseURL}/api/v1`,
   );
-  page.once("dialog", (dialog) => dialog.accept());
+  // 1. Cancel via button keeps the key active
   await page
     .getByRole("button", { name: `Revoke ${name}`, exact: true })
     .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText(`Revoke “${name}”?`);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `Revoke ${name}`, exact: true }),
+  ).toBeVisible();
+  expect(
+    (
+      await page.request.get(`${baseURL}/api/v1/info`, { headers: keyHeaders })
+    ).status(),
+  ).toBe(200);
+
+  // 2. Cancel via keyboard Escape keeps the key active
+  await page
+    .getByRole("button", { name: `Revoke ${name}`, exact: true })
+    .click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `Revoke ${name}`, exact: true }),
+  ).toBeVisible();
+
+  // 3. Explicit confirmation revokes the key
+  await page
+    .getByRole("button", { name: `Revoke ${name}`, exact: true })
+    .click();
+  await expect(dialog).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Confirm revocation", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
   await expect(
     page.getByRole("button", { name: `Revoke ${name}`, exact: true }),
   ).toHaveCount(0);
+  await expect(page.getByText(/Revoked/)).toBeVisible();
   expect(
     (
       await page.request.get(`${baseURL}/api/v1/info`, { headers: keyHeaders })

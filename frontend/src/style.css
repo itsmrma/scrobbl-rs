@@ -1898,6 +1898,9 @@ dialog {
 .state-badge.waiting {
   color: var(--warning);
 }
+.state-badge.active {
+  color: var(--success);
+}
 .activity-open,
 .back-link {
   display: inline-flex;
@@ -2624,6 +2627,16 @@ dialog {
   margin: 10vh auto;
 }
 @media (max-width: 600px) {
+  .api-step-content {
+    padding-left: 0;
+  }
+  .api-key-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .api-key-footer button {
+    width: 100%;
+  }
   .connection-step {
     padding: 18px 14px;
   }
@@ -3479,30 +3492,192 @@ dialog {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 20px;
+  gap: 24px;
 }
 .api-keys-panel > :is(h2, h3, p, form, label, section) {
   margin: 0;
 }
-.api-keys-panel > h3 {
+.api-keys-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-keys-header > h2,
+.api-keys-header > p {
+  margin: 0;
+}
+.api-connect-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }
-.api-keys-panel form {
+.api-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-section-header > h3,
+.api-section-header > p {
+  margin: 0;
+}
+.api-connection-steps {
+  display: flex;
+  flex-direction: column;
   gap: 16px;
 }
-.api-keys-panel form > button {
+.api-step-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.api-step-header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.api-step-header .step-number {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.api-step-header h4 {
+  margin: 2px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.api-step-header p {
+  margin: 0;
+}
+.api-step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 46px;
+}
+.api-step-content > form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.api-step-content > form > button {
   justify-self: start;
+  align-self: flex-start;
+}
+.api-step-content code {
+  background: var(--bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.api-keys-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.api-keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.api-key-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-wrap: anywhere;
+  transition:
+    background-color var(--motion-fast),
+    border-color var(--motion-fast);
+}
+.api-key-card.revoked {
+  background: color-mix(in srgb, var(--surface) 90%, var(--border));
+  opacity: 0.85;
+}
+.api-key-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.api-key-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  word-break: break-word;
+}
+.api-key-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.api-key-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.api-key-meta-item .material-icons-outlined {
+  font-size: 16px;
+  color: var(--muted);
+}
+.api-key-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.api-key-timestamps {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.api-key-sep {
+  color: var(--border);
 }
 .api-secret {
   display: grid;
   gap: 16px;
   padding: 20px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  margin: 12px 0 0;
 }
 .api-secret > :is(h3, p) {
   margin: 0;
 }
-.api-keys-panel .connection-actions {
+.api-secret .connection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   margin: 0;
 }
 .guide code + .copy-control {
