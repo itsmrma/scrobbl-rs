@@ -9,8 +9,6 @@ import { useEffect, useRef, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
-    artwork_connection_required:
-      "The remaining images need the Spotify fallback. Connect Spotify in Settings; public sources work without it. Saved progress resumes automatically.",
     artwork_provider_wait:
       "An image provider is unavailable or requested a pause. Other eligible images continue; saved progress and provider waits survive restarts.",
     artwork_paused:
@@ -113,7 +111,6 @@ const stateLabel = (job: Activity) =>
 export const phaseLabel = (job: Activity) =>
   job.kind === "artwork" && job.state === "waiting" && job.error_code
     ? {
-        artwork_connection_required: "Waiting for Spotify connection",
         artwork_provider_wait: "Waiting for an image provider",
         artwork_paused: "Paused",
         artwork_pacing: "Background download pacing",
@@ -433,21 +430,16 @@ export function Activities({
                   </span>
                 </div>
               </div>
-              {job.kind === "artwork" &&
-                job.error_code === "artwork_connection_required" && (
-                  <Link className="button secondary" to="/settings/connections">
-                    Connect Spotify
-                  </Link>
-                )}
               {job.kind === "artwork" && (
                 <>
                   <p>
                     Missing images are checked in the background using your
                     enabled providers. MusicBrainz and linked public sources
-                    work without Spotify. Spotify is used only as a fallback.
-                    Request limits and retry times are respected separately for
-                    each source. You can close the browser. Saved images,
-                    progress and your pause choice survive application restarts.
+                    work independently of Spotify. No Spotify API requests are
+                    made to retrieve images. Request limits and retry times are
+                    respected separately for each source. You can close the
+                    browser. Saved images, progress and your pause choice
+                    survive application restarts.
                   </p>
                   <ArtworkSchedule job={job} />
                 </>
@@ -706,11 +698,9 @@ export function Activities({
                     {job.kind === "artwork" ? (
                       <span>
                         {member.state === "pending"
-                          ? member.error_code === "artwork_connection_required"
-                            ? "Waiting for Spotify fallback"
-                            : member.error_code === "artwork_provider_wait"
-                              ? "Waiting for provider retry"
-                              : "Queued"
+                          ? member.error_code === "artwork_provider_wait"
+                            ? "Waiting for provider retry"
+                            : "Queued"
                           : member.skipped
                             ? "No image available"
                             : member.duplicates

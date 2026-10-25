@@ -11,7 +11,6 @@ use serde_json::Value;
 use sqlx::Row;
 
 const DAY: i64 = 86_400_000;
-pub const SPOTIFY_TTL_MS: i64 = 14 * DAY;
 #[derive(Clone, Debug, Serialize, Deserialize, ts_rs::TS)]
 pub struct ImageCredit {
     pub provider: String,
@@ -376,45 +375,6 @@ async fn commons(state: &AppState, file: &str, provider: ImageProvider) -> Resul
 impl ImageLookup for PublicSources<'_> {
     async fn lookup(&self, provider: ImageProvider, kind: &str, id: &str) -> Result<Lookup> {
         let state = self.0;
-        if provider == ImageProvider::Spotify {
-            let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-                .fetch_one(&state.private_db)
-                .await?;
-            if !connected {
-                return Err(AppError::Unauthorized);
-            }
-            let result = library::spotify_image(state, kind, id).await;
-            let result = match result {
-                Err(AppError::Spotify(_)) => {
-                    let retry = crate::db::setting(&state.db, "retry_at_ms")
-                        .await?
-                        .and_then(|v| v.parse::<i64>().ok())
-                        .filter(|at| *at > auth::now_ms());
-                    if let Some(retry_at_ms) = retry {
-                        return Err(AppError::ArtworkWait { retry_at_ms });
-                    }
-                    return Err(AppError::Spotify(
-                        "Spotify artwork is temporarily unavailable.".into(),
-                    ));
-                }
-                result => result?,
-            };
-            let Some((image_url, source_url)) = result else {
-                return Ok(Lookup::Missing);
-            };
-            return Ok(Lookup::Found(FoundImage {
-                bytes: library::download(&image_url, Some(state)).await?,
-                credit: ImageCredit {
-                    provider: "spotify".into(),
-                    source_url,
-                    image_url,
-                    author: None,
-                    license: Some("Spotify Content — temporary cache".into()),
-                    license_url: Some("https://developer.spotify.com/terms".into()),
-                    credit: Some("Spotify".into()),
-                },
-            }));
-        }
         let identity = identity(state, kind, id).await?;
         let mbid = match identity {
             Ok(Some(id)) => id,
@@ -567,21 +527,6 @@ pub(crate) async fn fetch_with_activity(
             Lookup::Missing => continue,
             Lookup::Ambiguous => break,
             Lookup::Found(image) => {
-                // Disconnect and publication share the Spotify gate. New temporary
-                // bytes cannot reappear after the owner disconnects the integration.
-                let _spotify = if provider == ImageProvider::Spotify {
-                    let guard = state.spotify.gate.lock().await;
-                    let connected: bool =
-                        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-                            .fetch_one(&state.private_db)
-                            .await?;
-                    if !connected {
-                        return Err(AppError::Unauthorized);
-                    }
-                    Some(guard)
-                } else {
-                    None
-                };
                 let mut tx = state.db.begin().await?;
                 sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
                 if artwork_settings::read(&mut tx).await?.version != settings.version {
@@ -593,7 +538,7 @@ pub(crate) async fn fetch_with_activity(
                 }
                 let now = auth::now_ms();
                 sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=excluded.expires_at_ms,provenance_json=excluded.provenance_json")
-                    .bind(kind).bind(id).bind(provider.key()).bind(&image.bytes).bind(library::image_type(&image.bytes)?).bind(now).bind((provider == ImageProvider::Spotify).then_some(now+SPOTIFY_TTL_MS)).bind(serde_json::to_string(&image.credit).map_err(|_| AppError::Internal)?).execute(&mut *tx).await?;
+                    .bind(kind).bind(id).bind(provider.key()).bind(&image.bytes).bind(library::image_type(&image.bytes)?).bind(now).bind(Option::<i64>::None).bind(serde_json::to_string(&image.credit).map_err(|_| AppError::Internal)?).execute(&mut *tx).await?;
                 tx.commit().await?;
                 return Ok(library::ArtworkFetch::Saved);
             }
@@ -662,7 +607,7 @@ mod tests {
             if self.mode == "ambiguous" {
                 return Ok(Lookup::Ambiguous);
             }
-            if self.mode == "spotify" && provider != ImageProvider::Spotify {
+            if self.mode == "fallback" && provider != ImageProvider::Wikidata {
                 return Ok(Lookup::Missing);
             }
             if self.mode == "custom" {
@@ -725,11 +670,11 @@ mod tests {
             .await
             .unwrap();
         let mut settings = ArtworkSettings::default();
-        settings.providers[1].enabled = false;
+        settings.providers[0].enabled = false;
         let fake = Fake {
             state: &state,
             calls: Mutex::new(vec![]),
-            mode: "spotify",
+            mode: "fallback",
         };
         assert_eq!(
             fetch_with(&state, &settings, "artists", "fallback", &fake)
@@ -739,14 +684,14 @@ mod tests {
         );
         assert_eq!(
             *fake.calls.lock().unwrap(),
-            vec![ImageProvider::Wikidata, ImageProvider::Spotify]
+            vec![ImageProvider::MusicbrainzImage, ImageProvider::Wikidata]
         );
-        let expiry: i64 =
+        let expiry: Option<i64> =
             sqlx::query_scalar("SELECT expires_at_ms FROM artwork WHERE entity_id='fallback'")
                 .fetch_one(&state.db)
                 .await
                 .unwrap();
-        assert!((expiry - auth::now_ms() - SPOTIFY_TTL_MS).abs() < 1000);
+        assert_eq!(expiry, None);
         state.storage.close().await;
     }
     #[tokio::test]

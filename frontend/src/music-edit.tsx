@@ -417,7 +417,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                           }),
                         );
                         toast(
-                          "Custom image removed. Spotify artwork will be used when available.",
+                          "Custom image removed. Available provider images will be used.",
                         );
                       } catch (e) {
                         setError(e instanceof Error ? e.message : String(e));
