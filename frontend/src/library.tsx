@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -27,6 +28,7 @@ import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
+import { isBool, useBrowserPreference } from "./preferences";
 
 const NowContext = createContext<{
   data: NowPlaying | null;
@@ -134,6 +136,12 @@ export function Now({
 }) {
   const { data, error, browserTiming, browserCommit } = useContext(NowContext);
   const [expanded, setExpanded] = useState(false);
+  const [minimized, setMinimized] = useBrowserPreference(
+    "now-playing-minimized",
+    false,
+    isBool,
+  );
+  const contentId = useId();
   const [clock, setClock] = useState(Date.now());
   const titleText = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
@@ -192,91 +200,111 @@ export function Now({
   if (compact)
     return (
       <div
-        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""}`}
+        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""} ${minimized ? "now-minimized" : ""}`}
         aria-label="Now playing"
       >
-        <Cover url={data?.cover_url} />
-        {data?.cover_url && (
-          <button
-            className="icon-button now-expand-toggle nav-copy"
-            aria-label={
-              expanded
-                ? "Collapse now playing artwork"
-                : "Expand now playing artwork"
-            }
-            aria-expanded={expanded}
-            onClick={() => setExpanded(!expanded)}
-          >
-            <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
-          </button>
-        )}
-        <div
-          className="now-artwork-expansion nav-copy"
-          aria-hidden={!expanded || !data?.cover_url}
-          inert={!expanded || !data?.cover_url}
+        <button
+          type="button"
+          className="now-section-toggle"
+          aria-label={minimized ? "Expand now playing" : "Collapse now playing"}
+          aria-expanded={!minimized}
+          aria-controls={contentId}
+          onClick={() => setMinimized(!minimized)}
         >
-          <div>
-            {data?.cover_url ? (
-              <img src={data.cover_url} alt="Now playing artwork" />
+          <Icon>{data ? "graphic_eq" : "music_note"}</Icon>
+          <span className="nav-copy">Now playing</span>
+          <Icon>{minimized ? "expand_more" : "expand_less"}</Icon>
+        </button>
+        {minimized && (
+          <p className="now-summary nav-copy" title={data?.title}>
+            {error
+              ? "Playback unavailable"
+              : data?.title ||
+                (status?.connected
+                  ? "Nothing playing"
+                  : "Connect Spotify in Settings")}
+          </p>
+        )}
+        <div id={contentId} className="now-details" hidden={minimized}>
+          <Cover url={data?.cover_url} />
+          {data?.cover_url && (
+            <button
+              className="icon-button now-expand-toggle nav-copy"
+              aria-label={
+                expanded
+                  ? "Collapse now playing artwork"
+                  : "Expand now playing artwork"
+              }
+              aria-expanded={expanded}
+              onClick={() => setExpanded(!expanded)}
+            >
+              <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
+            </button>
+          )}
+          {data?.cover_url && (
+            <div
+              className="now-artwork-expansion nav-copy"
+              aria-hidden={!expanded}
+              inert={!expanded}
+            >
+              <div>
+                <img src={data.cover_url} alt="Now playing artwork" />
+              </div>
+            </div>
+          )}
+          <div className="nav-copy playback-copy">
+            <small>
+              {error
+                ? "Playback unavailable"
+                : data
+                  ? "Listening on Spotify"
+                  : "Now playing"}
+            </small>
+            {data ? (
+              <>
+                <Link
+                  className="playback-title"
+                  to={
+                    data.track_id
+                      ? musicLink("tracks", data.track_id)
+                      : "/music/now-playing"
+                  }
+                >
+                  <span
+                    className="playback-title-text"
+                    ref={titleText}
+                    title={data.title}
+                  >
+                    {data.title}
+                  </span>
+                </Link>
+                <span>{data.artists.map((a) => a.name).join(", ")}</span>
+              </>
             ) : (
-              <span className="now-artwork-placeholder">
-                <Icon>music_note</Icon>
+              <span>
+                {status?.connected
+                  ? "Nothing playing"
+                  : "Connect Spotify in Settings"}
               </span>
             )}
           </div>
-        </div>
-        <div className="nav-copy playback-copy">
-          <small>
-            {error
-              ? "Playback unavailable"
-              : data
-                ? "Listening on Spotify"
-                : "Now playing"}
-          </small>
-          {data ? (
-            <>
-              <Link
-                className="playback-title"
-                to={
-                  data.track_id
-                    ? musicLink("tracks", data.track_id)
-                    : "/music/now-playing"
-                }
-              >
-                <span
-                  className="playback-title-text"
-                  ref={titleText}
-                  title={data.title}
-                >
-                  {data.title}
-                </span>
-              </Link>
-              <span>{data.artists.map((a) => a.name).join(", ")}</span>
-            </>
-          ) : (
-            <span>
-              {status?.connected
-                ? "Nothing playing"
-                : "Connect Spotify in Settings"}
-            </span>
+          {data && (
+            <div className="sidebar-playback nav-copy">
+              {progress !== null && data.duration_ms && (
+                <progress
+                  aria-label="Playback progress"
+                  value={progress}
+                  max={data.duration_ms}
+                />
+              )}
+              <div className="playback-time">
+                <span>{duration(progress)}</span>
+                <Icon>graphic_eq</Icon>
+                <span>{duration(data.duration_ms)}</span>
+              </div>
+            </div>
           )}
         </div>
-        {data && (
-          <div className="sidebar-playback nav-copy">
-            {progress !== null && data.duration_ms && (
-              <progress
-                aria-label="Playback progress"
-                value={progress}
-                max={data.duration_ms}
-              />
-            )}
-            <div className="playback-time">
-              <span>{duration(progress)}</span>
-              <Icon>graphic_eq</Icon>
-              <span>{duration(data.duration_ms)}</span>
-            </div>
-          </div>
-        )}
         <span className="collapsed-label">
           {data
             ? `${data.title} · ${data.artists.map((a) => a.name).join(", ")}`

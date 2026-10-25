@@ -140,6 +140,238 @@ async function login(page, path = "/dashboard") {
   await expect(page.locator("#main")).toBeVisible();
 }
 
+test("mobile forms and history separators stay inside their panels", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await login(page, "/settings/data");
+  await page.route("**/api/history?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.items = Array.from({ length: 3 }, (_, i) => ({
+      ...data.items[0],
+      id: `mobile-listen-${i}`,
+      title: "A long song title that should wrap within the history panel",
+      timezone: "America/Argentina/Buenos_Aires",
+    }));
+    data.total = 3;
+    await route.fulfill({ json: data });
+  });
+  for (const path of [
+    "/settings/data",
+    "/settings/api-keys",
+    "/history?period=all",
+  ]) {
+    await page.goto(path);
+    await expect(page.locator("#main")).toBeVisible();
+    for (const input of await page
+      .locator(
+        'input[type="date"]:visible, input[type="datetime-local"]:visible',
+      )
+      .all()) {
+      await input.fill(
+        (await input.getAttribute("type")) === "date"
+          ? "2025-05-01"
+          : "2026-12-01T12:00",
+      );
+    }
+    if (path.startsWith("/history"))
+      await expect(
+        page.locator("#history-list .listen-row").first(),
+      ).toBeVisible();
+    const escaped = await page
+      .locator(
+        "#main input, #history-list .listen-row, #history-list .listen-main > div",
+      )
+      .evaluateAll((nodes) =>
+        nodes.flatMap((node) => {
+          const panel = node.closest(".panel");
+          if (!panel || !node.getClientRects().length) return [];
+          const box = node.getBoundingClientRect(),
+            bounds = panel.getBoundingClientRect();
+          return box.right > bounds.right + 1 || box.left < bounds.left - 1
+            ? [node.outerHTML.slice(0, 180)]
+            : [];
+        }),
+      );
+    expect(escaped, path).toEqual([]);
+    await page.screenshot({
+      path: `test-results/mobile-${browserName}-${path.split("/")[2] || "history"}.png`,
+      fullPage: true,
+    });
+  }
+});
+
+test("mobile hourly pattern labels remain readable without split digits", async ({
+  page,
+  browserName,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.route("**/api/v1/consultation/patterns?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.series.hours = data.series.hours.map((bin, i) => ({
+      ...bin,
+      count: ((i % 6) + 1) * 125,
+    }));
+    data.total = data.series.hours.reduce((sum, bin) => sum + bin.count, 0);
+    await route.fulfill({ json: data });
+  });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto(
+    `/music/artists/${archive.rankings.artists[0].id}?period=all`,
+  );
+  const labels = page.locator(".pattern-temporal .pattern-label");
+  await expect(labels).toHaveCount(24);
+  const wrapped = await labels.evaluateAll((nodes) =>
+    nodes
+      .filter(
+        (node) =>
+          node.getBoundingClientRect().height >
+          parseFloat(getComputedStyle(node).lineHeight) + 1,
+      )
+      .map((node) => node.textContent),
+  );
+  expect(wrapped).toEqual([]);
+  await page.locator(".pattern-temporal .pattern-row").nth(17).focus();
+  await expect(page.locator(".pattern-readout")).toContainText("17:00");
+  await page.screenshot({
+    path: `test-results/mobile-${browserName}-patterns.png`,
+    fullPage: true,
+  });
+  await page.locator(".listening-patterns").screenshot({
+    path: `test-results/mobile-${browserName}-pattern-detail.png`,
+  });
+  const historyTitle = page.locator(".embedded-history .listen-title").first();
+  expect((await historyTitle.boundingBox()).width).toBeGreaterThan(100);
+  const separators = await page
+    .locator(".listen-context .listen-main")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect(),
+          row = node.closest(".listen-row").getBoundingClientRect();
+        const line = getComputedStyle(node, "::after");
+        return box.right - parseFloat(line.right) - row.right;
+      }),
+    );
+  for (const overflow of separators) expect(overflow).toBeLessThanOrEqual(1);
+});
+
+test("mobile ranking controls use the available width and keep search on one row", async ({
+  page,
+  browserName,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, "/rankings/artists?period=all");
+  const search = page.locator(".ranking-toolbar .search-inline");
+  const input = await search.getByRole("textbox").boundingBox();
+  const button = await search.getByRole("button").boundingBox();
+  expect(Math.abs(input.y - button.y)).toBeLessThan(1);
+  const toggle = page.getByRole("group", { name: "Ranking view", exact: true });
+  const toolbar = await page.locator(".ranking-toolbar").boundingBox();
+  expect(
+    Math.abs((await toggle.boundingBox()).width - toolbar.width),
+  ).toBeLessThan(1);
+  await page
+    .locator(".rankings-panel")
+    .screenshot({ path: `test-results/mobile-${browserName}-rankings.png` });
+});
+
+test.describe("now playing disclosure", () => {
+  test.use({ hasTouch: true });
+  test("entire now playing collapses without artwork and retains the choice across updates", async ({
+    page,
+    browserName,
+  }) => {
+    await page.route("**/api/spotify/status", async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        json: {
+          ...(await response.json()),
+          connected: true,
+          now_playing_seconds: 1,
+        },
+      });
+    });
+    let title = "Song without artwork";
+    let coverUrl = null;
+    await page.route("**/api/spotify/now-playing", (route) =>
+      route.fulfill({
+        json: title
+          ? {
+              title,
+              artists: [{ id: "artist", name: "Artist" }],
+              album: "Album",
+              cover_url: coverUrl,
+              duration_ms: 180000,
+              progress_ms: 45000,
+              response_received_at_ms: Date.now(),
+              observed_at_ms: Date.now(),
+            }
+          : null,
+      }),
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    await login(page);
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .click();
+    const widget = page.locator(".sidebar-now");
+    await expect(
+      widget.getByRole("link", { name: title, exact: true }),
+    ).toBeVisible();
+    const toggle = widget.getByRole("button", {
+      name: "Collapse now playing",
+      exact: true,
+    });
+    await expect(toggle).toBeVisible();
+    expect((await widget.boundingBox()).height).toBeLessThan(175);
+    await widget.screenshot({
+      path: `test-results/mobile-${browserName}-now-expanded.png`,
+    });
+    await toggle.tap();
+    const expand = widget.getByRole("button", {
+      name: "Expand now playing",
+      exact: true,
+    });
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    await expect(widget.getByRole("progressbar")).toBeHidden();
+    await expect(widget.getByRole("link")).toBeHidden();
+    title = "Next song";
+    await expect(widget).toContainText(title);
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    coverUrl = "/favicon.svg";
+    await expect(widget.locator(".now-artwork-expansion img")).toHaveAttribute(
+      "src",
+      coverUrl,
+    );
+    await expect(widget.locator(".now-artwork-expansion img")).toBeHidden();
+    await expand.tap();
+    await expect(widget.getByRole("progressbar")).toBeVisible();
+    await toggle.press("Enter");
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Open navigation", exact: true })
+      .click();
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    await widget.screenshot({
+      path: `test-results/mobile-${browserName}-now-collapsed.png`,
+    });
+    title = "";
+    await expect(widget).toContainText("Nothing playing");
+    await expand.press("Space");
+    await expect(
+      widget.getByRole("button", { name: "Collapse now playing", exact: true }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await widget
+      .getByRole("button", { name: "Collapse now playing", exact: true })
+      .press("Enter");
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
 test("music listening patterns switch within one compact chart and header filters match action widths", async ({
   page,
   browserName,
@@ -1561,7 +1793,10 @@ test("release routes fit phone and tablet viewports in both orientations", async
     paths.push(`/music/${kind}/${id}`, `/music/${kind}/${id}/edit`);
   }
   for (const [width, height] of [
+    [320, 740],
+    [375, 812],
     [390, 844],
+    [430, 932],
     [844, 390],
     [768, 1024],
     [1024, 768],
@@ -1579,7 +1814,13 @@ test("release routes fit phone and tablet viewports in both orientations", async
               { exact: true },
             ),
           ).toBeVisible();
-        else await expect(page.locator(".music-heading h1")).toBeVisible();
+        else {
+          await expect(page.locator(".music-heading h1")).toBeVisible();
+          if (width === 320)
+            await page.locator(".embedded-history").screenshot({
+              path: `test-results/mobile-${browserName}-${path.split("/")[2]}-history.png`,
+            });
+        }
       }
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth + 1,
@@ -2534,20 +2775,18 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await collapse.hover();
   await expect(collapse).toHaveCSS("box-shadow", "none");
   await expect(page.locator(".sidebar .wordmark > .accent")).toHaveText(".");
-  expect((await widget.boundingBox()).height).toBeLessThan(155);
+  expect((await widget.boundingBox()).height).toBeLessThan(175);
   const compactHeight = (await widget.boundingBox()).height;
   expect(
     await widget.evaluate((node) => {
       const cover = node
-        .querySelector(":scope > .cover")
+        .querySelector(".now-details > .cover")
         .getBoundingClientRect();
       const copy = node.querySelector(".playback-copy").getBoundingClientRect();
-      const style = getComputedStyle(node);
       return Math.abs(
         Math.min(cover.top, copy.top) -
-          node.getBoundingClientRect().top -
-          parseFloat(style.borderTopWidth) -
-          parseFloat(style.paddingTop),
+          node.querySelector(".now-section-toggle").getBoundingClientRect()
+            .bottom,
       );
     }),
   ).toBeLessThan(1);
@@ -2557,7 +2796,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeGreaterThan(compactHeight + 100);
-  await expect(widget.locator(":scope > .cover")).toBeHidden();
+  await expect(widget.locator(".now-details > .cover")).toBeHidden();
   await expect(widget.locator(".playback-copy > a")).toHaveCSS(
     "font-size",
     "16px",
@@ -2568,7 +2807,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeLessThan(compactHeight + 1);
-  await expect(widget.locator(":scope > .cover")).toBeVisible();
+  await expect(widget.locator(".now-details > .cover")).toBeVisible();
   await page.screenshot({
     path: `test-results/gui-${browserName}-sidebar-playback.png`,
     fullPage: true,
@@ -2597,7 +2836,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
   await page.reload();
   await expect(widget).toContainText("Nothing playing");
   await expect(widget.locator(".now-expand-toggle")).toHaveCount(0);
-  expect((await widget.boundingBox()).height).toBeLessThan(110);
+  expect((await widget.boundingBox()).height).toBeLessThan(155);
 });
 test("first star accepts half a star and album listen rows stay compact", async ({
   page,
