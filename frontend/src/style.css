@@ -156,7 +156,18 @@ input[type="radio"] {
   width: auto;
   min-height: auto;
 }
+/* Keep native date controls within the form on iOS as well as desktop. */
+input:is([type="date"], [type="datetime-local"], [type="time"]) {
+  appearance: none;
+  display: block;
+  max-width: 100%;
+}
+input::-webkit-date-and-time-value {
+  min-height: 1.6em;
+  text-align: left;
+}
 label {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -166,12 +177,14 @@ label {
 }
 form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
 }
 form > button {
   justify-self: start;
 }
 fieldset {
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   margin: 16px 0;
@@ -6217,8 +6230,7 @@ dialog {
   min-height: 0;
   overflow: hidden;
 }
-.now-artwork-expansion img,
-.sidebar-now .now-artwork-placeholder {
+.now-artwork-expansion img {
   display: block;
   width: 100%;
   aspect-ratio: 1;
@@ -6226,22 +6238,15 @@ dialog {
   object-fit: contain;
   background: var(--surface-raised);
 }
-.sidebar-now .now-artwork-placeholder {
-  display: grid;
-  place-items: center;
-}
-.now-artwork-placeholder .material-icons-outlined {
-  font-size: 56px;
-}
 .artwork-expanded .now-artwork-expansion {
   grid-template-rows: 1fr;
   margin-bottom: 12px;
   visibility: visible;
 }
-.artwork-expanded > .cover {
+.artwork-expanded .now-details > .cover {
   display: none;
 }
-.collapsed .artwork-expanded > .cover {
+.collapsed .artwork-expanded .now-details > .cover {
   display: grid;
 }
 .artwork-expanded .playback-copy {
@@ -6273,6 +6278,165 @@ dialog {
 @media (max-width: 600px) {
   .profile-photo-row {
     gap: 16px;
+  }
+}
+
+/* The whole playback card can fold independently of its artwork. */
+.sidebar-now .now-details {
+  display: contents;
+}
+.sidebar-now .now-section-toggle {
+  position: relative;
+  z-index: 2;
+  grid-row: 1;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  gap: 8px;
+}
+.sidebar-now .now-section-toggle > .nav-copy {
+  flex: 1;
+}
+.sidebar-now .now-summary {
+  grid-column: 1 / -1;
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.sidebar-now .now-artwork-expansion {
+  grid-row: 2;
+}
+.sidebar-now .now-expand-toggle {
+  top: 56px;
+  right: 4px;
+  min-width: 44px;
+  min-height: 44px;
+}
+.sidebar-now .playback-copy {
+  padding-right: 36px;
+}
+.artwork-expanded .playback-copy {
+  padding-right: 0;
+}
+.collapsed .now-section-toggle {
+  display: none;
+}
+.collapsed .now-minimized .now-section-toggle {
+  display: flex;
+  grid-column: 1 / -1;
+}
+.collapsed
+  .now-minimized
+  .now-section-toggle
+  > .material-icons-outlined:last-child {
+  display: none;
+}
+.collapsed .sidebar-now .now-expand-toggle {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .settings-page .settings-form > form > button,
+  .settings-form form > button {
+    width: 100%;
+    justify-self: stretch;
+  }
+  .settings-page .padded {
+    padding: 20px 16px;
+  }
+  .ranking-toolbar .search-inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    width: 100%;
+    max-width: none;
+    flex-basis: 100%;
+    align-items: stretch;
+  }
+  .ranking-toolbar .view-toggle {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+  .ranking-toolbar .view-toggle button {
+    min-width: 0;
+    gap: 4px;
+    padding-inline: 4px;
+    font-size: 12px;
+  }
+  .ranking-toolbar .view-toggle .material-icons-outlined {
+    font-size: 20px;
+  }
+  .ranking-toolbar .card-size-control {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .ranking-toolbar .card-size-control.inactive {
+    display: none;
+  }
+  .pagination,
+  .list-footer .pagination {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    gap: 8px;
+    padding-inline: 0;
+  }
+  .pagination > span {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    text-align: center;
+  }
+  .pagination > button {
+    min-width: 0;
+    padding-inline: 8px;
+  }
+  .listen-row,
+  .listen-main > div {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+  .listen-row.listen-context {
+    padding: 12px 16px;
+  }
+  .listen-context .listen-main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px 12px;
+    padding-right: 44px;
+  }
+  .listen-context-artists .listen-main {
+    grid-template-columns: var(--listen-cover-size) minmax(0, 1fr);
+  }
+  .listen-context-artists .listen-main > .cover {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .listen-context .listen-title {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+  .listen-context-artists .listen-title {
+    grid-column: 2;
+  }
+  .listen-context .listen-date,
+  .listen-context .listen-duration {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    text-align: left;
+  }
+  .listen-context .listen-main::after {
+    left: -16px;
+    right: -16px;
+    bottom: -12px;
   }
 }
 

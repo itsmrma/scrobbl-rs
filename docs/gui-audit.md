@@ -407,3 +407,15 @@ CI run 40099455025 passed all three browsers, Linux and Docker; Windows exposed 
 
 
 Run 40101444186 passed both backends, Firefox, WebKit and Docker. Chromium passed 67/68 scenarios, including the two new regressions, but the Spotify-interval test read status while its save was still in flight: trace timestamps show POST at 14:18:31.130Z (200 after 25.9 ms) and the test's GET at .146Z. Save is disabled while busy as well as when clean, so disabled was not proof of completion. Valid saves in that test now await their actual POST response before reading/reloading, including the other-browser save. No production save logic changed.
+
+### Mobile layout and complete Now Playing disclosure
+
+Follow-up for [Correggere overflow e leggibilità mobile e rendere comprimibile Now Playing](https://github.com/itsmrma/scrobbl-rs/issues/66), checked against all six original screenshots. Hourly patterns use two rows of twelve on phones, with unbroken labels, the same scale, keyboard inspection and the existing filters. Ranking search stays on one row; view buttons and form actions fill their available mobile width. Page controls share two equal columns below the page count. Native date controls, labels, fieldsets and form tracks can shrink within their panels.
+
+Embedded music history stacks its date and duration below the title on phones, reserves the disclosure target, and bounds its separator to the row. A 320 px regression caught a title column only 28 px wide; document-level scrollbar checks had missed this unreadable layout. Tests also check populated dates, long history metadata and separator geometry, along with the release routes at 320, 375, 390, 430, 768, 844, 1024 and 1440 px.
+
+Now Playing has a separate 44 px touch/keyboard disclosure for the entire card. Its minimized state retains a compact song/status summary, survives polling, track/artwork changes, navigation and reload, and works while idle or without artwork. Larger artwork remains a separate control. The title's stretched link cannot intercept the disclosure. The collapsed body is hidden from focus and accessibility navigation.
+
+Synthetic screenshots: [hourly patterns](screenshots/mobile-hourly-patterns.png), [music history](screenshots/mobile-music-history.png), [ranking controls](screenshots/mobile-rankings.png), [Now Playing open](screenshots/mobile-now-expanded.png), [Now Playing minimized](screenshots/mobile-now-collapsed.png).
+
+Chromium/WebKit automation and visual review cover the reported routes; exact final test and CI outcomes are recorded in the linked ticket. Physical iPhone/iPad Safari date-picker, text-size and orientation checks remain in the single final release acceptance session.

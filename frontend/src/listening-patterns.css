@@ -54,6 +54,7 @@
 }
 .pattern-temporal {
   display: grid;
+  grid-template-columns: repeat(var(--pattern-columns), minmax(0, 1fr));
   gap: 3px;
   overflow: visible;
   padding-right: 0;
@@ -80,9 +81,27 @@
 }
 .pattern-temporal .pattern-label {
   order: 1;
-  font-size: 10px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 .pattern-row:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+@media (max-width: 600px) {
+  .listening-patterns .select-control {
+    width: 100%;
+  }
+  .pattern-hours {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px 4px;
+    max-height: none;
+  }
+  .pattern-hours .pattern-track {
+    height: 96px;
+  }
+  .pattern-bars:not(.pattern-temporal) .pattern-row {
+    grid-template-columns: minmax(0, 1fr) minmax(32px, 1fr) 60px;
+    gap: 8px;
+  }
 }
