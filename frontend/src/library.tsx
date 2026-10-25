@@ -2,7 +2,6 @@ import {
   createContext,
   useContext,
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -137,14 +136,21 @@ export function Now({
 }) {
   const { data, error, browserTiming, browserCommit } = useContext(NowContext);
   const [expanded, setExpanded] = useState(false);
-  const [minimized, setMinimized] = useBrowserPreference(
+  const [mobileMinimized, setMobileMinimized] = useBrowserPreference(
     "now-playing-minimized",
     false,
     isBool,
   );
-  const contentId = useId();
   const [clock, setClock] = useState(Date.now());
   const titleText = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const mobile = matchMedia("(max-width: 600px)");
+    const resetDesktopState = () => {
+      if (!mobile.matches) setMobileMinimized(false);
+    };
+    mobile.addEventListener("change", resetDesktopState);
+    return () => mobile.removeEventListener("change", resetDesktopState);
+  }, []);
   useLayoutEffect(() => {
     const text = titleText.current;
     const container = text?.parentElement;
@@ -201,32 +207,19 @@ export function Now({
   if (compact)
     return (
       <div
-        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""} ${minimized ? "now-minimized" : ""}`}
+        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""} ${mobileMinimized ? "mobile-minimized" : ""}`}
         aria-label="Now playing"
       >
         <button
           type="button"
           className="now-section-toggle"
-          aria-label={minimized ? "Expand now playing" : "Collapse now playing"}
-          aria-expanded={!minimized}
-          aria-controls={contentId}
-          onClick={() => setMinimized(!minimized)}
+          aria-label={mobileMinimized ? "Expand now playing" : "Collapse now playing"}
+          aria-expanded={!mobileMinimized}
+          onClick={() => setMobileMinimized(!mobileMinimized)}
         >
-          <Icon>{data ? "graphic_eq" : "music_note"}</Icon>
-          <span className="nav-copy">Now playing</span>
-          <Icon>{minimized ? "expand_more" : "expand_less"}</Icon>
+          <Icon>{mobileMinimized ? "expand_more" : "expand_less"}</Icon>
         </button>
-        {minimized && (
-          <p className="now-summary nav-copy" title={data?.title}>
-            {error
-              ? "Playback unavailable"
-              : data?.title ||
-                (status?.connected
-                  ? "Nothing playing"
-                  : "Connect Spotify in Settings")}
-          </p>
-        )}
-        <div id={contentId} className="now-details" hidden={minimized}>
+        <div className={`now-details${mobileMinimized ? " mobile-minimized" : ""}`}>
           <Cover url={data?.cover_url} />
           {data?.cover_url && (
             <button
@@ -242,17 +235,21 @@ export function Now({
               <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
             </button>
           )}
-          {data?.cover_url && (
-            <div
-              className="now-artwork-expansion nav-copy"
-              aria-hidden={!expanded}
-              inert={!expanded}
-            >
-              <div>
+          <div
+            className="now-artwork-expansion nav-copy"
+            aria-hidden={!expanded || !data?.cover_url}
+            inert={!expanded || !data?.cover_url}
+          >
+            <div>
+              {data?.cover_url ? (
                 <img src={data.cover_url} alt="Now playing artwork" />
-              </div>
+              ) : (
+                <span className="now-artwork-placeholder">
+                  <Icon>music_note</Icon>
+                </span>
+              )}
             </div>
-          )}
+          </div>
           <div className="nav-copy playback-copy">
             <small>
               {error

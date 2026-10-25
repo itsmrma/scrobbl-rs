@@ -6405,13 +6405,21 @@ dialog {
   min-height: 0;
   overflow: hidden;
 }
-.now-artwork-expansion img {
+.now-artwork-expansion img,
+.sidebar-now .now-artwork-placeholder {
   display: block;
   width: 100%;
   aspect-ratio: 1;
   border-radius: 6px;
   object-fit: contain;
   background: var(--surface-raised);
+}
+.sidebar-now .now-artwork-placeholder {
+  display: grid;
+  place-items: center;
+}
+.now-artwork-placeholder .material-icons-outlined {
+  font-size: 56px;
 }
 .artwork-expanded .now-artwork-expansion {
   grid-template-rows: 1fr;
@@ -6456,69 +6464,66 @@ dialog {
   }
 }
 
-/* The whole playback card can fold independently of its artwork. */
+/* Keep the original playback card and add a small mobile-only fold control. */
 .sidebar-now .now-details {
   display: contents;
 }
 .sidebar-now .now-section-toggle {
-  position: relative;
-  z-index: 2;
-  grid-row: 1;
-  grid-column: 1 / -1;
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0;
-  background: transparent;
-  color: var(--muted);
-  text-align: left;
-  gap: 8px;
-}
-.sidebar-now .now-section-toggle > .nav-copy {
-  flex: 1;
-}
-.sidebar-now .now-summary {
-  grid-column: 1 / -1;
-  margin: 0;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
+  display: none;
 }
 .sidebar-now .now-artwork-expansion {
-  grid-row: 2;
-}
-.sidebar-now .now-expand-toggle {
-  top: 56px;
-  right: 4px;
-  min-width: 44px;
-  min-height: 44px;
-}
-.sidebar-now .playback-copy {
-  padding-right: 36px;
-}
-.artwork-expanded .playback-copy {
-  padding-right: 0;
-}
-.collapsed .now-section-toggle {
-  display: none;
-}
-.collapsed .now-minimized .now-section-toggle {
-  display: flex;
-  grid-column: 1 / -1;
-}
-.collapsed
-  .now-minimized
-  .now-section-toggle
-  > .material-icons-outlined:last-child {
-  display: none;
-}
-.collapsed .sidebar-now .now-expand-toggle {
-  display: none;
+  grid-row: 1;
 }
 
 @media (max-width: 600px) {
+  .sidebar-now .now-expand-toggle {
+    display: none;
+  }
+  .sidebar-now .now-section-toggle {
+    position: absolute;
+    z-index: 2;
+    display: flex;
+    top: 0;
+    right: 0;
+    justify-content: center;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .sidebar-now .playback-copy {
+    padding-right: 36px;
+  }
+  .artwork-expanded .playback-copy {
+    padding-right: 0;
+  }
+  .sidebar-now.mobile-minimized .playback-copy > :is(small, span),
+  .sidebar-now.mobile-minimized .sidebar-playback {
+    display: none;
+  }
+  .sidebar-now .now-artwork-expansion {
+    grid-row: 2;
+  }
+  .sidebar-now .now-expand-toggle {
+    top: 56px;
+    right: 4px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .sidebar-now:not(.artwork-expanded) .now-artwork-expansion {
+    display: none;
+  }
+  .sidebar-now.artwork-expanded .now-artwork-expansion {
+    display: grid;
+  }
+  .sidebar-now.mobile-minimized .now-artwork-expansion {
+    display: none;
+  }
   .settings-page .settings-form > form > button,
   .settings-form form > button {
     width: 100%;

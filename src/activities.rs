@@ -110,6 +110,25 @@ pub async fn detail(
         .await?
         .ok_or_else(|| AppError::BadRequest("Unknown activity.".into()))?;
     let mut members: Vec<ActivityMember> = sqlx::query_as("SELECT member,kind,state,expected_rows,processed,error_code,originals,variants,duplicates,added,reconciled,invalid,skipped,below_threshold FROM job_members WHERE job_id=? ORDER BY member LIMIT ? OFFSET ?").bind(&id).bind(if job.kind=="artwork" {100i64} else {i64::MAX}).bind(if job.kind=="artwork" {i64::from(query.issues_page)*100} else {0}).fetch_all(&mut *view.transaction).await?;
+    let source_parameters = if job.kind == "artwork" {
+        let current_provider = if job.state == "running" {
+            sqlx::query_scalar::<_, String>("SELECT current_provider FROM job_members WHERE job_id=? AND current_provider IS NOT NULL ORDER BY member LIMIT 1")
+                .bind(&job.id)
+                .fetch_optional(&mut *view.transaction)
+                .await?
+        } else {
+            None
+        };
+        Some(serde_json::json!({
+            "interval_ms": crate::artwork::IMAGE_INTERVAL_MS,
+            "next_at_ms": crate::db::setting(&state.db,"artwork_background_next_at_ms").await?.and_then(|v|v.parse::<i64>().ok()),
+            "current_provider": current_provider,
+        }))
+    } else if job.kind.starts_with("listenbrainz_") {
+        Some(serde_json::from_str(&job.parameters_json).map_err(|_| AppError::Internal)?)
+    } else {
+        None
+    };
     if job.kind == "artwork" {
         for member in &mut members {
             let group = member
@@ -131,7 +150,7 @@ pub async fn detail(
     }
 
     Ok(Json(ActivityDetail {
-        source_parameters: if job.kind == "artwork" { Some(serde_json::json!({"interval_ms": crate::artwork::IMAGE_INTERVAL_MS, "next_at_ms": crate::db::setting(&state.db,"artwork_background_next_at_ms").await?.and_then(|v|v.parse::<i64>().ok())})) } else if job.kind.starts_with("listenbrainz_") {Some(serde_json::from_str(&job.parameters_json).map_err(|_|AppError::Internal)?)}else{None},
+        source_parameters,
         issues: sqlx::query_as("SELECT member,row_number,reason FROM source_occurrences WHERE job_id=? AND (outcome='invalid' OR (? LIKE 'listenbrainz_%' AND reason IS NOT NULL)) ORDER BY member,row_number LIMIT 100 OFFSET ?").bind(&id).bind(&job.kind).bind(i64::from(query.issues_page)*100).fetch_all(&mut *view.transaction).await?,
         activity: present(&mut view.transaction, job).await?,
         members,

@@ -125,6 +125,10 @@ async fn step_with(
 ) -> Result<bool> {
     let mut reservation = state.db.begin().await?;
     jobs::validate_lease(&mut reservation, lease).await?;
+    sqlx::query("UPDATE job_members SET current_provider=NULL WHERE job_id=? AND current_provider IS NOT NULL")
+        .bind(&lease.id)
+        .execute(&mut *reservation)
+        .await?;
     reservation.commit().await?;
     let item=sqlx::query("SELECT member,kind FROM job_members WHERE job_id=? AND state='pending' AND artwork_retry_at_ms<=? ORDER BY artwork_retry_at_ms,member LIMIT 1").bind(&lease.id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
     let Some(item) = item else {
@@ -160,7 +164,8 @@ async fn step_with(
             if !background_slot(state, lease, &kind, &id).await? {
                 return Ok(false);
             }
-            library::ensure_artwork_with(state, &kind, &id, sources).await
+            library::ensure_artwork_for_activity(state, &kind, &id, sources, &lease.id, &member)
+                .await
         }
         Err(AppError::NotFound) => Ok(ArtworkFetch::Missing),
         Err(error) => Err(error),
