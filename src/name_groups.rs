@@ -198,12 +198,12 @@ pub async fn change(
             .await?;
         // Copy the current display choices, retaining all source-specific overrides.
         sqlx::query("INSERT OR IGNORE INTO local_corrections SELECT entity_kind,?,field,value_json FROM local_corrections WHERE entity_id=?").bind(&new_id).bind(&id).execute(&mut *tx).await?;
-        sqlx::query("INSERT OR IGNORE INTO artwork SELECT kind,?,source,bytes,mime,checked_at_ms,expires_at_ms FROM artwork WHERE entity_id=? AND source='custom'").bind(&new_id).bind(&id).execute(&mut *tx).await?;
+        sqlx::query("INSERT OR IGNORE INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) SELECT kind,?,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json FROM artwork WHERE entity_id=? AND source='custom'").bind(&new_id).bind(&id).execute(&mut *tx).await?;
         // A separated source entry recovers its own older personal choices.
         // Group display choices remain the fallback when no source override exists.
         if form.member_ids.len() == 1 {
             sqlx::query("INSERT OR REPLACE INTO local_corrections SELECT entity_kind,?,field,value_json FROM local_corrections WHERE entity_id=?").bind(&new_id).bind(&form.member_ids[0]).execute(&mut *tx).await?;
-            sqlx::query("INSERT OR REPLACE INTO artwork SELECT kind,?,source,bytes,mime,checked_at_ms,expires_at_ms FROM artwork WHERE entity_id=? AND source='custom'").bind(&new_id).bind(&form.member_ids[0]).execute(&mut *tx).await?;
+            sqlx::query("INSERT OR REPLACE INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) SELECT kind,?,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json FROM artwork WHERE entity_id=? AND source='custom'").bind(&new_id).bind(&form.member_ids[0]).execute(&mut *tx).await?;
         }
         Some(new_id)
     } else {

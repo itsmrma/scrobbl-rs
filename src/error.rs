@@ -21,6 +21,8 @@ pub enum AppError {
     TooManyRequests,
     #[error("{0}")]
     Spotify(String),
+    #[error("The image provider is temporarily unavailable. Artwork will retry automatically.")]
+    ArtworkWait { retry_at_ms: i64 },
     #[error("The local database operation failed.")]
     Database(#[from] sqlx::Error),
     #[error("The local database operation failed.")]
@@ -38,7 +40,7 @@ impl IntoResponse for AppError {
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
-            Self::Spotify(_) => StatusCode::BAD_GATEWAY,
+            Self::Spotify(_) | Self::ArtworkWait { .. } => StatusCode::BAD_GATEWAY,
             Self::Database(_) | Self::BatchDatabase(_) | Self::Internal => {
                 StatusCode::INTERNAL_SERVER_ERROR
             }

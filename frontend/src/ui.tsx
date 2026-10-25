@@ -1,8 +1,8 @@
 import { queueArtwork } from "./artwork-activity";
-import { downloadArtwork } from "./api";
+import { api, downloadArtwork } from "./api";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { Preferences } from "./generated";
+import type { Preferences, ImageCredit } from "./generated";
 
 export const ArtworkContext = createContext<{
   connected: boolean;
@@ -90,6 +90,8 @@ export function Cover({
   large?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
+  const [credit, setCredit] = useState<ImageCredit | null>(null);
+  const [loadedSource, setLoadedSource] = useState("");
   const [revision, setRevision] = useState(0);
   const [readySource, setReadySource] = useState("");
   const [cacheMiss, setCacheMiss] = useState("");
@@ -152,6 +154,25 @@ export function Cover({
       cancel();
     };
   }, [local, source, cacheMiss]);
+  useEffect(() => {
+    setCredit(null);
+    if (!local || !url || loadedSource !== source) return;
+    let active = true;
+    void api
+      .artworkCredit(url)
+      .then((value) => {
+        if (active) {
+          setCredit(value);
+          window.dispatchEvent(
+            new CustomEvent("artwork-credit-loaded", { detail: { url } }),
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [local, url, loadedSource, source]);
   const finish = (loaded: boolean) => {
     const current = release.current;
     if (current && current.source === source) current.done(loaded);
@@ -207,26 +228,34 @@ export function Cover({
       readySource === source ||
       readySource === `${source}&cached=true` ||
       readySource === source + "&cached=true&downloaded=true") ? (
-    <img
-      ref={(node) => {
-        marker.current = node;
-      }}
-      className={`cover ${large ? "large" : ""}`}
-      src={(local ? readySource : source) || undefined}
-      alt=""
-      loading={local ? "eager" : "lazy"}
-      referrerPolicy="no-referrer"
-      onLoad={() => finish(true)}
-      onError={() => {
-        if (local && readySource.endsWith("&cached=true")) {
-          setReadySource("");
-          setCacheMiss(source || "");
-          return;
-        }
-        finish(false);
-        setFailed(true);
-      }}
-    />
+    <span className={`cover image-frame ${large ? "large" : ""}`}>
+      <img
+        ref={(node) => {
+          marker.current = node;
+        }}
+        className="cover-image"
+        src={(local ? readySource : source) || undefined}
+        alt=""
+        loading={local ? "eager" : "lazy"}
+        referrerPolicy="no-referrer"
+        onLoad={() => {
+          finish(true);
+          setLoadedSource(source || "");
+        }}
+        onError={() => {
+          if (local && readySource.endsWith("&cached=true")) {
+            setReadySource("");
+            setCacheMiss(source || "");
+            return;
+          }
+          finish(false);
+          setFailed(true);
+        }}
+      />
+      {credit?.provider === "spotify" && (
+        <span className="image-provider-badge">Spotify</span>
+      )}
+    </span>
   ) : (
     <span
       ref={(node) => {

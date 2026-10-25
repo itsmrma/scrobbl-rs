@@ -2,6 +2,8 @@ pub mod account;
 pub mod activities;
 pub mod api_keys;
 pub mod artwork;
+pub mod artwork_settings;
+pub mod artwork_sources;
 pub mod auth;
 pub mod browse;
 pub mod calendar;

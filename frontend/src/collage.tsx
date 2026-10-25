@@ -1,3 +1,5 @@
+import { api } from "./api";
+import { plainCredit } from "./image-credit";
 import { Select } from "./select";
 import { useMemo, useRef, useState } from "react";
 import type { Ranking } from "./generated";
@@ -86,11 +88,66 @@ export function Collage({
     setBusy(true);
     setError("");
     try {
+      const credits = await Promise.all(
+        tiles.map((tile) =>
+          tile.item.cover_url?.startsWith("/api/v1/artwork/")
+            ? api.artworkCredit(tile.item.cover_url)
+            : Promise.resolve(null),
+        ),
+      );
+      const creditText = [
+        ...new Set(
+          credits
+            .filter((credit) => credit !== null)
+            .map((credit) =>
+              [
+                credit.provider,
+                plainCredit(credit.author),
+                plainCredit(credit.credit),
+                plainCredit(credit.license),
+                credit.license_url,
+                credit.source_url,
+              ]
+                .filter(Boolean)
+                .join(" | "),
+            ),
+        ),
+      ];
       const canvas = document.createElement("canvas");
       canvas.width = 1200;
       canvas.height = Math.round(height * 1200) + 120;
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("This browser cannot export a collage.");
+      // Wrap attribution without dropping authors or licence/source links from the PNG.
+      ctx.font = "16px sans-serif";
+      const creditLines = creditText.flatMap((text) => {
+        const lines: string[] = [];
+        let line = "";
+        for (const word of text.split(/\s+/)) {
+          const candidate = line ? `${line} ${word}` : word;
+          if (ctx.measureText(candidate).width <= 1152) {
+            line = candidate;
+            continue;
+          }
+          if (line) {
+            lines.push(line);
+            line = "";
+          }
+          // Keep ordinary source/licence URLs intact. Very long single tokens
+          // still wrap without dropping any attribution characters.
+          for (const character of word) {
+            if (ctx.measureText(line + character).width > 1152) {
+              lines.push(line);
+              line = "";
+            }
+            line += character;
+          }
+        }
+        if (line) lines.push(line);
+        return [...lines, ""];
+      });
+      const originalHeight = canvas.height;
+      canvas.height += creditLines.length * 22;
       ctx.fillStyle = "#171b20";
       ctx.fillRect(0, 0, 1200, canvas.height);
       ctx.fillStyle = "#ffffff";
@@ -111,11 +168,14 @@ export function Collage({
         ctx.fillRect(x, y, w, h);
         const img = cells?.[index].querySelector("img");
         if (img?.complete && img.naturalWidth) {
-          const scale = Math.max(w / img.naturalWidth, h / img.naturalHeight);
+          const scale = Math.min(
+            w / img.naturalWidth,
+            Math.max(1, h - 44) / img.naturalHeight,
+          );
           ctx.drawImage(
             img,
             x + (w - img.naturalWidth * scale) / 2,
-            y + (h - img.naturalHeight * scale) / 2,
+            y + (Math.max(1, h - 44) - img.naturalHeight * scale) / 2,
             img.naturalWidth * scale,
             img.naturalHeight * scale,
           );
@@ -142,6 +202,11 @@ export function Collage({
         `scrobbl.rs · ${params.get("period") || "all"} · ${params.get("sort") === "time" ? "Listening time" : "Listens"}`,
         24,
         canvas.height - 13,
+      );
+      ctx.fillStyle = "#bec5cf";
+      ctx.font = "16px sans-serif";
+      creditLines.forEach((line, index) =>
+        ctx.fillText(line, 24, originalHeight - 10 + index * 22),
       );
       const blob = await new Promise<Blob>((resolve, reject) =>
         canvas.toBlob(

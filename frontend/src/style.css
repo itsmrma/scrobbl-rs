@@ -6734,3 +6734,124 @@ dialog {
   position: relative;
   z-index: 2;
 }
+.artwork-provider-list {
+  margin: 1.5rem 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 1rem;
+}
+.artwork-provider {
+  padding: 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  min-width: 0;
+}
+.artwork-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.artwork-provider-header label {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0;
+  font-weight: 650;
+}
+.artwork-provider-order {
+  display: flex;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+.artwork-provider-order .button {
+  min-width: 44px;
+  padding: 0.6rem;
+}
+.artwork-provider dl {
+  display: grid;
+  gap: 0.4rem;
+}
+.artwork-provider dt {
+  font-weight: 650;
+}
+.artwork-provider dd {
+  margin: 0 0 0.7rem;
+}
+.artwork-provider-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem 1.2rem;
+}
+.artwork-provider-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.artwork-provider-links .icon {
+  font-size: 1rem;
+}
+.image-credits {
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+  max-width: 42rem;
+}
+.image-credits summary {
+  cursor: pointer;
+}
+.image-credits p {
+  margin: 0.4rem 0;
+}
+@media (max-width: 600px) {
+  .artwork-provider-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .artwork-provider-order {
+    align-self: flex-end;
+  }
+}
+
+.image-frame {
+  position: relative;
+  display: inline-block;
+}
+.cover-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+}
+.image-provider-badge {
+  position: absolute;
+  inset: auto 0 0;
+  background: #000c;
+  color: #fff;
+  font: 9px/1.4 sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+.collage-tile > .cover.large {
+  object-fit: contain;
+  height: calc(100% - 24px);
+}
+
+.image-frame:has(.image-provider-badge) .cover-image {
+  height: calc(100% - 14px);
+}
+
+.artwork-provider-header .checkbox-label {
+  min-height: 44px;
+  font-size: 14px;
+  color: var(--text);
+}
+.artwork-provider-header input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  padding: 0;
+}
