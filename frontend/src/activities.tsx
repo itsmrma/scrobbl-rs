@@ -386,7 +386,9 @@ export function Activities({
                 </span>
               </div>
               {job.kind === "artwork" && (
-                <ArtworkProviderStatus params={detail.data?.source_parameters} />
+                <ArtworkProviderStatus
+                  params={detail.data?.source_parameters}
+                />
               )}
               <Progress job={job} />
               <div className="activity-results">
@@ -697,46 +699,48 @@ export function Activities({
                     </p>
                   </section>
                 )}
-              {job.kind !== "artwork" && detail.data?.members.map((member, index) => (
-                <div className="job" key={`${index}:${member.member}`}>
-                  <strong>{member.member}</strong>
-                  {job.kind === "artwork" ? (
-                    <span>
-                      {member.state === "pending"
-                        ? member.error_code === "artwork_connection_required"
-                          ? "Waiting for Spotify fallback"
-                          : member.error_code === "artwork_provider_wait"
-                            ? "Waiting for provider retry"
-                            : "Queued"
-                        : member.skipped
-                          ? "No image available"
-                          : member.duplicates
-                            ? "Already cached"
-                            : "Saved"}
-                    </span>
-                  ) : (
-                    <>
+              {job.kind !== "artwork" &&
+                detail.data?.members.map((member, index) => (
+                  <div className="job" key={`${index}:${member.member}`}>
+                    <strong>{member.member}</strong>
+                    {job.kind === "artwork" ? (
                       <span>
-                        {member.kind} · {member.state} · {member.processed}{" "}
-                        processed
-                        {member.expected_rows === null
-                          ? " · total unknown"
-                          : ` of ${member.expected_rows}`}
+                        {member.state === "pending"
+                          ? member.error_code === "artwork_connection_required"
+                            ? "Waiting for Spotify fallback"
+                            : member.error_code === "artwork_provider_wait"
+                              ? "Waiting for provider retry"
+                              : "Queued"
+                          : member.skipped
+                            ? "No image available"
+                            : member.duplicates
+                              ? "Already cached"
+                              : "Saved"}
                       </span>
-                      <p>
-                        {member.originals} new originals | {member.variants} new
-                        variants | {member.duplicates} known rows |{" "}
-                        {member.added} new listens | {member.reconciled}{" "}
-                        reconciled | {member.invalid} invalid | {member.skipped}{" "}
-                        non-music | {member.below_threshold} below threshold
-                      </p>
-                    </>
-                  )}
-                  {member.error_code && job.kind !== "artwork" && (
-                    <p className="form-error">{member.error_code}</p>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <>
+                        <span>
+                          {member.kind} · {member.state} · {member.processed}{" "}
+                          processed
+                          {member.expected_rows === null
+                            ? " · total unknown"
+                            : ` of ${member.expected_rows}`}
+                        </span>
+                        <p>
+                          {member.originals} new originals | {member.variants}{" "}
+                          new variants | {member.duplicates} known rows |{" "}
+                          {member.added} new listens | {member.reconciled}{" "}
+                          reconciled | {member.invalid} invalid |{" "}
+                          {member.skipped} non-music | {member.below_threshold}{" "}
+                          below threshold
+                        </p>
+                      </>
+                    )}
+                    {member.error_code && job.kind !== "artwork" && (
+                      <p className="form-error">{member.error_code}</p>
+                    )}
+                  </div>
+                ))}
               {job.kind.startsWith("listenbrainz_") && (
                 <ListenBrainzOriginals key={job.id} id={job.id} />
               )}
