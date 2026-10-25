@@ -935,6 +935,9 @@ pub async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Re
     crate::storage::recover_access(&state.db, &state.private_db)
         .await
         .map_err(|_| AppError::Internal)?;
+    // Retire the new temporary image cache; preserve legacy saved and personal images.
+    sqlx::query("DELETE FROM artwork WHERE source='spotify' AND provenance_json IS NOT NULL AND expires_at_ms IS NOT NULL")
+        .execute(&state.db).await?;
     *state.spotify.cache.lock().await = None;
     Ok(Json(json!({"ok":true})))
 }

@@ -64,6 +64,7 @@ pub struct Details {
     pub rating: Option<f64>,
     pub custom_image: bool,
     pub spotify_url: Option<String>,
+    pub image_credit: Option<crate::artwork_sources::ImageCredit>,
 }
 #[derive(Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
@@ -114,6 +115,7 @@ pub async fn details(
         rating,
         custom_image,
         spotify_url,
+        image_credit: crate::artwork_sources::credit(&state, &kind, &id).await?,
     }))
 }
 pub async fn edit(
@@ -255,64 +257,112 @@ fn image_retry_at(value: Option<&str>, now: i64) -> i64 {
         .unwrap_or_else(|| now.saturating_add(60_000))
         .max(now.saturating_add(1000))
 }
-async fn download(url: &str, state: Option<&AppState>) -> Result<Vec<u8>> {
-    let url = url::Url::parse(url)
-        .map_err(|_| AppError::BadRequest("Enter a valid public HTTPS image URL.".into()))?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.port_or_known_default() != Some(443)
+pub(crate) fn archive_https(mut target: url::Url) -> url::Url {
+    // CAA still returns legacy HTTP Archive links. Request HTTPS directly;
+    // never transmit an HTTP hop or relax public-address validation.
+    if target.scheme() == "http"
+        && target.host_str().is_some_and(|host| {
+            host == "coverartarchive.org" || host == "archive.org" || host.ends_with(".archive.org")
+        })
     {
-        return Err(AppError::BadRequest(
-            "Use a public HTTPS image URL on port 443, without credentials.".into(),
-        ));
+        if target.port() == Some(80) {
+            let _ = target.set_port(None);
+        }
+        let _ = target.set_scheme("https");
     }
-    let host = url
-        .host_str()
-        .ok_or_else(|| AppError::BadRequest("The image URL needs a public hostname.".into()))?;
-    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, 443))
-        .await
-        .map_err(|_| AppError::BadRequest("Could not resolve the image host.".into()))?
-        .collect();
-    if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
-        return Err(AppError::BadRequest(
-            "Image links must point to the public internet, not a local or private address.".into(),
-        ));
-    }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
-        .resolve_to_addrs(host, &addresses)
-        .build()
-        .map_err(|_| AppError::Internal)?;
-    let mut response = client.get(url).send().await.map_err(|_| {
-        AppError::BadRequest(
-            "Could not download the image. Try a direct image link or upload a file.".into(),
-        )
-    })?;
-    if matches!(
-        response.status(),
-        reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE
-    ) && let Some(state) = state
-    {
-        let retry = image_retry_at(
-            response
+    target
+}
+pub(crate) async fn public_response(
+    url: &str,
+    state: Option<&AppState>,
+) -> Result<reqwest::Response> {
+    let mut target = url.to_owned();
+    for _ in 0..5 {
+        let url = target.as_str();
+        let url = url::Url::parse(url)
+            .map_err(|_| AppError::BadRequest("Enter a valid public HTTPS image URL.".into()))?;
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.port_or_known_default() != Some(443)
+        {
+            return Err(AppError::BadRequest(
+                "Use a public HTTPS image URL on port 443, without credentials.".into(),
+            ));
+        }
+        let host = url
+            .host_str()
+            .ok_or_else(|| AppError::BadRequest("The image URL needs a public hostname.".into()))?;
+        let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, 443))
+            .await
+            .map_err(|_| AppError::BadRequest("Could not resolve the image host.".into()))?
+            .collect();
+        if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
+            return Err(AppError::BadRequest(
+                "Image links must point to the public internet, not a local or private address."
+                    .into(),
+            ));
+        }
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .resolve_to_addrs(host, &addresses)
+            .build()
+            .map_err(|_| AppError::Internal)?;
+        let response = client
+            .get(url.clone())
+            .header(
+                header::USER_AGENT,
+                "scrobbl.rs/0.1 (https://github.com/itsmrma/scrobbl-rs)",
+            )
+            .send()
+            .await
+            .map_err(|_| {
+                AppError::BadRequest(
+                    "Could not download the image. Try a direct image link or upload a file."
+                        .into(),
+                )
+            })?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE
+        ) && let Some(state) = state
+        {
+            let retry = image_retry_at(
+                response
+                    .headers()
+                    .get(header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok()),
+                auth::now_ms(),
+            );
+            db::set_setting(
+                &mut *state.db.acquire().await?,
+                "artwork_retry_at_ms",
+                &retry.to_string(),
+            )
+            .await?;
+            return Err(AppError::Spotify(
+                "The image provider requested a pause. Artwork will resume automatically.".into(),
+            ));
+        }
+        if response.status().is_redirection() {
+            let location = response
                 .headers()
-                .get(header::RETRY_AFTER)
-                .and_then(|value| value.to_str().ok()),
-            auth::now_ms(),
-        );
-        db::set_setting(
-            &mut *state.db.acquire().await?,
-            "artwork_retry_at_ms",
-            &retry.to_string(),
-        )
-        .await?;
-        return Err(AppError::Spotify(
-            "The image provider requested a pause. Artwork will resume automatically.".into(),
-        ));
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or(AppError::Internal)?;
+            target = archive_https(url.join(location).map_err(|_| AppError::Internal)?).to_string();
+            continue;
+        }
+        return Ok(response);
     }
+    Err(AppError::BadRequest(
+        "Too many image provider redirects.".into(),
+    ))
+}
+pub(crate) async fn download(url: &str, state: Option<&AppState>) -> Result<Vec<u8>> {
+    let mut response = public_response(url, state).await?;
     if !response.status().is_success()
         || response
             .content_length()
@@ -412,7 +462,11 @@ pub async fn image_url(
     }
     Ok(Json(serde_json::json!({"saved":true})))
 }
-async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<String>> {
+pub(crate) async fn spotify_image(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+) -> Result<Option<(String, String)>> {
     let singular = if kind == "artists" { "artist" } else { "album" };
     let external:Option<String>=sqlx::query_scalar("SELECT external_id FROM entity_links INDEXED BY entity_links_entity WHERE entity_id IN (SELECT entity_id FROM name_group_members WHERE group_id=?) AND kind=? AND namespace='spotify' ORDER BY external_id LIMIT 1").bind(id).bind(singular).fetch_optional(&state.read_db).await?;
     let external = external.and_then(|s| {
@@ -466,12 +520,35 @@ async fn spotify_image(state: &AppState, kind: &str, id: &str) -> Result<Option<
             crate::spotify::api_get(state, &format!("/artists/{artist}"), &[]).await?
         }
     };
-    Ok(crate::spotify::best_image(&image["images"]))
+    let Some(external) = image["id"].as_str().filter(|v| valid_spotify_id(v)) else {
+        return Ok(None);
+    };
+    Ok(crate::spotify::best_image(&image["images"]).map(|url| {
+        (
+            url,
+            format!("https://open.spotify.com/{singular}/{external}"),
+        )
+    }))
 }
 #[derive(Default, Deserialize)]
 pub struct ArtworkQuery {
     #[serde(default)]
     pub cached: bool,
+}
+pub async fn artwork_credit(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((kind, id)): Path<(String, String)>,
+) -> Result<Json<Option<crate::artwork_sources::ImageCredit>>> {
+    auth::session(&state, &headers).await?;
+    if kind != "artists" && kind != "albums" {
+        return Err(AppError::NotFound);
+    }
+    let id =
+        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
+    Ok(Json(
+        crate::artwork_sources::credit(&state, &kind, &id).await?,
+    ))
 }
 pub async fn artwork(
     State(state): State<AppState>,
@@ -565,16 +642,16 @@ pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Re
         });
     }
     writable(state).await?;
-    let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-        .fetch_one(&state.private_db)
-        .await?;
-    if !connected {
-        return Err(AppError::Unauthorized);
+    let settings = crate::artwork_settings::read(&mut *state.read_db.acquire().await?).await?;
+    let missing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork_misses WHERE kind=? AND entity_id=? AND settings_version=? AND expires_at_ms>?)").bind(kind).bind(id).bind(settings.version).bind(auth::now_ms()).fetch_one(&state.read_db).await?;
+    if missing {
+        return Ok(ArtworkFetch::Missing);
     }
-    if db::setting(&state.db, "artwork_retry_at_ms")
-        .await?
-        .and_then(|v| v.parse::<i64>().ok())
-        .is_some_and(|at| at > auth::now_ms())
+    if settings.enabled(kind).next().is_some()
+        && db::setting(&state.db, "artwork_retry_at_ms")
+            .await?
+            .and_then(|v| v.parse::<i64>().ok())
+            .is_some_and(|at| at > auth::now_ms())
     {
         return Err(AppError::Spotify(
             "Waiting for the image provider's request limit to reset.".into(),
@@ -583,22 +660,14 @@ pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Re
     let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
         return Ok(ArtworkFetch::Busy);
     };
-    // A provider failure is not evidence that this entity has no image.
-    // Respect the shared request limit without poisoning the negative cache.
-    let bytes = match spotify_image(state, kind, id).await {
-        Ok(Some(url)) => match download(&url, Some(state)).await {
-            Ok(bytes) => Some(bytes),
-            Err(error) => return Err(error),
-        },
-        Ok(None) | Err(AppError::NotFound) => None,
-        Err(error) => return Err(error),
-    };
-    save_image(state, kind, id, "spotify", bytes.as_deref()).await?;
-    Ok(if bytes.is_some() {
-        ArtworkFetch::Saved
-    } else {
-        ArtworkFetch::Missing
-    })
+    crate::artwork_sources::fetch_with(
+        state,
+        &settings,
+        kind,
+        id,
+        &crate::artwork_sources::PublicSources(state),
+    )
+    .await
 }
 
 #[cfg(test)]

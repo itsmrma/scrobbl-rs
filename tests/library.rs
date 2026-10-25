@@ -93,6 +93,157 @@ async fn get(state: &AppState, token: &str, path: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 #[tokio::test]
+async fn disconnect_retires_new_spotify_cache_but_preserves_legacy_and_personal_images() {
+    let (_dir, state, token) = setup().await;
+    for (id, source, expires, provenance) in [
+        (
+            "new",
+            "spotify",
+            Some(auth::now_ms() + 86400000),
+            Some("{}"),
+        ),
+        ("legacy", "spotify", None, None),
+        ("personal", "custom", None, None),
+    ] {
+        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES('artists',?,?,?,'image/png',0,?,?)")
+            .bind(id).bind(source).bind(b"\x89PNG\r\n\x1a\nimage".as_slice()).bind(expires).bind(provenance).execute(&state.db).await.unwrap();
+    }
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            "/api/spotify/disconnect",
+            b"{}".to_vec(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let kept: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM artwork ORDER BY entity_id")
+        .fetch_all(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(kept, vec!["legacy", "personal"]);
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn image_provider_settings_require_owner_csrf_validate_order_and_survive_restart() {
+    let (dir, state, token) = setup().await;
+    let path = "/api/v1/artwork-providers";
+    assert_eq!(
+        call(&state, "invalid", "GET", path, vec![], false).await.0,
+        StatusCode::UNAUTHORIZED
+    );
+    let mut settings = get(&state, &token, path).await;
+    assert_eq!(settings["version"], 0);
+    let original = serde_json::to_vec(&settings).unwrap();
+    assert_eq!(
+        call(&state, &token, "POST", path, original.clone(), false)
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let mut invalid = settings.clone();
+    invalid["providers"][0] = invalid["providers"][1].clone();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            path,
+            serde_json::to_vec(&invalid).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut invalid = settings.clone();
+    invalid["providers"].as_array_mut().unwrap().swap(0, 3);
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            path,
+            serde_json::to_vec(&invalid).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    settings["providers"].as_array_mut().unwrap().swap(1, 2);
+    for provider in settings["providers"].as_array_mut().unwrap() {
+        provider["enabled"] = json!(false);
+    }
+    // Saved images and personal images must stay byte-for-byte intact when saving policy.
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES('artists','saved','spotify',?,'image/png',0),('artists','custom','custom',?,'image/png',0)").bind(b"\x89PNG\r\n\x1a\nsaved".as_slice()).bind(b"\x89PNG\r\n\x1a\ncustom".as_slice()).execute(&state.db).await.unwrap();
+    let before: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT entity_id,bytes FROM artwork ORDER BY entity_id")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    let (status, body) = call(
+        &state,
+        &token,
+        "POST",
+        path,
+        serde_json::to_vec(&settings).unwrap(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    settings["version"] = json!(1);
+    assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), settings);
+    assert_eq!(
+        call(&state, &token, "POST", path, original, true).await.0,
+        StatusCode::CONFLICT
+    );
+    let after: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT entity_id,bytes FROM artwork ORDER BY entity_id")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+    assert_eq!(before, after);
+    // Disabling all providers lets the real background queue complete without a Spotify connection or network.
+    let lease = state.storage.claim("artwork").await.unwrap().unwrap();
+    assert!(scrobbl_rs::artwork::step(&state, &lease).await.unwrap());
+    let misses: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork_misses")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(misses, 1);
+    sqlx::query("UPDATE archive_state SET maintenance=1")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &state,
+            &token,
+            "POST",
+            path,
+            serde_json::to_vec(&settings).unwrap(),
+            true
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    sqlx::query("UPDATE archive_state SET maintenance=0")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let config = state.config.clone();
+    state.storage.close().await;
+    let state = AppState::new(storage::open(dir.path()).await.unwrap(), config);
+    assert_eq!(get(&state, &token, path).await, settings);
+    state.storage.close().await;
+}
+#[tokio::test]
 async fn account_profile_and_application_controls_require_owner_and_csrf() {
     let (_dir, state, token) = setup().await;
     for path in [
@@ -1031,7 +1182,7 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
     let (_dir, state, token) = setup().await;
     let dash = get(&state, &token, "/api/dashboard").await;
     let id = dash["rankings"]["artists"][0]["id"].as_str().unwrap();
-    sqlx::query("INSERT INTO artwork VALUES('artists',?,'spotify',?,'image/png',?,?)")
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES('artists',?,'spotify',?,'image/png',?,?)")
         .bind(id)
         .bind(b"\x89PNG\r\n\x1a\ncached provider image".as_slice())
         .bind(auth::now_ms())
@@ -1126,7 +1277,20 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
 
 #[tokio::test]
 async fn temporary_spotify_limit_does_not_cache_missing_artwork() {
+    // This scenario isolates the Spotify limiter; public sources have independent access.
+
     let (_dir, state, token) = setup().await;
+    let mut settings = scrobbl_rs::artwork_settings::ArtworkSettings::default();
+    for item in &mut settings.providers {
+        item.enabled = item.provider == scrobbl_rs::artwork_settings::ImageProvider::Spotify;
+    }
+    db::set_setting(
+        &mut state.db.acquire().await.unwrap(),
+        "artwork_providers",
+        &serde_json::to_string(&settings).unwrap(),
+    )
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO spotify_tokens VALUES(1,'unused','unused',9999999999999)")
         .execute(&state.private_db)
         .await
@@ -1180,7 +1344,7 @@ async fn artwork_cache_probe_never_contacts_spotify_and_upgrade_preserves_custom
         .unwrap();
     assert_eq!(rows, 0);
     for source in ["custom", "spotify"] {
-        sqlx::query("INSERT INTO artwork VALUES('albums',?,?,?,'image/png',0,9999999999999)")
+        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES('albums',?,?,?,'image/png',0,9999999999999)")
             .bind(id)
             .bind(source)
             .bind(b"\x89PNG\r\n\x1a\nimage".as_slice())
@@ -1207,7 +1371,7 @@ async fn artwork_cache_probe_never_contacts_spotify_and_upgrade_preserves_custom
 }
 
 #[tokio::test]
-async fn downloaded_spotify_artwork_survives_cleanup_restart_and_backup() {
+async fn legacy_spotify_artwork_survives_cleanup_and_restart_but_is_excluded_from_backup() {
     let (dir, state, token) = setup().await;
     let dash = get(&state, &token, "/api/dashboard").await;
     let id = dash["rankings"]["artists"][0]["id"]
@@ -1215,7 +1379,7 @@ async fn downloaded_spotify_artwork_survives_cleanup_restart_and_backup() {
         .unwrap()
         .to_owned();
     let png = b"\x89PNG\r\n\x1a\npermanent provider image";
-    sqlx::query("INSERT INTO artwork VALUES('artists',?,'spotify',?,'image/png',0,1)")
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES('artists',?,'spotify',?,'image/png',0,1)")
         .bind(&id)
         .bind(png.as_slice())
         .execute(&state.db)
@@ -1266,13 +1430,18 @@ async fn downloaded_spotify_artwork_survives_cleanup_restart_and_backup() {
     let mut copy = recovery::connect(&restored.path().join("archive.db"), true)
         .await
         .unwrap();
-    let saved: Vec<u8> =
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork WHERE source='spotify'")
+        .fetch_one(&mut copy)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    let live: Vec<u8> =
         sqlx::query_scalar("SELECT bytes FROM artwork WHERE entity_id=? AND source='spotify'")
             .bind(&id)
-            .fetch_one(&mut copy)
+            .fetch_one(&state.db)
             .await
             .unwrap();
-    assert_eq!(saved, png);
+    assert_eq!(live, png);
     state.storage.close().await;
 }
 

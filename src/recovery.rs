@@ -235,6 +235,21 @@ pub async fn freeze(store: &Storage, path: &Path) -> anyhow::Result<()> {
 }
 async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<Manifest> {
     let mut conn = connect(snapshot, false).await?;
+    // Sanitize the frozen copy only. VACUUM removes deleted image bytes from free pages.
+    if sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='artwork')",
+    )
+    .fetch_one(&mut conn)
+    .await?
+    {
+        sqlx::query("PRAGMA secure_delete=ON")
+            .execute(&mut conn)
+            .await?;
+        sqlx::query("DELETE FROM artwork WHERE source='spotify'")
+            .execute(&mut conn)
+            .await?;
+        sqlx::query("VACUUM").execute(&mut conn).await?;
+    }
     // Recovery output files are not included recursively. Their jobs have no music provenance.
     sqlx::query("DELETE FROM recovery_assets")
         .execute(&mut conn)
@@ -507,6 +522,15 @@ async fn check_package(
         .run_direct(None, &mut conn, false)
         .await?;
     crate::retention::compact_payloads(&mut conn).await?;
+    // Old packages may contain Spotify bytes. Strip only the isolated restored copy.
+    sqlx::query("PRAGMA secure_delete=ON")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("DELETE FROM artwork WHERE source='spotify'")
+        .execute(&mut conn)
+        .await?;
+    sqlx::query("VACUUM").execute(&mut conn).await?;
+
     storage::compact_original_payloads(&mut conn).await?;
     validate_database(&mut conn).await?;
     conn.close().await?;

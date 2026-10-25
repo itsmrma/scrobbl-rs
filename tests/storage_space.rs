@@ -257,7 +257,7 @@ async fn startup_compacts_existing_archives_and_keeps_the_pre_upgrade_copy() {
     storage::open(directory.path()).await.unwrap().close().await;
     std::fs::remove_file(directory.path().join("archive.db")).unwrap();
     let mut conn = legacy_archive(&directory.path().join("archive.db")).await;
-    let wide = json!({"padding":"x".repeat(8192)}).to_string();
+    let wide = json!({"padding":"x".repeat(65536)}).to_string();
     sqlx::query("UPDATE observations SET raw_json=?")
         .bind(&wide)
         .execute(&mut conn)

@@ -30,6 +30,7 @@ Inspired by [Maloja](https://github.com/krateng/maloja). This is a personal pass
 - Explore searchable listening history, artist/album/track pages, complete rankings, and day/week/month/year activity charts.
 - Personalize artist and album images, correct names and titles, rate music from half to five stars, and reversibly group namesakes.
 - Export JSON or CSV, make portable backups, verify a restore, and recover safely from upgrades.
+- Choose and order album/artist [image providers](docs/image-providers.md) in Settings, with personal images taking priority.
 - Use read-only API keys and incremental archive copies with other tools.
 
 See the [GUI audit and personal library guide](docs/gui-audit.md), [consultation guide](docs/consultation.md), [ListenBrainz import guide](docs/listenbrainz.md), and [read API guide](docs/read-api.md) for details. The [development map](https://github.com/itsmrma/scrobbl-rs/issues/1) records release scope and future work.

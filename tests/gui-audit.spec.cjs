@@ -2891,6 +2891,23 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600"><rect width="600" height="600" fill="#687f9c"/><circle cx="300" cy="300" r="170" fill="#d8c78c"/></svg>',
     }),
   );
+  let includeImageCredits = false;
+  await page.route("**/api/v1/artwork/**/credit", (route) =>
+    route.fulfill({
+      json: includeImageCredits
+        ? {
+            provider: "wikidata",
+            source_url: "https://commons.wikimedia.org/wiki/File:Fixture.jpg",
+            image_url: "https://upload.wikimedia.org/fixture.jpg",
+            author:
+              '<b>Fixture author</b><img src=x onerror="window.creditAttack=true">',
+            license: "CC BY 4.0",
+            license_url: "https://creativecommons.org/licenses/by/4.0/",
+            credit: "Fixture attribution",
+          }
+        : null,
+    }),
+  );
   await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
     const response = await route.fetch(),
       data = await response.json();
@@ -3022,6 +3039,30 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   expect(png.readUInt32BE(20)).toBe(
     Math.round((preview.height / preview.width) * 1200) + 120,
   );
+  includeImageCredits = true;
+  await page.evaluate(() => {
+    window.collageText = [];
+    const original = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+      window.collageText.push(text);
+      return original.call(this, text, ...args);
+    };
+  });
+  const creditedDownload = page.waitForEvent("download");
+  await collage
+    .getByRole("button", { name: "Download PNG", exact: true })
+    .click();
+  const creditedPng = await require("node:fs/promises").readFile(
+    await (await creditedDownload).path(),
+  );
+  expect(creditedPng.readUInt32BE(20)).toBeGreaterThan(png.readUInt32BE(20));
+  const attribution = await page.evaluate(() => window.collageText.join(" "));
+  expect(attribution).toContain("Fixture author");
+  expect(attribution).toContain("CC BY 4.0");
+  expect(attribution).toContain(
+    "https://commons.wikimedia.org/wiki/File:Fixture.jpg",
+  );
+  expect(await page.evaluate(() => window.creditAttack)).toBeUndefined();
   await page.screenshot({
     path: `test-results/gui-${browserName}-album-collage.png`,
     fullPage: true,
@@ -3409,11 +3450,12 @@ test("music artwork is square from the first frame through delayed image loading
     await page.setViewportSize({ width, height: 1000 });
     for (const kind of ["artists", "albums", "tracks"]) {
       await page.goto("/music/" + kind + "/" + archive.rankings[kind][0].id);
-      await expect(page.locator(".music-heading > img")).toBeVisible();
+      await expect(page.locator(".music-heading .cover-image")).toBeVisible();
       await expect
         .poll(() =>
           page.evaluate(
-            () => document.querySelector(".music-heading > img")?.complete,
+            () =>
+              document.querySelector(".music-heading .cover-image")?.complete,
           ),
         )
         .toBe(true);
@@ -3486,6 +3528,7 @@ test("artwork downloads appear in activities and continue across navigation", as
     '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#7c9bac"/><circle cx="300" cy="150" r="130" fill="#e8cb8b"/></svg>';
   await page.route("**/api/v1/artwork/**", async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/credit")) return route.fulfill({ json: null });
     if (url.searchParams.has("cached"))
       return route.fulfill(
         saved.has(url.pathname)
@@ -3596,6 +3639,7 @@ test("weighted collages preserve listening share across sizes and exports", asyn
   await page.setViewportSize({ width: 1440, height: 1600 });
   await page.route("**/api/v1/artwork/**", (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/credit")) return route.fulfill({ json: null });
     const hue =
       [...path].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
     return route.fulfill({

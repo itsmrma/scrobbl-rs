@@ -1256,6 +1256,9 @@ async fn name_group_upgrade_preserves_source_ids_and_existing_personal_data() {
         .await
         .unwrap();
     for sql in [
+        "ALTER TABLE artwork DROP COLUMN provenance_json",
+        "DROP TABLE artwork_misses",
+        "DELETE FROM _sqlx_migrations WHERE version=16",
         "DROP TABLE name_group_members",
         "DROP TABLE name_groups",
         "DELETE FROM _sqlx_migrations WHERE version=12",
