@@ -607,6 +607,10 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
         response.headers()["access-control-allow-origin"],
         "https://itsmrma.github.io"
     );
+    assert_eq!(
+        response.headers()["access-control-allow-private-network"],
+        "true"
+    );
     assert!(
         !response
             .headers()
@@ -620,6 +624,29 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
             .unwrap()
             .to_bytes()
             .is_empty()
+    );
+    let pna_preflight = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("OPTIONS")
+                .uri("/api/v1/info")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "https://itsmrma.github.io")
+                .header("access-control-request-method", "GET")
+                .header(
+                    "access-control-request-headers",
+                    "authorization, access-control-request-private-network",
+                )
+                .header("access-control-request-private-network", "true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pna_preflight.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        pna_preflight.headers()["access-control-allow-private-network"],
+        "true"
     );
     let (status, headers, _) = request(
         &state,
