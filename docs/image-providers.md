@@ -28,7 +28,9 @@ sizes, and accepts PNG/JPEG/WebP. Provider Retry-After and network/server backof
 are retained per host across restarts; a Spotify image host's pause does not block
 MusicBrainz or Commons. Network/server failures without Retry-After back off from
 30 seconds to one hour. Confirmed absences are cached for one day; errors are not
-cached as absences.
+cached as absences. A cooldown saved before this upgrade did not identify its
+host: that existing finite pause is honored until its original expiry; new waits
+are scoped per host.
 
 Each queued image has its own persistent retry time. An image waiting for Spotify
 or an unavailable source stays pending while other eligible images continue.

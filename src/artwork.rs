@@ -552,6 +552,32 @@ mod tests {
         state.storage.close().await;
     }
     #[tokio::test]
+    async fn upgrade_honors_an_existing_provider_retry_until_it_expires() {
+        let (_dir, state) = setup().await;
+        let at = auth::now_ms() + 1_200_000;
+        db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_retry_at_ms",
+            &at.to_string(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(crate::artwork_sources::request_slot(&state,"musicbrainz.org").await, Err(AppError::ArtworkWait { retry_at_ms }) if retry_at_ms == at)
+        );
+        db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_retry_at_ms",
+            "0",
+        )
+        .await
+        .unwrap();
+        crate::artwork_sources::request_slot(&state, "musicbrainz.org")
+            .await
+            .unwrap();
+        state.storage.close().await;
+    }
+    #[tokio::test]
     async fn host_cooldown_is_persistent_and_does_not_block_other_sources() {
         use crate::artwork_sources::{request_failed, request_slot};
         let (dir, state) = setup().await;

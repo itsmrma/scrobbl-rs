@@ -84,13 +84,18 @@ async fn json(state: &AppState, target: &str) -> Result<Option<Value>> {
 // The single image slot serializes callers; reservations and cooldowns survive restarts.
 pub(crate) async fn request_slot(state: &AppState, host: &str) -> Result<()> {
     let mut tx = state.db.begin().await?;
-    let retry: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
-        .bind(format!("artwork_host_retry:{host}"))
-        .fetch_optional(&mut *tx)
-        .await?;
+    // Older releases stored one cooldown without the originating host. Honor
+    // that finite reservation until expiry; all new waits are scoped per host.
+    let retries: Vec<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key IN (?,'artwork_retry_at_ms')")
+            .bind(format!("artwork_host_retry:{host}"))
+            .fetch_all(&mut *tx)
+            .await?;
     let now = auth::now_ms();
-    if let Some(at) = retry
-        .and_then(|v| v.parse::<i64>().ok())
+    if let Some(at) = retries
+        .into_iter()
+        .filter_map(|v| v.parse::<i64>().ok())
+        .max()
         .filter(|at| *at > now)
     {
         return Err(AppError::ArtworkWait { retry_at_ms: at });
