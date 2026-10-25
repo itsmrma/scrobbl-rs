@@ -1014,6 +1014,22 @@ test("history artwork and type follow metadata height and shrink again", async (
         getComputedStyle(el.querySelector(".listen-heading > a")).fontSize,
       ),
     }));
+  // The initial 38px CSS fallback can be visible before ResizeObserver's first
+  // animation frame. Compare against the measured baseline, not that fallback.
+  await page.evaluate(() => document.fonts.ready);
+  await expect
+    .poll(() =>
+      row.evaluate((el) => {
+        const height = el
+          .querySelector(".listen-date")
+          .getBoundingClientRect().height;
+        return (
+          el.style.getPropertyValue("--listen-artwork") ===
+          `${Math.round(Math.max(38, Math.min(72, height)))}px`
+        );
+      }),
+    )
+    .toBe(true);
   const compact = await sizes();
   await row.locator(".listen-date").evaluate((el) => {
     for (let i = 0; i < 3; i++) {

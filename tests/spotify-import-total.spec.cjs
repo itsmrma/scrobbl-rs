@@ -1,8 +1,71 @@
-const { test, expect } = require("@playwright/test");
+const { test: base, expect } = require("@playwright/test");
+const { spawn } = require("node:child_process");
+const { once } = require("node:events");
+const { mkdtemp, rm } = require("node:fs/promises");
+const { tmpdir } = require("node:os");
+const { join, resolve } = require("node:path");
+const net = require("node:net");
+
+// Keep this scenario's sign-in outside the shared server's real login rate limit.
+const test = base.extend({
+  importApp: async ({ browser }, use) => {
+    const directory = await mkdtemp(join(tmpdir(), "scrobbl-import-total-"));
+    const socket = net.createServer();
+    socket.listen(0, "127.0.0.1");
+    await once(socket, "listening");
+    const port = socket.address().port;
+    await new Promise((resolve) => socket.close(resolve));
+    const baseURL = `http://127.0.0.1:${port}`;
+    const child = spawn(
+      resolve(
+        "target/debug/scrobbl-rs" +
+          (process.platform === "win32" ? ".exe" : ""),
+      ),
+      [],
+      {
+        windowsHide: true,
+        env: {
+          ...process.env,
+          SCROBBL_PORT: String(port),
+          SCROBBL_BIND: "127.0.0.1",
+          SCROBBL_DATA_DIR: directory,
+          SCROBBL_EXTERNAL_ORIGIN: baseURL,
+          SPOTIFY_CLIENT_ID: "",
+          SPOTIFY_CLIENT_SECRET: "",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let logs = "";
+    child.stdout.on("data", (data) => (logs += data));
+    child.stderr.on("data", (data) => (logs += data));
+    const context = await browser.newContext({ baseURL });
+    try {
+      await expect
+        .poll(async () => {
+          if (child.exitCode !== null) throw new Error(logs);
+          try {
+            return (await context.request.get("/healthz")).status();
+          } catch {
+            return 0;
+          }
+        })
+        .toBe(200);
+      await use({ page: await context.newPage(), baseURL });
+    } finally {
+      await context.close().catch(() => {});
+      if (child.exitCode === null) {
+        const stopped = once(child, "exit");
+        child.kill("SIGINT");
+        await stopped;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+});
 
 test("Import and activity detail show the whole total, counting and unavailable states", async ({
-  page,
-  baseURL,
+  importApp: { page, baseURL },
 }) => {
   const session = await (await page.request.get("/api/session")).json();
   const signedIn = await page.request.post(
