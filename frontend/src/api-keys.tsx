@@ -170,6 +170,11 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                         placeholder="https://itsmrma.github.io"
                       />
                     </label>
+                    <p className="subtle">
+                      {settings.cors_origins.length
+                        ? `Saved: ${settings.cors_origins.join(", ")}`
+                        : "No origins saved yet. Enter and save an origin to allow browser requests."}
+                    </p>
                     <button className="secondary" disabled={busy}>
                       Save allowed origins
                     </button>

@@ -88,12 +88,24 @@ test("API key lifecycle, one-time secret, explicit origins and mobile layout", a
   await expect(
     page.getByRole("heading", { name: "API keys", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText(
+      "No origins saved yet. Enter and save an origin to allow browser requests.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "API keys", exact: true }),
+  ).toBeVisible();
   await page
     .getByLabel("Allowed origins", { exact: true })
     .fill("https://itsmrma.github.io");
   await page.getByRole("button", { name: "Save allowed origins" }).click();
   await expect(
     page.getByRole("status").filter({ hasText: "Allowed origins saved." }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Saved: https://itsmrma.github.io", { exact: true }),
   ).toBeVisible();
   const name = `Browser test ${Date.now()}`;
   await page.getByLabel("Key name", { exact: true }).fill(name);

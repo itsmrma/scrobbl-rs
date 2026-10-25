@@ -7,7 +7,7 @@ use crate::{
 use axum::{
     Json,
     extract::{Query, Request, State, rejection::QueryRejection},
-    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -127,7 +127,11 @@ pub async fn security(state: AppState, request: Request, next: Next) -> Response
             || headers
                 .split(',')
                 .filter(|h| !h.trim().is_empty())
-                .any(|h| !h.trim().eq_ignore_ascii_case("authorization"))
+                .any(|h| {
+                    let trimmed = h.trim();
+                    !trimmed.eq_ignore_ascii_case("authorization")
+                        && !trimmed.eq_ignore_ascii_case("access-control-request-private-network")
+                })
         {
             ApiError(
                 StatusCode::FORBIDDEN,
@@ -191,11 +195,15 @@ pub async fn security(state: AppState, request: Request, next: Next) -> Response
         );
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("Authorization"),
+            HeaderValue::from_static("Authorization, Access-Control-Request-Private-Network"),
         );
         headers.insert(
             header::ACCESS_CONTROL_EXPOSE_HEADERS,
             HeaderValue::from_static("Retry-After"),
+        );
+        headers.insert(
+            HeaderName::from_static("access-control-allow-private-network"),
+            HeaderValue::from_static("true"),
         );
     }
     response

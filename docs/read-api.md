@@ -175,6 +175,8 @@ Authenticated reads are limited to 120 requests per minute per key, persisted ac
 restarts. Preflight requests contain no key and do not count. No credentials are
 allowed via CORS. Allowed origins receive CORS headers on success and API errors;
 preflight accepts read requests with the Authorization header and returns no data.
+Responses include `Access-Control-Allow-Private-Network: true` to support Private
+Network Access from public web applications.
 
 Errors use `{"error":{"code":"…","message":"…"}}`:
 
