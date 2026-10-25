@@ -42,32 +42,20 @@ fn url(base: &str, pairs: &[(&str, &str)]) -> String {
     url.into()
 }
 async fn json(state: &AppState, target: &str) -> Result<Option<Value>> {
-    // Reserve a durable MusicBrainz slot across both interactive and worker requests.
-    if target.starts_with("https://musicbrainz.org/") {
-        let mut tx = state.db.begin().await?;
-        let next = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM settings WHERE key='musicbrainz_next_at_ms'",
-        )
-        .fetch_optional(&mut *tx)
-        .await?
-        .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(0);
-        let now = auth::now_ms();
-        let at = now.max(next);
-        crate::db::set_setting(&mut tx, "musicbrainz_next_at_ms", &(at + 1100).to_string()).await?;
-        tx.commit().await?;
-        if at > now {
-            tokio::time::sleep(std::time::Duration::from_millis((at - now) as u64)).await;
-        }
-    }
     let mut response = library::public_response(target, Some(state)).await?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None);
     }
     if !response.status().is_success() {
-        return Err(AppError::BadRequest(
-            "The image provider is unavailable; the lookup will be retried.".into(),
-        ));
+        return Err(request_failed(
+            state,
+            url::Url::parse(target)
+                .map_err(|_| AppError::Internal)?
+                .host_str()
+                .ok_or(AppError::Internal)?,
+            None,
+        )
+        .await?);
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| AppError::Internal)? {
@@ -81,12 +69,88 @@ async fn json(state: &AppState, target: &str) -> Result<Option<Value>> {
     let value: Value = serde_json::from_slice(&bytes)
         .map_err(|_| AppError::BadRequest("Image provider returned an invalid response.".into()))?;
     if value.get("error").is_some() {
-        return Err(AppError::BadRequest(
-            "Image provider reported an error; the lookup will be retried.".into(),
-        ));
+        return Err(request_failed(
+            state,
+            url::Url::parse(target)
+                .map_err(|_| AppError::Internal)?
+                .host_str()
+                .ok_or(AppError::Internal)?,
+            None,
+        )
+        .await?);
     }
     Ok(Some(value))
 }
+// The single image slot serializes callers; reservations and cooldowns survive restarts.
+pub(crate) async fn request_slot(state: &AppState, host: &str) -> Result<()> {
+    let mut tx = state.db.begin().await?;
+    // Older releases stored one cooldown without the originating host. Honor
+    // that finite reservation until expiry; all new waits are scoped per host.
+    let retries: Vec<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key IN (?,'artwork_retry_at_ms')")
+            .bind(format!("artwork_host_retry:{host}"))
+            .fetch_all(&mut *tx)
+            .await?;
+    let now = auth::now_ms();
+    if let Some(at) = retries
+        .into_iter()
+        .filter_map(|v| v.parse::<i64>().ok())
+        .max()
+        .filter(|at| *at > now)
+    {
+        return Err(AppError::ArtworkWait { retry_at_ms: at });
+    }
+    if host == "musicbrainz.org" {
+        let next: Option<String> =
+            sqlx::query_scalar("SELECT value FROM settings WHERE key='musicbrainz_next_at_ms'")
+                .fetch_optional(&mut *tx)
+                .await?;
+        let at = now.max(next.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0));
+        crate::db::set_setting(&mut tx, "musicbrainz_next_at_ms", &(at + 1100).to_string()).await?;
+        tx.commit().await?;
+        if at > now {
+            tokio::time::sleep(std::time::Duration::from_millis((at - now) as u64)).await;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn request_failed(
+    state: &AppState,
+    host: &str,
+    at: Option<i64>,
+) -> Result<AppError> {
+    let mut tx = state.db.begin().await?;
+    let key = format!("artwork_host_failures:{host}");
+    let attempts: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
+        .bind(&key)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let attempts = attempts
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(7);
+    let retry = at.unwrap_or_else(|| auth::now_ms() + (30_000i64 * (1 << attempts)).min(3_600_000));
+    crate::db::set_setting(&mut tx, &key, &(attempts + 1).to_string()).await?;
+    let key = format!("artwork_host_retry:{host}");
+    let previous: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
+        .bind(&key)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let retry = retry.max(previous.and_then(|v| v.parse::<i64>().ok()).unwrap_or(0));
+    crate::db::set_setting(&mut tx, &key, &retry.to_string()).await?;
+    tx.commit().await?;
+    Ok(AppError::ArtworkWait { retry_at_ms: retry })
+}
+pub(crate) async fn request_succeeded(state: &AppState, host: &str) -> Result<()> {
+    sqlx::query("DELETE FROM settings WHERE key IN (?,?)")
+        .bind(format!("artwork_host_retry:{host}"))
+        .bind(format!("artwork_host_failures:{host}"))
+        .execute(&state.db)
+        .await?;
+    Ok(())
+}
+
 fn quoted(value: &str) -> String {
     let mut escaped = String::new();
     for c in value.chars() {
@@ -319,8 +383,23 @@ impl ImageLookup for PublicSources<'_> {
             if !connected {
                 return Err(AppError::Unauthorized);
             }
-            let Some((image_url, source_url)) = library::spotify_image(state, kind, id).await?
-            else {
+            let result = library::spotify_image(state, kind, id).await;
+            let result = match result {
+                Err(AppError::Spotify(_)) => {
+                    let retry = crate::db::setting(&state.db, "retry_at_ms")
+                        .await?
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .filter(|at| *at > auth::now_ms());
+                    if let Some(retry_at_ms) = retry {
+                        return Err(AppError::ArtworkWait { retry_at_ms });
+                    }
+                    return Err(AppError::Spotify(
+                        "Spotify artwork is temporarily unavailable.".into(),
+                    ));
+                }
+                result => result?,
+            };
+            let Some((image_url, source_url)) = result else {
                 return Ok(Lookup::Missing);
             };
             return Ok(Lookup::Found(FoundImage {

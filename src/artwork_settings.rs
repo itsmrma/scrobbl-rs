@@ -142,8 +142,10 @@ pub async fn save(
     sqlx::query("DELETE FROM artwork_misses")
         .execute(&mut *tx)
         .await?;
+    // New settings can make previously unavailable work takeable, retaining user pauses.
+    sqlx::query("UPDATE job_members SET artwork_retry_at_ms=0,artwork_attempts=0,error_code=NULL WHERE state='pending' AND job_id IN (SELECT id FROM jobs WHERE kind='artwork')").execute(&mut *tx).await?;
     crate::artwork::enqueue_missing(&mut tx).await?;
-    sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code='artwork_connection_required'").execute(&mut *tx).await?;
+    sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code IN ('artwork_connection_required','artwork_provider_wait')").execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(form))
 }
