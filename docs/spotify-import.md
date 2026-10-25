@@ -20,7 +20,17 @@ encryption, unsupported compression, bad CRC/syntax and resource limits have exp
 An unreadable ZIP directory or entry-count limit reports incomplete inventory.
 
 Content identifies extended history, including JSON arrays stored under unexpected names.
-The parser validates each array before acquisition, then streams source rows through a
+The worker validates and counts all arrays in a separate `counting` phase before any row
+acquisition. Both Import and Activities show processed rows out of the whole selection's
+total. The API keeps `expected_rows` null during receipt, inventory and counting; it never
+publishes a subtotal. Empty inventories report zero after counting. If any relevant member
+cannot be read or counted, the total stays unknown and the UI explains why, while valid
+members can still be processed. Counts include duplicate, invalid and non-musical history
+rows; they are distinct from new listens. Retry recounts the selection with current limits
+without resetting confirmed row checkpoints. Cancellation and maintenance remain available
+during counting.
+
+The parser then streams source rows through a
 bounded channel. Batches stop at 1,000 rows or about 1 MiB of encoded data, with one larger row
 permitted up to the row limit. Parsing, decompression and network I/O stay outside archive
 transactions. Normalized observations, variant fingerprints and row provenance are
@@ -51,7 +61,7 @@ reimport provenance. Compact retention releases successfully processed source fi
 but never deletes saved backups or previous recovery states. Keep your own original
 ZIP for future reimports; see [retention, compatibility and measurements](recovery.md#compact-retention-2026-10-22).
 
-Activities distinguishes receiving/inventory/processing/finished and complete/partial/error/
+Activities distinguishes receiving/inventory/counting/processing/finished and complete/partial/error/
 no-music outcomes. It exposes per-file classification and counters, unknown row counts as null,
 and paginated invalid-row reasons. Row/original/variant counts are not sums of new listens.
 Raw music/account payloads and job parameters are not returned in these endpoints.

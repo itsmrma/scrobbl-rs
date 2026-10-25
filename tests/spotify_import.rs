@@ -58,6 +58,60 @@ async fn count(storage: &Storage, table: &str) -> i64 {
     .unwrap()
 }
 #[tokio::test]
+async fn whole_selection_is_counted_before_processing_zip_or_multiple_json_files() {
+    for zipped in [false, true] {
+        let (_dir, state, cookie) = http_state().await;
+        let storage = &state.storage;
+        let files = [
+            (
+                "first.json",
+                json!([row(0, 30000), row(0, 30000)])
+                    .to_string()
+                    .into_bytes(),
+            ),
+            (
+                "second.json",
+                json!([row(60, 30000)]).to_string().into_bytes(),
+            ),
+        ];
+        let files = if zipped {
+            vec![("history.zip", zip(&files))]
+        } else {
+            files.to_vec()
+        };
+        let id = queue(storage, &files, ImportLimits::default()).await;
+        // Observe the real commit boundary rather than racing a fast worker with polling.
+        sqlx::raw_sql("CREATE TABLE progress_probe(total INTEGER, unknown INTEGER, phase TEXT);
+            CREATE TRIGGER capture_import_progress AFTER INSERT ON source_occurrences BEGIN
+              INSERT INTO progress_probe SELECT SUM(m.expected_rows), SUM(m.expected_rows IS NULL), j.phase
+              FROM job_members m JOIN jobs j ON j.id=m.job_id
+              WHERE m.job_id=NEW.job_id GROUP BY j.id;
+            END;")
+            .execute(&storage.writer).await.unwrap();
+        run(storage, &id).await;
+        let probes: Vec<(Option<i64>, i64, String)> =
+            sqlx::query_as("SELECT total,unknown,phase FROM progress_probe")
+                .fetch_all(&storage.readers)
+                .await
+                .unwrap();
+        assert_eq!(probes.len(), 3);
+        for (total, unknown, phase) in probes {
+            assert_eq!(
+                unknown, 0,
+                "Every member must be counted before the first row commit (ZIP={zipped})"
+            );
+            assert_eq!(total, Some(3));
+            assert_eq!(phase, "processing");
+        }
+        let job = storage.job(&id).await.unwrap();
+        assert_eq!(job.processed, 3);
+        assert_eq!(job.added, 2);
+        assert_eq!(job.duplicates, 1);
+        assert_activity_total(&state, &cookie, &id, Some(3)).await;
+        storage.close().await;
+    }
+}
+#[tokio::test]
 async fn zip_inventory_rows_variants_provenance_thresholds_and_semantic_reimport() {
     let dir = tempfile::tempdir().unwrap();
     let storage = db::open(dir.path()).await.unwrap();
@@ -399,6 +453,166 @@ async fn http_state() -> (tempfile::TempDir, AppState, String) {
         .await
         .unwrap();
     (dir, state, format!("scrobbl_session={cookie}"))
+}
+async fn get_activity_api(state: &AppState, cookie: &str, path: String) -> Value {
+    let response = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .uri(path)
+                .header("host", "127.0.0.1:3210")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+}
+async fn assert_activity_total(state: &AppState, cookie: &str, id: &str, total: Option<i64>) {
+    let detail = get_activity_api(state, cookie, format!("/api/v1/activities/{id}")).await;
+    let list = get_activity_api(
+        state,
+        cookie,
+        "/api/v1/activities?kind=spotify_import".into(),
+    )
+    .await;
+    let listed = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["id"] == id)
+        .unwrap();
+    assert_eq!(detail["activity"]["expected_rows"], json!(total));
+    assert_eq!(listed["expected_rows"], json!(total));
+}
+#[tokio::test]
+async fn activity_totals_hide_partial_inventory_and_counts_from_previous_attempts() {
+    let (_dir, state, cookie) = http_state().await;
+    let id = queue(&state.storage, &[], ImportLimits::default()).await;
+    state
+        .storage
+        .record_member(&id, "first", "music", "completed", Some(3), None)
+        .await
+        .unwrap();
+    for (phase, complete, total) in [
+        ("inventory", false, None),
+        ("counting", true, None),
+        ("processing", true, Some(3)),
+    ] {
+        sqlx::query("UPDATE jobs SET phase=?,inventory_complete=? WHERE id=?")
+            .bind(phase)
+            .bind(complete)
+            .bind(&id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert_activity_total(&state, &cookie, &id, total).await;
+    }
+    state
+        .storage
+        .record_member(
+            &id,
+            "broken",
+            "invalid",
+            "failed",
+            None,
+            Some("json_unreadable"),
+        )
+        .await
+        .unwrap();
+    assert_activity_total(&state, &cookie, &id, None).await;
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn empty_archives_and_unreadable_members_report_zero_or_unknown_totals() {
+    let (_dir, state, cookie) = http_state().await;
+    for (name, bytes, expected) in [
+        ("empty.zip", zip(&[]), Some(0)),
+        ("empty.json", b"[]".to_vec(), Some(0)),
+        ("broken.zip", b"PK broken".to_vec(), None),
+        (
+            "partial.zip",
+            zip(&[
+                ("good.json", json!([row(0, 30000)]).to_string().into_bytes()),
+                ("bad.json", b"[{broken]".to_vec()),
+            ]),
+            None,
+        ),
+    ] {
+        let id = queue(&state.storage, &[(name, bytes)], ImportLimits::default()).await;
+        state
+            .storage
+            .record_member(
+                &id,
+                "upload placeholder",
+                "received",
+                "received",
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        run(&state.storage, &id).await;
+        assert_activity_total(&state, &cookie, &id, expected).await;
+        if expected == Some(0) {
+            assert_eq!(
+                state.storage.job(&id).await.unwrap().outcome.as_deref(),
+                Some("no_music")
+            );
+        }
+    }
+    state.storage.close().await;
+}
+#[tokio::test]
+async fn cancellation_during_counting_can_resume_without_acquiring_rows_twice() {
+    let (_dir, state, cookie) = http_state().await;
+    let files = [(
+        "history.json",
+        json!([row(0, 30000), row(60, 30000)])
+            .to_string()
+            .into_bytes(),
+    )];
+    let id = queue(&state.storage, &files, ImportLimits::default()).await;
+    // Cancel at a deterministic phase boundary, before the parser can publish any batch.
+    sqlx::raw_sql(
+        "CREATE TRIGGER cancel_while_counting AFTER UPDATE OF phase ON jobs
+        WHEN NEW.phase='counting' BEGIN
+          UPDATE jobs SET state='cancelled',cancel_requested=1 WHERE id=NEW.id;
+        END;",
+    )
+    .execute(&state.db)
+    .await
+    .unwrap();
+    let lease = state
+        .storage
+        .claim("spotify_import")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        import_worker::run(&state.storage, lease).await,
+        Err(scrobbl_rs::error::AppError::Conflict(_))
+    ));
+    assert_eq!(state.storage.job(&id).await.unwrap().processed, 0);
+    assert_activity_total(&state, &cookie, &id, None).await;
+    sqlx::query("DROP TRIGGER cancel_while_counting")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    state.storage.retry(&id).await.unwrap();
+    run(&state.storage, &id).await;
+    assert_activity_total(&state, &cookie, &id, Some(2)).await;
+    let complete = state.storage.job(&id).await.unwrap();
+    assert_eq!(complete.processed, 2);
+    assert_eq!(complete.added, 2);
+    assert_eq!(complete.attempt, 2);
+    let again = queue(&state.storage, &files, ImportLimits::default()).await;
+    run(&state.storage, &again).await;
+    assert_activity_total(&state, &cookie, &again, Some(2)).await;
+    assert_eq!(state.storage.job(&again).await.unwrap().added, 0);
+    assert_eq!(state.storage.job(&again).await.unwrap().duplicates, 2);
+    state.storage.close().await;
 }
 async fn upload_http(
     state: &AppState,

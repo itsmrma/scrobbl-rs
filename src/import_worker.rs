@@ -52,6 +52,7 @@ enum Message {
     },
     Complete(String),
     Inventoried,
+    Counted,
 }
 fn send(tx: &mpsc::Sender<Message>, message: Message) -> anyhow::Result<()> {
     tx.blocking_send(message)
@@ -268,6 +269,7 @@ fn parse(
         send(&tx, Message::Inventory(member.clone()))?;
     }
     send(&tx, Message::Inventoried)?;
+    let mut processable = Vec::new();
     for member in members {
         if member.error.is_some() || member.kind == "directory" {
             continue;
@@ -276,6 +278,7 @@ fn parse(
         let mut non_music = false;
         let classification = with_reader(&member, limits.member_bytes, |reader| {
             array(reader, &limits, |_, row| {
+                anyhow::ensure!(!tx.is_closed(), "Worker stopped");
                 music |= row.get("master_metadata_track_name").is_some()
                     || row.get("spotify_track_uri").is_some();
                 non_music |= row.get("spotify_episode_uri").is_some_and(|v| !v.is_null())
@@ -301,6 +304,7 @@ fn parse(
                 None,
             ),
             Err(error) => {
+                anyhow::ensure!(!tx.is_closed(), "Worker stopped");
                 let limit_error = if error.to_string().contains("row byte limit") {
                     Some("json_row_byte_limit")
                 } else if error.to_string().contains("member byte limit") {
@@ -346,12 +350,19 @@ fn parse(
         if kind != "music" && kind != "non_music" {
             continue;
         }
+        processable.push(member);
+    }
+    // Every member is classified and counted before a single source row is acquired.
+    // Only member descriptors are retained; JSON values are streamed again from immutable spool.
+    send(&tx, Message::Counted)?;
+    for member in processable {
         let skip = resume.get(&member.key).copied().unwrap_or(0);
         let mut batch = Vec::new();
         let mut first = skip + 1;
         let mut batch_bytes = 0usize;
         let parsed = with_reader(&member, limits.member_bytes, |reader| {
             array(reader, &limits, |index, row| {
+                anyhow::ensure!(!tx.is_closed(), "Worker stopped");
                 if index <= skip {
                     return Ok(());
                 }
@@ -426,23 +437,50 @@ pub async fn run(storage: &Storage, mut job: Job) -> Result<()> {
         .into_iter()
         .map(|r| (r.get("member"), r.get("processed")))
         .collect();
+    let mut transaction = storage.writer.begin().await?;
+    crate::jobs::validate_lease(&mut transaction, &job).await?;
+    sqlx::query("UPDATE jobs SET phase='inventory',inventory_complete=0 WHERE id=?")
+        .bind(&job.id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
     let (tx, mut rx) = mpsc::channel(2);
     let own = storage.clone();
     let parser = tokio::task::spawn_blocking(move || parse(own, inputs, limits, resume, tx));
-    while let Some(message) = rx.recv().await {
+    // Counting a large member produces no messages until its complete count is known.
+    // Keep checking the lease so cancellation/maintenance drops the receiver promptly;
+    // the blocking reader notices the closed channel on its next row.
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_millis(250));
+    loop {
+        let message = tokio::select! {
+            message = rx.recv() => message,
+            _ = heartbeat.tick() => {
+                let mut transaction = storage.writer.begin().await?;
+                crate::jobs::validate_lease(&mut transaction, &job).await?;
+                transaction.commit().await?;
+                continue;
+            }
+        };
+        let Some(message) = message else { break };
         let mut transaction = storage.writer.begin().await?;
         crate::jobs::validate_lease(&mut transaction, &job).await?;
         match message {
             Message::Inventory(member) => {
+                sqlx::query("INSERT INTO job_members(job_id,member,file_id,kind,state,error_code) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,member) DO UPDATE SET kind=excluded.kind,state=excluded.state,error_code=excluded.error_code,expected_rows=NULL")
+                    .bind(&job.id).bind(member.key).bind(member.file_id).bind(&member.kind).bind(if member.error.is_some(){"failed"}else if member.kind=="directory"{"excluded"}else{"pending"}).bind(member.error).execute(&mut *transaction).await?;
+            }
+            Message::Inventoried => {
                 sqlx::query("DELETE FROM job_members WHERE job_id=? AND kind='received'")
                     .bind(&job.id)
                     .execute(&mut *transaction)
                     .await?;
-                sqlx::query("INSERT INTO job_members(job_id,member,file_id,kind,state,error_code) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,member) DO UPDATE SET error_code=excluded.error_code")
-                    .bind(&job.id).bind(member.key).bind(member.file_id).bind(&member.kind).bind(if member.error.is_some(){"failed"}else if member.kind=="directory"{"excluded"}else{"pending"}).bind(member.error).execute(&mut *transaction).await?;
+                sqlx::query("UPDATE jobs SET inventory_complete=1,phase='counting' WHERE id=?")
+                    .bind(&job.id)
+                    .execute(&mut *transaction)
+                    .await?;
             }
-            Message::Inventoried => {
-                sqlx::query("UPDATE jobs SET inventory_complete=1,phase='processing' WHERE id=?")
+            Message::Counted => {
+                sqlx::query("UPDATE jobs SET phase='processing' WHERE id=?")
                     .bind(&job.id)
                     .execute(&mut *transaction)
                     .await?;

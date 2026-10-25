@@ -4,7 +4,7 @@ import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
 import { Link } from "./navigation";
-import { useLoad } from "./library";
+import { useLoad } from "./load";
 import { useEffect, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
 const jobMessage = (code: string) => {
@@ -97,7 +97,7 @@ const stateLabel = (job: Activity) =>
         failed: "Needs attention",
         cancelled: "Cancelled",
       }[job.state] || job.state;
-const phaseLabel = (job: Activity) =>
+export const phaseLabel = (job: Activity) =>
   job.kind === "artwork" && job.state === "waiting" && job.error_code
     ? {
         artwork_connection_required: "Waiting for Spotify connection",
@@ -109,6 +109,7 @@ const phaseLabel = (job: Activity) =>
     : {
         receiving: "Receiving your files",
         inventory: "Finding files in the archive",
+        counting: "Counting source rows across all files",
         processing: "Adding source rows to your archive",
         finished: "Report saved",
         queued: "Waiting for the server to start",
@@ -133,12 +134,18 @@ function StateBadge({ job }: { job: Activity }) {
   );
 }
 export function Progress({ job }: { job: Activity }) {
-  const text =
-    job.expected_rows === null
-      ? isActive(job)
-        ? `${job.processed} processed · total not yet known`
-        : `${job.processed} source rows processed`
-      : `${job.processed} of ${job.expected_rows} processed`;
+  const preparingSpotify =
+    job.kind === "spotify_import" &&
+    ["receiving", "inventory", "counting"].includes(job.phase);
+  const text = preparingSpotify
+    ? "Total available after all files are counted"
+    : job.expected_rows === null
+      ? job.kind === "spotify_import"
+        ? `${number.format(job.processed)} source rows processed · total unavailable: some files could not be counted`
+        : isActive(job)
+          ? `${job.processed} processed · total not yet known`
+          : `${job.processed} source rows processed`
+      : `${number.format(job.processed)} of ${number.format(job.expected_rows)} processed`;
   return (
     <div className="activity-progress">
       {isActive(job) && (

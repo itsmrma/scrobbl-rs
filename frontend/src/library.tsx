@@ -27,6 +27,7 @@ import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
+import { phaseLabel, Progress } from "./activities";
 
 const NowContext = createContext<{
   data: NowPlaying | null;
@@ -578,9 +579,8 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
                     ? "No music found"
                     : `Import ${job.outcome || job.state}`}
               </h3>
-              <p>
-                Phase: {job.phase}. {job.processed} source rows processed.
-              </p>
+              <p>{phaseLabel(job)}</p>
+              <Progress job={job} />
               <p>
                 {number.format(job.added)} added |{" "}
                 {number.format(job.reconciled)} reconciled |{" "}
