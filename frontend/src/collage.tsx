@@ -123,12 +123,25 @@ export function Collage({
       const creditLines = creditText.flatMap((text) => {
         const lines: string[] = [];
         let line = "";
-        for (const character of text) {
-          if (ctx.measureText(line + character).width > 1152) {
+        for (const word of text.split(/\s+/)) {
+          const candidate = line ? `${line} ${word}` : word;
+          if (ctx.measureText(candidate).width <= 1152) {
+            line = candidate;
+            continue;
+          }
+          if (line) {
             lines.push(line);
             line = "";
           }
-          line += character;
+          // Keep ordinary source/licence URLs intact. Very long single tokens
+          // still wrap without dropping any attribution characters.
+          for (const character of word) {
+            if (ctx.measureText(line + character).width > 1152) {
+              lines.push(line);
+              line = "";
+            }
+            line += character;
+          }
         }
         if (line) lines.push(line);
         return [...lines, ""];
