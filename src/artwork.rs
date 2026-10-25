@@ -19,11 +19,17 @@ async fn background_slot(state: &AppState, lease: &Job, kind: &str, id: &str) ->
     if cached {
         return Ok(true);
     }
-    let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
-        .fetch_one(&state.private_db)
-        .await?;
-    if !connected {
-        return Ok(true);
+    let settings = crate::artwork_settings::read(&mut tx).await?;
+    if !settings
+        .enabled(kind)
+        .any(|p| p != crate::artwork_settings::ImageProvider::Spotify)
+    {
+        let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
+            .fetch_one(&state.private_db)
+            .await?;
+        if !connected {
+            return Ok(true);
+        }
     }
     let next: Option<String> =
         sqlx::query_scalar("SELECT value FROM settings WHERE key='artwork_background_next_at_ms'")
@@ -56,8 +62,9 @@ pub(crate) async fn enqueue_missing(conn: &mut sqlx::SqliteConnection) -> Result
       WHERE g.kind IN ('artists','albums')
         AND ((g.kind='albums' AND EXISTS(SELECT 1 FROM name_group_members gm JOIN tracks t ON t.album_id=gm.entity_id JOIN listens l ON l.track_id=t.id WHERE gm.kind='albums' AND gm.group_id=g.id AND l.trashed_at_ms IS NULL))
           OR (g.kind='artists' AND EXISTS(SELECT 1 FROM name_group_members gm JOIN track_artists ta ON ta.artist_id=gm.entity_id JOIN listens l ON l.track_id=ta.track_id WHERE gm.kind='artists' AND gm.group_id=g.id AND l.trashed_at_ms IS NULL)))
+        AND NOT EXISTS(SELECT 1 FROM artwork_misses m WHERE m.kind=g.kind AND m.entity_id=g.id AND m.expires_at_ms>?)
         AND NOT EXISTS(SELECT 1 FROM artwork a WHERE a.kind=g.kind AND a.entity_id=g.id AND (a.source='custom' OR a.expires_at_ms IS NULL OR a.expires_at_ms>?))
-      ON CONFLICT(job_id,member) DO NOTHING"#).bind(&id).bind(auth::now_ms()).execute(&mut *conn).await?;
+      ON CONFLICT(job_id,member) DO NOTHING"#).bind(&id).bind(auth::now_ms()).bind(auth::now_ms()).execute(&mut *conn).await?;
     if pending.is_none() {
         sqlx::query(
             "DELETE FROM jobs WHERE id=? AND NOT EXISTS(SELECT 1 FROM job_members WHERE job_id=?)",
@@ -380,6 +387,17 @@ mod tests {
     #[tokio::test]
     async fn queue_waits_for_connection_and_respects_shared_provider_retry_after() {
         let (_dir, mut state) = setup().await;
+        let mut settings = crate::artwork_settings::ArtworkSettings::default();
+        for p in &mut settings.providers {
+            p.enabled = p.provider == crate::artwork_settings::ImageProvider::Spotify;
+        }
+        db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_providers",
+            &serde_json::to_string(&settings).unwrap(),
+        )
+        .await
+        .unwrap();
         enqueue(&state).await;
         let lease = state.storage.claim("artwork").await.unwrap().unwrap();
         assert!(!step(&state, &lease).await.unwrap());

@@ -199,6 +199,7 @@ function Shell({ logout }: { logout: () => void }) {
     "general",
     "appearance",
     "connections",
+    "images",
     "data",
     "api-keys",
   ].includes(path.split("/")[2])

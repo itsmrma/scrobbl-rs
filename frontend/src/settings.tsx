@@ -1,3 +1,4 @@
+import { ArtworkProviderSettings } from "./artwork-settings";
 import { AccountSettings, ApplicationSettings } from "./account-settings";
 import { Select } from "./select";
 import { SpotifyNotice } from "./spotify-status";
@@ -1043,6 +1044,7 @@ export function Settings({
           <option value="application">Application</option>
           <option value="appearance">Appearance</option>
           <option value="connections">Connections</option>
+          <option value="images">Image providers</option>
           <option value="data">Data &amp; recovery</option>
           <option value="api-keys">API keys</option>
         </Select>
@@ -1054,6 +1056,7 @@ export function Settings({
           ["application", "Application"],
           ["appearance", "Appearance"],
           ["connections", "Connections"],
+          ["images", "Image providers"],
           ["data", "Data & recovery"],
           ["api-keys", "API keys"],
         ].map(([key, title]) => (
@@ -1066,6 +1069,7 @@ export function Settings({
           </Link>
         ))}
       </nav>
+      {section === "images" && <ArtworkProviderSettings />}
       {section === "account" && <AccountSettings />}
       {section === "application" && <ApplicationSettings />}
       <div hidden={section !== "general"}>

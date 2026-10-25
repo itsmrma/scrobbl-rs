@@ -1,4 +1,5 @@
 import { NameGroup } from "./name-groups";
+import { ImageCredits } from "./image-credit";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
@@ -130,6 +131,22 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const toast = useToast();
+  useEffect(() => {
+    const update = () => setVersion((v) => v + 1);
+    const loaded = (event: Event) => {
+      const url = (event as CustomEvent<{ url: string }>).detail.url;
+      if (url.split("?")[0] === `/api/v1/artwork/${kind}/${id}`) update();
+    };
+    window.addEventListener("artwork-credit-loaded", loaded);
+    window.addEventListener("artwork-cache-changed", update);
+    window.addEventListener("artwork-updated", update);
+    return () => {
+      window.removeEventListener("artwork-credit-loaded", loaded);
+      window.removeEventListener("artwork-cache-changed", update);
+      window.removeEventListener("artwork-updated", update);
+    };
+  }, []);
+
   useLayoutEffect(() => {
     const node = actions.current;
     const header = node?.closest<HTMLElement>(".music-header-content");
@@ -194,6 +211,7 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
           View on Spotify<Icon>open_in_new</Icon>
         </a>
       )}
+      <ImageCredits credit={details.data?.image_credit} />
       <ErrorText>{error || details.error}</ErrorText>
     </div>
   );
@@ -306,7 +324,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
               <h2>{kind === "artists" ? "Artist image" : "Album artwork"}</h2>
               <p>
                 Upload a file or paste a direct image link. Your choice replaces
-                Spotify artwork until you reset it.
+                automatic artwork until you reset it.
               </p>
               {preview ? (
                 <img
@@ -320,6 +338,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                   large
                 />
               )}
+              <ImageCredits credit={details.data.image_credit} />
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();

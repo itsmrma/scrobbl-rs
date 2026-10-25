@@ -23,6 +23,8 @@ import type {
   CreatedApiKey,
   Limits,
   Details,
+  ArtworkSettings,
+  ImageCredit,
   Edit,
   GroupPage,
   Listen,
@@ -216,6 +218,11 @@ export const api = {
       body: file,
       headers: { "Content-Type": file.type || "application/octet-stream" },
     }),
+  artworkSettings: () => request<ArtworkSettings>("/api/v1/artwork-providers"),
+  artworkCredit: (url: string) =>
+    request<ImageCredit | null>(url.split("?")[0] + "/credit"),
+  saveArtworkSettings: (settings: ArtworkSettings) =>
+    post<ArtworkSettings>("/api/v1/artwork-providers", settings),
   artworkUrl: (kind: string, id: string, url: string | null) =>
     post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, { url }),
   apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),

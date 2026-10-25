@@ -119,6 +119,8 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     let mut tx = store.writer.begin().await?;
     sqlx::query("DELETE FROM artwork WHERE source='spotify' AND expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
         .bind(crate::auth::now_ms()).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM artwork_misses WHERE expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
+        .bind(crate::auth::now_ms()).execute(&mut *tx).await?;
     // A source may be shared by several uploads/jobs. Only discard bytes once ALL
     // references have completed successfully. Partial, failed and cancelled work
     // remains retryable. Unattached uploads are retained, too.

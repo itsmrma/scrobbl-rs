@@ -90,6 +90,10 @@ pub fn router(state: AppState) -> Router {
             get(crate::library::artwork).post(crate::library::image_url),
         )
         .route(
+            "/api/v1/artwork/{kind}/{id}/credit",
+            get(crate::library::artwork_credit),
+        )
+        .route(
             "/api/v1/library/{kind}/{id}/group",
             get(crate::name_groups::members).post(crate::name_groups::change),
         )
@@ -101,6 +105,10 @@ pub fn router(state: AppState) -> Router {
             get(|| async { Redirect::permanent("/settings/api-keys") }),
         )
         .route("/material-icons.woff2", get(icons_font))
+        .route(
+            "/api/v1/artwork-providers",
+            get(crate::artwork_settings::get).post(crate::artwork_settings::save),
+        )
         .route(
             "/api/v1/preferences",
             get(crate::preferences::get).post(crate::preferences::save),
