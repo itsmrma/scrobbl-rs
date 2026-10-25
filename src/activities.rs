@@ -14,10 +14,14 @@ use sqlx::Row;
 
 async fn present(conn: &mut sqlx::SqliteConnection, job: Job) -> Result<Activity> {
     let totals = sqlx::query("SELECT COUNT(*) AS members, COUNT(expected_rows) AS known, SUM(expected_rows) AS total FROM job_members WHERE job_id=? AND kind NOT IN ('directory','foreign')").bind(&job.id).fetch_one(&mut *conn).await?;
-    let expected_rows = if totals.get::<i64, _>("members") > 0
+    // A subset of the inventory (or counts left from an earlier attempt) is never a total.
+    let preparing_spotify = job.kind == "spotify_import"
+        && (!job.inventory_complete || matches!(job.phase.as_str(), "inventory" | "counting"));
+    let expected_rows = if !preparing_spotify
         && totals.get::<i64, _>("members") == totals.get::<i64, _>("known")
+        && (totals.get::<i64, _>("members") > 0 || job.kind == "spotify_import")
     {
-        totals.get("total")
+        Some(totals.get::<Option<i64>, _>("total").unwrap_or(0))
     } else {
         None
     };
