@@ -59,6 +59,23 @@ const test = base.extend({
             headers: { Origin: baseURL },
           })
         ).json();
+        // This suite exercises the GUI, not public services. Keep its queue
+        // deterministic and avoid one external lookup per isolated test archive.
+        const providers = await (
+          await request.get("/api/v1/artwork-providers")
+        ).json();
+        expect(providers.providers).toBeDefined();
+        const savedProviders = await request.post("/api/v1/artwork-providers", {
+          data: {
+            ...providers,
+            providers: providers.providers.map((p) => ({
+              ...p,
+              enabled: p.provider === "spotify",
+            })),
+          },
+          headers: { Origin: baseURL, "X-CSRF-Token": session.csrf },
+        });
+        expect(savedProviders.ok()).toBeTruthy();
         const received = await (
           await request.post("/api/import/spotify", {
             headers: { Origin: baseURL, "X-CSRF-Token": session.csrf },
@@ -3752,7 +3769,7 @@ test("returning from music edits keeps the original back destination", async ({
   }
 });
 
-test("artwork reports expose a saved pause and a slow completion estimate", async ({
+test("artwork reports expose saved pauses and provider-dependent progress", async ({
   page,
 }) => {
   await login(page, "/activities");
@@ -3760,7 +3777,16 @@ test("artwork reports expose a saved pause and a slow completion estimate", asyn
   const job = jobs.find((j) => j.kind === "artwork");
   await page.goto("/activities/" + job.id);
   await expect(page.locator(".artwork-estimate")).toContainText(
-    "Estimated finish:",
+    "Completion time depends on matching images",
+  );
+  await expect(page.locator(".activity-detail")).toContainText(
+    "public sources work without it",
+  );
+  await expect(
+    page.getByText("Waiting for Spotify fallback", { exact: true }),
+  ).toHaveCount(2);
+  await expect(page.locator(".activity-detail")).not.toContainText(
+    "one image per minute",
   );
   await expect(
     page.getByRole("button", { name: "Cancel downloads", exact: true }),

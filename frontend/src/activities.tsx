@@ -10,13 +10,13 @@ import { ListenBrainzOriginals } from "./listenbrainz";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
     artwork_connection_required:
-      "Connect Spotify in Settings to download the queued artwork. The queue is saved and resumes automatically.",
+      "The remaining images need the Spotify fallback. Connect Spotify in Settings; public sources work without it. Saved progress resumes automatically.",
     artwork_provider_wait:
-      "Spotify or its image server requested a pause, or could not be reached. Saved images remain available; downloads resume automatically.",
+      "An image provider is unavailable or requested a pause. Other eligible images continue; saved progress and provider waits survive restarts.",
     artwork_paused:
       "Downloads are paused. Saved images and progress are kept, including after an application restart.",
     artwork_pacing:
-      "Downloading slowly in the background to leave capacity for live listening updates.",
+      "Waiting briefly between background images. Each source also has its own request limits.",
     artwork_capacity_wait: "Waiting for another artwork download to finish.",
     coverage_uncertain_use_official_zip:
       "Coverage is uncertain. Saved listens are retained. Upload the official ListenBrainz ZIP to complete this interval safely.",
@@ -101,9 +101,9 @@ export const phaseLabel = (job: Activity) =>
   job.kind === "artwork" && job.state === "waiting" && job.error_code
     ? {
         artwork_connection_required: "Waiting for Spotify connection",
-        artwork_provider_wait: "Waiting before the next download",
+        artwork_provider_wait: "Waiting for an image provider",
         artwork_paused: "Paused",
-        artwork_pacing: "Slow background download",
+        artwork_pacing: "Background download pacing",
         artwork_capacity_wait: "Waiting for the download slot",
       }[job.error_code] || "Waiting to resume artwork"
     : {
@@ -242,33 +242,16 @@ export function ArtworkWork({
     </article>
   );
 }
-function ArtworkSchedule({
-  job,
-  params,
-  preferences,
-}: {
-  job: Activity;
-  params: unknown;
-  preferences: Preferences;
-}) {
+function ArtworkSchedule({ job }: { job: Activity }) {
   const remaining = Math.max(0, (job.expected_rows || 0) - job.processed);
-  const schedule = params as {
-    interval_ms?: number;
-    next_at_ms?: number;
-  } | null;
-  const interval = schedule?.interval_ms;
-  if (!remaining || !interval) return null;
-  const hours = Math.ceil((remaining * interval) / 3600000);
-  const estimate =
-    Math.max(Date.now(), job.retry_at_ms || 0, schedule?.next_at_ms || 0) +
-    remaining * interval;
+  if (!remaining) return null;
   return (
     <p className="artwork-estimate">
-      {job.error_code === "artwork_paused"
-        ? `About ${hours} hours of background work remaining after you resume.`
-        : `Estimated finish: ${date(estimate, preferences)} (about ${hours} hours remaining).`}{" "}
-      This is an estimate at one image per minute; Spotify cooldowns, time
-      offline and additional imports can extend it.
+      {number.format(remaining)} images remain
+      {job.error_code === "artwork_paused" ? " after you resume" : ""}.{" "}
+      Completion time depends on matching images and each source's request
+      limits. Unavailable images are retried while other eligible images
+      continue.
     </p>
   );
 }
@@ -411,22 +394,14 @@ export function Activities({
               {job.kind === "artwork" && (
                 <>
                   <p>
-                    Artwork downloads run slowly in the background, at most one
-                    image per minute, to reduce the risk of Spotify limiting
-                    requests and delaying live listening updates. Large
-                    libraries can take several days. Spotify shares its limits
-                    across requests, so additional cooldowns are always
-                    respected.
+                    Missing images are checked in the background using your
+                    enabled providers. MusicBrainz and linked public sources
+                    work without Spotify. Spotify is used only as a fallback.
+                    Request limits and retry times are respected separately for
+                    each source. You can close the browser. Saved images,
+                    progress and your pause choice survive application restarts.
                   </p>
-                  <p>
-                    You can close the browser. Saved images, progress and your
-                    pause choice survive application restarts.
-                  </p>
-                  <ArtworkSchedule
-                    job={job}
-                    params={detail.data?.source_parameters}
-                    preferences={preferences}
-                  />
+                  <ArtworkSchedule job={job} />
                 </>
               )}
               {job.state === "cancelled" && (
@@ -703,7 +678,11 @@ export function Activities({
                   {job.kind === "artwork" ? (
                     <span>
                       {member.state === "pending"
-                        ? "Queued"
+                        ? member.error_code === "artwork_connection_required"
+                          ? "Waiting for Spotify fallback"
+                          : member.error_code === "artwork_provider_wait"
+                            ? "Waiting for provider retry"
+                            : "Queued"
                         : member.skipped
                           ? "No image available"
                           : member.duplicates
@@ -728,7 +707,7 @@ export function Activities({
                       </p>
                     </>
                   )}
-                  {member.error_code && (
+                  {member.error_code && job.kind !== "artwork" && (
                     <p className="form-error">{member.error_code}</p>
                   )}
                 </div>

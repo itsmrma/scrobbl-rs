@@ -293,10 +293,20 @@ pub(crate) async fn public_response(
         let host = url
             .host_str()
             .ok_or_else(|| AppError::BadRequest("The image URL needs a public hostname.".into()))?;
-        let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, 443))
-            .await
-            .map_err(|_| AppError::BadRequest("Could not resolve the image host.".into()))?
-            .collect();
+        if let Some(state) = state {
+            crate::artwork_sources::request_slot(state, host).await?;
+        }
+        let addresses: Vec<SocketAddr> = match tokio::net::lookup_host((host, 443)).await {
+            Ok(addresses) => addresses.collect(),
+            Err(_) => {
+                if let Some(state) = state {
+                    return Err(crate::artwork_sources::request_failed(state, host, None).await?);
+                }
+                return Err(AppError::BadRequest(
+                    "Could not resolve the image host.".into(),
+                ));
+            }
+        };
         if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
             return Err(AppError::BadRequest(
                 "Image links must point to the public internet, not a local or private address."
@@ -317,34 +327,31 @@ pub(crate) async fn public_response(
                 "scrobbl.rs/0.1 (https://github.com/itsmrma/scrobbl-rs)",
             )
             .send()
-            .await
-            .map_err(|_| {
-                AppError::BadRequest(
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(_) => {
+                if let Some(state) = state {
+                    return Err(crate::artwork_sources::request_failed(state, host, None).await?);
+                }
+                return Err(AppError::BadRequest(
                     "Could not download the image. Try a direct image link or upload a file."
                         .into(),
-                )
-            })?;
-        if matches!(
-            response.status(),
-            reqwest::StatusCode::TOO_MANY_REQUESTS | reqwest::StatusCode::SERVICE_UNAVAILABLE
-        ) && let Some(state) = state
+                ));
+            }
+        };
+        if (response.status().is_server_error()
+            || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS)
+            && let Some(state) = state
         {
-            let retry = image_retry_at(
-                response
-                    .headers()
-                    .get(header::RETRY_AFTER)
-                    .and_then(|value| value.to_str().ok()),
-                auth::now_ms(),
-            );
-            db::set_setting(
-                &mut *state.db.acquire().await?,
-                "artwork_retry_at_ms",
-                &retry.to_string(),
-            )
-            .await?;
-            return Err(AppError::Spotify(
-                "The image provider requested a pause. Artwork will resume automatically.".into(),
-            ));
+            let retry = response
+                .headers()
+                .get(header::RETRY_AFTER)
+                .map(|v| image_retry_at(v.to_str().ok(), auth::now_ms()));
+            return Err(crate::artwork_sources::request_failed(state, host, retry).await?);
+        }
+        if let Some(state) = state {
+            crate::artwork_sources::request_succeeded(state, host).await?;
         }
         if response.status().is_redirection() {
             let location = response
@@ -609,6 +616,21 @@ pub(crate) enum ArtworkFetch {
 }
 
 pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
+    ensure_artwork_with(
+        state,
+        kind,
+        id,
+        &crate::artwork_sources::PublicSources(state),
+    )
+    .await
+}
+
+pub(crate) async fn ensure_artwork_with(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+    sources: &impl crate::artwork_sources::ImageLookup,
+) -> Result<ArtworkFetch> {
     let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
     if let Some(saved) = cached {
         return Ok(if saved {
@@ -647,27 +669,10 @@ pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Re
     if missing {
         return Ok(ArtworkFetch::Missing);
     }
-    if settings.enabled(kind).next().is_some()
-        && db::setting(&state.db, "artwork_retry_at_ms")
-            .await?
-            .and_then(|v| v.parse::<i64>().ok())
-            .is_some_and(|at| at > auth::now_ms())
-    {
-        return Err(AppError::Spotify(
-            "Waiting for the image provider's request limit to reset.".into(),
-        ));
-    }
     let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
         return Ok(ArtworkFetch::Busy);
     };
-    crate::artwork_sources::fetch_with(
-        state,
-        &settings,
-        kind,
-        id,
-        &crate::artwork_sources::PublicSources(state),
-    )
-    .await
+    crate::artwork_sources::fetch_with(state, &settings, kind, id, sources).await
 }
 
 #[cfg(test)]
