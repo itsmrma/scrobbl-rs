@@ -519,12 +519,18 @@ function Shell({ logout }: { logout: () => void }) {
               )}
             </main>
             <footer>
-              <a href="/licenses" target="_blank" rel="noreferrer">
-                Licenses
-              </a>
-              {" · "}
-              {preferences.name}
-              <span>Made for the music you keep.</span>
+              <div className="footer-meta">
+                <a href="/licenses" target="_blank" rel="noreferrer">
+                  Licenses
+                </a>
+                <span className="footer-separator" aria-hidden="true">
+                  ·
+                </span>
+                <span>{preferences.name}</span>
+              </div>
+              <span className="footer-tagline">
+                Made for the music you keep.
+              </span>
             </footer>
           </div>
         </div>

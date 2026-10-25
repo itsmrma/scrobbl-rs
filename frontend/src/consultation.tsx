@@ -541,7 +541,8 @@ function RankingsPanel({
         <h2>{standalone ? `Your ${kind}` : title || `Top ${kind}`}</h2>
         {result.data && (
           <span className="result-count">
-            {number.format(result.data.total)} {kind}
+            {number.format(result.data.total)}{" "}
+            {result.data.total === 1 ? kind.slice(0, -1) : kind}
           </span>
         )}
       </div>

@@ -213,13 +213,17 @@ export function Now({
         <button
           type="button"
           className="now-section-toggle"
-          aria-label={mobileMinimized ? "Expand now playing" : "Collapse now playing"}
+          aria-label={
+            mobileMinimized ? "Expand now playing" : "Collapse now playing"
+          }
           aria-expanded={!mobileMinimized}
           onClick={() => setMobileMinimized(!mobileMinimized)}
         >
           <Icon>{mobileMinimized ? "expand_more" : "expand_less"}</Icon>
         </button>
-        <div className={`now-details${mobileMinimized ? " mobile-minimized" : ""}`}>
+        <div
+          className={`now-details${mobileMinimized ? " mobile-minimized" : ""}`}
+        >
           <Cover url={data?.cover_url} />
           {data?.cover_url && (
             <button
