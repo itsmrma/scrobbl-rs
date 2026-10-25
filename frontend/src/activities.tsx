@@ -5,7 +5,7 @@ import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
 import { Link } from "./navigation";
 import { useLoad } from "./load";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
@@ -75,6 +75,19 @@ function SourceInterval({ params }: { params: unknown }) {
     </p>
   );
 }
+function ArtworkProviderStatus({ params }: { params: unknown }) {
+  if (!params || typeof params !== "object" || !("current_provider" in params))
+    return null;
+  const provider = params.current_provider;
+  if (typeof provider !== "string") return null;
+  const names: Record<string, string> = {
+    cover_art_archive: "MusicBrainz → Cover Art Archive",
+    musicbrainz_image: "MusicBrainz → Commons image",
+    wikidata: "MusicBrainz → Wikidata → Commons",
+    spotify: "Spotify",
+  };
+  return <p>Currently using: {names[provider] || provider}</p>;
+}
 export const isActive = (job: Activity) =>
   ["queued", "running", "waiting"].includes(job.state);
 export const activityName = (job: Activity) =>
@@ -134,6 +147,36 @@ function StateBadge({ job }: { job: Activity }) {
   );
 }
 export function Progress({ job }: { job: Activity }) {
+  const sample = useRef({ processed: job.processed, at: Date.now(), rate: 0 });
+  const [eta, setEta] = useState("");
+  useEffect(() => {
+    const now = Date.now();
+    const elapsed = (now - sample.current.at) / 1000;
+    if (job.processed > sample.current.processed && elapsed >= 1) {
+      const instantRate = (job.processed - sample.current.processed) / elapsed;
+      sample.current = {
+        processed: job.processed,
+        at: now,
+        rate: sample.current.rate
+          ? sample.current.rate * 0.65 + instantRate * 0.35
+          : instantRate,
+      };
+    }
+    if (!isActive(job) || job.kind !== "artwork" || !sample.current.rate) {
+      setEta("");
+      return;
+    }
+    const seconds = Math.ceil(
+      Math.max(0, (job.expected_rows || 0) - job.processed) /
+        sample.current.rate,
+    );
+    const minutes = Math.ceil(seconds / 60);
+    setEta(
+      minutes < 60
+        ? ` · about ${minutes} min remaining`
+        : ` · about ${Math.floor(minutes / 60)}h ${minutes % 60}m remaining`,
+    );
+  }, [job.kind, job.expected_rows, job.processed, job.state]);
   const preparingSpotify =
     job.kind === "spotify_import" &&
     ["receiving", "inventory", "counting"].includes(job.phase);
@@ -161,7 +204,7 @@ export function Progress({ job }: { job: Activity }) {
       )}
       <small>
         {job.kind === "artwork"
-          ? `${number.format(job.processed)} of ${number.format(job.expected_rows || 0)} images checked`
+          ? `${number.format(job.processed)} of ${number.format(job.expected_rows || 0)} images checked${eta}`
           : text}
       </small>
     </div>
@@ -342,6 +385,9 @@ export function Activities({
                     : ""}
                 </span>
               </div>
+              {job.kind === "artwork" && (
+                <ArtworkProviderStatus params={detail.data?.source_parameters} />
+              )}
               <Progress job={job} />
               <div className="activity-results">
                 <div>
@@ -609,27 +655,6 @@ export function Activities({
                   ))}
                 </div>
               )}
-              {job.kind === "artwork" && (job.expected_rows || 0) > 100 && (
-                <div className="pagination">
-                  <button
-                    className="secondary"
-                    disabled={issuesPage === 0}
-                    onClick={() => setIssuesPage((p) => p - 1)}
-                  >
-                    Previous images
-                  </button>
-                  <span>Page {issuesPage + 1}</span>
-                  <button
-                    className="secondary"
-                    disabled={
-                      (issuesPage + 1) * 100 >= (job.expected_rows || 0)
-                    }
-                    onClick={() => setIssuesPage((p) => p + 1)}
-                  >
-                    Next images
-                  </button>
-                </div>
-              )}
               {job.kind !== "artwork" &&
                 detail.data &&
                 detail.data.members.length > 0 && (
@@ -672,7 +697,7 @@ export function Activities({
                     </p>
                   </section>
                 )}
-              {detail.data?.members.map((member, index) => (
+              {job.kind !== "artwork" && detail.data?.members.map((member, index) => (
                 <div className="job" key={`${index}:${member.member}`}>
                   <strong>{member.member}</strong>
                   {job.kind === "artwork" ? (

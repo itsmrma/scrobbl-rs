@@ -298,7 +298,7 @@ test("mobile ranking controls use the available width and keep search on one row
 
 test.describe("now playing disclosure", () => {
   test.use({ hasTouch: true });
-  test("entire now playing collapses without artwork and retains the choice across updates", async ({
+  test("now playing compacts on mobile and retains the choice across updates", async ({
     page,
     browserName,
   }) => {
@@ -313,7 +313,6 @@ test.describe("now playing disclosure", () => {
       });
     });
     let title = "Song without artwork";
-    let coverUrl = null;
     await page.route("**/api/spotify/now-playing", (route) =>
       route.fulfill({
         json: title
@@ -321,7 +320,7 @@ test.describe("now playing disclosure", () => {
               title,
               artists: [{ id: "artist", name: "Artist" }],
               album: "Album",
-              cover_url: coverUrl,
+              cover_url: null,
               duration_ms: 180000,
               progress_ms: 45000,
               response_received_at_ms: Date.now(),
@@ -355,19 +354,11 @@ test.describe("now playing disclosure", () => {
     });
     await expect(expand).toHaveAttribute("aria-expanded", "false");
     await expect(widget.getByRole("progressbar")).toBeHidden();
-    await expect(widget.getByRole("link")).toBeHidden();
+    await expect(widget.getByRole("link", { name: title })).toBeVisible();
+    await expect(widget.locator(".playback-copy > span")).toBeHidden();
     title = "Next song";
     await expect(widget).toContainText(title);
     await expect(expand).toHaveAttribute("aria-expanded", "false");
-    coverUrl = "/favicon.svg";
-    await expect(widget.locator(".now-artwork-expansion img")).toHaveAttribute(
-      "src",
-      coverUrl,
-    );
-    await expect(widget.locator(".now-artwork-expansion img")).toBeHidden();
-    await expand.tap();
-    await expect(widget.getByRole("progressbar")).toBeVisible();
-    await toggle.press("Enter");
     await page.reload();
     await page
       .getByRole("button", { name: "Open navigation", exact: true })
@@ -1084,12 +1075,16 @@ test("imports queue all missing artwork on the server with persistent progress a
   await expect(page.locator(".activity-detail")).toContainText(
     "2 images checked",
   );
-  await expect(page.locator(".activity-detail")).toContainText(
-    "Album · Seed album",
+  await expect(page.locator(".activity-detail")).not.toContainText(
+    "Seed album",
   );
-  await expect(page.locator(".activity-detail")).toContainText(
-    "Artist · Seed artist",
+  await expect(page.locator(".activity-detail")).not.toContainText(
+    "Seed artist",
   );
+  expect(
+    (await (await page.request.get(`/api/v1/activities/${job.id}`)).json())
+      .members,
+  ).toHaveLength(2);
   await expect(
     page.getByRole("button", { name: "Cancel downloads", exact: true }),
   ).toBeVisible();
@@ -2816,10 +2811,12 @@ test("sidebar playback card displays artwork, progress and remains usable collap
         .querySelector(".now-details > .cover")
         .getBoundingClientRect();
       const copy = node.querySelector(".playback-copy").getBoundingClientRect();
+      const style = getComputedStyle(node);
       return Math.abs(
         Math.min(cover.top, copy.top) -
-          node.querySelector(".now-section-toggle").getBoundingClientRect()
-            .bottom,
+          node.getBoundingClientRect().top -
+          parseFloat(style.borderTopWidth) -
+          parseFloat(style.paddingTop),
       );
     }),
   ).toBeLessThan(1);
@@ -3782,9 +3779,12 @@ test("artwork reports expose saved pauses and provider-dependent progress", asyn
   await expect(page.locator(".activity-detail")).toContainText(
     "public sources work without it",
   );
-  await expect(
-    page.getByText("Waiting for Spotify fallback", { exact: true }),
-  ).toHaveCount(2);
+  await expect(page.locator(".activity-detail")).toContainText(
+    "The remaining images need the Spotify fallback.",
+  );
+  await expect(page.locator(".activity-detail")).not.toContainText(
+    "Waiting for Spotify fallback",
+  );
   await expect(page.locator(".activity-detail")).not.toContainText(
     "one image per minute",
   );

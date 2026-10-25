@@ -631,6 +631,27 @@ pub(crate) async fn ensure_artwork_with(
     id: &str,
     sources: &impl crate::artwork_sources::ImageLookup,
 ) -> Result<ArtworkFetch> {
+    ensure_artwork_with_activity(state, kind, id, sources, None).await
+}
+
+pub(crate) async fn ensure_artwork_for_activity(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+    sources: &impl crate::artwork_sources::ImageLookup,
+    activity_id: &str,
+    member: &str,
+) -> Result<ArtworkFetch> {
+    ensure_artwork_with_activity(state, kind, id, sources, Some((activity_id, member))).await
+}
+
+async fn ensure_artwork_with_activity(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+    sources: &impl crate::artwork_sources::ImageLookup,
+    activity: Option<(&str, &str)>,
+) -> Result<ArtworkFetch> {
     let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
     if let Some(saved) = cached {
         return Ok(if saved {
@@ -672,7 +693,7 @@ pub(crate) async fn ensure_artwork_with(
     let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
         return Ok(ArtworkFetch::Busy);
     };
-    crate::artwork_sources::fetch_with(state, &settings, kind, id, sources).await
+    crate::artwork_sources::fetch_with_activity(state, &settings, kind, id, sources, activity).await
 }
 
 #[cfg(test)]

@@ -518,12 +518,24 @@ impl ImageLookup for PublicSources<'_> {
         commons(state, &format!("File:{}", files.first().unwrap()), provider).await
     }
 }
+#[cfg(test)]
 pub(crate) async fn fetch_with(
     state: &AppState,
     settings: &ArtworkSettings,
     kind: &str,
     id: &str,
     sources: &impl ImageLookup,
+) -> Result<library::ArtworkFetch> {
+    fetch_with_activity(state, settings, kind, id, sources, None).await
+}
+
+pub(crate) async fn fetch_with_activity(
+    state: &AppState,
+    settings: &ArtworkSettings,
+    kind: &str,
+    id: &str,
+    sources: &impl ImageLookup,
+    activity: Option<(&str, &str)>,
 ) -> Result<library::ArtworkFetch> {
     for provider in settings.enabled(kind) {
         // Configuration changes fence in-flight lookups as well as later queue entries.
@@ -534,7 +546,24 @@ pub(crate) async fn fetch_with(
         {
             return Ok(library::ArtworkFetch::Busy);
         }
-        match sources.lookup(provider, kind, id).await? {
+        if let Some((activity_id, member)) = activity {
+            sqlx::query("UPDATE job_members SET current_provider=? WHERE job_id=? AND member=? AND state='pending'")
+                .bind(provider.key())
+                .bind(activity_id)
+                .bind(member)
+                .execute(&state.db)
+                .await?;
+        }
+        let lookup = sources.lookup(provider, kind, id).await;
+        if let Some((activity_id, member)) = activity {
+            sqlx::query("UPDATE job_members SET current_provider=NULL WHERE job_id=? AND member=? AND current_provider=?")
+                .bind(activity_id)
+                .bind(member)
+                .bind(provider.key())
+                .execute(&state.db)
+                .await?;
+        }
+        match lookup? {
             Lookup::Missing => continue,
             Lookup::Ambiguous => break,
             Lookup::Found(image) => {
