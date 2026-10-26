@@ -3,10 +3,20 @@ const { mkdtempSync, rmSync, existsSync } = require("node:fs");
 const { tmpdir, homedir } = require("node:os");
 const { join } = require("node:path");
 const dataDir = mkdtempSync(join(tmpdir(), "scrobbl-e2e-"));
-const cargo = existsSync(join(homedir(), ".cargo/bin/cargo"))
-  ? join(homedir(), ".cargo/bin/cargo")
-  : "cargo";
-const child = spawn(cargo, ["run", "--locked", "--bin", "scrobbl-rs"], {
+const binary = join(
+  "target",
+  "debug",
+  process.platform === "win32" ? "scrobbl-rs.exe" : "scrobbl-rs",
+);
+const [cmd, args] = existsSync(binary)
+  ? [binary, []]
+  : [
+      existsSync(join(homedir(), ".cargo/bin/cargo"))
+        ? join(homedir(), ".cargo/bin/cargo")
+        : "cargo",
+      ["run", "--locked", "--bin", "scrobbl-rs"],
+    ];
+const child = spawn(cmd, args, {
   stdio: "inherit",
   env: {
     ...process.env,

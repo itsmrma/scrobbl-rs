@@ -2,8 +2,8 @@
   "name": "scrobbl-rs-frontend",
   "private": true,
   "scripts": {
-    "test:e2e": "playwright test",
-    "format:web": "prettier --write frontend/src/*.{ts,tsx,css} frontend/index.html vite.config.mts tests/*.cjs playwright.config.cjs",
+    "test:e2e": "node scripts/test-e2e.cjs",
+    "format:web": "prettier --write frontend/src/*.{ts,tsx,css} frontend/index.html vite.config.mts tests/*.cjs scripts/*.cjs playwright.config.cjs",
     "build": "tsc -p frontend/tsconfig.json && vite build && node scripts/frontend-notices.cjs",
     "typecheck": "tsc -p frontend/tsconfig.json",
     "dev": "vite",

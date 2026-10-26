@@ -131,15 +131,12 @@ const test = base.extend({
   baseURL: async ({ auditApp }, use) => use(auditApp),
 });
 
+test.describe.configure({ mode: "parallel" });
+
 async function login(page, path = "/dashboard") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
   await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
-  await page.screenshot({
-    path: `test-results/gui-${page.context().browser().browserType().name()}-login.png`,
-    fullPage: true,
-    animations: "disabled",
-  });
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
@@ -1813,7 +1810,7 @@ test("release routes fit phone and tablet viewports in both orientations", async
     const id = archive.rankings[kind][0].id;
     paths.push(`/music/${kind}/${id}`, `/music/${kind}/${id}/edit`);
   }
-  for (const [width, height] of [
+  const viewports = [
     [320, 740],
     [375, 812],
     [390, 844],
@@ -1828,26 +1825,32 @@ test("release routes fit phone and tablet viewports in both orientations", async
     [768, 1024],
     [1024, 768],
     [1440, 1000],
-  ]) {
-    await page.setViewportSize({ width, height });
-    for (const path of paths) {
-      await page.goto(path);
-      await expect(page.locator("#main")).toBeVisible();
-      if (path.startsWith("/music/")) {
-        if (path.endsWith("/edit"))
-          await expect(
-            page.getByLabel(
-              path.includes("/artists/") ? "Artist name" : "Title",
-              { exact: true },
-            ),
-          ).toBeVisible();
-        else {
-          await expect(page.locator(".music-heading h1")).toBeVisible();
-          if (width === 320)
-            await page.locator(".embedded-history").screenshot({
-              path: `test-results/mobile-${browserName}-${path.split("/")[2]}-history.png`,
-            });
-        }
+  ];
+  for (const path of paths) {
+    await page.goto(path);
+    await expect(page.locator("#main")).toBeVisible();
+    if (path.startsWith("/music/")) {
+      if (path.endsWith("/edit"))
+        await expect(
+          page.getByLabel(
+            path.includes("/artists/") ? "Artist name" : "Title",
+            { exact: true },
+          ),
+        ).toBeVisible();
+      else {
+        await expect(page.locator(".music-heading h1")).toBeVisible();
+      }
+    }
+    for (const [width, height] of viewports) {
+      await page.setViewportSize({ width, height });
+      if (
+        path.startsWith("/music/") &&
+        !path.endsWith("/edit") &&
+        width === 320
+      ) {
+        await page.locator(".embedded-history").screenshot({
+          path: `test-results/mobile-${browserName}-${path.split("/")[2]}-history.png`,
+        });
       }
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth + 1,
