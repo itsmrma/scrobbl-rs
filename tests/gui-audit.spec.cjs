@@ -133,6 +133,142 @@ const test = base.extend({
 
 test.describe.configure({ mode: "parallel" });
 
+test("rankings keep artwork square and long metadata and durations visible", async ({
+  page,
+  browserName,
+}) => {
+  await page.route("**/api/v1/artwork/**", (route) => {
+    if (route.request().url().includes("/credit"))
+      return route.fulfill({ json: null });
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="600"><rect width="300" height="600" fill="#687f9c"/><circle cx="150" cy="300" r="120" fill="#d8c78c"/></svg>',
+    });
+  });
+  await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.items = Array.from({ length: 3 }, (_, index) => ({
+      ...data.items[0],
+      id: `ranking-polish-${index}`,
+      position: index + 100,
+      name: "A long title with an anniversary edition and additional recordings",
+      subtitle: "An artist with a long name and a featured collaborator",
+      cover_url: index === 2 ? null : `/api/v1/artwork/albums/polish-${index}`,
+      plays: 1234567,
+      actual_ms: 1234567890,
+      estimated_ms: 987654321,
+      unknown_durations: 12345,
+    }));
+    data.total = data.items.length;
+    await route.fulfill({ json: data });
+  });
+  await login(page, "/rankings/albums?period=all");
+  const panel = page.getByRole("article", { name: "albums rankings" });
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const [view, size] of [
+      ["Grid", "Small"],
+      ["Grid", "Medium"],
+      ["Grid", "Large"],
+      ["List", null],
+    ]) {
+      await panel.getByRole("button", { name: view, exact: true }).click();
+      if (size) {
+        const smaller = panel.getByRole("button", {
+          name: "Smaller cards",
+          exact: true,
+        });
+        while (await smaller.isEnabled()) await smaller.click();
+        for (
+          let step = 0;
+          step < ["Small", "Medium", "Large"].indexOf(size);
+          step++
+        )
+          await panel
+            .getByRole("button", { name: "Larger cards", exact: true })
+            .click();
+        await expect(
+          panel.getByRole("status", { name: "Card size", exact: true }),
+        ).toHaveText(size);
+      }
+      const items = panel.locator(
+        view === "Grid" ? ".music-card" : ".ranking-row",
+      );
+      await expect(items).toHaveCount(3);
+      await expect(items.first().locator("img")).toBeVisible();
+      await expect(items.first().locator(".time-composition")).toBeVisible();
+      const layout = await items.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const frame = node.querySelector(".cover").getBoundingClientRect();
+          return {
+            square: Math.abs(frame.width - frame.height) < 1,
+            clipped: [
+              ...node.querySelectorAll(
+                ".rank-name a, .rank-name small, .rank-value, .time-composition",
+              ),
+            ].some(
+              (el) =>
+                el.scrollWidth > el.clientWidth + 1 ||
+                el.scrollHeight > el.clientHeight + 1,
+            ),
+            right: node.getBoundingClientRect().right,
+          };
+        }),
+      );
+      expect(
+        layout.every((item) => item.square),
+        JSON.stringify(layout),
+      ).toBe(true);
+      expect(
+        layout.some((item) => item.clipped),
+        JSON.stringify(layout),
+      ).toBe(false);
+      expect(Math.max(...layout.map((item) => item.right))).toBeLessThanOrEqual(
+        width,
+      );
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      if (size) {
+        const badges = await items.evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const cover = node.querySelector(".cover");
+            const image = node.querySelector("img");
+            const badge = node.querySelector(".rank-number");
+            const box = badge.getBoundingClientRect();
+            // Hit testing with pointer events enabled verifies the actual paint order.
+            badge.style.pointerEvents = "auto";
+            const top = document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+            );
+            badge.style.removeProperty("pointer-events");
+            return {
+              round: getComputedStyle(cover).borderRadius === "50%",
+              fillsCircle:
+                !image || getComputedStyle(image).objectFit === "cover",
+              clipped: badge.scrollWidth > badge.clientWidth,
+              onTop: box.bottom > innerHeight || box.y < 0 || top === badge,
+            };
+          }),
+        );
+        expect(
+          badges.every(
+            (badge) =>
+              badge.round && badge.fillsCircle && !badge.clipped && badge.onTop,
+          ),
+          JSON.stringify(badges),
+        ).toBe(true);
+      }
+      await page.screenshot({
+        path: `test-results/rankings-polish-${browserName}-${width}-${view.toLowerCase()}${size ? "-" + size.toLowerCase() : ""}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+});
+
 async function login(page, path = "/dashboard") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
@@ -3002,8 +3138,14 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     albums.getByRole("status", { name: "Card size", exact: true }),
   ).toHaveText("Medium");
-  const medium = (await albums.locator(".music-card").first().boundingBox())
-    .width;
+  let medium = 0;
+  await expect
+    .poll(async () => {
+      medium =
+        (await albums.locator(".music-card").first().boundingBox())?.width || 0;
+      return medium;
+    })
+    .toBeGreaterThan(0);
   await albums
     .getByRole("button", { name: "Larger cards", exact: true })
     .click();
