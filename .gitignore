@@ -11,3 +11,11 @@
 /test-results/
 /playwright-report/
 /ci-logs/
+
+# Local Impeccable agent setup
+/.agent
+/.agents/
+/.codex/
+/.github/agents/
+/.github/hooks/
+/.github/skills/
