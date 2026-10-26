@@ -6,6 +6,7 @@ import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
+import { SkeletonCardList, SkeletonList } from "./skeleton";
 
 function Trash({
   preferences,
@@ -35,7 +36,9 @@ function Trash({
         source records stay saved.
       </p>
       <ErrorText>{result.error}</ErrorText>
-      {!result.data && !result.error && <p role="status">Loading trash…</p>}
+      {!result.data && !result.error && (
+        <SkeletonList count={3} label="Loading trash…" />
+      )}
       {result.data && (
         <>
           <p className="subtle">
@@ -448,7 +451,7 @@ export function ReviewPage({
             </div>
           </details>
           {!result.data && !result.error && (
-            <p role="status">Loading comparisons…</p>
+            <SkeletonCardList count={3} label="Loading comparisons…" />
           )}
           {visibleGroups.map((group) => (
             <Comparison

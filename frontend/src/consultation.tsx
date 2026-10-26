@@ -26,6 +26,13 @@ import { ListeningPatterns } from "./listening-patterns";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
+import {
+  ChartSkeleton,
+  ListenListSkeleton,
+  MusicPageSkeleton,
+  OverviewSkeleton,
+  RankingsSkeleton,
+} from "./skeleton";
 import { periods, isBool, useBrowserPreference } from "./preferences";
 import {
   context,
@@ -671,7 +678,7 @@ function RankingsPanel({
           )}
         </>
       ) : (
-        !result.error && <p role="status">Loading rankings…</p>
+        !result.error && <RankingsSkeleton />
       )}
       {kind === "artists" && (
         <p className="subtle">
@@ -891,7 +898,7 @@ function Chart({
       {result.data && !buckets.length && (
         <p className="empty">No activity in this selection.</p>
       )}
-      {!result.data && !result.error && <p role="status">Loading activity…</p>}
+      {!result.data && !result.error && <ChartSkeleton />}
       <p className="subtle">
         * Partial period. Each listen belongs to its assigned date.
       </p>
@@ -963,7 +970,7 @@ export function Overview({
           </article>
         </>
       ) : (
-        !result.error && <p role="status">Loading your archive…</p>
+        !result.error && <OverviewSkeleton />
       )}
     </>
   );
@@ -1525,7 +1532,7 @@ export function HistoryPage({
           />
         </article>
       ) : (
-        !result.error && <p role="status">Loading listening history…</p>
+        !result.error && <ListenListSkeleton count={8} />
       )}
     </div>
   );
@@ -1628,7 +1635,7 @@ export function MusicPage({
           <Stats totals={result.data.totals} />
         </>
       ) : (
-        !result.error && <p role="status">Loading music page…</p>
+        !result.error && <MusicPageSkeleton />
       )}
       <Chart params={params} version={preferences.version} />
       <ListeningPatterns params={params} version={preferences.version} />

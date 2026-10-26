@@ -5,6 +5,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { Select } from "./select";
 import { ErrorText, number } from "./ui";
+import { SkeletonPatterns } from "./skeleton";
 
 const views = [
   ["hours", "Time of day"],
@@ -75,7 +76,7 @@ export function ListeningPatterns({
       </p>
       <ErrorText>{result.error}</ErrorText>
       {!result.data && !result.error && (
-        <p role="status">Loading listening patterns…</p>
+        <SkeletonPatterns label="Loading listening patterns…" />
       )}
       {result.data && (
         <>

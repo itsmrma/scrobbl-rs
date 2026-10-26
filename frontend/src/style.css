@@ -40,6 +40,12 @@
   --error: #ffaaa0;
   --warning: #e5c685;
   --focus: color-mix(in srgb, var(--accent) 45%, white);
+  --skeleton-base: color-mix(
+    in oklab,
+    var(--surface-raised) 75%,
+    var(--border) 25%
+  );
+  --skeleton-highlight: rgba(255, 255, 255, 0.08);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :root.theme-light {
@@ -55,6 +61,12 @@
   --error: #a22620;
   --warning: #795609;
   --focus: #354559;
+  --skeleton-base: color-mix(
+    in oklab,
+    var(--surface-raised) 85%,
+    var(--border) 15%
+  );
+  --skeleton-highlight: rgba(255, 255, 255, 0.65);
 }
 * {
   box-sizing: border-box;
@@ -6911,4 +6923,171 @@ dialog {
   flex-shrink: 0;
   accent-color: var(--accent);
   padding: 0;
+}
+
+/* --- SKELETON LOADING (YouTube-style animated placeholders) --- */
+
+@keyframes skeleton-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-container {
+  width: 100%;
+}
+
+.skeleton-block {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--skeleton-base);
+  flex-shrink: 0;
+}
+
+.skeleton-block::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--skeleton-highlight) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block::after {
+    animation: none;
+    display: none;
+  }
+}
+
+.skeleton-stat {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 94px;
+}
+
+.skeleton-panel {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.skeleton-ranking-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-ranking-row:last-child {
+  border-bottom: none;
+}
+
+.skeleton-chart-panel {
+  margin-block: 24px;
+}
+
+.skeleton-activity-chart {
+  display: flex;
+  align-items: flex-end;
+  height: 160px;
+  gap: 8px;
+  padding-top: 16px;
+}
+
+.skeleton-chart-segment {
+  flex: 1;
+  min-width: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.skeleton-chart-segment .chart-bar-area {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.skeleton-bar {
+  width: 100%;
+  max-width: 28px;
+}
+
+.skeleton-listen-row .listen-main {
+  width: 100%;
+}
+
+.app-skeleton {
+  display: flex;
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+.app-skeleton-sidebar {
+  width: var(--sidebar-width, 240px);
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  flex-shrink: 0;
+}
+
+.app-skeleton-logo {
+  padding-inline: 8px;
+}
+
+.app-skeleton-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-skeleton-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+}
+
+.app-skeleton-main {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 32px;
+}
+
+.app-skeleton-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+@media (max-width: 900px) {
+  .app-skeleton-sidebar {
+    display: none;
+  }
+  .app-skeleton-main {
+    padding: 16px;
+  }
 }

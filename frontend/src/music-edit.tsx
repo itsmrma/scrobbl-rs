@@ -7,6 +7,7 @@ import { useLoad } from "./load";
 import { Link, returnTo } from "./navigation";
 import { Cover, ErrorText, Heading, Icon, useToast } from "./ui";
 import type { Kind } from "./selection";
+import { SkeletonCardList } from "./skeleton";
 
 function Stars({
   value,
@@ -436,7 +437,9 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
           {kind !== "tracks" && <NameGroup kind={kind} id={id} />}
         </div>
       ) : (
-        !details.error && <p role="status">Loading details…</p>
+        !details.error && (
+          <SkeletonCardList count={2} label="Loading details…" />
+        )
       )}
     </>
   );

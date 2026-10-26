@@ -20,6 +20,7 @@ import type { useAppearance } from "./preferences";
 import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
 import { ApiKeys } from "./api-keys";
+import { SkeletonCard } from "./skeleton";
 
 export function General({
   preferences,
@@ -608,7 +609,7 @@ export function Connections({
     return (
       <>
         <ErrorText>{statusError}</ErrorText>
-        <p>Loading connection status…</p>
+        <SkeletonCard label="Loading connection status…" />
       </>
     );
   const connection = !status.connected
