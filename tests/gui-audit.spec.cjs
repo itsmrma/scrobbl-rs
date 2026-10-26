@@ -3271,10 +3271,9 @@ test("overview charts and activity reports have compact responsive layouts", asy
     target_timezone: null,
     target_week_start: null,
   };
-  await page.route("**/api/v1/activities", async (route) => {
-    const existing = await (await route.fetch()).json();
-    return route.fulfill({ json: [running, ...existing] });
-  });
+  await page.route("**/api/v1/activities", (route) =>
+    route.fulfill({ json: [running] }),
+  );
   await page.route("**/api/v1/activities/demo-import", (route) =>
     route.fulfill({
       json: {
