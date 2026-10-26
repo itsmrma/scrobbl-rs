@@ -3,6 +3,7 @@ import type { ArtworkSettings, ImageProvider } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
 import { ErrorText, Icon, useToast } from "./ui";
+import { SkeletonCardList } from "./skeleton";
 
 const providers: Record<
   ImageProvider,
@@ -243,7 +244,7 @@ export function ArtworkProviderSettings() {
           reload={() => setRevision((v) => v + 1)}
         />
       ) : (
-        <p role="status">Loading image providers…</p>
+        <SkeletonCardList count={3} label="Loading image providers…" />
       )}
     </>
   );

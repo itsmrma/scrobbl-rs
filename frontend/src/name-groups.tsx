@@ -3,6 +3,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { navigate } from "./navigation";
 import { ErrorText, Icon, number, useToast } from "./ui";
+import { SkeletonList } from "./skeleton";
 export function NameGroup({ kind, id }: { kind: string; id: string }) {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
@@ -156,7 +157,7 @@ export function NameGroup({ kind, id }: { kind: string; id: string }) {
         </>
       )}
       {!result.data && !result.error && (
-        <p role="status">Loading source entries…</p>
+        <SkeletonList count={3} label="Loading source entries…" />
       )}
     </article>
   );

@@ -26,18 +26,12 @@ import { Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
-import {
-  ArtworkContext,
-  ErrorText,
-  Heading,
-  Icon,
-  Toasts,
-  Wordmark,
-} from "./ui";
+import { ArtworkContext, Heading, Icon, Toasts, Wordmark } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
 import { Auth, UsernameSetup } from "./account";
 import { AccountMenu } from "./account-settings";
+import { AppShellSkeleton } from "./skeleton";
 
 function Shell({ logout }: { logout: () => void }) {
   useDisclosureMotion();
@@ -225,15 +219,11 @@ function Shell({ logout }: { logout: () => void }) {
   const activeCount = activeJobs.length + (artworkWork.pending > 0 ? 1 : 0);
   if (!preferences)
     return (
-      <main className="loading">
-        <p role="status">Opening your archive…</p>
-        <ErrorText>{loadError}</ErrorText>
-        {loadError && (
-          <button className="secondary" onClick={() => location.reload()}>
-            Reload
-          </button>
-        )}
-      </main>
+      <AppShellSkeleton
+        label="Opening your archive…"
+        error={loadError}
+        onReload={() => location.reload()}
+      />
     );
   const nav = [
     ["/dashboard", "dashboard", "Overview", "space_dashboard"],
@@ -587,10 +577,7 @@ function App() {
           />
         )
       ) : (
-        <main className="loading">
-          <p>Opening your archive…</p>
-          <ErrorText>{error}</ErrorText>
-        </main>
+        <AppShellSkeleton label="Opening your archive…" error={error} />
       )}
     </Toasts>
   );
