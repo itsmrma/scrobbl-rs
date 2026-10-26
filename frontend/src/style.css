@@ -4037,6 +4037,9 @@ dialog {
   display: flex;
   flex-direction: column;
 }
+.ranking-panel .ranking-list {
+  display: block;
+}
 .ranking-toolbar {
   display: flex;
   align-items: center;
@@ -4074,6 +4077,7 @@ dialog {
   text-align: center;
 }
 .ranking-results {
+  container-type: inline-size;
   min-width: 0;
   padding: 4px;
   margin: -4px;
@@ -4095,14 +4099,13 @@ dialog {
   min-height: 0;
   font-size: 13px;
   line-height: 1.4;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  display: block;
 }
 .music-grid .rank-name small {
   margin-top: 4px;
   line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .music-card .rank-value {
   display: flex;
@@ -4113,7 +4116,11 @@ dialog {
   font-size: 11px;
 }
 .music-card .rank-value .time-composition {
-  display: none;
+  display: block;
+  flex-basis: 100%;
+  color: var(--muted);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .music-card .rank-plays,
 .music-card .rank-plays small {
@@ -4129,28 +4136,68 @@ dialog {
 }
 .ranking-panel .ranking-row {
   display: grid;
-  grid-template-columns: 2ch 36px minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: 3ch 44px minmax(0, 1fr) minmax(0, 0.8fr);
+  gap: 8px 12px;
   padding: 12px 8px;
   border-radius: 6px;
 }
 .ranking-panel .ranking-row .cover {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
+}
+.ranking-panel .image-frame .cover-image {
+  /* Keep intrinsic image dimensions out of the square frame's sizing. */
+  position: absolute;
+  inset: 0;
 }
 .ranking-panel .rank-name a {
+  display: block;
   font-size: 13px;
 }
+.ranking-panel .ranking-row .rank-name small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .ranking-panel .ranking-row .rank-value {
+  min-width: 0;
   max-width: none;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.ranking-panel .ranking-row .rank-metrics {
+  justify-content: flex-end;
 }
 .ranking-panel .ranking-row .rank-plays {
   font-size: 13px;
 }
 .ranking-panel .ranking-row .time-composition {
   font-size: 10px;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.5;
+}
+@container (max-width: 600px) {
+  .ranking-panel .ranking-row {
+    grid-template-columns: 3ch 44px minmax(0, 1fr);
+    align-items: start;
+  }
+  .ranking-panel .ranking-row > .cover,
+  .ranking-panel .ranking-row > .rank-number {
+    grid-row: 1 / span 2;
+  }
+  .ranking-panel .ranking-row > .rank-number {
+    padding-top: 12px;
+  }
+  .ranking-panel .ranking-row .rank-name a {
+    display: block;
+    min-height: 0;
+  }
+  .ranking-panel .ranking-row .rank-value {
+    grid-column: 3;
+    text-align: left;
+  }
+  .ranking-panel .ranking-row .rank-metrics {
+    justify-content: flex-start;
+  }
 }
 :is(.music-card, .ranking-row):has(.music-item-link:focus-visible) {
   outline-offset: -3px;

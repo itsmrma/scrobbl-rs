@@ -133,6 +133,88 @@ const test = base.extend({
 
 test.describe.configure({ mode: "parallel" });
 
+test("rankings keep artwork square and long metadata and durations visible", async ({
+  page,
+  browserName,
+}) => {
+  await page.route("**/api/v1/artwork/**", (route) => {
+    if (route.request().url().includes("/credit"))
+      return route.fulfill({ json: null });
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="600"><rect width="300" height="600" fill="#687f9c"/><circle cx="150" cy="300" r="120" fill="#d8c78c"/></svg>',
+    });
+  });
+  await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.items = Array.from({ length: 3 }, (_, index) => ({
+      ...data.items[0],
+      id: `ranking-polish-${index}`,
+      position: index + 100,
+      name: "A long title with an anniversary edition and additional recordings",
+      subtitle: "An artist with a long name and a featured collaborator",
+      cover_url: index === 2 ? null : `/api/v1/artwork/albums/polish-${index}`,
+      plays: 1234567,
+      actual_ms: 1234567890,
+      estimated_ms: 987654321,
+      unknown_durations: 12345,
+    }));
+    data.total = data.items.length;
+    await route.fulfill({ json: data });
+  });
+  await login(page, "/rankings/albums?period=all");
+  const panel = page.getByRole("article", { name: "albums rankings" });
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const view of ["Grid", "List"]) {
+      await panel.getByRole("button", { name: view, exact: true }).click();
+      const items = panel.locator(
+        view === "Grid" ? ".music-card" : ".ranking-row",
+      );
+      await expect(items).toHaveCount(3);
+      await expect(items.first().locator("img")).toBeVisible();
+      await expect(items.first().locator(".time-composition")).toBeVisible();
+      const layout = await items.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const frame = node.querySelector(".cover").getBoundingClientRect();
+          return {
+            square: Math.abs(frame.width - frame.height) < 1,
+            clipped: [
+              ...node.querySelectorAll(
+                ".rank-name a, .rank-name small, .rank-value, .time-composition",
+              ),
+            ].some(
+              (el) =>
+                el.scrollWidth > el.clientWidth + 1 ||
+                el.scrollHeight > el.clientHeight + 1,
+            ),
+            right: node.getBoundingClientRect().right,
+          };
+        }),
+      );
+      expect(
+        layout.every((item) => item.square),
+        JSON.stringify(layout),
+      ).toBe(true);
+      expect(
+        layout.some((item) => item.clipped),
+        JSON.stringify(layout),
+      ).toBe(false);
+      expect(Math.max(...layout.map((item) => item.right))).toBeLessThanOrEqual(
+        width,
+      );
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      await page.screenshot({
+        path: `test-results/rankings-polish-${browserName}-${width}-${view.toLowerCase()}.png`,
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  }
+});
+
 async function login(page, path = "/dashboard") {
   const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
@@ -3002,6 +3084,7 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     albums.getByRole("status", { name: "Card size", exact: true }),
   ).toHaveText("Medium");
+  await expect(albums.locator(".music-card").first()).toBeVisible();
   const medium = (await albums.locator(".music-card").first().boundingBox())
     .width;
   await albums
