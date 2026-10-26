@@ -2,7 +2,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
   testDir: "./tests",
   testMatch: "*.spec.cjs",
-  workers: 1,
+  workers: process.env.CI ? 4 : undefined,
   timeout: 60000,
   use: {
     baseURL: `http://127.0.0.1:${process.env.SCROBBL_E2E_PORT || 3211}`,
