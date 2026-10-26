@@ -1460,17 +1460,18 @@ test("monthly charts compact quieter ranges without losing listens or drilldown"
   const bars = page.locator(".chart-segment");
   await expect.poll(() => bars.count()).toBeLessThanOrEqual(18);
   await expect.poll(() => bars.count()).toBeGreaterThan(0);
-  const total = await bars.evaluateAll((elements) =>
-    elements.reduce(
-      (sum, el) =>
-        sum +
-        Number(
-          el.querySelector(".chart-bar-value").textContent.replaceAll(",", ""),
+  await expect
+    .poll(() =>
+      page
+        .locator(".chart-bars")
+        .evaluate((chart) =>
+          Array.from(chart.querySelectorAll(".chart-bar-value")).reduce(
+            (sum, el) => sum + Number(el.textContent.replaceAll(",", "")),
+            0,
+          ),
         ),
-      0,
-    ),
-  );
-  expect(total).toBe(buckets.reduce((sum, b) => sum + b.listens, 0));
+    )
+    .toBe(buckets.reduce((sum, b) => sum + b.listens, 0));
   await expect(
     page.getByRole("link", {
       name: "2024-01-01 – 2024-01-31: 600 listens",
