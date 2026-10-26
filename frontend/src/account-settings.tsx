@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, setCsrf } from "./api";
 import type { AccountProfile } from "./api";
 import { useLoad } from "./load";
+import { SkeletonCard } from "./skeleton";
 import { Link } from "./navigation";
 import { ErrorText, Icon, Modal, useToast } from "./ui";
 import { PasswordFeedback, passwordChecks } from "./account";
@@ -173,6 +174,9 @@ export function AccountSettings() {
           account menu.
         </p>
         <ErrorText>{profile.error || error}</ErrorText>
+        {!profile.data && !profile.error && (
+          <SkeletonCard label="Loading account…" />
+        )}
         {profile.data && (
           <>
             <div className="profile-photo-row">

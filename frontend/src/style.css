@@ -6927,6 +6927,30 @@ dialog {
 
 /* --- SKELETON LOADING (YouTube-style animated placeholders) --- */
 
+.skeleton-playback {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+}
+
+.skeleton-playback > .skeleton-block {
+  flex-shrink: 0;
+}
+
+.skeleton-playback-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-now > .skeleton-playback {
+  grid-column: 1 / -1;
+}
+
+.collapsed .sidebar-now .skeleton-playback-copy {
+  display: none;
+}
+
 @keyframes skeleton-shimmer {
   0% {
     transform: translateX(-100%);

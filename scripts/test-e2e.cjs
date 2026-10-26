@@ -25,6 +25,7 @@ const serialFiles = [
 ];
 
 const isolatedFiles = [
+  "tests/skeleton.spec.cjs",
   "tests/api-keys.spec.cjs",
   "tests/artwork-providers.spec.cjs",
   "tests/consultation.spec.cjs",

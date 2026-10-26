@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { SkeletonCardList } from "./skeleton";
 import type { ApiKey, ApiKeySettings, Preferences } from "./generated";
 import { CopyButton, date, ErrorText, Icon, Modal, useToast } from "./ui";
 
@@ -76,6 +77,10 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
       </div>
 
       <ErrorText>{error}</ErrorText>
+
+      {!settings && !error && (
+        <SkeletonCardList count={3} label="Loading API keys…" />
+      )}
 
       {settings && (
         <>

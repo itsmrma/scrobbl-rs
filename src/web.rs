@@ -67,6 +67,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/consultation/choices/{kind}",
             get(crate::browse::choices),
         )
+        .route("/music/now-playing", get(index))
         .route("/music/{kind}/{id}", get(index))
         .route(
             "/api/v1/consultation/rankings/{kind}",

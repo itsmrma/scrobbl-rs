@@ -11,6 +11,7 @@ import type {
 import { useLoad } from "./library";
 import { date, ErrorText, Modal, useToast } from "./ui";
 import { Link } from "./navigation";
+import { SkeletonList } from "./skeleton";
 
 export function Recovery({ preferences }: { preferences: Preferences }) {
   const [revision, setRevision] = useState(0),
@@ -224,6 +225,9 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
         <Link to="/activities">Activities</Link>.
       </p>
       <h3>Saved files</h3>
+      {!loaded.data && !loaded.error && (
+        <SkeletonList count={3} label="Loading exports and backups…" />
+      )}
       {loaded.data?.assets.length === 0 && <p>No saved exports or backups.</p>}
       {loaded.data?.assets.map((asset) => {
         const manifest: Partial<Manifest> & {

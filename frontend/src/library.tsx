@@ -29,24 +29,34 @@ import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
 import { phaseLabel, Progress } from "./activities";
 import { isBool, useBrowserPreference } from "./preferences";
+import { MusicPageSkeleton, SkeletonList, SkeletonPlayback } from "./skeleton";
 
 const NowContext = createContext<{
   data: NowPlaying | null;
   error: string;
+  loading: boolean;
   browserTiming: number | null;
   browserCommit: number | null;
-}>({ data: null, error: "", browserTiming: null, browserCommit: null });
+}>({
+  data: null,
+  error: "",
+  loading: true,
+  browserTiming: null,
+  browserCommit: null,
+});
 export function NowPlayingProvider({
   status,
+  statusError,
   children,
 }: {
   status: SpotifyStatus | null;
+  statusError: string;
   children: ReactNode;
 }) {
   const [browserTiming, setBrowserTiming] = useState<number | null>(null);
   const [browserCommit, setBrowserCommit] = useState<number | null>(null);
   const requestStart = useRef(0);
-  const { data, error } = useLoad<NowPlaying | null>(
+  const { data, error, loading } = useLoad<NowPlaying | null>(
     async () => {
       const start = performance.now();
       requestStart.current = start;
@@ -54,7 +64,7 @@ export function NowPlayingProvider({
       setBrowserTiming(performance.now() - start);
       return sample;
     },
-    "now",
+    `now:${!!status?.connected}`,
     !!status?.connected,
     (status?.now_playing_seconds || 30) * 1000,
   );
@@ -65,7 +75,8 @@ export function NowPlayingProvider({
     <NowContext
       value={{
         data: status?.connected ? data : null,
-        error: status?.connected ? error : "",
+        error: statusError || (status?.connected ? error : ""),
+        loading: !status ? !statusError : status.connected && loading && !data,
         browserTiming,
         browserCommit,
       }}
@@ -75,14 +86,16 @@ export function NowPlayingProvider({
   );
 }
 export function NowPlayingPage() {
-  const { data, error } = useContext(NowContext);
+  const { data, error, loading } = useContext(NowContext);
   return (
     <>
       <Link className="back-link" to="/dashboard">
         <Icon>arrow_back</Icon>Overview
       </Link>
       <ErrorText>{error}</ErrorText>
-      {data ? (
+      {loading ? (
+        <MusicPageSkeleton label="Loading now playing…" />
+      ) : data ? (
         <>
           <div className="music-heading">
             <Cover url={data.cover_url} large />
@@ -119,9 +132,11 @@ export function NowPlayingPage() {
           </article>
         </>
       ) : (
-        <Heading title="Nothing playing">
-          Start a track on Spotify to see it here.
-        </Heading>
+        !error && (
+          <Heading title="Nothing playing">
+            Start a track on Spotify to see it here.
+          </Heading>
+        )
       )}
     </>
   );
@@ -134,7 +149,8 @@ export function Now({
   status: SpotifyStatus | null;
   compact?: boolean;
 }) {
-  const { data, error, browserTiming, browserCommit } = useContext(NowContext);
+  const { data, error, loading, browserTiming, browserCommit } =
+    useContext(NowContext);
   const [expanded, setExpanded] = useState(false);
   const [mobileMinimized, setMobileMinimized] = useBrowserPreference(
     "now-playing-minimized",
@@ -204,6 +220,7 @@ export function Now({
           data.duration_ms ?? Infinity,
           data.progress_ms + Math.max(0, clock - data.response_received_at_ms),
         );
+  if (loading) return <SkeletonPlayback compact={compact} />;
   if (compact)
     return (
       <div
@@ -586,7 +603,9 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
                 </p>
               </details>
             ) : (
-              <p>Checking upload availability...</p>
+              !limits.error && (
+                <SkeletonList count={1} label="Checking upload availability…" />
+              )
             )}
             <ErrorText>{limits.error}</ErrorText>
             <button
@@ -599,6 +618,9 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
             </button>
           </form>
           <ErrorText>{error || report.error}</ErrorText>
+          {jobId && !report.data && !report.error && (
+            <SkeletonList count={2} label="Loading import report…" />
+          )}
           {job && (
             <div id="import-result" role="status">
               <h3>

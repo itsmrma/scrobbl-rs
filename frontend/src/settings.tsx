@@ -20,7 +20,7 @@ import type { useAppearance } from "./preferences";
 import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
 import { ApiKeys } from "./api-keys";
-import { SkeletonCard } from "./skeleton";
+import { SkeletonCard, SkeletonList } from "./skeleton";
 
 export function General({
   preferences,
@@ -609,7 +609,7 @@ export function Connections({
     return (
       <>
         <ErrorText>{statusError}</ErrorText>
-        <SkeletonCard label="Loading connection status…" />
+        {!statusError && <SkeletonCard label="Loading connection status…" />}
       </>
     );
   const connection = !status.connected
@@ -973,9 +973,11 @@ export function Connections({
 }
 export function DataRecovery({
   status,
+  statusError,
   preferences,
 }: {
   status: SpotifyStatus | null;
+  statusError: string;
   preferences: Preferences;
 }) {
   return (
@@ -987,7 +989,11 @@ export function DataRecovery({
       </Link>
       <Recovery preferences={preferences} />
       <h3>Recent imports</h3>
-      {!status?.imports.length && <p>No imports yet.</p>}
+      <ErrorText>{statusError}</ErrorText>
+      {!status && !statusError && (
+        <SkeletonList count={3} label="Loading recent imports…" />
+      )}
+      {status && !status.imports.length && <p>No imports yet.</p>}
       {status?.imports.map((job, i) => (
         <div className="job" key={i}>
           <strong>{job.filename}</strong>
@@ -1088,7 +1094,11 @@ export function Settings({
         />
       </div>
       <div hidden={section !== "data"}>
-        <DataRecovery status={status} preferences={preferences} />
+        <DataRecovery
+          status={status}
+          statusError={statusError}
+          preferences={preferences}
+        />
       </div>
       <div hidden={section !== "api-keys"}>
         {section === "api-keys" && <ApiKeys preferences={preferences} />}

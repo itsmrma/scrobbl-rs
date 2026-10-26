@@ -3,6 +3,7 @@ import { api } from "./api";
 import { useLoad } from "./library";
 import { ErrorText, Icon, useToast } from "./ui";
 import { Link } from "./navigation";
+import { SkeletonList } from "./skeleton";
 
 export function ListenBrainzImport({
   refresh,
@@ -176,6 +177,12 @@ export function ListenBrainzImport({
             </details>
           )}
           <ErrorText>{limits.error}</ErrorText>
+          {!limits.data && !limits.error && (
+            <SkeletonList
+              count={1}
+              label="Loading ListenBrainz upload limits…"
+            />
+          )}
           <button className="primary" disabled={!!busy || !files?.length}>
             {busy === "upload"
               ? "Uploading… Keep this page open until received"
@@ -327,6 +334,9 @@ export function ListenBrainzOriginals({ id }: { id: string }) {
         Read saved source rows
       </button>
       <ErrorText>{error}</ErrorText>
+      {busy && !data && (
+        <SkeletonList count={3} label="Loading source observations…" />
+      )}
       {data && (
         <>
           <p>
