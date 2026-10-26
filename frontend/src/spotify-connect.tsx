@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { ConnectOutcome } from "./api";
 import { Icon, Modal } from "./ui";
+import { SkeletonCard } from "./skeleton";
 
 type Flow = "opening" | "waiting" | "interrupted" | "connected" | "error";
 const message = (error: unknown) =>
@@ -245,22 +246,26 @@ export function SpotifyConnectReturn({ attempt }: { attempt: string }) {
   return (
     <main className="connect-return panel padded">
       <h1>{connected ? "Connected to Spotify" : "Spotify connection"}</h1>
-      <ConnectionResult
-        state={
-          error || result?.outcome === "error"
-            ? "error"
-            : connected
-              ? "connected"
-              : "waiting"
-        }
-        detail={
-          error ||
-          result?.message ||
-          (connected
-            ? "Connected. You can close this tab and return to scrobbl.rs."
-            : "Checking the connection…")
-        }
-      />
+      {!result && !error ? (
+        <SkeletonCard label="Checking the connection…" />
+      ) : (
+        <ConnectionResult
+          state={
+            error || result?.outcome === "error"
+              ? "error"
+              : connected
+                ? "connected"
+                : "waiting"
+          }
+          detail={
+            error ||
+            result?.message ||
+            (connected
+              ? "Connected. You can close this tab and return to scrobbl.rs."
+              : "Checking the connection…")
+          }
+        />
+      )}
       <a className="button secondary" href="/settings/connections">
         Back to Connections
       </a>

@@ -244,7 +244,9 @@ export function ArtworkProviderSettings() {
           reload={() => setRevision((v) => v + 1)}
         />
       ) : (
-        <SkeletonCardList count={3} label="Loading image providers…" />
+        !settings.error && (
+          <SkeletonCardList count={3} label="Loading image providers…" />
+        )
       )}
     </>
   );

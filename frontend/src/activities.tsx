@@ -7,6 +7,7 @@ import { Link } from "./navigation";
 import { useLoad } from "./load";
 import { useEffect, useRef, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
+import { SkeletonCardList } from "./skeleton";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
     artwork_provider_wait:
@@ -296,6 +297,7 @@ function ArtworkSchedule({ job }: { job: Activity }) {
   );
 }
 export function Activities({
+  loading,
   jobs,
   artworkWork,
   error,
@@ -303,6 +305,7 @@ export function Activities({
   preferences,
   refresh,
 }: {
+  loading: boolean;
   jobs: Activity[];
   artworkWork: ArtworkActivity;
   error: string;
@@ -322,6 +325,9 @@ export function Activities({
     3000,
   );
   const visibleJobs = listPage || kind ? history.data || [] : jobs;
+  const listLoading =
+    listPage || kind ? history.loading && !history.data : loading;
+  const listError = listPage || kind ? history.error : error;
   const collectionRuns = visibleJobs.filter(
     (j) =>
       j.kind === "spotify_collection" &&
@@ -361,6 +367,9 @@ export function Activities({
           </Link>
           <ErrorText>{detail.error}</ErrorText>
           <ErrorText>{actionError}</ErrorText>
+          {!detail.data && !detail.error && (
+            <SkeletonCardList count={2} label="Loading activity report…" />
+          )}
           {job && (
             <article className="panel padded activity-detail">
               <header className="activity-detail-heading">
@@ -739,7 +748,7 @@ export function Activities({
         </>
       ) : (
         <div className="activities-panel">
-          <div className="activities-summary">
+          <div className="activities-summary" hidden={loading}>
             <div>
               <Icon>pending_actions</Icon>
               <strong>
@@ -792,7 +801,9 @@ export function Activities({
             </label>
           </div>
           <ErrorText>{history.error}</ErrorText>
-          {visibleJobs.length ? (
+          {listLoading ? (
+            <SkeletonCardList count={3} label="Loading activities…" />
+          ) : visibleJobs.length ? (
             separateJobs.map((job) => (
               <article
                 className={
@@ -883,24 +894,26 @@ export function Activities({
               </article>
             ))
           ) : (
-            <div className="empty activity-empty">
-              <Icon>task_alt</Icon>
-              <h2>
-                {artworkWork.total
-                  ? "No other activities"
-                  : "No activities to show"}
-              </h2>
-              <p>
-                Imports, collection and calendar changes leave a saved report
-                here. You can leave the page while the server works.
-              </p>
-              <Link to="/import" className="button secondary">
-                Import listening history
-              </Link>
-              <Link to="/settings/data">
-                Earlier import reports in Data &amp; recovery
-              </Link>
-            </div>
+            !listError && (
+              <div className="empty activity-empty">
+                <Icon>task_alt</Icon>
+                <h2>
+                  {artworkWork.total
+                    ? "No other activities"
+                    : "No activities to show"}
+                </h2>
+                <p>
+                  Imports, collection and calendar changes leave a saved report
+                  here. You can leave the page while the server works.
+                </p>
+                <Link to="/import" className="button secondary">
+                  Import listening history
+                </Link>
+                <Link to="/settings/data">
+                  Earlier import reports in Data &amp; recovery
+                </Link>
+              </div>
+            )
           )}
           {!!collectionRuns.length && (
             <details className="panel collection-runs">

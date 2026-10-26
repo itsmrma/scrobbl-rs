@@ -27,8 +27,10 @@ export function useLoad<T>(
     ),
     [error, setError] = useState("");
   const dataKey = useRef<string | null>(key);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (!enabled) return;
+    setLoading(true);
     if (dataKey.current !== key) {
       setData(remember ? previous<T>(key) : null);
       dataKey.current = key;
@@ -59,6 +61,7 @@ export function useLoad<T>(
         if (active) setError(String(e instanceof Error ? e.message : e));
       } finally {
         busy = false;
+        if (active) setLoading(false);
         if (active && refreshAgain) {
           refreshAgain = false;
           void refresh();
@@ -93,5 +96,6 @@ export function useLoad<T>(
   return {
     data: dataKey.current === key ? data : remember ? previous<T>(key) : null,
     error,
+    loading: enabled && (dataKey.current !== key || loading),
   };
 }

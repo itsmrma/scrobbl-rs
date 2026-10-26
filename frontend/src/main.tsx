@@ -44,6 +44,7 @@ function Shell({ logout }: { logout: () => void }) {
     [statusError, setStatusError] = useState("");
   const [jobs, setJobs] = useState<Activity[]>([]),
     [jobsError, setJobsError] = useState("");
+  const [jobsLoading, setJobsLoading] = useState(true);
   const [collapsed, setCollapsed] = useBrowserPreference(
       "sidebar-collapsed",
       false,
@@ -121,6 +122,7 @@ function Shell({ logout }: { logout: () => void }) {
         .then(async (data) => {
           if (!alive.current) return;
           setJobs(data);
+          setJobsLoading(false);
           setJobsError("");
           const artwork = JSON.stringify(
             data
@@ -143,7 +145,10 @@ function Shell({ logout }: { logout: () => void }) {
           }
         })
         .catch((e) => {
-          if (alive.current) setJobsError(e.message);
+          if (alive.current) {
+            setJobsError(e.message);
+            setJobsLoading(false);
+          }
         }),
     ]);
   }
@@ -233,7 +238,7 @@ function Shell({ logout }: { logout: () => void }) {
     ["/settings/general", "settings", "Settings", "settings"],
   ];
   return (
-    <NowPlayingProvider status={status}>
+    <NowPlayingProvider status={status} statusError={statusError}>
       <ArtworkContext
         value={{
           connected: !!status?.connected,
@@ -457,6 +462,7 @@ function Shell({ logout }: { logout: () => void }) {
               </section>
               <section hidden={page !== "activities"}>
                 <Activities
+                  loading={jobsLoading}
                   jobs={jobs}
                   artworkWork={artworkWork}
                   error={jobsError}

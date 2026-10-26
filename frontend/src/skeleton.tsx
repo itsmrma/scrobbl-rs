@@ -489,6 +489,30 @@ export function SkeletonCard({ label }: { label: string }) {
   );
 }
 
+export function SkeletonPlayback({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={compact ? "sidebar-now" : "panel padded"}>
+      <div
+        className="skeleton-container skeleton-playback"
+        role="status"
+        aria-busy="true"
+      >
+        <span className="visually-hidden">Loading now playing…</span>
+        <SkeletonBlock
+          width={compact ? 40 : 96}
+          height={compact ? 40 : 96}
+          borderRadius={6}
+        />
+        <SkeletonText
+          lines={2}
+          widths={["85%", "60%"]}
+          className="skeleton-playback-copy"
+        />
+      </div>
+    </div>
+  );
+}
+
 export function AppShellSkeleton({
   label = "Opening your archive…",
   error,

@@ -6,7 +6,7 @@ import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
-import { SkeletonCardList, SkeletonList } from "./skeleton";
+import { SkeletonCardList, SkeletonList, SkeletonText } from "./skeleton";
 
 function Trash({
   preferences,
@@ -393,12 +393,23 @@ export function ReviewPage({
           >
             <summary>
               <h2>Resolve matching duplicates automatically</h2>
-              <span className="automatic-preview-count">
-                {automatic.error
-                  ? "Preview unavailable"
-                  : automatic.data
-                    ? `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
-                    : "Checking…"}
+              <span
+                className="automatic-preview-count"
+                role="status"
+                aria-busy={!automatic.data && !automatic.error}
+              >
+                {automatic.error ? (
+                  "Preview unavailable"
+                ) : automatic.data ? (
+                  `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
+                ) : (
+                  <>
+                    <span className="visually-hidden">
+                      Checking automatic matches…
+                    </span>
+                    <SkeletonText widths={[100]} />
+                  </>
+                )}
               </span>
               <Icon>expand_more</Icon>
             </summary>
@@ -445,7 +456,7 @@ export function ReviewPage({
                 </div>
               ) : (
                 !automatic.error && (
-                  <p role="status">Checking automatic matches…</p>
+                  <SkeletonList count={1} label="Checking automatic matches…" />
                 )
               )}
             </div>

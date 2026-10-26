@@ -32,6 +32,7 @@ import {
   MusicPageSkeleton,
   OverviewSkeleton,
   RankingsSkeleton,
+  SkeletonList,
 } from "./skeleton";
 import { periods, isBool, useBrowserPreference } from "./preferences";
 import {
@@ -678,7 +679,15 @@ function RankingsPanel({
           )}
         </>
       ) : (
-        !result.error && <RankingsSkeleton />
+        !result.error && (
+          <RankingsSkeleton
+            grid={
+              collage ||
+              (!showView && kind === "albums") ||
+              list.view === "grid"
+            }
+          />
+        )
       )}
       {kind === "artists" && (
         <p className="subtle">
@@ -1183,7 +1192,11 @@ function EntityFilter({
               )}
             </>
           ) : (
-            <li role="status">Finding matches…</li>
+            !options.error && (
+              <li>
+                <SkeletonList count={3} label="Finding matches…" />
+              </li>
+            )
           )}
         </ul>
       )}
