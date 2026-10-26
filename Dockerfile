@@ -12,20 +12,14 @@ FROM rust:1.99.1-bookworm@sha256:5c1a1732ac3f77635b24d397ceb67b4d9ea61de348f68c0
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \
     && rm -rf /var/lib/apt/lists/* && rustup component add rust-docs
 WORKDIR /work
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
-COPY migrations ./migrations
-COPY release-migrations ./release-migrations
-COPY private-migrations ./private-migrations
-COPY static ./static
+COPY . .
 COPY --from=frontend /work/static/dist ./static/dist
+COPY --from=frontend /work/node_modules ./node_modules
 ARG VCS_REF=unknown
 ENV SCROBBL_BUILD_REF=$VCS_REF
 RUN cargo build --locked --release
 # Keep exact dependency source, native licenses and build inputs alongside every binary.
 RUN mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
-COPY . .
-COPY --from=frontend /work/node_modules ./node_modules
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime

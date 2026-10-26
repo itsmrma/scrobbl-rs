@@ -23,7 +23,7 @@ Tutti gli interventi sono stati implementati mantenendo rigorosamente la compati
 | **Backend & Storage** | `src/`, `release-migrations/` | Nuova migrazione `0020` per ritiro artwork temporanei Spotify; rimozione struct e campi obsoleti da DTO e query; ottimizzazioni I/O. |
 | **Frontend TypeScript & React** | `frontend/src/` | Rimozione badge Spotify e chiamate N+1 in `<Cover>`; transizione a `blob:` Object URL sicuri con revoca deterministica; deduplicazione richieste `preferences`; memoizzazione selettori; caching `Intl.DateTimeFormat`. |
 | **Fogli di stile** | `frontend/src/style.css` | Eliminazione di oltre 100 righe di regole CSS morte e duplicate (`.now-panel`, `.private-label`, `.image-provider-badge`, `.rating-input`, ecc.). |
-| **Build, Docker & CI** | `Dockerfile`, `checks.yml`, `package.json` | Caching migliorato dei layer Docker; rimozione step e script ridondanti (`check:web`, doppi typecheck in CI, build prima dei test); restore-keys Cargo. |
+| **Build, Docker & CI** | `.github/workflows/checks.yml`, `package.json` | Rimozione step e script ridondanti (`check:web`, doppi typecheck in CI, build prima dei test); restore-keys Cargo. |
 | **Script & Asset** | `scripts/`, `brag-output-2026-10-24-164300/` | Allineamento tabelle in `verify-spotify-archive.py` e generazione password conforme; rimozione asset intermedi non referenziati. |
 
 ---
@@ -74,7 +74,6 @@ A seguito della decisione di non utilizzare più Spotify come provider per il re
 
 ### Build, CI e Script
 - **`package.json`**: rimosso lo script duplicato `"check:web"` (identico a `"typecheck"`).
-- **`Dockerfile`**: ottimizzato l'ordine delle istruzioni nella fase `build`: la copia dei manifest (`Cargo.toml`, `Cargo.lock`) e dei sorgenti minimi per `cargo build --locked --release` e `cargo vendor` precede ora `COPY . .` e la generazione della distribuzione, evitando la ricostruzione completa del binario Rust a fronte di modifiche alla sola documentazione o ai test.
 - **`.github/workflows/checks.yml`**:
   - Aggiunto `restore-keys:` per massimizzare il riuso della cache di Cargo tra commit vicini.
   - Rimosso lo step ridondante `cargo build --locked --all-targets` nel job `backend`, già eseguito implicitamente da `cargo test`.
@@ -99,7 +98,7 @@ A seguito della decisione di non utilizzare più Spotify come provider per il re
    - Le funzioni di formattazione data e periodi (`date` in `ui.tsx` e `periodLabel` in `consultation.tsx`) memorizzano in cache (`Map<string, Intl.DateTimeFormat>`) le istanze dei formattatori internazionali basate su timezone e opzioni, evitando l'allocazione ripetuta di oggetti `Intl` su ogni riga di ascolto.
 4. **Memoizzazione in `Select` e `Collage`**:
    - In `select.tsx`, i valori derivati dai nodi figli JSX e le opzioni filtrate sono stati racchiusi in `useMemo`, eliminando ricalcoli e riallocazioni a ogni render del parent.
-   - In `collage.tsx`, il calcolo del totale dei play/tempo ascoltato è stato spostato all'esterno del loop di rendering della legenda, ed è stata introdotta una cache per i crediti delle immagini per velocizzare le esportazioni PNG ripetute.
+   - In `collage.tsx`, il calcolo del totale dei play/tempo ascoltato è stato spostato in un `useMemo` all'esterno del loop di rendering della legenda, e la troncatura delle etichette su Canvas è stata resa sicura per i code point Unicode.
 5. **Controllo del Polling in Background**:
    - L'intervallo dell'orologio in `Now` viene sospeso quando la sidebar è collassata o in background (`paused`).
    - La visualizzazione `Recovery` sospende il polling degli asset quando la tab delle impostazioni non è attiva (`active = false`).
