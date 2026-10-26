@@ -3,7 +3,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use http_body_util::BodyExt;
 use scrobbl_rs::{
     AppState, auth,
@@ -819,29 +819,6 @@ async fn statistics_count_each_credit_once_and_search_is_literal() {
         .0,
         StatusCode::BAD_REQUEST
     );
-}
-#[test]
-fn rome_custom_days_follow_daylight_saving_and_end_date_is_inclusive() {
-    let f = web::Filters {
-        from: Some("2025-03-30".into()),
-        to: Some("2025-03-30".into()),
-        ..Default::default()
-    };
-    let (from, to) = web::bounds(&f).unwrap();
-    assert_eq!(to.unwrap() - from.unwrap(), 23 * 3600 * 1000);
-    assert_eq!(
-        from.unwrap(),
-        Utc.with_ymd_and_hms(2025, 3, 29, 23, 0, 0)
-            .unwrap()
-            .timestamp_millis()
-    );
-    let f = web::Filters {
-        from: Some("2025-10-26".into()),
-        to: Some("2025-10-26".into()),
-        ..Default::default()
-    };
-    let (from, to) = web::bounds(&f).unwrap();
-    assert_eq!(to.unwrap() - from.unwrap(), 25 * 3600 * 1000);
 }
 #[test]
 fn rejects_wrong_format_and_preserves_unsplit_artist_names() {

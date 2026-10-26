@@ -134,7 +134,6 @@ pub fn parse_row(row: Value) -> SourceRow {
                 title: title.into(),
                 album_id,
                 album,
-                cover_url: None,
                 duration_ms: None,
                 artists: vec![Artist {
                     id: db::metadata_id("import-artist", &[artist]),

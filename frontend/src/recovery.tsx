@@ -8,12 +8,18 @@ import type {
   Manifest,
   Preferences,
 } from "./generated";
-import { useLoad } from "./library";
+import { useLoad } from "./load";
 import { date, ErrorText, Modal, useToast } from "./ui";
 import { Link } from "./navigation";
 import { SkeletonList } from "./skeleton";
 
-export function Recovery({ preferences }: { preferences: Preferences }) {
+export function Recovery({
+  preferences,
+  active = true,
+}: {
+  preferences: Preferences;
+  active?: boolean;
+}) {
   const [revision, setRevision] = useState(0),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
@@ -30,7 +36,7 @@ export function Recovery({ preferences }: { preferences: Preferences }) {
       status: "all",
     });
   const input = useRef<HTMLInputElement>(null);
-  const loaded = useLoad(() => api.recovery(), String(revision), true, 2000);
+  const loaded = useLoad(() => api.recovery(), String(revision), active, 2000);
   const toast = useToast();
   async function perform(work: () => Promise<unknown>, message: string) {
     setBusy(true);

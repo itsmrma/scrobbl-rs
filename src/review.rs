@@ -84,39 +84,50 @@ pub async fn list(
     .await?;
     let seeds: Vec<String> = sqlx::query_scalar("SELECT id FROM listens WHERE needs_review=1 AND trashed_at_ms IS NULL ORDER BY played_at_ms DESC,id DESC LIMIT 50 OFFSET ?").bind(i64::from(page.page)*50).fetch_all(&mut *conn).await?;
     let mut seen = BTreeSet::new();
-    let mut groups = Vec::new();
+    let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
     for seed in seeds {
         if seen.contains(&seed) {
             continue;
         }
         // Suggestions are evidence for comparison, never an automatic deletion.
         let ids: Vec<String> = sqlx::query_scalar("SELECT l.id FROM listens l JOIN tracks t ON t.id=l.track_id JOIN listens anchor ON anchor.id=? JOIN tracks at ON at.id=anchor.track_id WHERE l.needs_review=1 AND l.trashed_at_ms IS NULL AND l.played_at_ms BETWEEN anchor.played_at_ms-2000 AND anchor.played_at_ms+2000 AND (l.track_id=anchor.track_id OR (t.title=at.title AND EXISTS(SELECT 1 FROM track_artists x JOIN artists a ON a.id=x.artist_id JOIN track_artists y JOIN artists b ON b.id=y.artist_id WHERE x.track_id=t.id AND y.track_id=at.id AND a.name=b.name))) ORDER BY l.played_at_ms DESC,l.id DESC LIMIT 100").bind(&seed).fetch_all(&mut *conn).await?;
-        let mut query = crate::consultation::selection_at(
-            conn,
-            &crate::web::Filters::default(),
-            true,
-            auth::now_ms(),
-        )
-        .await?;
+        seen.extend(ids.iter().cloned());
+        clusters.push((seed, ids));
+    }
+    let mut hydrated = std::collections::HashMap::with_capacity(seen.len());
+    let all_ids: Vec<&str> = seen.iter().map(String::as_str).collect();
+    let now = auth::now_ms();
+    for chunk in all_ids.chunks(500) {
+        let mut query =
+            crate::consultation::selection_at(conn, &crate::web::Filters::default(), true, now)
+                .await?;
         query
             .push(crate::web::LISTEN_COLUMNS)
             .push(" WHERE s.id IN (");
         let mut separated = query.separated(",");
-        for id in &ids {
-            separated.push_bind(id);
+        for id in chunk {
+            separated.push_bind(*id);
         }
-        separated.push_unseparated(") ORDER BY s.played_at_ms DESC,s.id DESC");
+        separated.push_unseparated(")");
         let rows = query.build().fetch_all(&mut *conn).await?;
-        let mut items = Vec::new();
         for row in rows {
             let revision: i64 = row.get("revision");
             let mut item = crate::web::listen_json(row);
             item["revision"] = json!(revision);
-            seen.insert(item["id"].as_str().ok_or(AppError::Internal)?.to_owned());
-            items.push(item);
+            let id = item["id"].as_str().ok_or(AppError::Internal)?.to_owned();
+            hydrated.insert(id, item);
         }
-        groups.push(json!({"id":seed,"items":items}));
     }
+    let groups: Vec<Value> = clusters
+        .into_iter()
+        .map(|(seed, ids)| {
+            let items: Vec<Value> = ids
+                .iter()
+                .filter_map(|id| hydrated.get(id).cloned())
+                .collect();
+            json!({"id": seed, "items": items})
+        })
+        .collect();
     let decisions_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM identity_decisions d WHERE d.kind='listen_review' AND NOT EXISTS(SELECT 1 FROM identity_decisions u WHERE u.kind='listen_review_undo' AND u.to_id=d.id)").fetch_one(&mut *conn).await?;
     let recent: Vec<Value> = sqlx::query("SELECT d.id,d.created_at_ms,d.evidence_json FROM identity_decisions d WHERE d.kind='listen_review' AND NOT EXISTS(SELECT 1 FROM identity_decisions u WHERE u.kind='listen_review_undo' AND u.to_id=d.id) ORDER BY d.created_at_ms DESC,d.id DESC LIMIT 20 OFFSET ?").bind(i64::from(page.decisions_page)*20).fetch_all(&mut *conn).await?.into_iter().map(|r| {
         let evidence: Value = serde_json::from_str(r.get::<&str,_>("evidence_json")).unwrap_or(Value::Null);

@@ -4,6 +4,7 @@ import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
 import { Link } from "./navigation";
+import { WEEKDAYS } from "./preferences";
 import { useLoad } from "./load";
 import { useEffect, useRef, useState } from "react";
 import { ListenBrainzOriginals } from "./listenbrainz";
@@ -83,13 +84,12 @@ function ArtworkProviderStatus({ params }: { params: unknown }) {
     cover_art_archive: "MusicBrainz → Cover Art Archive",
     musicbrainz_image: "MusicBrainz → Commons image",
     wikidata: "MusicBrainz → Wikidata → Commons",
-    spotify: "Spotify",
   };
   return <p>Currently using: {names[provider] || provider}</p>;
 }
 export const isActive = (job: Activity) =>
   ["queued", "running", "waiting"].includes(job.state);
-export const activityName = (job: Activity) =>
+const activityName = (job: Activity) =>
   job.kind === "calendar"
     ? "Recalculate assigned calendar"
     : job.filename || `${job.kind.replaceAll("_", " ")} activity`;
@@ -354,7 +354,7 @@ export function Activities({
   return (
     <>
       {!id && (
-        <Heading eyebrow="YOUR ARCHIVE AT WORK" title="Activities">
+        <Heading title="Activities">
           Your imports, collection and calendar updates. Follow the progress or
           open a saved report.
         </Heading>
@@ -463,17 +463,7 @@ export function Activities({
               {job.target_timezone && (
                 <p>
                   Requested calendar: {job.target_timezone} · week starts{" "}
-                  {
-                    [
-                      "Monday",
-                      "Tuesday",
-                      "Wednesday",
-                      "Thursday",
-                      "Friday",
-                      "Saturday",
-                      "Sunday",
-                    ][job.target_week_start || 0]
-                  }
+                  {WEEKDAYS[job.target_week_start || 0]}
                 </p>
               )}
               {!!(
@@ -704,38 +694,21 @@ export function Activities({
                 detail.data?.members.map((member, index) => (
                   <div className="job" key={`${index}:${member.member}`}>
                     <strong>{member.member}</strong>
-                    {job.kind === "artwork" ? (
-                      <span>
-                        {member.state === "pending"
-                          ? member.error_code === "artwork_provider_wait"
-                            ? "Waiting for provider retry"
-                            : "Queued"
-                          : member.skipped
-                            ? "No image available"
-                            : member.duplicates
-                              ? "Already cached"
-                              : "Saved"}
-                      </span>
-                    ) : (
-                      <>
-                        <span>
-                          {member.kind} · {member.state} · {member.processed}{" "}
-                          processed
-                          {member.expected_rows === null
-                            ? " · total unknown"
-                            : ` of ${member.expected_rows}`}
-                        </span>
-                        <p>
-                          {member.originals} new originals | {member.variants}{" "}
-                          new variants | {member.duplicates} known rows |{" "}
-                          {member.added} new listens | {member.reconciled}{" "}
-                          reconciled | {member.invalid} invalid |{" "}
-                          {member.skipped} non-music | {member.below_threshold}{" "}
-                          below threshold
-                        </p>
-                      </>
-                    )}
-                    {member.error_code && job.kind !== "artwork" && (
+                    <span>
+                      {member.kind} · {member.state} · {member.processed}{" "}
+                      processed
+                      {member.expected_rows === null
+                        ? " · total unknown"
+                        : ` of ${member.expected_rows}`}
+                    </span>
+                    <p>
+                      {member.originals} new originals | {member.variants} new
+                      variants | {member.duplicates} known rows | {member.added}{" "}
+                      new listens | {member.reconciled} reconciled |{" "}
+                      {member.invalid} invalid | {member.skipped} non-music |{" "}
+                      {member.below_threshold} below threshold
+                    </p>
+                    {member.error_code && (
                       <p className="form-error">{member.error_code}</p>
                     )}
                   </div>

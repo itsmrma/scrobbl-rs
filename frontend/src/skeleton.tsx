@@ -149,7 +149,7 @@ export function SkeletonRankingRow({ grid = false }: { grid?: boolean }) {
           style={{ marginTop: 4 }}
         />
       </div>
-      <div className="rank-metric">
+      <div className="rank-value">
         <SkeletonBlock width={36} height={14} borderRadius={4} />
       </div>
     </li>
@@ -489,20 +489,16 @@ export function SkeletonCard({ label }: { label: string }) {
   );
 }
 
-export function SkeletonPlayback({ compact = false }: { compact?: boolean }) {
+export function SkeletonPlayback() {
   return (
-    <div className={compact ? "sidebar-now" : "panel padded"}>
+    <div className="sidebar-now">
       <div
         className="skeleton-container skeleton-playback"
         role="status"
         aria-busy="true"
       >
         <span className="visually-hidden">Loading now playing…</span>
-        <SkeletonBlock
-          width={compact ? 40 : 96}
-          height={compact ? 40 : 96}
-          borderRadius={6}
-        />
+        <SkeletonBlock width={40} height={40} borderRadius={6} />
         <SkeletonText
           lines={2}
           widths={["85%", "60%"]}

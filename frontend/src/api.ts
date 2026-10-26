@@ -30,7 +30,7 @@ import type {
   Listen,
 } from "./generated";
 
-export class SessionExpired extends Error {}
+class SessionExpired extends Error {}
 let csrf: string | null = null;
 export function setCsrf(value: string | null) {
   csrf = value;
@@ -51,7 +51,7 @@ window.addEventListener("pageshow", () => {
 });
 // Artwork downloads survive SPA navigation but must be cancelled before the
 // document disappears, just like the JSON reads below (not left to WebKit).
-export async function downloadArtwork(path: string) {
+export async function downloadArtwork(path: string): Promise<string> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
   const controller = new AbortController();
@@ -62,7 +62,7 @@ export async function downloadArtwork(path: string) {
       credentials: "same-origin",
     });
     if (!response.ok) throw new Error("Artwork download failed");
-    await response.arrayBuffer();
+    return URL.createObjectURL(await response.blob());
   } finally {
     pendingRequests.delete(controller);
   }
@@ -139,6 +139,17 @@ export type ReviewPage = {
   groups: { id: string; items: (Listen & { revision: number })[] }[];
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
+export type ListenBrainzOriginalsPage = {
+  total: number;
+  files: { file_id: string; name: string }[];
+  rows: {
+    member: string;
+    row_number: number;
+    outcome: string;
+    reason: string | null;
+    raw: unknown;
+  }[];
+};
 export const api = {
   account: () => request<AccountProfile>("/api/v1/account"),
   saveAccount: (name: string) =>
@@ -204,6 +215,10 @@ export const api = {
       member_ids,
     }),
   listenBrainzLimits: () => request<Limits>("/api/v1/listenbrainz/limits"),
+  listenBrainzOriginals: (id: string, offset: number) =>
+    request<ListenBrainzOriginalsPage>(
+      `/api/v1/listenbrainz/jobs/${encodeURIComponent(id)}/originals?offset=${offset}`,
+    ),
   importListenBrainz: (form: FormData) =>
     post<{ jobs: string[] }>("/api/v1/listenbrainz/upload", form),
   fetchListenBrainz: (form: { username: string; from: string; to: string }) =>

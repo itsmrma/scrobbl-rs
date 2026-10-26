@@ -43,20 +43,47 @@ impl Application {
 
 pub async fn profile(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
-    let username: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key='owner_username'")
-            .fetch_optional(&state.private_db)
-            .await?;
-    let name: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key='profile_name'")
-            .fetch_optional(&state.private_db)
-            .await?;
-    let avatar: Option<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key='profile_avatar'")
-            .fetch_optional(&state.private_db)
-            .await?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, CASE WHEN key='profile_avatar' THEN '1' ELSE value END FROM settings WHERE key IN ('owner_username','profile_name','profile_avatar_etag','profile_avatar')",
+    )
+    .fetch_all(&state.private_db)
+    .await?;
+    let mut username = None;
+    let mut name = None;
+    let mut avatar_etag = None;
+    let mut has_avatar = false;
+    for (key, value) in rows {
+        match key.as_str() {
+            "owner_username" => username = Some(value),
+            "profile_name" => name = Some(value),
+            "profile_avatar_etag" => avatar_etag = Some(value),
+            "profile_avatar" => has_avatar = true,
+            _ => {}
+        }
+    }
+    if has_avatar
+        && avatar_etag.is_none()
+        && let Some(raw) =
+            sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key='profile_avatar'")
+                .fetch_optional(&state.private_db)
+                .await?
+    {
+        let etag = auth::digest(&raw);
+        let _ = sqlx::query(
+            "INSERT INTO settings(key,value) VALUES('profile_avatar_etag',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        )
+        .bind(&etag)
+        .execute(&state.private_db)
+        .await;
+        avatar_etag = Some(etag);
+    }
+    let avatar_url = if has_avatar {
+        avatar_etag.map(|etag| format!("/api/v1/account/avatar?v={etag}"))
+    } else {
+        None
+    };
     Ok(Json(
-        json!({"username":username,"name":name.unwrap_or_default(),"avatar_url":avatar.map(|v|format!("/api/v1/account/avatar?v={}",auth::digest(&v)))}),
+        json!({"username":username,"name":name.unwrap_or_default(),"avatar_url":avatar_url}),
     ))
 }
 
@@ -88,7 +115,18 @@ pub async fn upload_avatar(
 ) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
     crate::library::image_type(&bytes)?;
-    sqlx::query("INSERT INTO settings(key,value) VALUES('profile_avatar',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(auth::encode_hex(&bytes)).execute(&state.private_db).await?;
+    let encoded = auth::encode_hex(&bytes);
+    let etag = auth::digest(&encoded);
+    let mut tx = state.private_db.begin().await?;
+    sqlx::query("INSERT INTO settings(key,value) VALUES('profile_avatar',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(&encoded)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("INSERT INTO settings(key,value) VALUES('profile_avatar_etag',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(&etag)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     profile(State(state), headers).await
 }
 pub async fn remove_avatar(
@@ -96,10 +134,18 @@ pub async fn remove_avatar(
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
-    sqlx::query("DELETE FROM settings WHERE key='profile_avatar'")
+    sqlx::query("DELETE FROM settings WHERE key IN ('profile_avatar','profile_avatar_etag')")
         .execute(&state.private_db)
         .await?;
     profile(State(state), headers).await
+}
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
 }
 pub async fn avatar(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
     auth::session(&state, &headers).await?;
@@ -107,15 +153,18 @@ pub async fn avatar(State(state): State<AppState>, headers: HeaderMap) -> Result
         .fetch_optional(&state.private_db)
         .await?
         .ok_or(AppError::NotFound)?;
+    if !value.len().is_multiple_of(2) {
+        return Err(AppError::Internal);
+    }
     let bytes = value
         .as_bytes()
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|pair| {
-            std::str::from_utf8(pair)
-                .ok()
-                .and_then(|s| u8::from_str_radix(s, 16).ok())
+        .map(|&[hi, lo]| {
+            hex_nibble(hi)
+                .zip(hex_nibble(lo))
+                .map(|(h, l)| (h << 4) | l)
                 .ok_or(AppError::Internal)
         })
         .collect::<Result<Vec<_>>>()?;

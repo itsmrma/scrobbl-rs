@@ -26,7 +26,7 @@ import { Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
-import { ArtworkContext, Heading, Icon, Toasts, Wordmark } from "./ui";
+import { Heading, Icon, Toasts, Wordmark } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
 import { Auth, UsernameSetup } from "./account";
@@ -102,7 +102,7 @@ function Shell({ logout }: { logout: () => void }) {
     };
   }, [mobileOpen, mobile]);
   const alive = useRef(true);
-  const lastCalendar = useRef("");
+  const lastCalendar = useRef<string | null>(null);
   const lastArtwork = useRef("");
   async function refresh() {
     await Promise.all([
@@ -138,7 +138,9 @@ function Shell({ logout }: { logout: () => void }) {
               .filter((j) => j.kind === "calendar")
               .map((j) => [j.id, j.state]),
           );
-          if (calendar !== lastCalendar.current) {
+          if (lastCalendar.current === null) {
+            lastCalendar.current = calendar;
+          } else if (calendar !== lastCalendar.current) {
             lastCalendar.current = calendar;
             const p = await api.preferences();
             if (alive.current) setPreferences(p);
@@ -239,298 +241,297 @@ function Shell({ logout }: { logout: () => void }) {
   ];
   return (
     <NowPlayingProvider status={status} statusError={statusError}>
-      <ArtworkContext
-        value={{
-          connected: !!status?.connected,
-          retryAt: status?.retry_at_ms || null,
-        }}
+      <div
+        className={`app-layout ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}
+        style={{ "--sidebar-width": `${width}px` } as Style}
       >
-        <div
-          className={`app-layout ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}
-          style={{ "--sidebar-width": `${width}px` } as Style}
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
+        {mobileOpen && (
+          <button
+            className="sidebar-backdrop"
+            aria-label="Close navigation"
+            onClick={() => setMobileOpen(false)}
+          />
+        )}
+        <aside
+          ref={sidebar}
+          inert={mobile && !mobileOpen}
+          className="sidebar"
+          id="navigation-panel"
         >
-          <a className="skip-link" href="#main">
-            Skip to content
-          </a>
-          {mobileOpen && (
+          <div className="sidebar-heading">
+            <Link to="/dashboard" className="brand">
+              <img src="/favicon.svg" alt="" width="30" height="30" />
+              <span className="nav-copy">
+                <Wordmark name={preferences.name} />
+              </span>
+            </Link>
             <button
-              className="sidebar-backdrop"
+              className="icon-button desktop-collapse"
+              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+              aria-expanded={!collapsed}
+              onClick={() => setCollapsed(!collapsed)}
+            >
+              <Icon>{collapsed ? "chevron_right" : "chevron_left"}</Icon>
+            </button>
+            <button
+              className="icon-button mobile-close"
               aria-label="Close navigation"
               onClick={() => setMobileOpen(false)}
-            />
-          )}
-          <aside
-            ref={sidebar}
-            inert={mobile && !mobileOpen}
-            className="sidebar"
-            id="navigation-panel"
-          >
-            <div className="sidebar-heading">
-              <Link to="/dashboard" className="brand">
-                <img src="/favicon.svg" alt="" width="30" height="30" />
-                <span className="nav-copy">
-                  <Wordmark name={preferences.name} />
-                </span>
-              </Link>
-              <button
-                className="icon-button desktop-collapse"
-                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                aria-expanded={!collapsed}
-                onClick={() => setCollapsed(!collapsed)}
-              >
-                <Icon>{collapsed ? "chevron_right" : "chevron_left"}</Icon>
-              </button>
-              <button
-                className="icon-button mobile-close"
-                aria-label="Close navigation"
-                onClick={() => setMobileOpen(false)}
-              >
-                <Icon>close</Icon>
-              </button>
-            </div>
-            <p className="eyebrow nav-copy">YOUR LIBRARY</p>
-            <nav aria-label="Main navigation">
-              {nav.map(([to, key, label, icon]) => (
-                <Link
-                  key={to}
-                  to={to}
-                  aria-label={label}
-                  className={
-                    page === key || (page === "review" && key === "history")
-                      ? "active"
-                      : ""
-                  }
-                  aria-current={
-                    page === key || (page === "review" && key === "history")
-                      ? "page"
-                      : undefined
-                  }
-                >
-                  <Icon>{icon}</Icon>
-                  <span className="nav-copy">{label}</span>
-                  <span className="collapsed-label">{label}</span>
-                </Link>
-              ))}
-            </nav>
-            <div className="sidebar-activities">
-              <Link
-                to="/activities"
-                className={
-                  "activity-link " + (page === "activities" ? "active" : "")
-                }
-                aria-current={page === "activities" ? "page" : undefined}
-                aria-label={`Activities: ${activeCount} active`}
-              >
-                <Icon>pending_actions</Icon>
-                <span className="nav-copy">
-                  Activities <span className="pill">{activeCount}</span>
-                </span>
-                <span className="collapsed-label">
-                  Activities: {activeCount} active
-                </span>
-                {collapsed && (
-                  <span className="activity-count" aria-hidden="true">
-                    {activeCount}
-                  </span>
-                )}
-              </Link>
-              <div className="nav-copy">
-                <p className="subtle" role="status">
-                  {jobsError ||
-                    (activeCount
-                      ? `${activeCount} in progress`
-                      : "No activities running")}
-                </p>
-                {artworkWork.pending > 0 && (
-                  <ArtworkWork work={artworkWork} compact />
-                )}
-                {activeJobs.slice(0, 2).map((job) => (
-                  <SidebarActivity key={job.id} job={job} />
-                ))}
-                {jobs.some((j) => j.state === "failed") && (
-                  <Link to="/activities" className="warning">
-                    Review failed activities
-                  </Link>
-                )}
-              </div>
-            </div>
-            <div className="sidebar-bottom">
-              <Now status={status} compact />
-            </div>
-          </aside>
-          {!collapsed && (
-            <div
-              className="sidebar-resizer"
-              role="separator"
-              tabIndex={0}
-              aria-label="Sidebar width"
-              aria-orientation="vertical"
-              aria-controls="navigation-panel"
-              aria-valuemin={216}
-              aria-valuemax={360}
-              aria-valuenow={width}
-              onKeyDown={(e) => {
-                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
-                  return;
-                e.preventDefault();
-                setWidth(
-                  e.key === "Home"
-                    ? 216
-                    : e.key === "End"
-                      ? 360
-                      : Math.max(
-                          216,
-                          Math.min(
-                            360,
-                            width + (e.key === "ArrowLeft" ? -16 : 16),
-                          ),
-                        ),
-                );
-              }}
-              onPointerDown={(e) => {
-                drag.current = { x: e.clientX, width };
-                e.currentTarget.setPointerCapture(e.pointerId);
-              }}
-              onPointerMove={(e) => {
-                if (drag.current)
-                  setWidth(
-                    Math.max(
-                      216,
-                      Math.min(
-                        360,
-                        drag.current.width + e.clientX - drag.current.x,
-                      ),
-                    ),
-                  );
-              }}
-              onPointerUp={() => {
-                drag.current = null;
-              }}
-              onPointerCancel={() => {
-                drag.current = null;
-              }}
-            />
-          )}
-          <div className="main-area">
-            <header className="topbar">
-              <button
-                ref={menu}
-                className="icon-button mobile-menu"
-                aria-label="Open navigation"
-                aria-expanded={mobileOpen}
-                aria-controls="navigation-panel"
-                onClick={() => setMobileOpen(true)}
-              >
-                <Icon>menu</Icon>
-              </button>
-              <span>Your library / {title}</span>
-              <Link to="/activities" className="mobile-activities">
-                <Icon>pending_actions</Icon>Activities ({activeCount})
-              </Link>
-              <AccountMenu logout={logout} />
-            </header>
-            <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
-              <section hidden={page !== "dashboard"}>
-                <Overview
-                  preferences={preferences}
-                  visible={page === "dashboard"}
-                  status={status}
-                />
-              </section>
-              <section hidden={page !== "history"}>
-                <HistoryPage
-                  preferences={preferences}
-                  visible={page === "history"}
-                />
-              </section>
-              {page === "review" && (
-                <ReviewPage preferences={preferences} refresh={refresh} />
-              )}
-              <section hidden={page !== "import"}>
-                <ImportPage refresh={refresh} />
-              </section>
-              <section hidden={page !== "settings"}>
-                <Settings
-                  section={settingsSection}
-                  preferences={preferences}
-                  saved={setPreferences}
-                  appearance={appearance}
-                  status={status}
-                  refresh={refresh}
-                  statusError={statusError}
-                />
-              </section>
-              <section hidden={page !== "activities"}>
-                <Activities
-                  loading={jobsLoading}
-                  jobs={jobs}
-                  artworkWork={artworkWork}
-                  error={jobsError}
-                  path={path}
-                  preferences={preferences}
-                  refresh={refresh}
-                />
-              </section>
-              {page === "rankings" &&
-                kinds.includes(path.split("/")[2] as Kind) && (
-                  <RankingsPage
-                    status={status}
-                    preferences={preferences}
-                    kind={path.split("/")[2] as Kind}
-                    key={path}
-                  />
-                )}
-              {path === "/music/now-playing" && <NowPlayingPage />}
-              {page === "music" &&
-                kinds.includes(path.split("/")[2] as Kind) &&
-                path.split("/")[3] &&
-                (path.split("/")[4] === "edit" ? (
-                  <MusicEdit
-                    kind={path.split("/")[2] as Kind}
-                    id={decodeURIComponent(path.split("/")[3])}
-                    key={path}
-                  />
-                ) : (
-                  <MusicPage
-                    preferences={preferences}
-                    kind={path.split("/")[2] as Kind}
-                    id={decodeURIComponent(path.split("/")[3])}
-                    key={path}
-                  />
-                ))}
-              {![
-                "rankings",
-                "music",
-                "dashboard",
-                "history",
-                "review",
-                "import",
-                "settings",
-                "activities",
-              ].includes(page) && (
-                <>
-                  <Heading title="Page not found" />
-                  <Link to="/dashboard">Back to overview</Link>
-                </>
-              )}
-            </main>
-            <footer>
-              <div className="footer-meta">
-                <a href="/licenses" target="_blank" rel="noreferrer">
-                  Licenses
-                </a>
-                <span className="footer-separator" aria-hidden="true">
-                  ·
-                </span>
-                <span>{preferences.name}</span>
-              </div>
-              <span className="footer-tagline">
-                Made for the music you keep.
-              </span>
-            </footer>
+            >
+              <Icon>close</Icon>
+            </button>
           </div>
+          <p className="eyebrow nav-copy">YOUR LIBRARY</p>
+          <nav aria-label="Main navigation">
+            {nav.map(([to, key, label, icon]) => (
+              <Link
+                key={to}
+                to={to}
+                aria-label={label}
+                className={
+                  page === key || (page === "review" && key === "history")
+                    ? "active"
+                    : ""
+                }
+                aria-current={
+                  page === key || (page === "review" && key === "history")
+                    ? "page"
+                    : undefined
+                }
+              >
+                <Icon>{icon}</Icon>
+                <span className="nav-copy">{label}</span>
+                <span className="collapsed-label">{label}</span>
+              </Link>
+            ))}
+          </nav>
+          <div className="sidebar-activities">
+            <Link
+              to="/activities"
+              className={
+                "activity-link " + (page === "activities" ? "active" : "")
+              }
+              aria-current={page === "activities" ? "page" : undefined}
+              aria-label={`Activities: ${activeCount} active`}
+            >
+              <Icon>pending_actions</Icon>
+              <span className="nav-copy">
+                Activities <span className="pill">{activeCount}</span>
+              </span>
+              <span className="collapsed-label">
+                Activities: {activeCount} active
+              </span>
+              {collapsed && (
+                <span className="activity-count" aria-hidden="true">
+                  {activeCount}
+                </span>
+              )}
+            </Link>
+            <div className="nav-copy">
+              <p className="subtle" role="status">
+                {jobsError ||
+                  (activeCount
+                    ? `${activeCount} in progress`
+                    : "No activities running")}
+              </p>
+              {artworkWork.pending > 0 && (
+                <ArtworkWork work={artworkWork} compact />
+              )}
+              {activeJobs.slice(0, 2).map((job) => (
+                <SidebarActivity key={job.id} job={job} />
+              ))}
+              {jobs.some((j) => j.state === "failed") && (
+                <Link to="/activities" className="warning">
+                  Review failed activities
+                </Link>
+              )}
+            </div>
+          </div>
+          <div className="sidebar-bottom">
+            <Now
+              status={status}
+              paused={(collapsed && !mobile) || (mobile && !mobileOpen)}
+            />
+          </div>
+        </aside>
+        {!collapsed && (
+          <div
+            className="sidebar-resizer"
+            role="separator"
+            tabIndex={0}
+            aria-label="Sidebar width"
+            aria-orientation="vertical"
+            aria-controls="navigation-panel"
+            aria-valuemin={216}
+            aria-valuemax={360}
+            aria-valuenow={width}
+            onKeyDown={(e) => {
+              if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
+                return;
+              e.preventDefault();
+              setWidth(
+                e.key === "Home"
+                  ? 216
+                  : e.key === "End"
+                    ? 360
+                    : Math.max(
+                        216,
+                        Math.min(
+                          360,
+                          width + (e.key === "ArrowLeft" ? -16 : 16),
+                        ),
+                      ),
+              );
+            }}
+            onPointerDown={(e) => {
+              drag.current = { x: e.clientX, width };
+              e.currentTarget.setPointerCapture(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              if (drag.current)
+                setWidth(
+                  Math.max(
+                    216,
+                    Math.min(
+                      360,
+                      drag.current.width + e.clientX - drag.current.x,
+                    ),
+                  ),
+                );
+            }}
+            onPointerUp={() => {
+              drag.current = null;
+            }}
+            onPointerCancel={() => {
+              drag.current = null;
+            }}
+          />
+        )}
+        <div className="main-area">
+          <header className="topbar">
+            <button
+              ref={menu}
+              className="icon-button mobile-menu"
+              aria-label="Open navigation"
+              aria-expanded={mobileOpen}
+              aria-controls="navigation-panel"
+              onClick={() => setMobileOpen(true)}
+            >
+              <Icon>menu</Icon>
+            </button>
+            <span>Your library / {title}</span>
+            <Link to="/activities" className="mobile-activities">
+              <Icon>pending_actions</Icon>Activities ({activeCount})
+            </Link>
+            <AccountMenu logout={logout} />
+          </header>
+          <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
+            <section hidden={page !== "dashboard"}>
+              <Overview
+                preferences={preferences}
+                visible={page === "dashboard"}
+                status={status}
+              />
+            </section>
+            <section hidden={page !== "history"}>
+              <HistoryPage
+                preferences={preferences}
+                visible={page === "history"}
+              />
+            </section>
+            {page === "review" && (
+              <ReviewPage preferences={preferences} refresh={refresh} />
+            )}
+            <section hidden={page !== "import"}>
+              <ImportPage
+                refresh={refresh}
+                visible={page === "import"}
+                preferences={preferences}
+              />
+            </section>
+            <section hidden={page !== "settings"}>
+              <Settings
+                section={settingsSection}
+                preferences={preferences}
+                saved={setPreferences}
+                appearance={appearance}
+                status={status}
+                refresh={refresh}
+                statusError={statusError}
+                visible={page === "settings"}
+              />
+            </section>
+            <section hidden={page !== "activities"}>
+              <Activities
+                loading={jobsLoading}
+                jobs={jobs}
+                artworkWork={artworkWork}
+                error={jobsError}
+                path={path}
+                preferences={preferences}
+                refresh={refresh}
+              />
+            </section>
+            {page === "rankings" &&
+              kinds.includes(path.split("/")[2] as Kind) && (
+                <RankingsPage
+                  status={status}
+                  preferences={preferences}
+                  kind={path.split("/")[2] as Kind}
+                  key={path}
+                />
+              )}
+            {path === "/music/now-playing" && <NowPlayingPage />}
+            {page === "music" &&
+              kinds.includes(path.split("/")[2] as Kind) &&
+              path.split("/")[3] &&
+              (path.split("/")[4] === "edit" ? (
+                <MusicEdit
+                  kind={path.split("/")[2] as Kind}
+                  id={decodeURIComponent(path.split("/")[3])}
+                  key={path}
+                />
+              ) : (
+                <MusicPage
+                  preferences={preferences}
+                  kind={path.split("/")[2] as Kind}
+                  id={decodeURIComponent(path.split("/")[3])}
+                  key={path}
+                />
+              ))}
+            {![
+              "rankings",
+              "music",
+              "dashboard",
+              "history",
+              "review",
+              "import",
+              "settings",
+              "activities",
+            ].includes(page) && (
+              <>
+                <Heading title="Page not found" />
+                <Link to="/dashboard">Back to overview</Link>
+              </>
+            )}
+          </main>
+          <footer>
+            <div className="footer-meta">
+              <a href="/licenses" target="_blank" rel="noreferrer">
+                Licenses
+              </a>
+              <span className="footer-separator" aria-hidden="true">
+                ·
+              </span>
+              <span>{preferences.name}</span>
+            </div>
+            <span className="footer-tagline">Made for the music you keep.</span>
+          </footer>
         </div>
-      </ArtworkContext>
+      </div>
     </NowPlayingProvider>
   );
 }

@@ -12,8 +12,6 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
 };
-use chrono::{Datelike, Duration, NaiveDate, TimeZone, Utc};
-use chrono_tz::Europe::Rome;
 use serde_json::{Value, json};
 use sqlx::Row;
 
@@ -328,7 +326,7 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' https://i.scdn.co; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
+    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
@@ -341,77 +339,6 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
 }
 pub use crate::consultation::Filters;
 use crate::consultation::selection_at;
-fn midnight(date: NaiveDate) -> Result<i64> {
-    Rome.from_local_datetime(&date.and_hms_opt(0, 0, 0).ok_or(AppError::Internal)?)
-        .single()
-        .map(|v| v.timestamp_millis())
-        .ok_or_else(|| {
-            AppError::BadRequest("This local date cannot be represented in Europe/Rome.".into())
-        })
-}
-pub fn bounds(filters: &Filters) -> Result<(Option<i64>, Option<i64>)> {
-    let today = Utc::now().with_timezone(&Rome).date_naive();
-    let custom = filters.from.as_deref().filter(|v| !v.is_empty()).is_some()
-        || filters.to.as_deref().filter(|v| !v.is_empty()).is_some();
-    if custom || filters.period.as_deref() == Some("custom") {
-        let parse = |s: &Option<String>| -> Result<Option<NaiveDate>> {
-            s.as_deref()
-                .filter(|s| !s.is_empty())
-                .map(|s| {
-                    NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                        .map_err(|_| AppError::BadRequest("Use dates in YYYY-MM-DD format.".into()))
-                })
-                .transpose()
-        };
-        let from = parse(&filters.from)?;
-        let to = parse(&filters.to)?;
-        if from.zip(to).is_some_and(|(f, t)| f > t) {
-            return Err(AppError::BadRequest(
-                "The end date must be on or after the start date.".into(),
-            ));
-        }
-        let end = to
-            .map(|d| {
-                d.succ_opt()
-                    .ok_or_else(|| AppError::BadRequest("End date is out of range.".into()))
-            })
-            .transpose()?;
-        return Ok((
-            from.map(midnight).transpose()?,
-            end.map(midnight).transpose()?,
-        ));
-    }
-    let start = match filters.period.as_deref().unwrap_or("all") {
-        "all" => return Ok((None, None)),
-        "today" => today,
-        "week" => today - Duration::days(today.weekday().num_days_from_monday().into()),
-        "month" => today.with_day(1).ok_or(AppError::Internal)?,
-        "year" => NaiveDate::from_ymd_opt(today.year(), 1, 1).ok_or(AppError::Internal)?,
-        "7d" => {
-            return Ok((
-                Some(auth::now_ms() - 7 * 86_400_000),
-                Some(auth::now_ms() + 1),
-            ));
-        }
-        "30d" => {
-            return Ok((
-                Some(auth::now_ms() - 30 * 86_400_000),
-                Some(auth::now_ms() + 1),
-            ));
-        }
-        "365d" => {
-            return Ok((
-                Some(auth::now_ms() - 365 * 86_400_000),
-                Some(auth::now_ms() + 1),
-            ));
-        }
-        _ => return Err(AppError::BadRequest("Unknown period.".into())),
-    };
-    Ok((
-        Some(midnight(start)?),
-        Some(midnight(today.succ_opt().ok_or(AppError::Internal)?)?),
-    ))
-}
 pub(crate) fn listen_json(r: sqlx::sqlite::SqliteRow) -> Value {
     json!({"id":r.get::<String,_>("id"),"track_id":r.get::<String,_>("track_id"),"title":r.get::<String,_>("title"),"album_id":r.get::<Option<String>,_>("album_id"),"timezone":r.get::<String,_>("timezone"),"local_date":r.get::<String,_>("local_date"),"week_date":r.get::<String,_>("week_date"),"album":r.get::<Option<String>,_>("album"),"cover_url":r.get::<Option<String>,_>("cover_url"),"spotify_url":r.get::<Option<String>,_>("spotify_url"),"played_at_ms":r.get::<i64,_>("played_at_ms"),"first_acquired_at_ms":r.get::<i64,_>("first_acquired_at_ms"),"listened_ms":r.get::<Option<i64>,_>("listened_ms"),"duration_kind":r.get::<String,_>("duration_kind"),"counted":r.get::<bool,_>("counted"),"needs_review":r.get::<bool,_>("needs_review"),
         "artists":serde_json::from_str::<Value>(&r.get::<String,_>("artists")).unwrap_or(json!([])),"sources":serde_json::from_str::<Value>(&r.get::<String,_>("sources")).unwrap_or(json!([]))})
@@ -429,7 +356,8 @@ pub async fn history(
     }
     let now = auth::now_ms();
     let (page, size) = crate::browse::paging(&filters)?;
-    let mut count = selection_at(&mut view.transaction, &filters, true, now).await?;
+    let has_search = filters.q.as_deref().is_some_and(|q| !q.trim().is_empty());
+    let mut count = selection_at(&mut view.transaction, &filters, has_search, now).await?;
     count.push("SELECT COUNT(*) FROM selected");
     let total: i64 = count
         .build_query_scalar()
@@ -459,7 +387,6 @@ pub async fn dashboard(
     Query(filters): Query<Filters>,
 ) -> Result<Json<crate::dto::Dashboard>> {
     auth::session(&state, &headers).await?;
-    let mut cache = state.dashboard_cache.lock().await;
     let mut view = state.storage.read_view().await?;
     let preferences = crate::preferences::read(&mut view.transaction).await?;
     // Absolute selections remain valid until archive identity/revision or preferences
@@ -467,13 +394,19 @@ pub async fn dashboard(
     let cacheable = matches!(filters.period.as_deref().unwrap_or("all"), "all" | "custom")
         || filters.from.as_deref().is_some_and(|s| !s.is_empty())
         || filters.to.as_deref().is_some_and(|s| !s.is_empty());
-    let key = serde_json::to_string(&(&view.identity, &preferences, &filters))
-        .map_err(|_| AppError::Internal)?;
-    if cacheable && let Some((_, value)) = cache.iter().find(|(stored, _)| stored == &key) {
-        return Ok(Json(
-            serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?,
-        ));
-    }
+    let key = if cacheable {
+        let key = serde_json::to_string(&(&view.identity, &preferences, &filters))
+            .map_err(|_| AppError::Internal)?;
+        let cache = state.dashboard_cache.lock().await;
+        if let Some((_, value)) = cache.iter().find(|(stored, _)| stored == &key) {
+            return Ok(Json(
+                serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?,
+            ));
+        }
+        Some(key)
+    } else {
+        None
+    };
     let order = match filters.sort.as_deref().unwrap_or("plays") {
         "plays" => "plays DESC, listened_ms DESC, name COLLATE NOCASE, id",
         "time" => "listened_ms DESC, plays DESC, name COLLATE NOCASE, id",
@@ -521,12 +454,15 @@ pub async fn dashboard(
         .collect();
     let value = json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":preferences.timezone});
     let response = serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?;
-    if cacheable {
+    if let Some(key) = key {
         // At most sixteen small response projections; no originals or complete history.
-        if cache.len() == 16 {
-            cache.pop_front();
+        let mut cache = state.dashboard_cache.lock().await;
+        if !cache.iter().any(|(stored, _)| stored == &key) {
+            if cache.len() == 16 {
+                cache.pop_front();
+            }
+            cache.push_back((key, value));
         }
-        cache.push_back((key, value));
     }
     Ok(Json(response))
 }

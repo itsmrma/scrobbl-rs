@@ -92,20 +92,29 @@ async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<String> {
     Ok(digest)
 }
 
+#[derive(Clone)]
+pub struct AuthenticatedKey(String);
+
 /// Called inside the common Host check and recovery request gate, before owner CSRF rules.
-pub async fn security(state: AppState, request: Request, next: Next) -> Response {
+pub async fn security(state: AppState, mut request: Request, next: Next) -> Response {
     let origin = request
         .headers()
         .get(header::ORIGIN)
         .and_then(|h| h.to_str().ok())
         .map(str::to_owned);
-    let allowed = match crate::api_keys::origins(&state).await {
-        Ok(v) => v,
-        Err(_) => return unavailable().into_response(),
+    let cors = if let Some(ref o) = origin {
+        if *o == state.config.origin() {
+            Some(o.clone())
+        } else {
+            let allowed = match crate::api_keys::origins(&state).await {
+                Ok(v) => v,
+                Err(_) => return unavailable().into_response(),
+            };
+            allowed.contains(o).then(|| o.clone())
+        }
+    } else {
+        None
     };
-    let cors = origin
-        .as_ref()
-        .filter(|o| allowed.contains(o) || **o == state.config.origin());
     let mut response = if origin.is_some() && cors.is_none() {
         ApiError(
             StatusCode::FORBIDDEN,
@@ -158,6 +167,9 @@ pub async fn security(state: AppState, request: Request, next: Next) -> Response
                     .bind(&digest).bind(window).fetch_one(&state.private_db).await;
                 match count {
                     Ok(n) if n <= 120 => {
+                        request
+                            .extensions_mut()
+                            .insert(AuthenticatedKey(digest.clone()));
                         let response = next.run(request).await;
                         if response.status().is_success() {
                             let _ =
@@ -187,7 +199,7 @@ pub async fn security(state: AppState, request: Request, next: Next) -> Response
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    if let Some(origin) = cors.and_then(|o| HeaderValue::from_str(o).ok()) {
+    if let Some(origin) = cors.as_deref().and_then(|o| HeaderValue::from_str(o).ok()) {
         headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
@@ -279,19 +291,20 @@ pub struct ApiPage {
     pub complete: bool,
 }
 async fn identity(state: &AppState) -> Result<Identity> {
-    let (value, maintenance): (Identity, bool) = {
-        let mut tx = state.read_db.begin().await?;
-        let value=sqlx::query_as("SELECT instance_id,generation,revision,retained_from FROM archive_state WHERE singleton=1").fetch_one(&mut *tx).await?;
-        let maintenance: bool =
-            sqlx::query_scalar("SELECT maintenance FROM archive_state WHERE singleton=1")
-                .fetch_one(&mut *tx)
-                .await?;
-        (value, maintenance)
-    };
-    if maintenance {
+    let row = sqlx::query(
+        "SELECT instance_id,generation,revision,retained_from,maintenance FROM archive_state WHERE singleton=1",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
+    if row.get::<bool, _>("maintenance") {
         return Err(unavailable());
     }
-    Ok(value)
+    Ok(Identity {
+        instance_id: row.get("instance_id"),
+        generation: row.get("generation"),
+        revision: row.get("revision"),
+        retained_from: row.get("retained_from"),
+    })
 }
 pub async fn info(State(state): State<AppState>) -> Result<Json<serde_json::Value>> {
     let identity = identity(&state).await?;
@@ -393,29 +406,47 @@ async fn open_snapshot(
 }
 pub async fn listens(
     State(state): State<AppState>,
+    auth_key: Option<axum::Extension<AuthenticatedKey>>,
     headers: HeaderMap,
     params: std::result::Result<Query<Parameters>, QueryRejection>,
 ) -> Result<Json<ApiPage>> {
-    page(state, headers, params.map_err(|_| invalid())?.0, false)
-        .await
-        .map(Json)
+    page(
+        state,
+        auth_key.map(|axum::Extension(AuthenticatedKey(k))| k),
+        headers,
+        params.map_err(|_| invalid())?.0,
+        false,
+    )
+    .await
+    .map(Json)
 }
 pub async fn changes(
     State(state): State<AppState>,
+    auth_key: Option<axum::Extension<AuthenticatedKey>>,
     headers: HeaderMap,
     params: std::result::Result<Query<Parameters>, QueryRejection>,
 ) -> Result<Json<ApiPage>> {
-    page(state, headers, params.map_err(|_| invalid())?.0, true)
-        .await
-        .map(Json)
+    page(
+        state,
+        auth_key.map(|axum::Extension(AuthenticatedKey(k))| k),
+        headers,
+        params.map_err(|_| invalid())?.0,
+        true,
+    )
+    .await
+    .map(Json)
 }
 async fn page(
     state: AppState,
+    authenticated_key: Option<String>,
     headers: HeaderMap,
     params: Parameters,
     delta: bool,
 ) -> Result<ApiPage> {
-    let key = authenticate(&state, &headers).await?;
+    let key = match authenticated_key {
+        Some(key) => key,
+        None => authenticate(&state, &headers).await?,
+    };
     let limit = params.limit.unwrap_or(500);
     if !(1..=1000).contains(&limit) {
         return Err(invalid());
@@ -558,10 +589,12 @@ async fn page(
                 .map_err(|_| unavailable())?,
             track_duration_ms: row.get("track_duration_ms"),
             listened_ms: row.get("listened_ms"),
-            duration_kind: serde_json::from_value(serde_json::Value::String(
-                row.get("duration_kind"),
-            ))
-            .map_err(|_| unavailable())?,
+            duration_kind: match row.get::<&str, _>("duration_kind") {
+                "actual" => DurationKind::Actual,
+                "estimated" => DurationKind::Estimated,
+                "unknown" => DurationKind::Unknown,
+                _ => return Err(unavailable()),
+            },
             counted: counted.unwrap_or(false),
             sources: serde_json::from_str(&row.get::<String, _>("sources"))
                 .map_err(|_| unavailable())?,

@@ -112,8 +112,11 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
             pre_upgrade_copy(&directory, &writer, &private).await?;
         }
         ARCHIVE_MIGRATOR.run(&writer).await?;
-        crate::retention::compact_payloads(&mut *writer.acquire().await?).await?;
-        compact_original_payloads(&mut *writer.acquire().await?).await?;
+        {
+            let mut conn = writer.acquire().await?;
+            crate::retention::compact_payloads(&mut conn).await?;
+            compact_original_payloads(&mut conn).await?;
+        }
         PRIVATE_MIGRATOR.run(&private).await?;
         sqlx::query("INSERT INTO settings(key,value) VALUES('app_build',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"revision":option_env!("SCROBBL_BUILD_REF").unwrap_or("development")}).to_string()).execute(&writer).await?;
         recover_access(&writer, &private).await?;
@@ -324,7 +327,7 @@ pub async fn recover_access(archive: &SqlitePool, private: &SqlitePool) -> anyho
         .fetch_all(private)
         .await?
     {
-        sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','collection_error','now_playing_error','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')")
+        sqlx::query(crate::spotify::RESET_STATUS_SQL)
             .execute(archive)
             .await?;
         sqlx::query("UPDATE access_operations SET completed=1 WHERE id=?")

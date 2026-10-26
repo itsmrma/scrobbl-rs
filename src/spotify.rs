@@ -56,18 +56,40 @@ impl Spotify {
         }
     }
 }
+pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')";
+
 async fn credentials(state: &AppState) -> Result<Option<(String, String)>> {
     if let (Some(id), Some(secret)) = (&state.config.env_client_id, &state.config.env_client_secret)
     {
         return Ok(Some((id.clone(), secret.clone())));
     }
-    let id = db::setting(&state.private_db, "spotify_client_id").await?;
-    let secret = db::setting(&state.private_db, "spotify_client_secret").await?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM settings WHERE key IN ('spotify_client_id', 'spotify_client_secret')",
+    )
+    .fetch_all(&state.private_db)
+    .await?;
+    let mut id = None;
+    let mut secret = None;
+    for (key, value) in rows {
+        match key.as_str() {
+            "spotify_client_id" => id = Some(value),
+            "spotify_client_secret" => secret = Some(value),
+            _ => {}
+        }
+    }
     Ok(id.zip(secret))
 }
 async fn diagnostic(state: &AppState, key: &str, value: &str) -> Result<()> {
     let mut conn = state.db.acquire().await?;
     db::set_setting(&mut conn, key, value).await
+}
+async fn diagnostics(state: &AppState, entries: &[(&str, &str)]) -> Result<()> {
+    let mut tx = state.db.begin().await?;
+    for (key, value) in entries {
+        db::set_setting(&mut tx, key, value).await?;
+    }
+    tx.commit().await?;
+    Ok(())
 }
 async fn intervals(state: &AppState) -> Result<crate::dto::SpotifyIntervals> {
     match db::setting(&state.read_db, "spotify_intervals").await? {
@@ -112,30 +134,52 @@ pub async fn status(
     headers: HeaderMap,
 ) -> Result<Json<crate::dto::SpotifyStatus>> {
     auth::session(&state, &headers).await?;
-    let intervals = intervals(&state).await?;
     let configured = credentials(&state).await?.is_some();
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
         .await?;
     let mut view = state.storage.read_view().await?;
     let conn = &mut *view.transaction;
-    async fn setting(conn: &mut sqlx::SqliteConnection, key: &str) -> Result<Option<String>> {
-        Ok(
-            sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key=?")
-                .bind(key)
-                .fetch_optional(conn)
-                .await?
-                .filter(|v| !v.is_empty()),
-        )
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT key, value FROM settings WHERE key IN (
+            'spotify_intervals',
+            'spotify_verified_at_ms',
+            'retry_at_ms',
+            'spotify_action_required',
+            'spotify_error',
+            'collection_error',
+            'last_attempt_ms',
+            'last_sync_ms',
+            'last_sync_added',
+            'now_playing_error',
+            'now_playing_timing',
+            'coverage_warning'
+        )",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut map = std::collections::HashMap::with_capacity(rows.len());
+    for (key, value) in rows {
+        if !value.is_empty() {
+            map.insert(key, value);
+        }
     }
-    async fn timestamp(conn: &mut sqlx::SqliteConnection, key: &str) -> Result<Option<i64>> {
-        Ok(setting(conn, key).await?.and_then(|v| v.parse().ok()))
+    fn timestamp(map: &std::collections::HashMap<String, String>, key: &str) -> Option<i64> {
+        map.get(key).and_then(|v| v.parse::<i64>().ok())
     }
-    let verified_at_ms = timestamp(conn, "spotify_verified_at_ms").await?;
-    let retry_at_ms = timestamp(conn, "retry_at_ms").await?;
-    let required = setting(conn, "spotify_action_required").await?;
-    let last_error = setting(conn, "spotify_error").await?;
-    let collection_error = setting(conn, "collection_error").await?;
+    let intervals = match map.get("spotify_intervals") {
+        Some(value) => serde_json::from_str::<crate::dto::SpotifyIntervals>(value)
+            .map_err(|_| AppError::Internal)?,
+        None => crate::dto::SpotifyIntervals {
+            sync_seconds: state.config.sync_seconds,
+            now_playing_seconds: state.config.now_playing_seconds,
+        },
+    };
+    let verified_at_ms = timestamp(&map, "spotify_verified_at_ms");
+    let retry_at_ms = timestamp(&map, "retry_at_ms");
+    let required = map.get("spotify_action_required").cloned();
+    let last_error = map.remove("spotify_error");
+    let collection_error = map.remove("collection_error");
     let connection = if !connected {
         "disconnected"
     } else if required.is_some() {
@@ -154,22 +198,6 @@ pub async fn status(
     } else {
         "active"
     };
-    let jobs = sqlx::query(
-        "SELECT filename,created_at_ms,report_json FROM import_jobs ORDER BY id DESC LIMIT 10",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-    let imports = jobs
-        .into_iter()
-        .map(|r| {
-            Ok(crate::dto::ImportJob {
-                filename: r.get("filename"),
-                created_at_ms: r.get("created_at_ms"),
-                report: serde_json::from_str(&r.get::<String, _>("report_json"))
-                    .map_err(|_| AppError::Internal)?,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
     Ok(Json(crate::dto::SpotifyStatus {
         configured,
         connected,
@@ -179,18 +207,17 @@ pub async fn status(
         now_playing_seconds: intervals.now_playing_seconds,
         connection: connection.into(),
         collection: collection.into(),
-        last_attempt_ms: timestamp(conn, "last_attempt_ms").await?,
-        last_sync_ms: timestamp(conn, "last_sync_ms").await?,
-        last_added: timestamp(conn, "last_sync_added").await?,
+        last_attempt_ms: timestamp(&map, "last_attempt_ms"),
+        last_sync_ms: timestamp(&map, "last_sync_ms"),
+        last_added: timestamp(&map, "last_sync_added"),
         verified_at_ms,
         last_error: collection_error.or(last_error),
-        now_playing_error: setting(conn, "now_playing_error").await?,
-        now_playing_timing: setting(conn, "now_playing_timing")
-            .await?
-            .and_then(|v| serde_json::from_str(&v).ok()),
-        coverage_warning: setting(conn, "coverage_warning").await?,
+        now_playing_error: map.remove("now_playing_error"),
+        now_playing_timing: map
+            .get("now_playing_timing")
+            .and_then(|v| serde_json::from_str(v).ok()),
+        coverage_warning: map.remove("coverage_warning"),
         retry_at_ms,
-        imports,
         review_count: sqlx::query_scalar(
             "SELECT COUNT(*) FROM listens WHERE needs_review=1 AND trashed_at_ms IS NULL",
         )
@@ -548,22 +575,15 @@ async fn api_get_locked(
     }
     let value = checked_json(state, response).await?;
     let response_received_at_ms = auth::now_ms();
-    diagnostic(state, "spotify_verified_at_ms", &auth::now_ms().to_string()).await?;
-    diagnostic(state, "spotify_action_required", "").await?;
+    diagnostics(
+        state,
+        &[
+            ("spotify_verified_at_ms", &auth::now_ms().to_string()),
+            ("spotify_action_required", ""),
+        ],
+    )
+    .await?;
     Ok((value, source_requested_at_ms, response_received_at_ms))
-}
-pub(crate) fn best_image(images: &Value) -> Option<String> {
-    images
-        .as_array()?
-        .iter()
-        .filter(|image| {
-            image["url"]
-                .as_str()
-                .is_some_and(|url| url.starts_with("https://i.scdn.co/"))
-        })
-        .max_by_key(|image| image["width"].as_u64().unwrap_or(0))
-        .and_then(|image| image["url"].as_str())
-        .map(str::to_owned)
 }
 
 pub fn parse_track(row: &Value) -> Result<Track> {
@@ -589,7 +609,6 @@ pub fn parse_track(row: &Value) -> Result<Track> {
         .and_then(|v| v.get("name"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cover_url = album.and_then(|v| best_image(&v["images"]));
     let mut artists = Vec::new();
     if let Some(items) = row.get("artists").and_then(Value::as_array) {
         for item in items {
@@ -613,7 +632,6 @@ pub fn parse_track(row: &Value) -> Result<Track> {
         title,
         album_id,
         album: album_name,
-        cover_url,
         duration_ms: row
             .get("duration_ms")
             .and_then(Value::as_i64)
@@ -792,6 +810,49 @@ pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> R
     now_playing_in_window(state, headers, None).await
 }
 
+async fn local_now_playing_links(
+    db: &sqlx::SqlitePool,
+    track_external: Option<&str>,
+    album_external: Option<&str>,
+) -> Result<(Option<String>, Option<String>)> {
+    let mut track_id = None;
+    let mut album_group_id = None;
+    if let Some(external) = track_external
+        && let Some((entity_id, group_id)) = sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT l.entity_id, m.group_id
+             FROM entity_links l
+             LEFT JOIN tracks t ON t.id = l.entity_id
+             LEFT JOIN name_group_members m ON m.kind = 'albums' AND m.entity_id = t.album_id
+             WHERE l.kind = 'track' AND l.namespace = 'spotify' AND l.external_id = ?
+             LIMIT 1",
+        )
+        .bind(external)
+        .fetch_optional(db)
+        .await?
+    {
+        track_id = Some(entity_id);
+        album_group_id = group_id;
+    }
+    if album_group_id.is_none()
+        && let Some(album_ext) = album_external
+    {
+        album_group_id = sqlx::query_scalar(
+            "SELECT m.group_id
+             FROM entity_links l
+             JOIN name_group_members m ON m.kind = 'albums' AND m.entity_id = l.entity_id
+             WHERE l.kind = 'album' AND l.namespace = 'spotify' AND l.external_id = ?
+             LIMIT 1",
+        )
+        .bind(album_ext)
+        .fetch_optional(db)
+        .await?;
+    }
+    Ok((
+        track_id,
+        album_group_id.map(|id| format!("/api/v1/artwork/albums/{id}")),
+    ))
+}
+
 // A fixed poll time lets cache tests exercise the same/new window independently
 // of the wall clock crossing a boundary while the HTTP/SQLite calls run.
 async fn now_playing_in_window(
@@ -816,14 +877,14 @@ async fn now_playing_in_window(
             .as_str()
             .and_then(|url| url.strip_prefix("https://open.spotify.com/track/"))
             .map(|id| format!("spotify:track:{id}"));
-        let track_id: Option<String> = if let Some(external) = external {
-            sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(external).fetch_optional(&state.read_db).await?
-        } else {
-            None
-        };
+        let (track_id, cover_url) =
+            local_now_playing_links(&state.read_db, external.as_deref(), None).await?;
         if let Some(object) = value.as_object_mut() {
             object.insert("served_at_ms".into(), json!(auth::now_ms()));
             object.insert("track_id".into(), json!(track_id));
+            if cover_url.is_some() || !object.contains_key("cover_url") {
+                object.insert("cover_url".into(), json!(cover_url));
+            }
         }
         return Ok(Json(value));
     }
@@ -845,17 +906,31 @@ async fn now_playing_in_window(
     let value = if row["is_playing"] == true && row["currently_playing_type"] == "track" {
         match parse_track(&row["item"]) {
             Ok(track) => {
-                let track_id: Option<String> = sqlx::query_scalar("SELECT entity_id FROM entity_links WHERE kind='track' AND namespace='spotify' AND external_id=? LIMIT 1").bind(&track.id).fetch_optional(&state.read_db).await?;
-
-                json!({"track_id":track_id,"title":track.title,"artists":track.artists,"album":track.album,"cover_url":track.cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
+                let (track_id, cover_url) = local_now_playing_links(
+                    &state.read_db,
+                    Some(&track.id),
+                    track.album_id.as_deref(),
+                )
+                .await?;
+                json!({"track_id":track_id,"title":track.title,"artists":track.artists,"album":track.album,"cover_url":cover_url,"spotify_url":format!("https://open.spotify.com/track/{}",track.id.trim_start_matches("spotify:track:")),"duration_ms":track.duration_ms,"progress_ms":row["progress_ms"],"observed_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64(),"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"served_at_ms":auth::now_ms()})
             }
             Err(_) => Value::Null,
         }
     } else {
         Value::Null
     };
-    diagnostic(&state, "now_playing_timing", &json!({"requested_at_ms":requested_at_ms,"source_requested_at_ms":source_requested_at_ms,"response_received_at_ms":response_received_at_ms,"source_timestamp_ms":row["timestamp"].as_i64()}).to_string()).await?;
-    diagnostic(&state, "now_playing_error", "").await?;
+    let timing = json!({
+        "requested_at_ms": requested_at_ms,
+        "source_requested_at_ms": source_requested_at_ms,
+        "response_received_at_ms": response_received_at_ms,
+        "source_timestamp_ms": row["timestamp"].as_i64(),
+    })
+    .to_string();
+    diagnostics(
+        &state,
+        &[("now_playing_timing", &timing), ("now_playing_error", "")],
+    )
+    .await?;
     *state.spotify.cache.lock().await = Some((source_requested_at_ms, value.clone()));
     Ok(Json(value))
 }
@@ -878,9 +953,6 @@ pub async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Re
     crate::storage::recover_access(&state.db, &state.private_db)
         .await
         .map_err(|_| AppError::Internal)?;
-    // Retire the new temporary image cache; preserve legacy saved and personal images.
-    sqlx::query("DELETE FROM artwork WHERE source='spotify' AND provenance_json IS NOT NULL AND expires_at_ms IS NOT NULL")
-        .execute(&state.db).await?;
     *state.spotify.cache.lock().await = None;
     Ok(Json(json!({"ok":true})))
 }
@@ -1007,25 +1079,19 @@ mod tests {
         }
     }
     #[test]
-    fn track_artwork_uses_largest_image_regardless_of_provider_order() {
+    fn parse_track_ignores_spotify_image_urls_and_keeps_structured_metadata() {
         let mut row = track();
-        for images in [
-            json!([
-                {"url":"https://i.scdn.co/image/full", "width":640},
-                {"url":"https://i.scdn.co/image/thumb", "width":64},
-                {"url":"https://i.scdn.co/image/medium", "width":300}
-            ]),
-            json!([
-                {"url":"https://i.scdn.co/image/thumb", "width":64},
-                {"url":"https://i.scdn.co/image/full", "width":640}
-            ]),
-        ] {
-            row["album"]["images"] = images;
-            assert_eq!(
-                parse_track(&row).unwrap().cover_url.as_deref(),
-                Some("https://i.scdn.co/image/full")
-            );
-        }
+        row["album"]["images"] = json!([
+            {"url": "https://i.scdn.co/image/full", "width": 640},
+            {"url": "https://i.scdn.co/image/thumb", "width": 64}
+        ]);
+        let parsed = parse_track(&row).unwrap();
+        assert_eq!(parsed.id, "spotify:track:0000000000000000000001");
+        assert_eq!(parsed.title, "Test track");
+        assert_eq!(parsed.album_id.as_deref(), Some("spotify:album:album1"));
+        assert_eq!(parsed.album.as_deref(), Some("An album"));
+        assert_eq!(parsed.artists.len(), 1);
+        assert!(parsed.structured);
     }
     fn track() -> Value {
         json!({"uri":"spotify:track:0000000000000000000001","type":"track","name":"Test track","duration_ms":180000,"album":{"id":"album1","name":"An album","images":[]},"artists":[{"id":"artist1","name":"Artist"}]})
@@ -1871,37 +1937,33 @@ mod tests {
     }
     #[tokio::test]
     async fn missing_artwork_never_uses_spotify_or_blocks_new_listens() {
-        struct PublicMisses<'a>(&'a AppState);
-        impl crate::artwork_sources::ImageLookup for PublicMisses<'_> {
+        struct PublicMisses;
+        impl crate::artwork_sources::ImageLookup for PublicMisses {
             async fn lookup(
                 &self,
-                provider: crate::artwork_settings::ImageProvider,
-                kind: &str,
-                id: &str,
+                _provider: crate::artwork_settings::ImageProvider,
+                _kind: &str,
+                _id: &str,
             ) -> Result<crate::artwork_sources::Lookup> {
-                if provider.key() == "spotify" {
-                    crate::artwork_sources::ImageLookup::lookup(
-                        &crate::artwork_sources::PublicSources(self.0),
-                        provider,
-                        kind,
-                        id,
-                    )
-                    .await
-                } else {
-                    Ok(crate::artwork_sources::Lookup::Missing)
-                }
+                Ok(crate::artwork_sources::Lookup::Missing)
             }
         }
         let at = 1_749_000_000_000;
         let (_dir, state, mock, handle) = fixture(
             vec![
                 reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
-                Reply {
-                    path: "/v1/tracks/0000000000000000000001",
-                    status: StatusCode::TOO_MANY_REQUESTS,
-                    body: json!({}),
-                    retry: Some("72000"),
-                },
+                reply(
+                    "/v1/me/player/recently-played",
+                    json!({"items":[item(at+180_000),item(at)]}),
+                ),
+                reply(
+                    "/v1/me/player/currently-playing",
+                    json!({"is_playing":true,"currently_playing_type":"track","item":track()}),
+                ),
+                reply(
+                    "/v1/me/player/recently-played",
+                    json!({"items":[item(at+180_000),item(at)]}),
+                ),
             ],
             false,
         )
@@ -1913,23 +1975,7 @@ mod tests {
                 .await
                 .unwrap();
         let image =
-            crate::library::ensure_artwork_with(&state, "albums", &album, &PublicMisses(&state))
-                .await;
-        mock.replies.lock().await.clear();
-        mock.replies.lock().await.extend([
-            reply(
-                "/v1/me/player/recently-played",
-                json!({"items":[item(at+180_000),item(at)]}),
-            ),
-            reply(
-                "/v1/me/player/currently-playing",
-                json!({"is_playing":true,"currently_playing_type":"track","item":track()}),
-            ),
-            reply(
-                "/v1/me/player/recently-played",
-                json!({"items":[item(at+180_000),item(at)]}),
-            ),
-        ]);
+            crate::library::ensure_artwork_with(&state, "albums", &album, &PublicMisses).await;
         let collection = sync(&state).await;
         assert!(
             collection.is_ok(),
@@ -1938,13 +1984,12 @@ mod tests {
         assert_eq!(collection.unwrap()["added"], 1);
         assert_eq!(image.unwrap(), crate::library::ArtworkFetch::Missing);
         let headers = owner_headers(&state).await;
-        assert_eq!(
-            now_playing(State(state.clone()), headers.clone())
-                .await
-                .unwrap()
-                .0["title"],
-            "Test track"
-        );
+        let now = now_playing(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(now["title"], "Test track");
+        assert_eq!(now["cover_url"], format!("/api/v1/artwork/albums/{album}"));
         assert_eq!(
             status(State(state.clone()), headers)
                 .await

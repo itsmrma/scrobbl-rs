@@ -4,6 +4,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -35,31 +36,39 @@ export function Select({
   const input = useRef<HTMLInputElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef({ text: "", at: 0 });
-  const values = Children.toArray(children).flatMap((child) => {
-    if (
-      !isValidElement<{
-        value?: string | number;
-        disabled?: boolean;
-        children?: ReactNode;
-      }>(child)
-    )
-      return [];
-    const text = Children.toArray(child.props.children).join("");
-    return [
-      {
-        value: String(child.props.value ?? text),
-        label: text,
-        disabled: !!child.props.disabled,
-      },
-    ];
-  });
-  const options = searchable
-    ? values.filter((option) =>
-        option.label
-          .toLocaleLowerCase()
-          .includes(String(value).toLocaleLowerCase()),
-      )
-    : values;
+  const values = useMemo(
+    () =>
+      Children.toArray(children).flatMap((child) => {
+        if (
+          !isValidElement<{
+            value?: string | number;
+            disabled?: boolean;
+            children?: ReactNode;
+          }>(child)
+        )
+          return [];
+        const text = Children.toArray(child.props.children).join("");
+        return [
+          {
+            value: String(child.props.value ?? text),
+            label: text,
+            disabled: !!child.props.disabled,
+          },
+        ];
+      }),
+    [children],
+  );
+  const options = useMemo(
+    () =>
+      searchable
+        ? values.filter((option) =>
+            option.label
+              .toLocaleLowerCase()
+              .includes(String(value).toLocaleLowerCase()),
+          )
+        : values,
+    [searchable, values, value],
+  );
   const selected = options.findIndex(
     (option) => option.value === String(value),
   );

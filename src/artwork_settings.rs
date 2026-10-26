@@ -127,9 +127,6 @@ pub async fn save(
     )
     .await?;
     // Retry absences under the new policy; saved bytes, including legacy Spotify, stay intact.
-    sqlx::query("DELETE FROM artwork WHERE bytes IS NULL")
-        .execute(&mut *tx)
-        .await?;
     sqlx::query("DELETE FROM artwork_misses")
         .execute(&mut *tx)
         .await?;

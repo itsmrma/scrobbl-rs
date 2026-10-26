@@ -5,7 +5,16 @@ import type { Preferences } from "./generated";
 import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
-import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
+import {
+  Cover,
+  date,
+  duration,
+  ErrorText,
+  formatSources,
+  Heading,
+  Icon,
+  number,
+} from "./ui";
 import { SkeletonCardList, SkeletonList, SkeletonText } from "./skeleton";
 
 function Trash({
@@ -76,7 +85,7 @@ function Trash({
                     ...preferences,
                     timezone: item.timezone,
                   })}{" "}
-                  · {item.sources.join(" + ")}
+                  · {formatSources(item.sources)}
                 </small>
               </div>
               <div>
@@ -172,18 +181,7 @@ function Comparison({
                 })}
               </strong>
               <small>{item.timezone}</small>
-              <small>
-                {item.sources
-                  .map(
-                    (source) =>
-                      ({
-                        spotify_api: "Spotify collection",
-                        spotify_import: "Spotify import",
-                        listenbrainz: "ListenBrainz",
-                      })[source] || source,
-                  )
-                  .join(" + ")}
-              </small>
+              <small>{formatSources(item.sources)}</small>
             </span>
             <span className="review-duration">
               {item.duration_kind === "estimated" ? "≈ " : ""}

@@ -43,17 +43,19 @@ survive restarts. Activities shows provider waits without estimating completion
 from a fixed per-image rate.
 
 Upgrading removes Spotify from saved provider settings while retaining the order
-and enabled state of public sources. Pending items from the retired fallback are
-reconsidered; user pauses and public host waits remain respected. Existing Spotify
-API Retry-After waits are preserved: removing artwork requests does not shorten a
-pause already imposed by Spotify. Collection and now playing resume on their
-scheduled retry after the pause. A long interruption can leave a history gap if
-Spotify no longer returns all listens; an extended-history import can repair it.
+and enabled state of public sources. Temporary and expired Spotify artwork rows
+are permanently retired, and Spotify provider badges on covers are removed.
+Pending items from the retired fallback are reconsidered; user pauses and public host
+waits remain respected. Existing Spotify API Retry-After waits are preserved:
+removing artwork requests does not shorten a pause already imposed by Spotify.
+Collection and now playing resume on their scheduled retry after the pause.
+A long interruption can leave a history gap if Spotify no longer returns all listens;
+an extended-history import can repair it.
 
-Previously saved Spotify images remain subject to their existing expiry and
-removal on disconnection. Legacy permanent images remain saved. Portable backups
-and their isolated restores continue to omit all Spotify images; personal images
-are preserved. Technical private upgrade copies retain their recovery purpose.
+Legacy permanent images remain saved; temporary Spotify image rows are retired by
+migration 0020. Portable backups and their isolated restores continue to omit all
+Spotify images; personal images are preserved. Technical private upgrade copies
+retain their recovery purpose.
 
 The image source, author, credits and licence are retained where supplied.
 **Image credits** on the music/edit page exposes them, and collage PNG exports

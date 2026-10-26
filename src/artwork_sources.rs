@@ -80,21 +80,22 @@ async fn json(state: &AppState, target: &str) -> Result<Option<Value>> {
     }
     Ok(Some(value))
 }
+pub(crate) fn retry_backoff_ms(attempts: i64) -> i64 {
+    30_000_i64
+        .saturating_mul(1_i64 << attempts.clamp(0, 7))
+        .min(3_600_000)
+}
+
 // The single image slot serializes callers; reservations and cooldowns survive restarts.
 pub(crate) async fn request_slot(state: &AppState, host: &str) -> Result<()> {
     let mut tx = state.db.begin().await?;
-    // Older releases stored one cooldown without the originating host. Honor
-    // that finite reservation until expiry; all new waits are scoped per host.
-    let retries: Vec<String> =
-        sqlx::query_scalar("SELECT value FROM settings WHERE key IN (?,'artwork_retry_at_ms')")
-            .bind(format!("artwork_host_retry:{host}"))
-            .fetch_all(&mut *tx)
-            .await?;
+    let retry: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
+        .bind(format!("artwork_host_retry:{host}"))
+        .fetch_optional(&mut *tx)
+        .await?;
     let now = auth::now_ms();
-    if let Some(at) = retries
-        .into_iter()
-        .filter_map(|v| v.parse::<i64>().ok())
-        .max()
+    if let Some(at) = retry
+        .and_then(|v| v.parse::<i64>().ok())
         .filter(|at| *at > now)
     {
         return Err(AppError::ArtworkWait { retry_at_ms: at });
@@ -126,10 +127,10 @@ pub(crate) async fn request_failed(
         .fetch_optional(&mut *tx)
         .await?;
     let attempts = attempts
-        .and_then(|v| v.parse::<u32>().ok())
+        .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(0)
-        .min(7);
-    let retry = at.unwrap_or_else(|| auth::now_ms() + (30_000i64 * (1 << attempts)).min(3_600_000));
+        .clamp(0, 7);
+    let retry = at.unwrap_or_else(|| auth::now_ms().saturating_add(retry_backoff_ms(attempts)));
     crate::db::set_setting(&mut tx, &key, &(attempts + 1).to_string()).await?;
     let key = format!("artwork_host_retry:{host}");
     let previous: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
@@ -532,13 +533,19 @@ pub(crate) async fn fetch_with_activity(
                 if artwork_settings::read(&mut tx).await?.version != settings.version {
                     return Ok(library::ArtworkFetch::Busy);
                 }
-                let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?))").bind(kind).bind(id).bind(auth::now_ms()).fetch_one(&mut *tx).await?;
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
+                )
+                .bind(kind)
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
                 if exists {
                     return Ok(library::ArtworkFetch::Cached);
                 }
                 let now = auth::now_ms();
-                sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=excluded.expires_at_ms,provenance_json=excluded.provenance_json")
-                    .bind(kind).bind(id).bind(provider.key()).bind(&image.bytes).bind(library::image_type(&image.bytes)?).bind(now).bind(Option::<i64>::None).bind(serde_json::to_string(&image.credit).map_err(|_| AppError::Internal)?).execute(&mut *tx).await?;
+                sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES(?,?,?,?,?,?,NULL,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=NULL,provenance_json=excluded.provenance_json")
+                    .bind(kind).bind(id).bind(provider.key()).bind(&image.bytes).bind(library::image_type(&image.bytes)?).bind(now).bind(serde_json::to_string(&image.credit).map_err(|_| AppError::Internal)?).execute(&mut *tx).await?;
                 tx.commit().await?;
                 return Ok(library::ArtworkFetch::Saved);
             }
@@ -554,7 +561,21 @@ pub(crate) async fn fetch_with_activity(
     Ok(library::ArtworkFetch::Missing)
 }
 pub async fn credit(state: &AppState, kind: &str, id: &str) -> Result<Option<ImageCredit>> {
-    let row = sqlx::query("SELECT source,provenance_json FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    let mut conn = state.read_db.acquire().await?;
+    credit_in(&mut conn, kind, id).await
+}
+pub(crate) async fn credit_in(
+    conn: &mut sqlx::SqliteConnection,
+    kind: &str,
+    id: &str,
+) -> Result<Option<ImageCredit>> {
+    let row = sqlx::query(
+        "SELECT source,provenance_json FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
+    )
+    .bind(kind)
+    .bind(id)
+    .fetch_optional(conn)
+    .await?;
     let Some(row) = row else {
         return Ok(None);
     };
@@ -665,10 +686,6 @@ mod tests {
                 .as_deref(),
             Some("Author")
         );
-        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'test','test',9999999999999)")
-            .execute(&state.private_db)
-            .await
-            .unwrap();
         let mut settings = ArtworkSettings::default();
         settings.providers[0].enabled = false;
         let fake = Fake {

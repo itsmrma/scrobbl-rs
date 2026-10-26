@@ -123,16 +123,7 @@ pub(crate) async fn selection_at(
         }
     }
     if let Some(q) = filters.q.as_deref().filter(|s| !s.trim().is_empty()) {
-        if q.len() > 500 {
-            return Err(AppError::BadRequest(
-                "Search is limited to 500 bytes.".into(),
-            ));
-        }
-        let escaped = q
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_");
-        let pattern = format!("%{escaped}%");
+        let pattern = crate::db::search_pattern(q)?;
         b.push(" AND (t.title LIKE ").push_bind(pattern.clone()).push(" ESCAPE '\\' OR a.name LIKE ").push_bind(pattern.clone()).push(" ESCAPE '\\' OR EXISTS(SELECT 1 FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=t.id AND ar.name LIKE ").push_bind(pattern).push(" ESCAPE '\\'))");
     }
     match filters.status.as_deref().unwrap_or("all") {

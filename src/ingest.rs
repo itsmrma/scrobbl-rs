@@ -137,8 +137,8 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
         let album = entity(conn, "album", key, &format!("track:{id}"))?;
         execute(
             conn,
-            "INSERT INTO albums(id,name,cover_url,metadata_rank) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,cover_url=COALESCE(excluded.cover_url,albums.cover_url),metadata_rank=excluded.metadata_rank WHERE excluded.metadata_rank>albums.metadata_rank",
-            params![album, name, track.cover_url, rank],
+            "INSERT INTO albums(id,name,cover_url,metadata_rank) VALUES(?,?,NULL,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,metadata_rank=excluded.metadata_rank WHERE excluded.metadata_rank>albums.metadata_rank",
+            params![album, name, rank],
         )?;
         album_id = Some(album);
     }
@@ -146,9 +146,8 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
         .id
         .strip_prefix("spotify:track:")
         .map(|key| format!("https://open.spotify.com/track/{key}"));
-    execute(
-        conn,
-        "INSERT INTO tracks(id,title,album_id,duration_ms,spotify_url,structured_metadata,metadata_rank) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,album_id=COALESCE(excluded.album_id,tracks.album_id),duration_ms=COALESCE(excluded.duration_ms,tracks.duration_ms),spotify_url=excluded.spotify_url,structured_metadata=excluded.structured_metadata,metadata_rank=excluded.metadata_rank",
+    let effective_album: Option<String> = conn.query_row(
+        "INSERT INTO tracks(id,title,album_id,duration_ms,spotify_url,structured_metadata,metadata_rank) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,album_id=COALESCE(excluded.album_id,tracks.album_id),duration_ms=COALESCE(excluded.duration_ms,tracks.duration_ms),spotify_url=excluded.spotify_url,structured_metadata=excluded.structured_metadata,metadata_rank=excluded.metadata_rank RETURNING album_id",
         params![
             id,
             track.title,
@@ -158,6 +157,7 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
             track.structured,
             rank
         ],
+        |row| row.get(0),
     )?;
     execute(conn, "DELETE FROM track_artists WHERE track_id=?", [&id])?;
     for (ordinal, artist) in track.artists.iter().enumerate() {
@@ -172,14 +172,9 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
             "INSERT OR IGNORE INTO track_artists VALUES(?,?,?)",
             params![id, artist_id, ordinal as i64],
         )?;
+        crate::name_groups::attach(conn, "artists", &artist_id)?;
     }
-    for artist in &track.artists {
-        let source_id: String=optional(conn,"SELECT entity_id FROM entity_links WHERE kind='artist' AND external_id=? AND (namespace='spotify' OR namespace=?)",params![artist.id,format!("track:{id}")])?.ok_or(AppError::Internal)?;
-        crate::name_groups::attach(conn, "artists", &source_id)?;
-    }
-    if let Some(album) =
-        optional::<Option<String>>(conn, "SELECT album_id FROM tracks WHERE id=?", [&id])?.flatten()
-    {
+    if let Some(album) = effective_album {
         crate::name_groups::attach(conn, "albums", &album)?;
     }
 

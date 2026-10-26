@@ -1861,7 +1861,7 @@ test("personal names, half-star ratings and custom images persist without changi
         .getByRole("button", { name: "Save image", exact: true })
         .click();
       await expect(
-        page.getByRole("button", { name: "Use Spotify image" }),
+        page.getByRole("button", { name: "Reset custom image" }),
       ).toBeEnabled();
       await expect(page.getByLabel(label, { exact: true })).toHaveValue(
         `Personal ${kind}`,
@@ -2899,7 +2899,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
       },
     });
   });
-  await page.route("https://i.scdn.co/image/sidebar", (route) =>
+  await page.route("**/api/v1/artwork/albums/sidebar*", (route) =>
     route.fulfill({
       contentType: "image/svg+xml",
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#7c9bac"/></svg>',
@@ -2912,7 +2912,7 @@ test("sidebar playback card displays artwork, progress and remains usable collap
             title: songTitle,
             artists: [{ id: "artist", name: "An artist with a long name" }],
             album: "Album",
-            cover_url: "https://i.scdn.co/image/sidebar",
+            cover_url: "/api/v1/artwork/albums/sidebar",
             spotify_url:
               "https://open.spotify.com/track/0000000000000000000088",
             duration_ms: 180000,

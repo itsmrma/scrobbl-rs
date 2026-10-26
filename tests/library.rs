@@ -93,7 +93,7 @@ async fn get(state: &AppState, token: &str, path: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 #[tokio::test]
-async fn disconnect_retires_new_spotify_cache_but_preserves_legacy_and_personal_images() {
+async fn upgrade_retires_temporary_spotify_cache_and_disconnect_preserves_saved_images() {
     let (_dir, state, token) = setup().await;
     for (id, source, expires, provenance) in [
         (
@@ -108,6 +108,12 @@ async fn disconnect_retires_new_spotify_cache_but_preserves_legacy_and_personal_
         sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES('artists',?,?,?,'image/png',0,?,?)")
             .bind(id).bind(source).bind(b"\x89PNG\r\n\x1a\nimage".as_slice()).bind(expires).bind(provenance).execute(&state.db).await.unwrap();
     }
+    sqlx::raw_sql(include_str!(
+        "../release-migrations/0020_retire_temporary_spotify_artwork.sql"
+    ))
+    .execute(&state.db)
+    .await
+    .unwrap();
     assert_eq!(
         call(
             &state,
@@ -928,11 +934,7 @@ async fn automatic_review_excludes_boundary_repeats_conflicts_and_distinct_ident
         } else {
             1000000
         };
-        let source = if case == "same_source" {
-            "spotify_api"
-        } else {
-            "listenbrainz"
-        };
+        let source = "listenbrainz";
         let spotify = if case == "identity" {
             "spotify:track:0000000000000000000009"
         } else {
@@ -1182,11 +1184,10 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
     let (_dir, state, token) = setup().await;
     let dash = get(&state, &token, "/api/dashboard").await;
     let id = dash["rankings"]["artists"][0]["id"].as_str().unwrap();
-    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES('artists',?,'spotify',?,'image/png',?,?)")
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES('artists',?,'wikidata',?,'image/png',?)")
         .bind(id)
         .bind(b"\x89PNG\r\n\x1a\ncached provider image".as_slice())
         .bind(auth::now_ms())
-        .bind(auth::now_ms() + 86400000)
         .execute(&state.db)
         .await
         .unwrap();
@@ -1228,14 +1229,14 @@ async fn artwork_precedence_expiry_and_portable_backup_preserve_owner_data() {
         call(&state, &token, "GET", &path, vec![], false).await.1,
         png
     );
-    sqlx::query("UPDATE artwork SET expires_at_ms=1 WHERE source='spotify'")
+    sqlx::query("INSERT INTO artwork_misses(kind,entity_id,settings_version,expires_at_ms) VALUES('artists','expired-miss',0,1)")
         .execute(&state.db)
         .await
         .unwrap();
     scrobbl_rs::retention::cleanup(&state.storage)
         .await
         .unwrap();
-    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork WHERE source='spotify'")
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork_misses")
         .fetch_one(&state.read_db)
         .await
         .unwrap();

@@ -106,12 +106,6 @@ const cases = [
     "**/api/v1/recovery",
     "Loading exports and backups",
   ],
-  [
-    "recent imports",
-    "/settings/data",
-    "**/api/spotify/status",
-    "Loading recent imports",
-  ],
   ["activities", "/activities", "**/api/v1/activities", "Loading activities"],
   [
     "activity report",
@@ -172,10 +166,6 @@ for (const [name, path, endpoint, label] of cases) {
       if (name === "activities")
         await expect(
           page.getByRole("heading", { name: "No activities to show" }),
-        ).toHaveCount(0);
-      if (name === "recent imports")
-        await expect(
-          page.getByText("No imports yet.", { exact: true }),
         ).toHaveCount(0);
       release({ status: 503, json: { error: "Delayed read failed" } });
       await expect(skeleton).toHaveCount(0);

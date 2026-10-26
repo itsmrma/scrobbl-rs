@@ -82,6 +82,14 @@ export function Collage({
     () => collageTiles(items.slice(0, count), byTime),
     [items, count, byTime],
   );
+  const total = useMemo(
+    () =>
+      tiles.reduce(
+        (sum, t) => sum + (byTime ? t.item.listened_ms : t.item.plays),
+        0,
+      ),
+    [tiles, byTime],
+  );
   const height = Math.max(1 / 25, ...tiles.map((tile) => tile.y + tile.height));
   const title = `${kind === "albums" ? "Album" : "Artist"} collage`;
   async function download() {
@@ -185,11 +193,16 @@ export function Collage({
           ctx.fillRect(x, y + h - 44, w, 44);
           ctx.fillStyle = "#fff";
           ctx.font = "600 17px sans-serif";
-          let label = tile.item.name;
-          while (ctx.measureText(label).width > w - 16 && label.length > 1)
-            label = label.slice(0, -2);
+          const chars = Array.from(tile.item.name);
+          let end = chars.length;
+          while (
+            end > 1 &&
+            ctx.measureText(chars.slice(0, end).join("")).width > w - 16
+          )
+            end--;
+          const label = chars.slice(0, end).join("");
           ctx.fillText(
-            label === tile.item.name ? label : `${label}…`,
+            end === chars.length ? label : `${label}…`,
             x + 8,
             y + h - 17,
           );
@@ -287,10 +300,6 @@ export function Collage({
         <ol className="collage-legend" aria-label="Collage listening shares">
           {tiles.map(({ item }, i) => {
             const value = byTime ? item.listened_ms : item.plays;
-            const total = tiles.reduce(
-              (sum, t) => sum + (byTime ? t.item.listened_ms : t.item.plays),
-              0,
-            );
             return (
               <li key={item.id}>
                 <Link to={musicLink(kind, item.id, params)}>

@@ -11,6 +11,7 @@ import type {
   ActivityDetail,
   ImportLimits,
   NowPlaying,
+  Preferences,
   SpotifyStatus,
 } from "./generated";
 import { api } from "./api";
@@ -35,14 +36,10 @@ const NowContext = createContext<{
   data: NowPlaying | null;
   error: string;
   loading: boolean;
-  browserTiming: number | null;
-  browserCommit: number | null;
 }>({
   data: null,
   error: "",
   loading: true,
-  browserTiming: null,
-  browserCommit: null,
 });
 export function NowPlayingProvider({
   status,
@@ -53,32 +50,18 @@ export function NowPlayingProvider({
   statusError: string;
   children: ReactNode;
 }) {
-  const [browserTiming, setBrowserTiming] = useState<number | null>(null);
-  const [browserCommit, setBrowserCommit] = useState<number | null>(null);
-  const requestStart = useRef(0);
   const { data, error, loading } = useLoad<NowPlaying | null>(
-    async () => {
-      const start = performance.now();
-      requestStart.current = start;
-      const sample = await api.nowPlaying();
-      setBrowserTiming(performance.now() - start);
-      return sample;
-    },
+    api.nowPlaying,
     `now:${!!status?.connected}`,
     !!status?.connected,
     (status?.now_playing_seconds || 30) * 1000,
   );
-  useLayoutEffect(() => {
-    if (data) setBrowserCommit(performance.now() - requestStart.current);
-  }, [data]);
   return (
     <NowContext
       value={{
         data: status?.connected ? data : null,
         error: statusError || (status?.connected ? error : ""),
         loading: !status ? !statusError : status.connected && loading && !data,
-        browserTiming,
-        browserCommit,
       }}
     >
       {children}
@@ -143,14 +126,12 @@ export function NowPlayingPage() {
 }
 export function Now({
   status,
-  compact = false,
+  paused = false,
 }: {
-  visible?: boolean;
   status: SpotifyStatus | null;
-  compact?: boolean;
+  paused?: boolean;
 }) {
-  const { data, error, loading, browserTiming, browserCommit } =
-    useContext(NowContext);
+  const { data, error, loading } = useContext(NowContext);
   const [expanded, setExpanded] = useState(false);
   const [mobileMinimized, setMobileMinimized] = useBrowserPreference(
     "now-playing-minimized",
@@ -170,7 +151,7 @@ export function Now({
   useLayoutEffect(() => {
     const text = titleText.current;
     const container = text?.parentElement;
-    if (!compact || !text || !container) return;
+    if (!text || !container) return;
     const reduced = matchMedia("(prefers-reduced-motion: reduce)");
     let animation: Animation | undefined;
     const update = () => {
@@ -204,15 +185,15 @@ export function Now({
       reduced.removeEventListener("change", update);
       animation?.cancel();
     };
-  }, [compact, data?.title]);
+  }, [data?.title]);
   useEffect(() => {
-    if (!compact || !data) return;
+    if (!data || paused) return;
     setClock(Date.now());
     const timer = setInterval(() => {
       if (!document.hidden) setClock(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [compact, data]);
+  }, [data, paused]);
   const progress =
     data?.progress_ms == null
       ? null
@@ -220,192 +201,118 @@ export function Now({
           data.duration_ms ?? Infinity,
           data.progress_ms + Math.max(0, clock - data.response_received_at_ms),
         );
-  if (loading) return <SkeletonPlayback compact={compact} />;
-  if (compact)
-    return (
-      <div
-        className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""} ${mobileMinimized ? "mobile-minimized" : ""}`}
-        aria-label="Now playing"
-      >
-        <button
-          type="button"
-          className="now-section-toggle"
-          aria-label={
-            mobileMinimized ? "Expand now playing" : "Collapse now playing"
-          }
-          aria-expanded={!mobileMinimized}
-          onClick={() => setMobileMinimized(!mobileMinimized)}
-        >
-          <Icon>{mobileMinimized ? "expand_more" : "expand_less"}</Icon>
-        </button>
-        <div
-          className={`now-details${mobileMinimized ? " mobile-minimized" : ""}`}
-        >
-          <Cover url={data?.cover_url} />
-          {data?.cover_url && (
-            <button
-              className="icon-button now-expand-toggle nav-copy"
-              aria-label={
-                expanded
-                  ? "Collapse now playing artwork"
-                  : "Expand now playing artwork"
-              }
-              aria-expanded={expanded}
-              onClick={() => setExpanded(!expanded)}
-            >
-              <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
-            </button>
-          )}
-          <div
-            className="now-artwork-expansion nav-copy"
-            aria-hidden={!expanded || !data?.cover_url}
-            inert={!expanded || !data?.cover_url}
-          >
-            <div>
-              {data?.cover_url ? (
-                <img src={data.cover_url} alt="Now playing artwork" />
-              ) : (
-                <span className="now-artwork-placeholder">
-                  <Icon>music_note</Icon>
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="nav-copy playback-copy">
-            <small>
-              {error
-                ? "Playback unavailable"
-                : data
-                  ? "Listening on Spotify"
-                  : "Now playing"}
-            </small>
-            {data ? (
-              <>
-                <Link
-                  className="playback-title"
-                  to={
-                    data.track_id
-                      ? musicLink("tracks", data.track_id)
-                      : "/music/now-playing"
-                  }
-                >
-                  <span
-                    className="playback-title-text"
-                    ref={titleText}
-                    title={data.title}
-                  >
-                    {data.title}
-                  </span>
-                </Link>
-                <span>{data.artists.map((a) => a.name).join(", ")}</span>
-              </>
-            ) : (
-              <span>
-                {status?.connected
-                  ? "Nothing playing"
-                  : "Connect Spotify in Settings"}
-              </span>
-            )}
-          </div>
-          {data && (
-            <div className="sidebar-playback nav-copy">
-              {progress !== null && data.duration_ms && (
-                <progress
-                  aria-label="Playback progress"
-                  value={progress}
-                  max={data.duration_ms}
-                />
-              )}
-              <div className="playback-time">
-                <span>{duration(progress)}</span>
-                <Icon>graphic_eq</Icon>
-                <span>{duration(data.duration_ms)}</span>
-              </div>
-            </div>
-          )}
-        </div>
-        <span className="collapsed-label">
-          {data
-            ? `${data.title} · ${data.artists.map((a) => a.name).join(", ")}`
-            : "Nothing playing"}
-        </span>
-      </div>
-    );
+  if (loading) return <SkeletonPlayback />;
   return (
-    <article className="panel now-panel">
-      <p className="eyebrow">
-        {error ? "SPOTIFY UNAVAILABLE" : data ? "NOW PLAYING" : "NOT PLAYING"}
-      </p>
-      <div className="now-content">
-        <Cover url={data?.cover_url} large />
-        <div>
-          <h3>
-            {data ? (
+    <div
+      className={`sidebar-now ${data ? "is-playing" : "is-idle"} ${expanded && data?.cover_url ? "artwork-expanded" : ""} ${mobileMinimized ? "mobile-minimized" : ""}`}
+      aria-label="Now playing"
+    >
+      <button
+        type="button"
+        className="now-section-toggle"
+        aria-label={
+          mobileMinimized ? "Expand now playing" : "Collapse now playing"
+        }
+        aria-expanded={!mobileMinimized}
+        onClick={() => setMobileMinimized(!mobileMinimized)}
+      >
+        <Icon>{mobileMinimized ? "expand_more" : "expand_less"}</Icon>
+      </button>
+      <div
+        className={`now-details${mobileMinimized ? " mobile-minimized" : ""}`}
+      >
+        <Cover url={data?.cover_url} />
+        {data?.cover_url && (
+          <button
+            className="icon-button now-expand-toggle nav-copy"
+            aria-label={
+              expanded
+                ? "Collapse now playing artwork"
+                : "Expand now playing artwork"
+            }
+            aria-expanded={expanded}
+            onClick={() => setExpanded(!expanded)}
+          >
+            <Icon>{expanded ? "expand_more" : "expand_less"}</Icon>
+          </button>
+        )}
+        <div
+          className="now-artwork-expansion nav-copy"
+          aria-hidden={!expanded || !data?.cover_url}
+          inert={!expanded || !data?.cover_url}
+        >
+          <div>{data?.cover_url && <Cover url={data.cover_url} large />}</div>
+        </div>
+        <div className="nav-copy playback-copy">
+          <small>
+            {error
+              ? "Playback unavailable"
+              : data
+                ? "Listening on Spotify"
+                : "Now playing"}
+          </small>
+          {data ? (
+            <>
               <Link
+                className="playback-title"
                 to={
                   data.track_id
                     ? musicLink("tracks", data.track_id)
                     : "/music/now-playing"
                 }
               >
-                {data.title}
+                <span
+                  className="playback-title-text"
+                  ref={titleText}
+                  title={data.title}
+                >
+                  {data.title}
+                </span>
               </Link>
-            ) : (
-              "Your next favourite awaits"
-            )}
-          </h3>
-          <p>
-            {data?.artists.map((a) => a.name).join(", ") ||
-              (status?.connected
-                ? "Nothing playing on Spotify right now."
-                : "Connect Spotify to see what’s playing.")}
-          </p>
+              <span>{data.artists.map((a) => a.name).join(", ")}</span>
+            </>
+          ) : (
+            <span>
+              {status?.connected
+                ? "Nothing playing"
+                : "Connect Spotify in Settings"}
+            </span>
+          )}
         </div>
+        {data && (
+          <div className="sidebar-playback nav-copy">
+            {progress !== null && data.duration_ms && (
+              <progress
+                aria-label="Playback progress"
+                value={progress}
+                max={data.duration_ms}
+              />
+            )}
+            <div className="playback-time">
+              <span>{duration(progress)}</span>
+              <Icon>graphic_eq</Icon>
+              <span>{duration(data.duration_ms)}</span>
+            </div>
+          </div>
+        )}
       </div>
-      <p className="subtle">
-        {error ||
-          (data
-            ? `${duration(data.progress_ms)} / ${duration(data.duration_ms)} · From Spotify`
-            : "Live while your archive is open")}
-      </p>
-      {data && (
-        <details>
-          <summary>Sample timing</summary>
-          <p>
-            Source playback-state change:{" "}
-            {data.source_timestamp_ms
-              ? new Date(data.source_timestamp_ms).toISOString()
-              : "not reported"}
-            . This is a state-change timestamp, not a measure of Spotify
-            propagation delay.
-          </p>
-          <p>
-            Server queue: {data.source_requested_at_ms - data.requested_at_ms}{" "}
-            ms | provider request:{" "}
-            {data.response_received_at_ms - data.source_requested_at_ms} ms |
-            cached sample age when served:{" "}
-            {Math.max(0, data.served_at_ms - data.response_received_at_ms)} ms |
-            browser request/response:{" "}
-            {browserTiming === null ? "unknown" : Math.round(browserTiming)} ms.
-          </p>
-          <p>
-            Browser request through render commit:{" "}
-            {browserCommit === null ? "unknown" : Math.round(browserCommit)} ms.
-          </p>
-          <p>
-            Polled every {status?.now_playing_seconds || 30} seconds while
-            visible; source delay requires comparison with actual playback.
-          </p>
-        </details>
-      )}
-      <small>
-        Now playing is separate from background collection.{" "}
-        <Link to="/settings/connections">Check collection status</Link>.
-      </small>
-    </article>
+      <span className="collapsed-label">
+        {data
+          ? `${data.title} · ${data.artists.map((a) => a.name).join(", ")}`
+          : "Nothing playing"}
+      </span>
+    </div>
   );
 }
-export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
+export function ImportPage({
+  refresh,
+  visible,
+  preferences,
+}: {
+  refresh: () => Promise<void>;
+  visible: boolean;
+  preferences: Preferences;
+}) {
   const [files, setFiles] = useState<File[]>([]);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -413,7 +320,7 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
   const [jobId, setJobId] = useState("");
   const [error, setError] = useState("");
   const [version, setVersion] = useState(0);
-  const limits = useLoad<ImportLimits>(api.importLimits, "limits");
+  const limits = useLoad<ImportLimits>(api.importLimits, "limits", visible);
   const report = useLoad<ActivityDetail>(
     () => api.activity(jobId),
     `${jobId}:${version}`,
@@ -461,10 +368,7 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
   }, [job?.id, job?.state, job?.outcome]);
   return (
     <>
-      <Heading
-        title="Import your listening history"
-        eyebrow="BRING YOUR PAST WITH YOU"
-      >
+      <Heading title="Import your listening history">
         Add your Spotify Extended Streaming History or ListenBrainz archive.
       </Heading>
       <div className="two-column">
@@ -691,8 +595,11 @@ export function ImportPage({ refresh }: { refresh: () => Promise<void> }) {
           <Link to="/activities">View persistent activities</Link>
         </aside>
       </div>
-      <ListenBrainzImport refresh={refresh} />
+      <ListenBrainzImport
+        refresh={refresh}
+        visible={visible}
+        preferences={preferences}
+      />
     </>
   );
 }
-export { useLoad } from "./load";

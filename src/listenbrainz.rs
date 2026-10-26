@@ -164,7 +164,6 @@ pub fn parse(row: Value, account: Option<&str>) -> SourceRow {
                 title: title.into(),
                 album_id: album.map(|a| db::metadata_id("lb-album", &[artist, a])),
                 album: album.map(str::to_owned),
-                cover_url: None,
                 duration_ms: total,
                 artists: vec![Artist {
                     id: db::metadata_id("lb-artist", &[artist]),

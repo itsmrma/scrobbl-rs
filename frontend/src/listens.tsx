@@ -1,6 +1,6 @@
 import type { Listen, Preferences } from "./generated";
 import { useEffect, useId, useRef } from "react";
-import { Cover, date, duration, Icon } from "./ui";
+import { Cover, date, duration, formatSources, Icon } from "./ui";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import type { Kind } from "./selection";
@@ -128,13 +128,7 @@ export function ListenList({
                 <small>
                   {item.timezone} · {item.local_date}
                 </small>
-                <small>
-                  {[...new Set(item.sources)]
-                    .join(" + ")
-                    .replaceAll("spotify_import", "Spotify import")
-                    .replaceAll("spotify_api", "Spotify collection")
-                    .replaceAll("listenbrainz", "ListenBrainz")}
-                </small>
+                <small>{formatSources(item.sources)}</small>
               </div>
               {context && (
                 <div className="listen-archive">

@@ -1,17 +1,26 @@
 import { useRef, useState } from "react";
 import { api } from "./api";
-import { useLoad } from "./library";
+import type { ListenBrainzOriginalsPage } from "./api";
+import type { Preferences } from "./generated";
+import { useLoad } from "./load";
 import { ErrorText, Icon, useToast } from "./ui";
 import { Link } from "./navigation";
 import { SkeletonList } from "./skeleton";
 
 export function ListenBrainzImport({
   refresh,
+  visible,
+  preferences,
 }: {
   refresh: () => Promise<void>;
+  visible: boolean;
+  preferences: Preferences;
 }) {
-  const limits = useLoad(api.listenBrainzLimits, "listenbrainz-limits");
-  const preferences = useLoad(api.preferences, "listenbrainz-calendar");
+  const limits = useLoad(
+    api.listenBrainzLimits,
+    "listenbrainz-limits",
+    visible,
+  );
   const [method, setMethod] = useState("upload");
   const [files, setFiles] = useState<File[]>([]);
   const input = useRef<HTMLInputElement>(null);
@@ -231,11 +240,10 @@ export function ListenBrainzImport({
           <details className="import-help">
             <summary>Dates, retries &amp; coverage</summary>
             <p>
-              Dates include the whole selected day in{" "}
-              {preferences.data?.timezone || "the instance time zone"}. Without
-              a start date: the last 14 days of the interval. Without an end
-              date: stop at the moment you start. The saved interval stays fixed
-              during retries.
+              Dates include the whole selected day in {preferences.timezone}.
+              Without a start date: the last 14 days of the interval. Without an
+              end date: stop at the moment you start. The saved interval stays
+              fixed during retries.
             </p>
             <p>
               No token required. For months, years or a complete history,
@@ -285,31 +293,16 @@ export function ListenBrainzImport({
   );
 }
 
-type Originals = {
-  total: number;
-  files: { file_id: string; name: string }[];
-  rows: {
-    member: string;
-    row_number: number;
-    outcome: string;
-    reason: string | null;
-    raw: unknown;
-  }[];
-};
 export function ListenBrainzOriginals({ id }: { id: string }) {
   const [offset, setOffset] = useState(0);
-  const [data, setData] = useState<Originals | null>(null),
+  const [data, setData] = useState<ListenBrainzOriginalsPage | null>(null),
     [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function load(next: number) {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(
-        `/api/v1/listenbrainz/jobs/${encodeURIComponent(id)}/originals?offset=${next}`,
-      );
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      const result = await api.listenBrainzOriginals(id, next);
       setData(result);
       setOffset(next);
     } catch (e) {
