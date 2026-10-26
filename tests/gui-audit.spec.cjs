@@ -166,8 +166,31 @@ test("rankings keep artwork square and long metadata and durations visible", asy
   const panel = page.getByRole("article", { name: "albums rankings" });
   for (const width of [320, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
-    for (const view of ["Grid", "List"]) {
+    for (const [view, size] of [
+      ["Grid", "Small"],
+      ["Grid", "Medium"],
+      ["Grid", "Large"],
+      ["List", null],
+    ]) {
       await panel.getByRole("button", { name: view, exact: true }).click();
+      if (size) {
+        const smaller = panel.getByRole("button", {
+          name: "Smaller cards",
+          exact: true,
+        });
+        while (await smaller.isEnabled()) await smaller.click();
+        for (
+          let step = 0;
+          step < ["Small", "Medium", "Large"].indexOf(size);
+          step++
+        )
+          await panel
+            .getByRole("button", { name: "Larger cards", exact: true })
+            .click();
+        await expect(
+          panel.getByRole("status", { name: "Card size", exact: true }),
+        ).toHaveText(size);
+      }
       const items = panel.locator(
         view === "Grid" ? ".music-card" : ".ranking-row",
       );
@@ -206,8 +229,39 @@ test("rankings keep artwork square and long metadata and durations visible", asy
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(width);
+      if (size) {
+        const badges = await items.evaluateAll((nodes) =>
+          nodes.map((node) => {
+            const cover = node.querySelector(".cover");
+            const image = node.querySelector("img");
+            const badge = node.querySelector(".rank-number");
+            const box = badge.getBoundingClientRect();
+            // Hit testing with pointer events enabled verifies the actual paint order.
+            badge.style.pointerEvents = "auto";
+            const top = document.elementFromPoint(
+              box.x + box.width / 2,
+              box.y + box.height / 2,
+            );
+            badge.style.removeProperty("pointer-events");
+            return {
+              round: getComputedStyle(cover).borderRadius === "50%",
+              fillsCircle:
+                !image || getComputedStyle(image).objectFit === "cover",
+              clipped: badge.scrollWidth > badge.clientWidth,
+              onTop: box.bottom > innerHeight || box.y < 0 || top === badge,
+            };
+          }),
+        );
+        expect(
+          badges.every(
+            (badge) =>
+              badge.round && badge.fillsCircle && !badge.clipped && badge.onTop,
+          ),
+          JSON.stringify(badges),
+        ).toBe(true);
+      }
       await page.screenshot({
-        path: `test-results/rankings-polish-${browserName}-${width}-${view.toLowerCase()}.png`,
+        path: `test-results/rankings-polish-${browserName}-${width}-${view.toLowerCase()}${size ? "-" + size.toLowerCase() : ""}.png`,
         fullPage: true,
         animations: "disabled",
       });
@@ -3084,9 +3138,14 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     albums.getByRole("status", { name: "Card size", exact: true }),
   ).toHaveText("Medium");
-  await expect(albums.locator(".music-card").first()).toBeVisible();
-  const medium = (await albums.locator(".music-card").first().boundingBox())
-    .width;
+  let medium = 0;
+  await expect
+    .poll(async () => {
+      medium =
+        (await albums.locator(".music-card").first().boundingBox())?.width || 0;
+      return medium;
+    })
+    .toBeGreaterThan(0);
   await albums
     .getByRole("button", { name: "Larger cards", exact: true })
     .click();

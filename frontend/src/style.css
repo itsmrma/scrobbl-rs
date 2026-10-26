@@ -4130,6 +4130,16 @@ dialog {
   top: 14px;
   left: 14px;
   font-size: 10px;
+  z-index: 2;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.ranking-panel .music-card .cover.large {
+  border-radius: 50%;
+  overflow: hidden;
+}
+.ranking-panel .music-card .cover-image {
+  object-fit: cover;
 }
 .ranking-row:last-child {
   padding-bottom: 14px;
