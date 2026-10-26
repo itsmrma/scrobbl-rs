@@ -4029,8 +4029,8 @@ test("expanded connection steps and API help keep text and buttons within their 
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/settings/connections");
     const spotify = page.locator(".spotify-card");
-    if (!(await spotify.evaluate((node) => node.open)))
-      await spotify.locator(":scope > summary").click();
+    await spotify.evaluate((node) => (node.open = true));
+    await expect(spotify).toHaveAttribute("open", "");
     await expect(page.locator(".connection-step").first()).toBeVisible();
     for (const disclosure of await spotify.locator("details").all()) {
       if (!(await disclosure.evaluate((node) => node.open)))
