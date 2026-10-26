@@ -13,7 +13,7 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
     <details className="image-credits">
       <summary>Image credits</summary>
       <a href={credit.source_url} target="_blank" rel="noreferrer">
-        {credit.provider === "spotify" ? "Spotify" : "Image source"}
+        Image source
       </a>
       {credit.author && <p>{plainCredit(credit.author)}</p>}
       {credit.credit && <p>{plainCredit(credit.credit)}</p>}

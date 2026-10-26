@@ -15,12 +15,14 @@ import {
   useToast,
 } from "./ui";
 import { SpotifyConnectButton } from "./spotify-connect";
-import { defaultAccent, ink, isHex, periods } from "./preferences";
+import { defaultAccent, ink, isHex, periods, WEEKDAYS } from "./preferences";
 import type { useAppearance } from "./preferences";
 import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
 import { ApiKeys } from "./api-keys";
-import { SkeletonCard, SkeletonList } from "./skeleton";
+import { SkeletonCard } from "./skeleton";
+
+const TIMEZONES = Intl.supportedValuesOf("timeZone");
 
 export function General({
   preferences,
@@ -133,7 +135,7 @@ export function General({
               onChange={(value) => update("timezone", value)}
             >
               <option value="UTC">UTC</option>
-              {Intl.supportedValuesOf("timeZone").map((zone) => (
+              {TIMEZONES.map((zone) => (
                 <option key={zone} value={zone}>
                   {zone}
                 </option>
@@ -147,15 +149,7 @@ export function General({
               value={draft.week_start}
               onChange={(value) => update("week_start", Number(value))}
             >
-              {[
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-              ].map((day, i) => (
+              {WEEKDAYS.map((day, i) => (
                 <option key={day} value={i}>
                   {day}
                 </option>
@@ -972,13 +966,11 @@ export function Connections({
   );
 }
 export function DataRecovery({
-  status,
-  statusError,
   preferences,
+  active,
 }: {
-  status: SpotifyStatus | null;
-  statusError: string;
   preferences: Preferences;
+  active: boolean;
 }) {
   return (
     <article className="panel padded">
@@ -987,33 +979,7 @@ export function DataRecovery({
       <Link to="/activities" className="button secondary">
         View persistent activities
       </Link>
-      <Recovery preferences={preferences} />
-      <h3>Recent imports</h3>
-      <ErrorText>{statusError}</ErrorText>
-      {!status && !statusError && (
-        <SkeletonList count={3} label="Loading recent imports…" />
-      )}
-      {status && !status.imports.length && <p>No imports yet.</p>}
-      {status?.imports.map((job, i) => (
-        <div className="job" key={i}>
-          <strong>{job.filename}</strong>
-          <small>{date(job.created_at_ms, preferences)}</small>
-          <span>
-            {job.report.added} added · {job.report.reconciled} reconciled ·{" "}
-            {job.report.duplicates} duplicates · {job.report.invalid} invalid
-          </span>
-          {job.report.ambiguous > 0 && (
-            <p className="warning">
-              {job.report.ambiguous} ambiguous matches kept separate
-            </p>
-          )}
-          {job.report.errors.map((error, n) => (
-            <p className="form-error" key={n}>
-              {error}
-            </p>
-          ))}
-        </div>
-      ))}
+      <Recovery preferences={preferences} active={active} />
     </article>
   );
 }
@@ -1025,6 +991,7 @@ export function Settings({
   status,
   refresh,
   statusError,
+  visible = true,
 }: {
   section: string;
   preferences: Preferences;
@@ -1033,10 +1000,11 @@ export function Settings({
   status: SpotifyStatus | null;
   refresh: () => Promise<void>;
   statusError: string;
+  visible?: boolean;
 }) {
   return (
     <div className="settings-page">
-      <Heading eyebrow="MAKE YOURSELF AT HOME" title="Settings & connections">
+      <Heading title="Settings & connections">
         Preferences for your instance and this browser.
       </Heading>
       <label className="settings-section-select">
@@ -1095,9 +1063,8 @@ export function Settings({
       </div>
       <div hidden={section !== "data"}>
         <DataRecovery
-          status={status}
-          statusError={statusError}
           preferences={preferences}
+          active={visible && section === "data"}
         />
       </div>
       <div hidden={section !== "api-keys"}>

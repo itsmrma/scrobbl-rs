@@ -113,11 +113,13 @@ def main():
     def totals():
         with sqlite3.connect(f'file:{directory.as_posix()}/archive.db?mode=ro', uri=True) as conn:
             return {table: conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] for table in ('listens','observations','observation_variants','source_occurrences')}
+    def generate_password():
+        return ''.join(secrets.choice('BDFHJLNPRTVXZ') + secrets.choice('bdfhjlnprtvxz') + secrets.choice('2468') + secrets.choice('!@#$%^&*') for _ in range(4))
     def archive_fingerprints(root):
         tables = ('listens','observations','observation_variants','original_payloads',
                   'source_occurrences','source_files','calendars','tracks','artists','albums',
-                  'track_artists','entity_links','local_corrections','entity_groups','group_members',
-                  'identity_decisions','conflicts','job_inputs','job_members')
+                  'track_artists','entity_links','local_corrections','name_groups','name_group_members',
+                  'identity_decisions','conflicts','job_inputs','job_members','artwork','artwork_misses')
         result = {}
         with sqlite3.connect(f'file:{root.as_posix()}/archive.db?mode=ro', uri=True) as conn:
             for table in tables:
@@ -166,7 +168,7 @@ def main():
         env['SCROBBL_DATA_DIR'] = str(destination)
         cookie, csrf = None, None
         start()
-        with api('/api/setup', {'username':'owner','password': secrets.token_hex(24)}) as response:
+        with api('/api/setup', {'username':'owner','password': generate_password()}) as response:
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         old_cookie = cookie
@@ -188,7 +190,7 @@ def main():
         imported_id = json.loads(response.read())['id']
         connection.close()
         ready(imported_id)
-        password = secrets.token_hex(24)
+        password = generate_password()
         began = time.monotonic()
         with api('/api/v1/recovery/restore', {'asset_id':imported_id,'password':password,'confirm_replace':True}) as response:
             assert json.load(response)['restart_required']
@@ -220,7 +222,7 @@ def main():
                 'source_disk':original_disk,'restored_disk':restored_disk}
     try:
         start()
-        with api('/api/setup', {'username':'owner','password': secrets.token_hex(24)}) as response:
+        with api('/api/setup', {'username':'owner','password': generate_password()}) as response:
             cookie = response.headers['Set-Cookie'].split(';')[0]
             csrf = json.load(response)['csrf']
         began = time.monotonic()

@@ -1,13 +1,8 @@
 import { queueArtwork } from "./artwork-activity";
-import { api, downloadArtwork } from "./api";
+import { downloadArtwork } from "./api";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { Preferences, ImageCredit } from "./generated";
-
-export const ArtworkContext = createContext<{
-  connected: boolean;
-  retryAt: number | null;
-}>({ connected: false, retryAt: null });
+import type { Preferences } from "./generated";
 
 export function Icon({ children }: { children: string }) {
   return (
@@ -90,20 +85,22 @@ export function Cover({
   large?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
-  const [credit, setCredit] = useState<ImageCredit | null>(null);
-  const [loadedSource, setLoadedSource] = useState("");
   const [revision, setRevision] = useState(0);
-  const [readySource, setReadySource] = useState("");
+  const [ready, setReady] = useState<{ source: string; src: string } | null>(
+    null,
+  );
   const [cacheMiss, setCacheMiss] = useState("");
   const marker = useRef<HTMLElement | null>(null);
-  const release = useRef<{
-    source: string;
-    done: (loaded: boolean | null) => void;
-  } | null>(null);
   const local = !!url?.startsWith("/api/v1/artwork/");
   const source = local
     ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
-    : url;
+    : "";
+  useEffect(() => {
+    const src = ready?.src;
+    return () => {
+      if (src?.startsWith("blob:")) URL.revokeObjectURL(src);
+    };
+  }, [ready?.src]);
   useEffect(() => {
     if (!local || !source || !marker.current) return;
     let cancel = () => {};
@@ -114,7 +111,7 @@ export function Cover({
         if (!entries.some((entry) => entry.isIntersecting)) return;
         if (cacheMiss !== source) {
           observer.disconnect();
-          setReadySource(`${source}&cached=true`);
+          setReady({ source, src: `${source}&cached=true` });
         } else if (!pending) {
           pending = true;
           cancel = queueArtwork((done) => {
@@ -131,12 +128,16 @@ export function Cover({
               return;
             }
             observer.disconnect();
-            release.current = { source, done };
             void downloadArtwork(source)
-              .then(() => {
+              .then((blobUrl) => {
                 done(true);
-                if (current)
-                  setReadySource(source + "&cached=true&downloaded=true");
+                if (url) {
+                  window.dispatchEvent(
+                    new CustomEvent("artwork-downloaded", { detail: { url } }),
+                  );
+                }
+                if (current) setReady({ source, src: blobUrl });
+                else URL.revokeObjectURL(blobUrl);
               })
               .catch(() => {
                 done(false);
@@ -153,46 +154,20 @@ export function Cover({
       observer.disconnect();
       cancel();
     };
-  }, [local, source, cacheMiss]);
-  useEffect(() => {
-    setCredit(null);
-    if (!local || !url || loadedSource !== source) return;
-    let active = true;
-    void api
-      .artworkCredit(url)
-      .then((value) => {
-        if (active) {
-          setCredit(value);
-          window.dispatchEvent(
-            new CustomEvent("artwork-credit-loaded", { detail: { url } }),
-          );
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [local, url, loadedSource, source]);
-  const finish = (loaded: boolean) => {
-    const current = release.current;
-    if (current && current.source === source) current.done(loaded);
-  };
-  const artwork = useContext(ArtworkContext);
+  }, [local, source, cacheMiss, url]);
   useEffect(() => setFailed(false), [url]);
   useEffect(() => {
-    if (!failed || !artwork.connected || !url?.startsWith("/api/v1/artwork/"))
-      return;
-    // Retry once the shared cooldown expires. Failed images also recover after
-    // a temporary network failure without requiring the owner to reload.
-    const due =
-      Date.now() + Math.max(60_000, (artwork.retryAt || 0) - Date.now() + 1000);
+    if (!failed || !local) return;
+    // Failed images recover after a temporary network or provider failure
+    // without requiring the owner to reload.
+    const due = Date.now() + 60_000;
     const retry = () => {
       if (!document.hidden && Date.now() >= due) {
         setFailed(false);
         setRevision((v) => v + 1);
       }
     };
-    const timer = setTimeout(retry, due - Date.now());
+    const timer = setTimeout(retry, 60_000);
     document.addEventListener("visibilitychange", retry);
     window.addEventListener("online", retry);
     return () => {
@@ -200,7 +175,7 @@ export function Cover({
       document.removeEventListener("visibilitychange", retry);
       window.removeEventListener("online", retry);
     };
-  }, [failed, artwork.connected, artwork.retryAt, url]);
+  }, [failed, local]);
   useEffect(() => {
     if (!failed || !local) return;
     const changed = () => {
@@ -222,39 +197,26 @@ export function Cover({
     window.addEventListener("artwork-updated", changed);
     return () => window.removeEventListener("artwork-updated", changed);
   }, [url]);
-  return (url?.startsWith("https://i.scdn.co/") || local) &&
-    !failed &&
-    (!local ||
-      readySource === source ||
-      readySource === `${source}&cached=true` ||
-      readySource === source + "&cached=true&downloaded=true") ? (
+  return local && !failed && ready?.source === source ? (
     <span className={`cover image-frame ${large ? "large" : ""}`}>
       <img
         ref={(node) => {
           marker.current = node;
         }}
         className="cover-image"
-        src={(local ? readySource : source) || undefined}
+        src={ready.src}
         alt=""
-        loading={local ? "eager" : "lazy"}
+        loading="eager"
         referrerPolicy="no-referrer"
-        onLoad={() => {
-          finish(true);
-          setLoadedSource(source || "");
-        }}
         onError={() => {
-          if (local && readySource.endsWith("&cached=true")) {
-            setReadySource("");
-            setCacheMiss(source || "");
+          if (ready.src.endsWith("&cached=true")) {
+            setReady(null);
+            setCacheMiss(source);
             return;
           }
-          finish(false);
           setFailed(true);
         }}
       />
-      {credit?.provider === "spotify" && (
-        <span className="image-provider-badge">Spotify</span>
-      )}
     </span>
   ) : (
     <span
@@ -265,21 +227,6 @@ export function Cover({
     >
       <Icon>music_note</Icon>
     </span>
-  );
-}
-export function SpotifyLink({
-  url,
-  children,
-}: {
-  url?: string | null;
-  children: ReactNode;
-}) {
-  return url?.startsWith("https://open.spotify.com/track/") ? (
-    <a href={url} target="_blank" rel="noreferrer">
-      {children}
-    </a>
-  ) : (
-    <strong>{children}</strong>
   );
 }
 export const number = new Intl.NumberFormat("en-GB");
@@ -294,24 +241,40 @@ export function duration(ms: number | null, compact = false): string {
       : `${number.format(minutes)}m`
     : `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
 export function date(ms: number | null, preferences: Preferences) {
-  return ms === null
-    ? "Never"
-    : new Intl.DateTimeFormat("en-GB", {
-        timeZone: preferences.timezone,
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: preferences.hour_format === "12" ? "h12" : "h23",
-      }).format(ms);
+  if (ms === null) return "Never";
+  const hourCycle = preferences.hour_format === "12" ? "h12" : "h23";
+  const key = `${preferences.timezone}:${hourCycle}`;
+  let formatter = dateFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: preferences.timezone,
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle,
+    });
+    dateFormatters.set(key, formatter);
+  }
+  return formatter.format(ms);
+}
+const SOURCE_LABELS: Record<string, string> = {
+  spotify_api: "Spotify collection",
+  spotify_import: "Spotify import",
+  listenbrainz: "ListenBrainz",
+};
+export function formatSources(sources: string[]): string {
+  return [...new Set(sources)]
+    .map((source) => SOURCE_LABELS[source] || source)
+    .join(" + ");
 }
 export function Heading({
   title,
   children,
 }: {
-  eyebrow?: string;
   title: string;
   children?: ReactNode;
 }) {
@@ -361,9 +324,9 @@ export function Notice({
 export function ErrorText({ children }: { children?: ReactNode }) {
   return <Notice title="Something needs attention">{children}</Notice>;
 }
-export const ToastContext = createContext<
-  (message: string, error?: boolean) => void
->(() => {});
+const ToastContext = createContext<(message: string, error?: boolean) => void>(
+  () => {},
+);
 export const useToast = () => useContext(ToastContext);
 export function Toasts({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<

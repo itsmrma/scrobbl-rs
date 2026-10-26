@@ -14,8 +14,13 @@ pub const IMAGE_INTERVAL_MS: i64 = 1_000;
 async fn background_slot(state: &AppState, lease: &Job, kind: &str, id: &str) -> Result<bool> {
     let mut tx = state.db.begin().await?;
     jobs::validate_lease(&mut tx, lease).await?;
-    let cached: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?))")
-        .bind(kind).bind(id).bind(auth::now_ms()).fetch_one(&mut *tx).await?;
+    let cached: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
+    )
+    .bind(kind)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
     if cached {
         return Ok(true);
     }
@@ -51,8 +56,8 @@ pub(crate) async fn enqueue_missing(conn: &mut sqlx::SqliteConnection) -> Result
         AND ((g.kind='albums' AND EXISTS(SELECT 1 FROM name_group_members gm JOIN tracks t ON t.album_id=gm.entity_id JOIN listens l ON l.track_id=t.id WHERE gm.kind='albums' AND gm.group_id=g.id AND l.trashed_at_ms IS NULL))
           OR (g.kind='artists' AND EXISTS(SELECT 1 FROM name_group_members gm JOIN track_artists ta ON ta.artist_id=gm.entity_id JOIN listens l ON l.track_id=ta.track_id WHERE gm.kind='artists' AND gm.group_id=g.id AND l.trashed_at_ms IS NULL)))
         AND NOT EXISTS(SELECT 1 FROM artwork_misses m WHERE m.kind=g.kind AND m.entity_id=g.id AND m.expires_at_ms>?)
-        AND NOT EXISTS(SELECT 1 FROM artwork a WHERE a.kind=g.kind AND a.entity_id=g.id AND (a.source='custom' OR a.expires_at_ms IS NULL OR a.expires_at_ms>?))
-      ON CONFLICT(job_id,member) DO NOTHING"#).bind(&id).bind(auth::now_ms()).bind(auth::now_ms()).execute(&mut *conn).await?.rows_affected();
+        AND NOT EXISTS(SELECT 1 FROM artwork a WHERE a.kind=g.kind AND a.entity_id=g.id AND a.bytes IS NOT NULL)
+      ON CONFLICT(job_id,member) DO NOTHING"#).bind(&id).bind(auth::now_ms()).execute(&mut *conn).await?.rows_affected();
     if inserted > 0 {
         sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE id=? AND state='waiting' AND COALESCE(error_code,'')!='artwork_paused'")
             .bind(&id).execute(&mut *conn).await?;
@@ -91,9 +96,7 @@ async fn defer(
             .bind(member)
             .fetch_one(&mut *tx)
             .await?;
-    let delay = 30_000i64
-        .saturating_mul(1 << attempts.min(7))
-        .min(3_600_000);
+    let delay = crate::artwork_sources::retry_backoff_ms(attempts);
     let retry = at.unwrap_or_else(|| auth::now_ms().saturating_add(delay));
     sqlx::query("UPDATE job_members SET artwork_retry_at_ms=?,artwork_attempts=artwork_attempts+1,error_code=? WHERE job_id=? AND member=?")
         .bind(retry).bind(code).bind(&lease.id).bind(member).execute(&mut *tx).await?;
@@ -426,8 +429,17 @@ mod tests {
         sqlx::query("UPDATE job_members SET error_code='artwork_connection_required',artwork_retry_at_ms=?,current_provider='spotify'").bind(until).execute(&state.db).await.unwrap();
         sqlx::query("INSERT INTO jobs(id,kind,state,created_at_ms,updated_at_ms,error_code,retry_at_ms) VALUES('user-paused','artwork','waiting',0,0,'artwork_paused',?)").bind(until).execute(&state.db).await.unwrap();
         sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES('artists','personal','custom',x'89504E470D0A1A0A','image/png',0)").execute(&state.db).await.unwrap();
-        // Schema 19 only changes data. Recreate the state immediately before it.
-        sqlx::query("DELETE FROM _sqlx_migrations WHERE version=19")
+        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES('albums','temp-spotify','spotify',x'89504E470D0A1A0A','image/png',0,?,'{\"provider\":\"spotify\"}')").bind(until).execute(&state.db).await.unwrap();
+        sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES('albums','null-spotify','spotify',NULL,NULL,0,?)").bind(until).execute(&state.db).await.unwrap();
+        crate::db::set_setting(
+            &mut state.db.acquire().await.unwrap(),
+            "artwork_retry_at_ms",
+            &until.to_string(),
+        )
+        .await
+        .unwrap();
+        // Schemas 19 and 20 only change data. Recreate the state immediately before them.
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version>=19")
             .execute(&state.db)
             .await
             .unwrap();
@@ -454,6 +466,12 @@ mod tests {
         assert_eq!(
             crate::db::setting(&state.db, "retry_at_ms").await.unwrap(),
             Some(until.to_string())
+        );
+        assert!(
+            crate::db::setting(&state.db, "artwork_retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
         );
         assert_eq!(
             crate::db::setting(&state.db, "artwork_host_retry:musicbrainz.org")
@@ -567,38 +585,12 @@ mod tests {
         state.storage.close().await;
     }
     #[tokio::test]
-    async fn upgrade_honors_an_existing_provider_retry_until_it_expires() {
-        let (_dir, state) = setup().await;
-        let at = auth::now_ms() + 1_200_000;
-        db::set_setting(
-            &mut state.db.acquire().await.unwrap(),
-            "artwork_retry_at_ms",
-            &at.to_string(),
-        )
-        .await
-        .unwrap();
-        assert!(
-            matches!(crate::artwork_sources::request_slot(&state,"musicbrainz.org").await, Err(AppError::ArtworkWait { retry_at_ms }) if retry_at_ms == at)
-        );
-        db::set_setting(
-            &mut state.db.acquire().await.unwrap(),
-            "artwork_retry_at_ms",
-            "0",
-        )
-        .await
-        .unwrap();
-        crate::artwork_sources::request_slot(&state, "musicbrainz.org")
-            .await
-            .unwrap();
-        state.storage.close().await;
-    }
-    #[tokio::test]
     async fn host_cooldown_is_persistent_and_does_not_block_other_sources() {
         use crate::artwork_sources::{request_failed, request_slot};
         let (dir, state) = setup().await;
         let at = auth::now_ms() + 1_200_000;
         assert!(
-            matches!(request_failed(&state,"i.scdn.co",Some(at)).await.unwrap(), AppError::ArtworkWait { retry_at_ms } if retry_at_ms == at)
+            matches!(request_failed(&state,"coverartarchive.org",Some(at)).await.unwrap(), AppError::ArtworkWait { retry_at_ms } if retry_at_ms == at)
         );
         request_slot(&state, "musicbrainz.org").await.unwrap();
         let config = state.config.clone();
@@ -606,12 +598,12 @@ mod tests {
         drop(state);
         let state = AppState::new(storage::open(dir.path()).await.unwrap(), config);
         assert!(
-            matches!(request_slot(&state,"i.scdn.co").await, Err(AppError::ArtworkWait { retry_at_ms }) if retry_at_ms == at)
+            matches!(request_slot(&state,"coverartarchive.org").await, Err(AppError::ArtworkWait { retry_at_ms }) if retry_at_ms == at)
         );
         request_slot(&state, "commons.wikimedia.org").await.unwrap();
         // A later shorter pause cannot erase an outstanding Retry-After.
         assert!(
-            matches!(request_failed(&state,"i.scdn.co",None).await.unwrap(), AppError::ArtworkWait { retry_at_ms } if retry_at_ms >= at)
+            matches!(request_failed(&state,"coverartarchive.org",None).await.unwrap(), AppError::ArtworkWait { retry_at_ms } if retry_at_ms >= at)
         );
         state.storage.close().await;
     }
@@ -647,10 +639,6 @@ mod tests {
         let lease = state.storage.job(&lease.id).await.unwrap();
         sqlx::query("DELETE FROM artwork")
             .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'test','test',9999999999999)")
-            .execute(&state.private_db)
             .await
             .unwrap();
         let before = auth::now_ms();
@@ -741,7 +729,11 @@ mod tests {
             1
         );
         // Personal images and a valid negative cache do not enter a new queue.
-        sqlx::query("UPDATE artwork SET bytes=NULL,mime=NULL,expires_at_ms=? WHERE kind='artists'")
+        sqlx::query("DELETE FROM artwork WHERE kind='artists'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artwork_misses VALUES('artists',(SELECT id FROM name_groups WHERE kind='artists'),0,?)")
             .bind(auth::now_ms() + 100000)
             .execute(&state.db)
             .await

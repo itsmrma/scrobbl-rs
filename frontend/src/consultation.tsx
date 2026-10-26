@@ -698,20 +698,27 @@ function RankingsPanel({
     </article>
   );
 }
+const periodFormatters = new Map<string, Intl.DateTimeFormat>();
 function periodLabel(start: string, grain: string, full = false) {
   const date = new Date(`${start}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return start;
   if (grain === "year") return String(date.getUTCFullYear());
-  const label = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "UTC",
-    ...(grain === "month"
-      ? { month: "short", year: "numeric" }
-      : {
-          day: "numeric",
-          month: "short",
-          ...(full ? { year: "numeric" } : {}),
-        }),
-  }).format(date);
+  const key = grain === "month" ? "month" : full ? "day:full" : "day";
+  let formatter = periodFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      ...(grain === "month"
+        ? { month: "short", year: "numeric" }
+        : {
+            day: "numeric",
+            month: "short",
+            ...(full ? { year: "numeric" } : {}),
+          }),
+    });
+    periodFormatters.set(key, formatter);
+  }
+  const label = formatter.format(date);
   return grain === "week" ? `Week of ${label}` : label;
 }
 const compactNumber = new Intl.NumberFormat("en-GB", {
@@ -935,10 +942,7 @@ export function Overview({
   return (
     <>
       <div className="overview-heading">
-        <Heading
-          eyebrow="YOUR PERSONAL LISTENING ARCHIVE"
-          title="Your listening, at a glance"
-        >
+        <Heading title="Your listening, at a glance">
           The songs, the repeats, the moments. All yours.
         </Heading>
         <PeriodFilters selection={selection} />
@@ -996,7 +1000,7 @@ export function RankingsPage({
   const selection = useSelection(true);
   return (
     <>
-      <Heading title="Rankings" eyebrow="YOUR LISTENING RANKED">
+      <Heading title="Rankings">
         {kind === "artists"
           ? "Your most played artists, combining listens across all their tracks."
           : kind === "albums"
@@ -1311,7 +1315,7 @@ export function HistoryPage({
     <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
         <div className="history-heading">
-          <Heading title="Listening history" eyebrow="EVERY LISTEN HAS A STORY">
+          <Heading title="Listening history">
             Search and combine period, artist, album and source filters.
           </Heading>
           <div className="history-actions">
@@ -1383,10 +1387,6 @@ export function HistoryPage({
             change({ q: draft });
           }}
         >
-          <div className="history-filter-heading">
-            <h2>Find your listens</h2>
-            <span>Combine filters to narrow your history</span>
-          </div>
           {!embedded && <PeriodFilters selection={selection} sort={false} />}
           <div className="history-filter-grid">
             <label className="history-search">
@@ -1606,10 +1606,7 @@ export function MusicPage({
             <Cover url={result.data.cover_url} large />
             <div className="music-header-content" ref={introduction}>
               <div className="music-title-row">
-                <Heading
-                  title={result.data.name}
-                  eyebrow={kind.slice(0, -1).toUpperCase()}
-                >
+                <Heading title={result.data.name}>
                   {kind === "albums"
                     ? "Album by "
                     : kind === "tracks"

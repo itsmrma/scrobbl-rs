@@ -138,11 +138,11 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
       const url = (event as CustomEvent<{ url: string }>).detail.url;
       if (url.split("?")[0] === `/api/v1/artwork/${kind}/${id}`) update();
     };
-    window.addEventListener("artwork-credit-loaded", loaded);
+    window.addEventListener("artwork-downloaded", loaded);
     window.addEventListener("artwork-cache-changed", update);
     window.addEventListener("artwork-updated", update);
     return () => {
-      window.removeEventListener("artwork-credit-loaded", loaded);
+      window.removeEventListener("artwork-downloaded", loaded);
       window.removeEventListener("artwork-cache-changed", update);
       window.removeEventListener("artwork-updated", update);
     };
@@ -427,7 +427,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                       }
                     }}
                   >
-                    <Icon>restart_alt</Icon>Use Spotify image
+                    <Icon>restart_alt</Icon>Reset custom image
                   </button>
                 </div>
               </form>

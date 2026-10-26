@@ -49,17 +49,7 @@ pub async fn choices(
 ) -> Result<Json<Vec<EntityChoice>>> {
     auth::session(&state, &headers).await?;
     let q = filters.q.as_deref().unwrap_or("").trim();
-    if q.len() > 500 {
-        return Err(AppError::BadRequest(
-            "Search is limited to 500 bytes.".into(),
-        ));
-    }
-    let pattern = format!(
-        "%{}%",
-        q.replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
-    );
+    let pattern = crate::db::search_pattern(q)?;
     let join = match kind.as_str() {
         "artists" => {
             "artists e JOIN track_artists ta ON ta.artist_id=e.id JOIN tracks t ON t.id=ta.track_id"
@@ -191,6 +181,7 @@ fn calendar_day(calendar: &Calendar, time: i64) -> Result<NaiveDate> {
 }
 #[derive(FromRow)]
 struct Daily {
+    calendar_id: String,
     local_date: String,
     week_date: String,
     listens: i64,
@@ -215,21 +206,38 @@ pub async fn activity_chart(
     now: i64,
 ) -> Result<ActivityChart> {
     let mut query = consultation::selection_at(conn, filters, false, now).await?;
-    query.push("SELECT local_date,week_date,COUNT(*) AS listens,COALESCE(SUM(CASE WHEN duration_kind='actual' THEN listened_ms END),0) AS actual_ms,COALESCE(SUM(CASE WHEN duration_kind='estimated' THEN listened_ms END),0) AS estimated_ms,SUM(duration_kind='unknown') AS unknown_durations FROM selected WHERE counted=1 GROUP BY local_date,week_date ORDER BY local_date");
+    query.push(
+        "SELECT calendar_id,local_date,week_date,COALESCE(SUM(counted=1),0) AS listens,COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms END),0) AS actual_ms,COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms END),0) AS estimated_ms,COALESCE(SUM(counted=1 AND duration_kind='unknown'),0) AS unknown_durations FROM selected GROUP BY calendar_id,local_date,week_date ORDER BY local_date",
+    );
     let rows: Vec<Daily> = query.build_query_as().fetch_all(&mut *conn).await?;
     // Used calendars, plus the effective calendar when there are no matching listens.
-    let mut query = consultation::selection_at(conn, filters, false, now).await?;
-    query.push("SELECT DISTINCT c.* FROM calendars c JOIN selected s ON s.calendar_id=c.id");
-    let mut calendars: Vec<Calendar> = query.build_query_as().fetch_all(&mut *conn).await?;
-    if calendars.is_empty() {
-        calendars.push(crate::calendar::current(conn).await?);
-    }
+    let calendar_ids: BTreeSet<&str> = rows.iter().map(|r| r.calendar_id.as_str()).collect();
+    let calendars: Vec<Calendar> = if calendar_ids.is_empty() {
+        vec![crate::calendar::current(conn).await?]
+    } else {
+        let mut cal_query = sqlx::QueryBuilder::new("SELECT * FROM calendars WHERE id IN (");
+        let mut separated = cal_query.separated(",");
+        for id in calendar_ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+        cal_query.build_query_as().fetch_all(&mut *conn).await?
+    };
     let period = filters.period.as_deref().unwrap_or("all");
     let custom = period == "custom"
         || filters.from.as_deref().is_some_and(|s| !s.is_empty())
         || filters.to.as_deref().is_some_and(|s| !s.is_empty());
-    let min = rows.first().map(|r| date(&r.local_date)).transpose()?;
-    let max = rows.last().map(|r| date(&r.local_date)).transpose()?;
+    let min = rows
+        .iter()
+        .find(|r| r.listens > 0)
+        .map(|r| date(&r.local_date))
+        .transpose()?;
+    let max = rows
+        .iter()
+        .rev()
+        .find(|r| r.listens > 0)
+        .map(|r| date(&r.local_date))
+        .transpose()?;
     let mut ranges = Vec::new();
     for calendar in &calendars {
         let today = calendar_day(calendar, now)?;
@@ -330,6 +338,9 @@ pub async fn activity_chart(
         }
     }
     for row in rows {
+        if row.listens == 0 {
+            continue;
+        }
         let start = if grain == "week" {
             date(&row.week_date)?
         } else {

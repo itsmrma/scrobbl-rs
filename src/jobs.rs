@@ -136,6 +136,7 @@ impl Storage {
             .await?
             .ok_or_else(|| AppError::BadRequest("Unknown job.".into()))
     }
+    #[cfg(test)]
     pub async fn activities(&self) -> Result<Vec<Job>> {
         Ok(
             sqlx::query_as("SELECT * FROM jobs ORDER BY created_at_ms DESC,id DESC LIMIT 100")

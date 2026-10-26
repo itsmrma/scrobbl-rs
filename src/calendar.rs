@@ -18,11 +18,12 @@ pub struct Calendar {
     pub rules_version: i64,
 }
 impl Calendar {
-    pub fn dates(&self, time: i64) -> Result<(String, String)> {
-        let tz: Tz = self
-            .timezone
+    pub fn parse_tz(&self) -> Result<Tz> {
+        self.timezone
             .parse()
-            .map_err(|_| AppError::BadRequest("Unknown IANA timezone.".into()))?;
+            .map_err(|_| AppError::BadRequest("Unknown IANA timezone.".into()))
+    }
+    pub fn dates_with_tz(&self, tz: Tz, time: i64) -> Result<(String, String)> {
         let day = DateTime::<Utc>::from_timestamp_millis(time)
             .ok_or_else(|| AppError::BadRequest("Timestamp outside calendar range.".into()))?
             .with_timezone(&tz)
@@ -33,6 +34,9 @@ impl Calendar {
             .checked_sub_signed(Duration::days(offset))
             .ok_or_else(|| AppError::BadRequest("Timestamp outside calendar range.".into()))?;
         Ok((day.to_string(), week.to_string()))
+    }
+    pub fn dates(&self, time: i64) -> Result<(String, String)> {
+        self.dates_with_tz(self.parse_tz()?, time)
     }
 }
 /// Shared selection for UI, exports and integrations. Bounds apply to each assigned calendar.
@@ -169,17 +173,29 @@ impl Storage {
             serde_json::from_str(&lease.parameters_json).map_err(|_| AppError::Internal)?;
         let id = params["calendar_id"].as_str().ok_or(AppError::Internal)?;
         let calendar = get(&mut tx, id).await?;
-        let rows=sqlx::query("SELECT id,played_at_ms FROM listens l WHERE NOT EXISTS(SELECT 1 FROM calendar_staging s WHERE s.job_id=? AND s.listen_id=l.id) ORDER BY id LIMIT 1000")
-            .bind(&lease.id).fetch_all(&mut *tx).await?;
+        let tz = calendar.parse_tz()?;
+        let rows = sqlx::query(
+            "SELECT id,played_at_ms FROM listens l WHERE NOT EXISTS(SELECT 1 FROM calendar_staging s WHERE s.job_id=? AND s.listen_id=l.id) ORDER BY id LIMIT 1000",
+        )
+        .bind(&lease.id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut staged = Vec::with_capacity(rows.len());
         for row in &rows {
-            let (date, week) = calendar.dates(row.get("played_at_ms"))?;
-            sqlx::query("INSERT INTO calendar_staging VALUES(?,?,?,?)")
-                .bind(&lease.id)
-                .bind(row.get::<String, _>("id"))
-                .bind(date)
-                .bind(week)
-                .execute(&mut *tx)
-                .await?;
+            let (date, week) = calendar.dates_with_tz(tz, row.get("played_at_ms"))?;
+            staged.push((row.get::<String, _>("id"), date, week));
+        }
+        for chunk in staged.chunks(200) {
+            let mut builder = sqlx::QueryBuilder::new(
+                "INSERT INTO calendar_staging(job_id,listen_id,local_date,week_date) ",
+            );
+            builder.push_values(chunk, |mut b, (listen_id, date, week)| {
+                b.push_bind(&lease.id)
+                    .push_bind(listen_id)
+                    .push_bind(date)
+                    .push_bind(week);
+            });
+            builder.build().execute(&mut *tx).await?;
         }
         sqlx::query("UPDATE jobs SET checkpoint=checkpoint+?,processed=processed+? WHERE id=?")
             .bind(rows.len() as i64)
@@ -212,7 +228,18 @@ impl Storage {
             .fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
         sqlx::query("UPDATE listens SET calendar_id=?,local_date=s.local_date,week_date=s.week_date,revision=? FROM calendar_staging s WHERE s.job_id=? AND s.listen_id=listens.id")
             .bind(id).bind(revision).bind(&lease.id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO changes(revision,listen_id,operation) SELECT ?,listen_id,'upsert' FROM calendar_staging WHERE job_id=?").bind(revision).bind(&lease.id).execute(&mut *tx).await?;
+        sqlx::query(
+            "INSERT INTO changes(revision,listen_id,operation)
+             SELECT ?,s.listen_id,CASE WHEN l.trashed_at_ms IS NULL THEN 'upsert' ELSE 'remove' END
+             FROM calendar_staging s
+             JOIN listens l ON l.id=s.listen_id
+             WHERE s.job_id=?",
+        )
+        .bind(revision)
+        .bind(&lease.id)
+        .execute(&mut *tx)
+        .await?;
+        db::prune_revision_log(&mut tx, revision).await?;
         db::set_setting(&mut tx, "calendar_id", id).await?;
         sqlx::query("INSERT INTO settings(key,value) VALUES('preferences_version','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1").execute(&mut *tx).await?;
         sqlx::query("UPDATE jobs SET state='completed',updated_at_ms=? WHERE id=?")

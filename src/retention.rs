@@ -102,6 +102,18 @@ fn legacy_pins(store: &Storage) -> anyhow::Result<BTreeSet<String>> {
     Ok(pinned)
 }
 
+const RELEASABLE_SOURCE_FILES_SQL: &str = "WITH references_to_files AS (
+    SELECT file_id,id AS job_id FROM jobs WHERE file_id IS NOT NULL
+    UNION ALL SELECT file_id,job_id FROM job_inputs
+    UNION ALL SELECT file_id,job_id FROM job_members WHERE file_id IS NOT NULL
+    UNION ALL SELECT file_id,job_id FROM listenbrainz_pages
+  )
+  SELECT f.id FROM references_to_files r
+  JOIN source_files f ON f.id=r.file_id AND f.retained=1
+  JOIN jobs j ON j.id=r.job_id
+  GROUP BY f.id
+  HAVING MIN(j.state='completed' AND COALESCE(j.outcome,'complete') IN ('complete','no_music'))=1";
+
 pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
     let _files = store.spool_operations.write().await;
     if store.directory.join("recovery.pending").exists() {
@@ -116,67 +128,89 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
         }
     }
     let pinned = legacy_pins(store)?;
-    let mut tx = store.writer.begin().await?;
-    sqlx::query("DELETE FROM artwork WHERE source='spotify' AND expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
-        .bind(crate::auth::now_ms()).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM artwork_misses WHERE expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
-        .bind(crate::auth::now_ms()).execute(&mut *tx).await?;
-    // A source may be shared by several uploads/jobs. Only discard bytes once ALL
-    // references have completed successfully. Partial, failed and cancelled work
-    // remains retryable. Unattached uploads are retained, too.
-    let candidates: Vec<String> = sqlx::query_scalar(
-        "WITH references_to_files AS (
-           SELECT file_id,id AS job_id FROM jobs WHERE file_id IS NOT NULL
-           UNION ALL SELECT file_id,job_id FROM job_inputs
-           UNION ALL SELECT file_id,job_id FROM job_members WHERE file_id IS NOT NULL
-           UNION ALL SELECT file_id,job_id FROM listenbrainz_pages
-         )
-         SELECT f.id FROM references_to_files r
-         JOIN source_files f ON f.id=r.file_id AND f.retained=1
-         JOIN jobs j ON j.id=r.job_id
-         GROUP BY f.id
-         HAVING MIN(j.state='completed' AND COALESCE(j.outcome,'complete') IN ('complete','no_music'))=1",
-    ).fetch_all(&mut *tx).await?;
-    for id in candidates {
-        if pinned.contains(&id) {
-            continue;
-        }
-        sqlx::query("UPDATE source_files SET retained=0 WHERE id=? AND retained=1")
-            .bind(id)
-            .execute(&mut *tx)
+    let now = crate::auth::now_ms();
+    let expired_misses: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork_misses WHERE expires_at_ms<=?)")
+            .bind(now)
+            .fetch_one(&store.readers)
             .await?;
+    let reader_candidates: Vec<String> = sqlx::query_scalar(RELEASABLE_SOURCE_FILES_SQL)
+        .fetch_all(&store.readers)
+        .await?;
+    let has_releasable = reader_candidates.iter().any(|id| !pinned.contains(id));
+    if expired_misses || has_releasable {
+        let mut tx = store.writer.begin().await?;
+        if expired_misses {
+            sqlx::query("DELETE FROM artwork_misses WHERE expires_at_ms<=? AND (SELECT maintenance FROM archive_state WHERE singleton=1)=0")
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+        }
+        if has_releasable {
+            // A source may be shared by several uploads/jobs. Only discard bytes once ALL
+            // references have completed successfully. Partial, failed and cancelled work
+            // remains retryable. Unattached uploads are retained, too.
+            let candidates: Vec<String> = sqlx::query_scalar(RELEASABLE_SOURCE_FILES_SQL)
+                .fetch_all(&mut *tx)
+                .await?;
+            let releasable: Vec<String> = candidates
+                .into_iter()
+                .filter(|id| !pinned.contains(id))
+                .collect();
+            for chunk in releasable.chunks(500) {
+                let mut builder = sqlx::QueryBuilder::new(
+                    "UPDATE source_files SET retained=0 WHERE retained=1 AND id IN (",
+                );
+                let mut separated = builder.separated(",");
+                for id in chunk {
+                    separated.push_bind(id);
+                }
+                separated.push_unseparated(")");
+                builder.build().execute(&mut *tx).await?;
+            }
+        }
+        tx.commit().await?;
     }
-    tx.commit().await?;
     // Commit unavailability before unlinking; retry after a crash at either step.
     // Inspect only files still on disk, including publication interrupted before
     // source_files committed. Never walk historical released rows on every tick.
+    let mut spool_files = Vec::new();
     for entry in std::fs::read_dir(store.directory.join("spool"))? {
         let entry = entry?;
         let name = entry.file_name();
-        let hash = name.to_string_lossy();
+        let hash = name.to_string_lossy().into_owned();
         if !entry.file_type()?.is_file()
             || hash.len() != 64
             || !hash.bytes().all(|c| c.is_ascii_hexdigit())
-            || pinned.contains(hash.as_ref())
+            || pinned.contains(&hash)
         {
             continue;
         }
-        let retained: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM source_files WHERE content_hash=? AND retained=1)",
-        )
-        .bind(hash.as_ref())
-        .fetch_one(&store.readers)
-        .await?;
-        if retained {
+        spool_files.push((hash, entry.path()));
+    }
+    if spool_files.is_empty() {
+        return Ok(());
+    }
+    let retained: BTreeSet<String> =
+        sqlx::query_scalar("SELECT content_hash FROM source_files WHERE retained=1")
+            .fetch_all(&store.readers)
+            .await?
+            .into_iter()
+            .collect();
+    let mut removed_any = false;
+    for (hash, path) in spool_files {
+        if retained.contains(&hash) {
             continue;
         }
-        match std::fs::remove_file(entry.path()) {
-            Ok(()) => {}
+        match std::fs::remove_file(path) {
+            Ok(()) => removed_any = true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
     }
-    storage::sync_directory(&store.directory.join("spool"))?;
+    if removed_any {
+        storage::sync_directory(&store.directory.join("spool"))?;
+    }
     Ok(())
 }
 

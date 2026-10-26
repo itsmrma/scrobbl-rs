@@ -233,30 +233,36 @@ pub async fn freeze(store: &Storage, path: &Path) -> anyhow::Result<()> {
     storage::sync_file(path)?;
     Ok(())
 }
-async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<Manifest> {
+async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<(Manifest, Vec<(String, i64)>)> {
     let mut conn = connect(snapshot, false).await?;
-    // Sanitize the frozen copy only. VACUUM removes deleted image bytes from free pages.
+    // Sanitize the frozen copy only. VACUUM removes deleted bytes from free pages when needed.
+    sqlx::query("PRAGMA secure_delete=ON")
+        .execute(&mut conn)
+        .await?;
+    let mut deleted = 0;
     if sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='artwork')",
     )
     .fetch_one(&mut conn)
     .await?
     {
-        sqlx::query("PRAGMA secure_delete=ON")
+        deleted += sqlx::query("DELETE FROM artwork WHERE source='spotify'")
             .execute(&mut conn)
-            .await?;
-        sqlx::query("DELETE FROM artwork WHERE source='spotify'")
-            .execute(&mut conn)
-            .await?;
-        sqlx::query("VACUUM").execute(&mut conn).await?;
+            .await?
+            .rows_affected();
     }
     // Recovery output files are not included recursively. Their jobs have no music provenance.
-    sqlx::query("DELETE FROM recovery_assets")
+    deleted += sqlx::query("DELETE FROM recovery_assets")
         .execute(&mut conn)
-        .await?;
-    sqlx::query("DELETE FROM jobs WHERE kind LIKE 'recovery_%'")
+        .await?
+        .rows_affected();
+    deleted += sqlx::query("DELETE FROM jobs WHERE kind LIKE 'recovery_%'")
         .execute(&mut conn)
-        .await?;
+        .await?
+        .rows_affected();
+    if deleted > 0 {
+        sqlx::query("VACUUM").execute(&mut conn).await?;
+    }
     let identity: (String, String, i64) =
         sqlx::query_as("SELECT instance_id,generation,revision FROM archive_state")
             .fetch_one(&mut conn)
@@ -266,20 +272,24 @@ async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<Manifest> {
             .fetch_one(&mut conn)
             .await?;
     let counts = validate_database(&mut conn).await?;
+    let files = crate::retention::files(&mut conn).await?;
     conn.close().await?;
     storage::sync_file(snapshot)?;
-    Ok(Manifest {
-        format: "scrobbl-backup".into(),
-        format_version: 1,
-        app_version: env!("CARGO_PKG_VERSION").into(),
-        schema_version,
-        created_at_ms: auth::now_ms(),
-        instance_id: identity.0,
-        generation: identity.1,
-        revision: identity.2,
-        counts,
-        files: vec![],
-    })
+    Ok((
+        Manifest {
+            format: "scrobbl-backup".into(),
+            format_version: 1,
+            app_version: env!("CARGO_PKG_VERSION").into(),
+            schema_version,
+            created_at_ms: auth::now_ms(),
+            instance_id: identity.0,
+            generation: identity.1,
+            revision: identity.2,
+            counts,
+            files: vec![],
+        },
+        files,
+    ))
 }
 pub async fn create_backup(
     store: &Storage,
@@ -291,10 +301,7 @@ pub async fn create_backup(
     let _files = store.spool_operations.read().await;
     let snapshot = work.join("archive.db");
     freeze(store, &snapshot).await?;
-    let manifest = sanitized_manifest(&snapshot).await?;
-    let mut conn = connect(&snapshot, true).await?;
-    let files = crate::retention::files(&mut conn).await?;
-    conn.close().await?;
+    let (manifest, files) = sanitized_manifest(&snapshot).await?;
     let directory = store.directory.clone();
     let work = work.to_owned();
     let output = output.to_owned();
@@ -319,16 +326,28 @@ pub async fn create_backup(
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated)
             .unix_permissions(0o600);
+        let mut buffer = [0u8; 65536];
         for (name, path, expected) in inputs {
-            let (sha256, size_bytes) = hash_file(&path)?;
+            let mut input = File::open(path)?;
+            let mut hasher = Sha256::new();
+            let mut size_bytes = 0u64;
+            zip.start_file(&name, options)?;
+            loop {
+                let n = input.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buffer[..n]);
+                zip.write_all(&buffer[..n])?;
+                size_bytes += n as u64;
+            }
+            let sha256 = crate::auth::encode_hex(&hasher.finalize());
             if let Some((hash, size)) = expected {
                 ensure!(
                     hash == sha256 && size == size_bytes,
                     "Received file missing or damaged"
                 );
             }
-            zip.start_file(&name, options)?;
-            std::io::copy(&mut File::open(path)?, &mut zip)?;
             manifest.files.push(InventoryFile {
                 name,
                 sha256,
@@ -526,10 +545,13 @@ async fn check_package(
     sqlx::query("PRAGMA secure_delete=ON")
         .execute(&mut conn)
         .await?;
-    sqlx::query("DELETE FROM artwork WHERE source='spotify'")
+    let deleted = sqlx::query("DELETE FROM artwork WHERE source='spotify'")
         .execute(&mut conn)
-        .await?;
-    sqlx::query("VACUUM").execute(&mut conn).await?;
+        .await?
+        .rows_affected();
+    if deleted > 0 {
+        sqlx::query("VACUUM").execute(&mut conn).await?;
+    }
 
     storage::compact_original_payloads(&mut conn).await?;
     validate_database(&mut conn).await?;
@@ -835,7 +857,9 @@ async fn prepare_restore_job(
         .execute(&mut conn)
         .await?;
     sqlx::query("INSERT INTO settings(key,value) VALUES('recovery_paused','true') ON CONFLICT(key) DO UPDATE SET value='true'").execute(&mut conn).await?;
-    sqlx::query("DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','collection_error','now_playing_error','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')").execute(&mut conn).await?;
+    sqlx::query(crate::spotify::RESET_STATUS_SQL)
+        .execute(&mut conn)
+        .await?;
     conn.close().await?;
     std::fs::create_dir(new.join("private"))?;
     let private_path = new.join("private/auth.db");

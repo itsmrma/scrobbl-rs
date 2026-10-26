@@ -169,8 +169,14 @@ pub async fn upload(
         std::fs::rename(&path,&destination).map_err(|_|AppError::Internal)?;
         crate::storage::sync_directory(&state.storage.directory.join("backups")).map_err(|_|AppError::Internal)?;
         let mut tx=state.db.begin().await?;let job=crate::db::new_id();
-        sqlx::query("INSERT INTO jobs(id,kind,state,phase,created_at_ms,updated_at_ms) VALUES(?,'recovery_inspect','queued','preparing',?,?)").bind(&job).bind(auth::now_ms()).bind(auth::now_ms()).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO recovery_assets(id,job_id,kind,format,created_at_ms,size_bytes) VALUES(?,?,'uploaded_backup','zip',?,?)").bind(&id).bind(job).bind(auth::now_ms()).bind(size as i64).execute(&mut *tx).await?;
+        let now=auth::now_ms();
+        let inserted=sqlx::query("INSERT INTO jobs(id,kind,state,phase,created_at_ms,updated_at_ms) SELECT ?,'recovery_inspect','queued','preparing',?,? FROM archive_state WHERE singleton=1 AND maintenance=0").bind(&job).bind(now).bind(now).execute(&mut *tx).await?;
+        if inserted.rows_affected()!=1 {
+            drop(tx);
+            let _=std::fs::remove_file(&destination);
+            return Err(AppError::Conflict("Archive is in maintenance.".into()));
+        }
+        sqlx::query("INSERT INTO recovery_assets(id,job_id,kind,format,created_at_ms,size_bytes) VALUES(?,?,'uploaded_backup','zip',?,?)").bind(&id).bind(job).bind(now).bind(size as i64).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Json(json!({"id":id})))
     }.await;

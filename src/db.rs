@@ -1,7 +1,11 @@
-use crate::{auth::digest, error::Result};
+use crate::{
+    auth::{digest, encode_hex},
+    error::{AppError, Result},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
+use sha2::{Digest, Sha256};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::collections::BTreeSet;
 
 pub use crate::storage::open;
@@ -16,7 +20,6 @@ pub struct Track {
     pub title: String,
     pub album_id: Option<String>,
     pub album: Option<String>,
-    pub cover_url: Option<String>,
     pub duration_ms: Option<i64>,
     pub artists: Vec<Artist>,
     pub structured: bool,
@@ -62,52 +65,75 @@ pub struct IngestReport {
     pub ambiguous: u64,
     pub errors: Vec<String>,
 }
-impl IngestReport {
-    pub fn add(&mut self, other: &Self) {
-        self.originals += other.originals;
-        self.variants += other.variants;
-        self.added += other.added;
-        self.reconciled += other.reconciled;
-        self.duplicates += other.duplicates;
-        self.skipped += other.skipped;
-        self.invalid += other.invalid;
-        self.ambiguous += other.ambiguous;
-        self.errors.extend(
-            other
-                .errors
-                .iter()
-                .take(10usize.saturating_sub(self.errors.len()))
-                .cloned(),
-        );
-    }
-}
 /// Internal IDs are independent of source keys, titles and timestamps.
 pub fn new_id() -> String {
     crate::auth::random_secret()
 }
 
 pub fn payload_fingerprint(value: &Value) -> String {
+    struct HashWriter(Sha256);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.update(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     // serde_json's default Map is sorted, recursively, independently of input key order.
-    digest(&value.to_string())
+    let mut writer = HashWriter(Sha256::new());
+    let _ = serde_json::to_writer(&mut writer, value);
+    encode_hex(&writer.0.finalize())
+}
+
+pub(crate) fn search_pattern(q: &str) -> Result<String> {
+    if q.len() > 500 {
+        return Err(AppError::BadRequest(
+            "Search is limited to 500 bytes.".into(),
+        ));
+    }
+    Ok(format!(
+        "%{}%",
+        q.replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    ))
 }
 
 pub(crate) async fn publish(conn: &mut SqliteConnection, ids: &BTreeSet<String>) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
-    let revision: i64=sqlx::query_scalar("UPDATE archive_state SET revision=revision+1 WHERE singleton=1 AND maintenance=0 RETURNING revision")
-        .fetch_optional(&mut *conn).await?.ok_or_else(||crate::error::AppError::Conflict("Archive is in maintenance.".into()))?;
-    for id in ids {
-        sqlx::query("UPDATE listens SET revision=? WHERE id=?")
-            .bind(revision)
-            .bind(id)
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query("INSERT INTO changes(revision,listen_id,operation) SELECT ?,id,CASE WHEN trashed_at_ms IS NULL THEN 'upsert' ELSE 'remove' END FROM listens WHERE id=?")
-            .bind(revision)
-            .bind(id)
-            .execute(&mut *conn)
-            .await?;
+    let revision: i64 = sqlx::query_scalar(
+        "UPDATE archive_state SET revision=revision+1 WHERE singleton=1 AND maintenance=0 RETURNING revision",
+    )
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
+    let all: Vec<&String> = ids.iter().collect();
+    for chunk in all.chunks(500) {
+        let mut update = QueryBuilder::<Sqlite>::new("UPDATE listens SET revision=");
+        update.push_bind(revision).push(" WHERE id IN (");
+        let mut separated = update.separated(",");
+        for id in chunk {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(")");
+        update.build().execute(&mut *conn).await?;
+
+        let mut insert = QueryBuilder::<Sqlite>::new(
+            "INSERT INTO changes(revision,listen_id,operation) SELECT ",
+        );
+        insert
+            .push_bind(revision)
+            .push(",id,CASE WHEN trashed_at_ms IS NULL THEN 'upsert' ELSE 'remove' END FROM listens WHERE id IN (");
+        let mut separated = insert.separated(",");
+        for id in chunk {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(")");
+        insert.build().execute(&mut *conn).await?;
     }
     prune_revision_log(conn, revision).await?;
     Ok(())

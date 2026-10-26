@@ -46,7 +46,7 @@ impl IntoResponse for AppError {
             }
         };
         if status == StatusCode::INTERNAL_SERVER_ERROR {
-            eprintln!("A local operation failed ({}).", status.as_u16());
+            eprintln!("A local operation failed ({}): {self:?}", status.as_u16());
         }
         (status, Json(json!({"error": self.to_string()}))).into_response()
     }

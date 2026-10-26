@@ -1,7 +1,7 @@
 version = 1
 
 [[annotations]]
-path = ["src/**", "frontend/**", "tests/**", "scripts/**", "migrations/**", "release-migrations/**", "private-migrations/**", "static/favicon.svg", "README.md", "GLOSSARY.md", "AGENTS.md", "Dockerfile", "compose.yaml", ".dockerignore", ".env.example", ".gitignore", "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "vite.config.mts", "playwright.config.cjs", ".github/**", "docs/*.md", "docs/agents/**", "docs/research/**", "docs/screenshots/**"]
+path = ["src/**", "frontend/**", "tests/**", "scripts/**", "migrations/**", "release-migrations/**", "private-migrations/**", "static/favicon.svg", "README.md", "GLOSSARY.md", "AGENTS.md", "Dockerfile", "compose.yaml", ".dockerignore", ".env.example", ".gitignore", "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "vite.config.mts", "playwright.config.cjs", ".github/**", "docs/*.md", "docs/agents/**", "docs/research/**", "docs/reports/**", "docs/screenshots/**"]
 SPDX-FileCopyrightText = "2026 itsmrma and scrobbl.rs contributors"
 SPDX-License-Identifier = "GPL-3.0-or-later"
 

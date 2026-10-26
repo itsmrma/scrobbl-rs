@@ -1,8 +1,8 @@
 import { api } from "./api";
 import { plainCredit } from "./image-credit";
 import { Select } from "./select";
-import { useMemo, useRef, useState } from "react";
-import type { Ranking } from "./generated";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ImageCredit, Ranking } from "./generated";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import type { Kind } from "./selection";
@@ -77,10 +77,28 @@ export function Collage({
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const preview = useRef<HTMLDivElement>(null);
+  const creditCache = useRef(new Map<string, ImageCredit | null>());
+  useEffect(() => {
+    const clear = () => creditCache.current.clear();
+    window.addEventListener("artwork-updated", clear);
+    window.addEventListener("artwork-cache-changed", clear);
+    return () => {
+      window.removeEventListener("artwork-updated", clear);
+      window.removeEventListener("artwork-cache-changed", clear);
+    };
+  }, []);
   const byTime = params.get("sort") === "time";
   const tiles = useMemo(
     () => collageTiles(items.slice(0, count), byTime),
     [items, count, byTime],
+  );
+  const total = useMemo(
+    () =>
+      tiles.reduce(
+        (sum, t) => sum + (byTime ? t.item.listened_ms : t.item.plays),
+        0,
+      ),
+    [tiles, byTime],
   );
   const height = Math.max(1 / 25, ...tiles.map((tile) => tile.y + tile.height));
   const title = `${kind === "albums" ? "Album" : "Artist"} collage`;
@@ -89,11 +107,16 @@ export function Collage({
     setError("");
     try {
       const credits = await Promise.all(
-        tiles.map((tile) =>
-          tile.item.cover_url?.startsWith("/api/v1/artwork/")
-            ? api.artworkCredit(tile.item.cover_url)
-            : Promise.resolve(null),
-        ),
+        tiles.map(async (tile) => {
+          const url = tile.item.cover_url;
+          if (!url?.startsWith("/api/v1/artwork/")) return null;
+          const key = url.split("?")[0];
+          if (creditCache.current.has(key))
+            return creditCache.current.get(key) ?? null;
+          const credit = await api.artworkCredit(key);
+          creditCache.current.set(key, credit);
+          return credit;
+        }),
       );
       const creditText = [
         ...new Set(
@@ -185,11 +208,16 @@ export function Collage({
           ctx.fillRect(x, y + h - 44, w, 44);
           ctx.fillStyle = "#fff";
           ctx.font = "600 17px sans-serif";
-          let label = tile.item.name;
-          while (ctx.measureText(label).width > w - 16 && label.length > 1)
-            label = label.slice(0, -2);
+          const chars = Array.from(tile.item.name);
+          let end = chars.length;
+          while (
+            end > 1 &&
+            ctx.measureText(chars.slice(0, end).join("")).width > w - 16
+          )
+            end--;
+          const label = chars.slice(0, end).join("");
           ctx.fillText(
-            label === tile.item.name ? label : `${label}…`,
+            end === chars.length ? label : `${label}…`,
             x + 8,
             y + h - 17,
           );
@@ -287,10 +315,6 @@ export function Collage({
         <ol className="collage-legend" aria-label="Collage listening shares">
           {tiles.map(({ item }, i) => {
             const value = byTime ? item.listened_ms : item.plays;
-            const total = tiles.reduce(
-              (sum, t) => sum + (byTime ? t.item.listened_ms : t.item.plays),
-              0,
-            );
             return (
               <li key={item.id}>
                 <Link to={musicLink(kind, item.id, params)}>

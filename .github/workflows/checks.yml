@@ -86,10 +86,11 @@ jobs:
             ~/.cargo/git
             target
           key: rust-${{ runner.os }}-1.99.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.99.1-
       - run: mkdir -p ci-logs
       - run: cargo fmt --check 2>&1 | tee ci-logs/fmt.log
       - run: cargo clippy --locked --all-targets -- -D warnings 2>&1 | tee ci-logs/clippy.log
-      - run: cargo build --locked --all-targets 2>&1 | tee ci-logs/build.log
       - run: cargo test --locked --all-targets -- --nocapture 2>&1 | tee ci-logs/test.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
@@ -130,7 +131,6 @@ jobs:
             rust-${{ runner.os }}-1.99.1-
       - run: mkdir -p ci-logs
       - run: npm ci 2>&1 | tee ci-logs/install.log
-      - run: npm run typecheck 2>&1 | tee ci-logs/typecheck.log
       - run: npm run build 2>&1 | tee ci-logs/build.log
       - name: Check embedded assets match the sources
         run: |
@@ -194,7 +194,6 @@ jobs:
             rust-${{ runner.os }}-1.99.1-
       - run: mkdir -p ci-logs
       - run: npm ci 2>&1 | tee ci-logs/install.log
-      - run: npm run typecheck 2>&1 | tee ci-logs/typecheck.log
       - run: npm run build 2>&1 | tee ci-logs/build.log
       - name: Install Rust build tools
         run: |

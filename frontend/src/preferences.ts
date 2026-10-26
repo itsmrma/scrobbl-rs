@@ -1,5 +1,14 @@
 import { useEffect, useState } from "react";
 export const defaultAccent = "#c9ee8b";
+export const WEEKDAYS = [
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+  "Sunday",
+] as const;
 export const periods = [
   ["all", "All time"],
   ["today", "Today"],

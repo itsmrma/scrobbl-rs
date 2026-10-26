@@ -1,5 +1,5 @@
 //! Browser contracts. The checked-in TypeScript declarations are checked by a Rust test.
-use crate::db::{Artist, DurationKind, IngestReport};
+use crate::db::{Artist, DurationKind};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -151,12 +151,6 @@ pub struct NowPlaying {
     pub served_at_ms: i64,
 }
 #[derive(Serialize, Deserialize, TS)]
-pub struct ImportJob {
-    pub filename: String,
-    pub created_at_ms: i64,
-    pub report: IngestReport,
-}
-#[derive(Serialize, Deserialize, TS)]
 pub struct NowPlayingTiming {
     pub source_timestamp_ms: Option<i64>,
     pub requested_at_ms: i64,
@@ -188,7 +182,6 @@ pub struct SpotifyStatus {
     pub now_playing_timing: Option<NowPlayingTiming>,
     pub coverage_warning: Option<String>,
     pub retry_at_ms: Option<i64>,
-    pub imports: Vec<ImportJob>,
     pub review_count: i64,
 }
 #[derive(Serialize, TS)]
@@ -264,7 +257,7 @@ mod tests {
             SavedPreferences::decl(&config),
             Artist::decl(&config),
             DurationKind::decl(&config),
-            IngestReport::decl(&config),
+            crate::db::IngestReport::decl(&config),
             Listen::decl(&config),
             History::decl(&config),
             Totals::decl(&config),
@@ -278,7 +271,6 @@ mod tests {
             ActivityChart::decl(&config),
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
-            ImportJob::decl(&config),
             SpotifyIntervals::decl(&config),
             SpotifyStatus::decl(&config),
             Activity::decl(&config),

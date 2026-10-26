@@ -140,10 +140,32 @@ async fn plan(conn: &mut sqlx::SqliteConnection) -> Result<Plan> {
         start = end;
     }
     let mut signature = serde_json::to_string(&groups).map_err(|_| AppError::Internal)?;
-    for group in &groups {
-        for id in &group.ids {
-            signature.push_str(&evidence_fingerprint(conn, id).await?);
+    let matched_ids: Vec<&str> = groups
+        .iter()
+        .flat_map(|g| g.ids.iter().map(String::as_str))
+        .collect();
+    let mut evidence_map = std::collections::HashMap::with_capacity(matched_ids.len());
+    for chunk in matched_ids.chunks(500) {
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT listen_id, group_concat(id || ':' || fingerprint, '|') FROM (SELECT o.listen_id, v.id, v.fingerprint FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.listen_id IN (",
+        );
+        let mut separated = builder.separated(",");
+        for id in chunk {
+            separated.push_bind(*id);
         }
+        separated.push_unseparated(") ORDER BY o.listen_id, v.id) GROUP BY listen_id");
+        let rows: Vec<(String, Option<String>)> =
+            builder.build_query_as().fetch_all(&mut *conn).await?;
+        for (listen_id, concat) in rows {
+            if let Some(concat) = concat {
+                evidence_map.insert(listen_id, concat);
+            }
+        }
+    }
+    for id in matched_ids {
+        signature.push_str(&auth::digest(
+            evidence_map.get(id).map(String::as_str).unwrap_or(""),
+        ));
     }
     Ok(Plan {
         groups,

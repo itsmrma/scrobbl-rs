@@ -105,17 +105,7 @@ pub async fn members(
     let id = canonical(conn, &kind, &id).await?;
     let page = query.page.unwrap_or(1).clamp(1, 1000000);
     let q = query.q.unwrap_or_default();
-    if q.len() > 500 {
-        return Err(AppError::BadRequest(
-            "Search is limited to 500 bytes.".into(),
-        ));
-    }
-    let pattern = format!(
-        "%{}%",
-        q.replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_")
-    );
+    let pattern = crate::db::search_pattern(&q)?;
     let source = if kind == "artists" {
         "main.artists e JOIN main.track_artists ta ON ta.artist_id=e.id JOIN main.tracks t ON t.id=ta.track_id"
     } else {

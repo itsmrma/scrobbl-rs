@@ -22,7 +22,6 @@ use std::{
 // Readers of a frozen archive use the same overlays as the live consultation.
 pub const METADATA: &str = include_str!("library-metadata.sql");
 const IMAGE_LIMIT: usize = 5 * 1024 * 1024;
-const DAY: i64 = 86_400_000;
 
 fn entity(kind: &str) -> Result<(&'static str, &'static str, &'static str)> {
     match kind {
@@ -78,10 +77,10 @@ pub async fn details(
     Path((kind, id)): Path<(String, String)>,
 ) -> Result<Json<Details>> {
     auth::session(&state, &headers).await?;
-    let id =
-        crate::name_groups::canonical(&mut *state.read_db.acquire().await?, &kind, &id).await?;
     let (_, singular, _) = entity(&kind)?;
-    let mut tx = state.read_db.begin().await?;
+    let mut view = state.storage.read_view().await?;
+    let tx = &mut *view.transaction;
+    let id = crate::name_groups::canonical(&mut *tx, &kind, &id).await?;
     let original_sql = if kind == "tracks" {
         "SELECT title FROM main.tracks WHERE id=?"
     } else if kind == "artists" {
@@ -94,8 +93,22 @@ pub async fn details(
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(AppError::NotFound)?;
-    let name: Option<String> = sqlx::query_scalar("SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind=? AND entity_id=? AND field='name'").bind(singular).bind(&id).fetch_optional(&mut *tx).await?;
-    let rating: Option<f64> = sqlx::query_scalar("SELECT json_extract(value_json,'$') FROM local_corrections WHERE entity_kind=? AND entity_id=? AND field='rating'").bind(singular).bind(&id).fetch_optional(&mut *tx).await?;
+    let mut name: Option<String> = None;
+    let mut rating: Option<f64> = None;
+    let corrections: Vec<(String, String)> = sqlx::query_as(
+        "SELECT field, value_json FROM local_corrections WHERE entity_kind=? AND entity_id=? AND field IN ('name', 'rating')",
+    )
+    .bind(singular)
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (field, value_json) in corrections {
+        match field.as_str() {
+            "name" => name = serde_json::from_str(&value_json).ok(),
+            "rating" => rating = serde_json::from_str(&value_json).ok(),
+            _ => {}
+        }
+    }
     let custom_image: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND source='custom')",
     )
@@ -109,13 +122,14 @@ pub async fn details(
             .filter(|id| valid_spotify_id(id))
             .map(|id| format!("https://open.spotify.com/{singular}/{id}"))
     });
+    let image_credit = crate::artwork_sources::credit_in(&mut *tx, &kind, &id).await?;
     Ok(Json(Details {
         name: name.unwrap_or_else(|| original_name.clone()),
         original_name,
         rating,
         custom_image,
         spotify_url,
-        image_credit: crate::artwork_sources::credit(&state, &kind, &id).await?,
+        image_credit,
     }))
 }
 pub async fn edit(
@@ -324,7 +338,11 @@ pub(crate) async fn public_response(
             .get(url.clone())
             .header(
                 header::USER_AGENT,
-                "scrobbl.rs/0.1 (https://github.com/itsmrma/scrobbl-rs)",
+                concat!(
+                    "scrobbl.rs/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (https://github.com/itsmrma/scrobbl-rs)"
+                ),
             )
             .send()
             .await;
@@ -398,23 +416,22 @@ async fn save_image(
     kind: &str,
     id: &str,
     source: &str,
-    data: Option<&[u8]>,
+    data: &[u8],
 ) -> Result<()> {
     writable(state).await?;
-    let mime = data.map(image_type).transpose()?;
+    let mime = image_type(data)?;
     let now = auth::now_ms();
-    // Successful downloads are part of the local library. Only a confirmed
-    // absence expires, so the provider can be checked again later.
-    let expires = (source == "spotify" && data.is_none()).then_some(now + DAY);
     let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
-    sqlx::query(
-        "DELETE FROM artwork WHERE source='spotify' AND bytes IS NULL AND expires_at_ms<=?",
-    )
-    .bind(now)
-    .execute(&mut *tx)
-    .await?;
-    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=excluded.expires_at_ms").bind(kind).bind(id).bind(source).bind(data).bind(mime).bind(now).bind(expires).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=NULL")
+        .bind(kind)
+        .bind(id)
+        .bind(source)
+        .bind(data)
+        .bind(mime)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -433,7 +450,7 @@ pub async fn upload_image(
         ));
     }
     exists(&state, &kind, &id).await?;
-    save_image(&state, &kind, &id, "custom", Some(&data)).await?;
+    save_image(&state, &kind, &id, "custom", &data).await?;
     Ok(Json(serde_json::json!({"saved":true})))
 }
 #[derive(Deserialize)]
@@ -459,7 +476,7 @@ pub async fn image_url(
     exists(&state, &kind, &id).await?;
     if let Some(url) = form.url {
         let bytes = download(&url, None).await?;
-        save_image(&state, &kind, &id, "custom", Some(&bytes)).await?;
+        save_image(&state, &kind, &id, "custom", &bytes).await?;
     } else {
         sqlx::query("DELETE FROM artwork WHERE kind=? AND entity_id=? AND source='custom'")
             .bind(&kind)
@@ -512,7 +529,13 @@ pub async fn artwork(
         )
             .into_response()
     };
-    let cached=sqlx::query("SELECT bytes,mime FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
+    let cached = sqlx::query(
+        "SELECT bytes FROM artwork WHERE kind=? AND entity_id=? ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
+    )
+    .bind(&kind)
+    .bind(&id)
+    .fetch_optional(&state.read_db)
+    .await?;
     if let Some(row) = cached {
         let bytes: Option<Vec<u8>> = row.get("bytes");
         let bytes = bytes.ok_or(AppError::NotFound)?;
@@ -520,7 +543,7 @@ pub async fn artwork(
         // from the image bytes, never from an editable MIME string in SQLite.
         return Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response());
     }
-    // A fast cache lookup must never wait for Spotify or a cold download.
+    // A fast cache lookup must never wait for a cold provider download.
     if query.cached {
         return Ok((
             axum::http::StatusCode::NOT_FOUND,
@@ -528,11 +551,17 @@ pub async fn artwork(
         )
             .into_response());
     }
-    match ensure_artwork(&state, &kind, &id).await {
+    match ensure_artwork_after_miss(&state, &kind, &id).await {
         Ok(ArtworkFetch::Busy) => Ok(unavailable()),
         Ok(ArtworkFetch::Missing) | Err(AppError::Unauthorized) => Err(AppError::NotFound),
         Ok(ArtworkFetch::Saved | ArtworkFetch::Cached) => {
-            let bytes: Vec<u8> = sqlx::query_scalar("SELECT bytes FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(&kind).bind(&id).fetch_one(&state.read_db).await?;
+            let bytes: Vec<u8> = sqlx::query_scalar(
+                "SELECT bytes FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
+            )
+            .bind(&kind)
+            .bind(&id)
+            .fetch_one(&state.read_db)
+            .await?;
             Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response())
         }
         Err(_) => Ok(unavailable()),
@@ -547,6 +576,7 @@ pub(crate) enum ArtworkFetch {
     Busy,
 }
 
+#[cfg(test)]
 pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
     ensure_artwork_with(
         state,
@@ -557,13 +587,26 @@ pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Re
     .await
 }
 
+async fn ensure_artwork_after_miss(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
+    ensure_artwork_inner(
+        state,
+        kind,
+        id,
+        &crate::artwork_sources::PublicSources(state),
+        None,
+        false,
+    )
+    .await
+}
+
+#[cfg(test)]
 pub(crate) async fn ensure_artwork_with(
     state: &AppState,
     kind: &str,
     id: &str,
     sources: &impl crate::artwork_sources::ImageLookup,
 ) -> Result<ArtworkFetch> {
-    ensure_artwork_with_activity(state, kind, id, sources, None).await
+    ensure_artwork_inner(state, kind, id, sources, None, true).await
 }
 
 pub(crate) async fn ensure_artwork_for_activity(
@@ -574,23 +617,28 @@ pub(crate) async fn ensure_artwork_for_activity(
     activity_id: &str,
     member: &str,
 ) -> Result<ArtworkFetch> {
-    ensure_artwork_with_activity(state, kind, id, sources, Some((activity_id, member))).await
+    ensure_artwork_inner(state, kind, id, sources, Some((activity_id, member)), true).await
 }
 
-async fn ensure_artwork_with_activity(
+async fn ensure_artwork_inner(
     state: &AppState,
     kind: &str,
     id: &str,
     sources: &impl crate::artwork_sources::ImageLookup,
     activity: Option<(&str, &str)>,
+    precheck: bool,
 ) -> Result<ArtworkFetch> {
-    let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
-    if let Some(saved) = cached {
-        return Ok(if saved {
-            ArtworkFetch::Cached
-        } else {
-            ArtworkFetch::Missing
-        });
+    if precheck {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
+        )
+        .bind(kind)
+        .bind(id)
+        .fetch_one(&state.read_db)
+        .await?;
+        if exists {
+            return Ok(ArtworkFetch::Cached);
+        }
     }
     let entity_gate = {
         let mut locks = state.artwork_gate.lock().await;
@@ -608,13 +656,15 @@ async fn ensure_artwork_with_activity(
         return Ok(ArtworkFetch::Busy);
     };
     // A browser/worker may have completed while this request acquired its lock.
-    let cached: Option<bool> = sqlx::query_scalar("SELECT bytes IS NOT NULL FROM artwork WHERE kind=? AND entity_id=? AND (source='custom' OR expires_at_ms IS NULL OR expires_at_ms>?) ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1").bind(kind).bind(id).bind(auth::now_ms()).fetch_optional(&state.read_db).await?;
-    if let Some(saved) = cached {
-        return Ok(if saved {
-            ArtworkFetch::Cached
-        } else {
-            ArtworkFetch::Missing
-        });
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
+    )
+    .bind(kind)
+    .bind(id)
+    .fetch_one(&state.read_db)
+    .await?;
+    if exists {
+        return Ok(ArtworkFetch::Cached);
     }
     writable(state).await?;
     let settings = crate::artwork_settings::read(&mut *state.read_db.acquire().await?).await?;
@@ -651,10 +701,6 @@ mod tests {
         let token = auth::random_secret();
         sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
             .bind(auth::digest(&token))
-            .execute(&state.private_db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO spotify_tokens VALUES(1,'unused','unused',9999999999999)")
             .execute(&state.private_db)
             .await
             .unwrap();
@@ -705,7 +751,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cached, 0, "a busy provider must not cache a missing image");
-        save_image(&state, "artists", &id, "custom", Some(b"\x89PNG\r\n\x1a\n"))
+        save_image(&state, "artists", &id, "custom", b"\x89PNG\r\n\x1a\n")
             .await
             .unwrap();
         let cached = tokio::time::timeout(
