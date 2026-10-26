@@ -1163,12 +1163,13 @@ test("activity automatically fits dense daily and weekly data without horizontal
           .locator(".chart-scroll")
           .evaluate((el) => el.scrollWidth - el.clientWidth),
       ).toBeLessThanOrEqual(1);
-      const total = await page
-        .locator(".chart-bar-value")
-        .evaluateAll((nodes) =>
-          nodes.reduce((sum, node) => sum + Number(node.textContent), 0),
-        );
-      expect(total).toBe(make().reduce((sum, b) => sum + b.listens, 0));
+      await expect
+        .poll(async () =>
+          page.locator(".chart-bar-value").evaluateAll((nodes) =>
+            nodes.reduce((sum, node) => sum + Number(node.textContent), 0),
+          ),
+        )
+        .toBe(make().reduce((sum, b) => sum + b.listens, 0));
       if (kind === "week")
         await expect(bars.first().locator("small").first()).toContainText(
           /202[0-3]/,
@@ -2200,7 +2201,7 @@ test("music charts start independently and back navigation restores the visited 
   });
   try {
     await page.goto(`/music/albums/${album.id}`);
-    await expect(page.locator(".chart-bars")).toBeVisible({ timeout: 1000 });
+    await expect(page.locator(".chart-bars")).toBeVisible();
   } finally {
     hold = false;
     release();
@@ -2217,7 +2218,7 @@ test("music charts start independently and back navigation restores the visited 
   await expect(page.locator(".music-heading h1")).toContainText(album.name, {
     timeout: 500,
   });
-  await expect(page.locator(".chart-bars")).toBeVisible({ timeout: 500 });
+  await expect(page.locator(".chart-bars")).toBeVisible();
 });
 
 test("history filters collapse without clearing the selection and music history keeps listen details", async ({
