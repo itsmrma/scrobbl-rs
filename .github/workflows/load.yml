@@ -3,6 +3,11 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  RUSTUP_USE_CURL: "1"
+  RUSTUP_MAX_RETRIES: "10"
 jobs:
   load:
     name: Synthetic load (not a PR requirement)
@@ -15,16 +20,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: 1.99.1
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+            ~/.rustup/toolchains
+            ~/.rustup/update-hashes
             target
           key: load-rust-1.99.1-${{ hashFiles('Cargo.lock') }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.99.1
       - run: |
           mkdir -p ci-logs
           cargo test --locked --test foundations foundation_load -- --ignored --exact --nocapture 2>&1 | tee ci-logs/foundations.log
