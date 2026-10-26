@@ -1165,9 +1165,11 @@ test("activity automatically fits dense daily and weekly data without horizontal
       ).toBeLessThanOrEqual(1);
       await expect
         .poll(async () =>
-          page.locator(".chart-bar-value").evaluateAll((nodes) =>
-            nodes.reduce((sum, node) => sum + Number(node.textContent), 0),
-          ),
+          page
+            .locator(".chart-bar-value")
+            .evaluateAll((nodes) =>
+              nodes.reduce((sum, node) => sum + Number(node.textContent), 0),
+            ),
         )
         .toBe(make().reduce((sum, b) => sum + b.listens, 0));
       if (kind === "week")
@@ -4029,7 +4031,6 @@ test("expanded connection steps and API help keep text and buttons within their 
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/settings/connections");
     const spotify = page.locator(".spotify-card");
-    await spotify.evaluate((node) => (node.open = true));
     await expect(spotify).toHaveAttribute("open", "");
     await expect(page.locator(".connection-step").first()).toBeVisible();
     for (const disclosure of await spotify.locator("details").all()) {

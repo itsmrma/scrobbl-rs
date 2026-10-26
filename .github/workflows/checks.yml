@@ -107,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        browser: [chromium, firefox, webkit]
+        browser: [chromium, firefox]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -162,6 +162,54 @@ jobs:
             playwright-report/
           retention-days: 7
 
+  frontend-webkit:
+    name: Browser (webkit)
+    needs: changes
+    if: needs.changes.outputs.run_checks == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.99.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: rust-${{ runner.os }}-1.99.1-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.99.1-
+      - run: mkdir -p ci-logs
+      - run: npm ci 2>&1 | tee ci-logs/install.log
+      - run: npm run typecheck 2>&1 | tee ci-logs/typecheck.log
+      - run: npm run build 2>&1 | tee ci-logs/build.log
+      - name: Check embedded assets match the sources
+        run: |
+          git diff --exit-code -- static/dist
+          test -z "$(git ls-files --others --exclude-standard static/dist)"
+      - run: cargo build --locked --bin scrobbl-rs 2>&1 | tee ci-logs/server-build.log
+      - run: npm run test:e2e -- --browser=webkit 2>&1 | tee ci-logs/browser.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: browser-webkit-${{ github.run_attempt }}
+          path: |
+            ci-logs/
+            test-results/
+            playwright-report/
+          retention-days: 7
+
   docker:
     name: Docker
     needs: changes
@@ -171,7 +219,7 @@ jobs:
   required:
     name: PR checks
     if: always()
-    needs: [changes, backend, frontend, docker]
+    needs: [changes, backend, frontend, frontend-webkit, docker]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -179,18 +227,21 @@ jobs:
         env:
           BACKEND: ${{ needs.backend.result }}
           FRONTEND: ${{ needs.frontend.result }}
+          WEBKIT: ${{ needs.frontend-webkit.result }}
           DOCKER: ${{ needs.docker.result }}
           RUN_CHECKS: ${{ needs.changes.outputs.run_checks }}
         run: |
-          printf 'run_checks=%s backend=%s frontend=%s docker=%s\n' "$RUN_CHECKS" "$BACKEND" "$FRONTEND" "$DOCKER"
+          printf 'run_checks=%s backend=%s frontend=%s webkit=%s docker=%s\n' "$RUN_CHECKS" "$BACKEND" "$FRONTEND" "$WEBKIT" "$DOCKER"
           if [[ "$RUN_CHECKS" == true ]]; then
             test "$BACKEND" = success
             test "$FRONTEND" = success
+            test "$WEBKIT" = success
             test "$DOCKER" = success
           else
             test "$RUN_CHECKS" = false
             test "$BACKEND" = skipped
             test "$FRONTEND" = skipped
+            test "$WEBKIT" = skipped
             test "$DOCKER" = skipped
           fi
 
