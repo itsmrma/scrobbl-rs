@@ -2,6 +2,7 @@ import type { ImageCredit } from "./generated";
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "./api";
 import { useLoad } from "./load";
+import { Icon } from "./ui";
 
 // Commons attribution metadata contains untrusted HTML. Display its text, never its markup.
 export function plainCredit(value: string | null) {
@@ -73,25 +74,27 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
           <strong>Image credits</strong>
           <button
             type="button"
-            className="icon-button"
+            className="icon-button image-credit-close"
             aria-label="Close image credits"
             onClick={close}
           >
-            <span className="material-icons-outlined" aria-hidden="true">
-              close
-            </span>
+            <Icon>close</Icon>
           </button>
         </span>
         <span className="image-credit-provider">
-          {{
-            cover_art_archive: "Cover Art Archive",
-            musicbrainz_image: "MusicBrainz · Wikimedia Commons",
-            wikidata: "Wikidata · Wikimedia Commons",
-          }[credit.provider] || credit.provider}
+          <Icon>photo_library</Icon>
+          <span>
+            {{
+              cover_art_archive: "Cover Art Archive",
+              musicbrainz_image: "MusicBrainz · Wikimedia Commons",
+              wikidata: "Wikidata · Wikimedia Commons",
+            }[credit.provider] || credit.provider}
+          </span>
         </span>
         {credit.author && (
-          <span className="image-credit-copy">
-            {plainCredit(credit.author)}
+          <span className="image-credit-author">
+            <span className="image-credit-label">Photo by</span>
+            <strong>{plainCredit(credit.author)}</strong>
           </span>
         )}
         {credit.credit && (
@@ -100,16 +103,30 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
           </span>
         )}
         <span className="image-credit-links">
-          <a href={credit.source_url} target="_blank" rel="noreferrer">
-            View source
+          <a
+            href={credit.source_url}
+            target="_blank"
+            rel="noreferrer"
+            className="image-credit-link"
+          >
+            <span>View source</span>
+            <Icon>open_in_new</Icon>
           </a>
           {credit.license &&
             (credit.license_url ? (
-              <a href={credit.license_url} target="_blank" rel="noreferrer">
-                {plainCredit(credit.license)}
+              <a
+                href={credit.license_url}
+                target="_blank"
+                rel="noreferrer"
+                className="image-credit-link"
+              >
+                <span>{plainCredit(credit.license)}</span>
+                <Icon>open_in_new</Icon>
               </a>
             ) : (
-              <span>{plainCredit(credit.license)}</span>
+              <span className="image-credit-badge">
+                {plainCredit(credit.license)}
+              </span>
             ))}
         </span>
       </span>
