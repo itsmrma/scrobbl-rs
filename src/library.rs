@@ -122,7 +122,21 @@ pub async fn details(
             .filter(|id| valid_spotify_id(id))
             .map(|id| format!("https://open.spotify.com/{singular}/{id}"))
     });
-    let image_credit = crate::artwork_sources::credit_in(&mut *tx, &kind, &id).await?;
+    let image_credit = if kind == "tracks" {
+        let album: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "{METADATA} SELECT album_id FROM tracks WHERE id=?"
+        )))
+        .bind(&id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .flatten();
+        match album {
+            Some(album) => crate::artwork_sources::credit_in(&mut *tx, "albums", &album).await?,
+            None => None,
+        }
+    } else {
+        crate::artwork_sources::credit_in(&mut *tx, &kind, &id).await?
+    };
     Ok(Json(Details {
         name: name.unwrap_or_else(|| original_name.clone()),
         original_name,

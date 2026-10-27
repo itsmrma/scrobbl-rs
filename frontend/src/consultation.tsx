@@ -20,6 +20,7 @@ import { api } from "./api";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Collage } from "./collage";
+import { ArtworkCredits } from "./image-credit";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
 import { ListeningPatterns } from "./listening-patterns";
@@ -1603,7 +1604,9 @@ export function MusicPage({
       {result.data ? (
         <>
           <div className="music-heading">
-            <Cover url={result.data.cover_url} large />
+            <Cover url={result.data.cover_url} large>
+              <ArtworkCredits url={result.data.cover_url} />
+            </Cover>
             <div className="music-header-content" ref={introduction}>
               <div className="music-title-row">
                 <Heading title={result.data.name}>

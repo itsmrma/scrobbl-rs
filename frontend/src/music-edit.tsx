@@ -212,7 +212,6 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
           View on Spotify<Icon>open_in_new</Icon>
         </a>
       )}
-      <ImageCredits credit={details.data?.image_credit} />
       <ErrorText>{error || details.error}</ErrorText>
     </div>
   );

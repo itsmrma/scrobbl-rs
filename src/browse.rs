@@ -70,6 +70,57 @@ pub async fn choices(
             .await?,
     ))
 }
+/// Library search includes all non-trashed identities, even when every listen
+/// is below the counting threshold. Corrections and name groups match music pages.
+pub async fn search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(kind): Path<String>,
+    Query(filters): Query<Filters>,
+) -> Result<Json<Vec<EntityChoice>>> {
+    auth::session(&state, &headers).await?;
+    let q = filters.q.as_deref().unwrap_or("").trim();
+    let pattern = crate::db::search_pattern(q)?;
+    if q.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let (join, name, subtitle) = match kind.as_str() {
+        "artists" => (
+            "artists e JOIN track_artists ta ON ta.artist_id=e.id JOIN tracks t ON t.id=ta.track_id",
+            "e.name",
+            "CAST(COUNT(DISTINCT t.album_id) AS TEXT)||CASE WHEN COUNT(DISTINCT t.album_id)=1 THEN ' album · ' ELSE ' albums · ' END||CAST(COUNT(DISTINCT t.id) AS TEXT)||CASE WHEN COUNT(DISTINCT t.id)=1 THEN ' track' ELSE ' tracks' END",
+        ),
+        "albums" => (
+            "albums e JOIN tracks t ON t.album_id=e.id",
+            "e.name",
+            "COALESCE((SELECT group_concat(name, ', ') FROM (SELECT DISTINCT a.name FROM artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks at ON at.id=ta.track_id WHERE at.album_id=e.id ORDER BY a.name COLLATE NOCASE)), '')",
+        ),
+        "tracks" => (
+            "tracks e JOIN tracks t ON t.id=e.id LEFT JOIN albums al ON al.id=e.album_id",
+            "e.title",
+            "COALESCE((SELECT group_concat(name, ', ') FROM (SELECT a.name FROM artists a JOIN track_artists ta ON ta.artist_id=a.id WHERE ta.track_id=e.id ORDER BY ta.ordinal)), '')||CASE WHEN al.name IS NULL THEN '' ELSE ' · '||al.name END",
+        ),
+        _ => {
+            return Err(AppError::BadRequest(
+                "Choose artists, albums or tracks.".into(),
+            ));
+        }
+    };
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
+        "{}SELECT e.id,{name} AS name,{subtitle} AS subtitle FROM {join} WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND {name} LIKE ",
+        crate::library::METADATA
+    ));
+    query.push_bind(pattern).push(format!(
+        " ESCAPE '\\' GROUP BY e.id ORDER BY {name} COLLATE NOCASE,e.id LIMIT 50"
+    ));
+    let mut view = state.storage.read_view().await?;
+    Ok(Json(
+        query
+            .build_query_as()
+            .fetch_all(&mut *view.transaction)
+            .await?,
+    ))
+}
 pub async fn rankings(
     State(state): State<AppState>,
     headers: HeaderMap,

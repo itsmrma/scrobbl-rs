@@ -727,6 +727,133 @@ async fn competition_positions_use_only_the_primary_measure_and_names_break_comp
 }
 
 #[tokio::test]
+async fn library_search_is_bounded_and_validates_categories_and_queries() {
+    let (_dir, state, token) = setup().await;
+    let events: Vec<_> = (0..55)
+        .map(|index| {
+            event(
+                index,
+                at("2025-01-01T12:00:00Z"),
+                Some(180000),
+                DurationKind::Actual,
+                &[("a", "Artist")],
+            )
+        })
+        .collect();
+    save(&state.storage, &events).await;
+    let matches = json_get(&state, &token, "/api/v1/consultation/search/tracks?q=Track").await;
+    assert_eq!(matches.as_array().unwrap().len(), 50);
+    assert_eq!(matches[0]["name"], "Track 000");
+    assert_eq!(matches[49]["name"], "Track 049");
+    assert_eq!(
+        get(
+            &state,
+            &token,
+            "/api/v1/consultation/search/unknown?q=Track"
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        get(
+            &state,
+            &token,
+            &format!("/api/v1/consultation/search/tracks?q={}", "a".repeat(501))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn library_search_finds_corrected_music_with_short_listens_and_excludes_trash() {
+    let (_dir, state, token) = setup().await;
+    save(
+        &state.storage,
+        &[event(
+            1,
+            at("2025-01-01T12:00:00Z"),
+            Some(29000),
+            DurationKind::Actual,
+            &[("short", "Short % artist")],
+        )],
+    )
+    .await;
+    let artist = json_get(&state, &token, "/api/v1/consultation/search/artists?q=%25").await;
+    assert_eq!(artist.as_array().unwrap().len(), 1);
+    assert_eq!(artist[0]["name"], "Short % artist");
+    let album = json_get(&state, &token, "/api/v1/consultation/search/albums?q=Album").await;
+    assert_eq!(album[0]["subtitle"], "Short % artist");
+    let tracks = json_get(&state, &token, "/api/v1/consultation/search/tracks?q=Track").await;
+    assert_eq!(tracks.as_array().unwrap().len(), 1);
+    assert_eq!(tracks[0]["subtitle"], "Short % artist · Album 001");
+    let track = tracks[0]["id"].as_str().unwrap();
+    let music = json_get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/tracks/{track}"),
+    )
+    .await;
+    assert_eq!(music["name"], tracks[0]["name"]);
+    assert_eq!(
+        get(
+            &state,
+            "missing",
+            "/api/v1/consultation/search/tracks?q=Track"
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    sqlx::query("INSERT INTO local_corrections(entity_kind,entity_id,field,value_json) VALUES('track',?,'name','\"Corrected _ title\"')")
+        .bind(track).execute(&state.db).await.unwrap();
+    assert_eq!(
+        json_get(&state, &token, "/api/v1/consultation/search/tracks?q=_").await[0]["name"],
+        "Corrected _ title"
+    );
+    assert!(
+        json_get(&state, &token, "/api/v1/consultation/search/tracks?q=Track")
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        json_get(&state, &token, "/api/v1/consultation/search/tracks?q=%20")
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let id: String = sqlx::query_scalar("SELECT id FROM listens")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let mut tx = state.db.begin().await.unwrap();
+    db::set_trashed(&mut tx, &[id], Some(auth::now_ms()))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    for kind in ["artists", "albums", "tracks"] {
+        assert!(
+            json_get(
+                &state,
+                &token,
+                &format!("/api/v1/consultation/search/{kind}?q=o")
+            )
+            .await
+            .as_array()
+            .unwrap()
+            .is_empty()
+        );
+    }
+    state.storage.close().await;
+}
+
+#[tokio::test]
 async fn history_typeahead_can_select_identities_with_only_short_listens_and_excludes_trash() {
     let (_dir, state, token) = setup().await;
     let row = event(

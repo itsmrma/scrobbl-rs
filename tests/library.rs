@@ -93,6 +93,39 @@ async fn get(state: &AppState, token: &str, path: &str) -> Value {
     serde_json::from_slice(&body).unwrap()
 }
 #[tokio::test]
+async fn track_details_credit_the_displayed_album_artwork_and_respect_custom_images() {
+    let (_dir, state, token) = setup().await;
+    let track: String = sqlx::query_scalar("SELECT id FROM tracks LIMIT 1")
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+    let music = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/tracks/{track}"),
+    )
+    .await;
+    let album_url = music["cover_url"].as_str().unwrap();
+    let album = album_url.rsplit('/').next().unwrap();
+    let credit = json!({"provider":"cover_art_archive","source_url":"https://coverartarchive.org/release/example","image_url":"https://coverartarchive.org/example.jpg","author":null,"license":null,"license_url":null,"credit":null});
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,provenance_json) VALUES('albums',?,'cover_art_archive',?,'image/png',0,?)")
+        .bind(album).bind(b"image".as_slice()).bind(credit.to_string()).execute(&state.db).await.unwrap();
+    let track_path = format!("/api/v1/library/tracks/{track}");
+    assert_eq!(
+        get(&state, &token, &track_path).await["image_credit"],
+        credit
+    );
+    assert_eq!(
+        get(&state, &token, &format!("{album_url}/credit")).await,
+        credit
+    );
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES('albums',?,'custom',?,'image/png',1)")
+        .bind(album).bind(b"personal".as_slice()).execute(&state.db).await.unwrap();
+    assert!(get(&state, &token, &track_path).await["image_credit"].is_null());
+    state.storage.close().await;
+}
+
+#[tokio::test]
 async fn upgrade_retires_temporary_spotify_cache_and_disconnect_preserves_saved_images() {
     let (_dir, state, token) = setup().await;
     for (id, source, expires, provenance) in [

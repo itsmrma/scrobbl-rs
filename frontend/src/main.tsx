@@ -5,12 +5,7 @@ import { createRoot } from "react-dom/client";
 import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
-import {
-  Activities,
-  SidebarActivity,
-  ArtworkWork,
-  isActive,
-} from "./activities";
+import { Activities, ActivityMenu } from "./activities";
 import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
@@ -31,6 +26,7 @@ import type { Style } from "./ui";
 import "./style.css";
 import { Auth, UsernameSetup } from "./account";
 import { AccountMenu } from "./account-settings";
+import { SearchPage } from "./search";
 import { AppShellSkeleton } from "./skeleton";
 
 function Shell({ logout }: { logout: () => void }) {
@@ -210,6 +206,7 @@ function Shell({ logout }: { logout: () => void }) {
     (
       {
         dashboard: "Overview",
+        search: "Search",
         history: "Listening history",
         review: "Review duplicates",
         import: "Import history",
@@ -222,8 +219,6 @@ function Shell({ logout }: { logout: () => void }) {
   useEffect(() => {
     document.title = `${title} · ${preferences?.name || "scrobbl.rs"}`;
   }, [title, preferences?.name]);
-  const activeJobs = jobs.filter(isActive);
-  const activeCount = activeJobs.length + (artworkWork.pending > 0 ? 1 : 0);
   if (!preferences)
     return (
       <AppShellSkeleton
@@ -234,6 +229,7 @@ function Shell({ logout }: { logout: () => void }) {
     );
   const nav = [
     ["/dashboard", "dashboard", "Overview", "space_dashboard"],
+    ["/search", "search", "Search", "search"],
     ["/history", "history", "Listening history", "history"],
     ["/rankings/artists", "rankings", "Rankings", "leaderboard"],
     ["/import", "import", "Import history", "file_upload"],
@@ -308,48 +304,6 @@ function Shell({ logout }: { logout: () => void }) {
               </Link>
             ))}
           </nav>
-          <div className="sidebar-activities">
-            <Link
-              to="/activities"
-              className={
-                "activity-link " + (page === "activities" ? "active" : "")
-              }
-              aria-current={page === "activities" ? "page" : undefined}
-              aria-label={`Activities: ${activeCount} active`}
-            >
-              <Icon>pending_actions</Icon>
-              <span className="nav-copy">
-                Activities <span className="pill">{activeCount}</span>
-              </span>
-              <span className="collapsed-label">
-                Activities: {activeCount} active
-              </span>
-              {collapsed && (
-                <span className="activity-count" aria-hidden="true">
-                  {activeCount}
-                </span>
-              )}
-            </Link>
-            <div className="nav-copy">
-              <p className="subtle" role="status">
-                {jobsError ||
-                  (activeCount
-                    ? `${activeCount} in progress`
-                    : "No activities running")}
-              </p>
-              {artworkWork.pending > 0 && (
-                <ArtworkWork work={artworkWork} compact />
-              )}
-              {activeJobs.slice(0, 2).map((job) => (
-                <SidebarActivity key={job.id} job={job} />
-              ))}
-              {jobs.some((j) => j.state === "failed") && (
-                <Link to="/activities" className="warning">
-                  Review failed activities
-                </Link>
-              )}
-            </div>
-          </div>
           <div className="sidebar-bottom">
             <Now
               status={status}
@@ -423,12 +377,18 @@ function Shell({ logout }: { logout: () => void }) {
               <Icon>menu</Icon>
             </button>
             <span>Your library / {title}</span>
-            <Link to="/activities" className="mobile-activities">
-              <Icon>pending_actions</Icon>Activities ({activeCount})
-            </Link>
-            <AccountMenu logout={logout} />
+            <div className="topbar-actions">
+              <ActivityMenu
+                jobs={jobs}
+                work={artworkWork}
+                error={jobsError}
+                loading={jobsLoading}
+              />
+              <AccountMenu logout={logout} />
+            </div>
           </header>
           <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
+            {page === "search" && <SearchPage />}
             <section hidden={page !== "dashboard"}>
               <Overview
                 preferences={preferences}
@@ -506,6 +466,7 @@ function Shell({ logout }: { logout: () => void }) {
               "rankings",
               "music",
               "dashboard",
+              "search",
               "history",
               "review",
               "import",

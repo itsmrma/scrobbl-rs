@@ -221,6 +221,90 @@ export function SidebarActivity({ job }: { job: Activity }) {
     </Link>
   );
 }
+export function ActivityMenu({
+  jobs,
+  work,
+  error,
+  loading,
+}: {
+  jobs: Activity[];
+  work: ArtworkActivity;
+  error: string;
+  loading: boolean;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const active = jobs.filter(isActive);
+  const count = active.length + (work.pending > 0 ? 1 : 0);
+  const failures = jobs.some((job) => job.state === "failed");
+  return (
+    <>
+      <button
+        type="button"
+        className="icon-button activity-trigger"
+        aria-label={`Activities: ${count} active`}
+        aria-expanded={open}
+        popoverTarget="activity-menu"
+        onClick={(event) => event.currentTarget.focus()}
+      >
+        <Icon>{count ? "sync" : "pending_actions"}</Icon>
+        {count > 0 && (
+          <span className="activity-trigger-count" aria-hidden="true">
+            {count}
+          </span>
+        )}
+        {(error || failures) && (
+          <span
+            className="activity-attention"
+            aria-label="Activities need attention"
+          />
+        )}
+      </button>
+      <div
+        popover="auto"
+        id="activity-menu"
+        ref={panel}
+        className="activity-menu"
+        role="region"
+        aria-label="Current activities"
+        onToggle={(event) => setOpen(event.newState === "open")}
+        onClick={(event) => {
+          if ((event.target as Element).closest("a"))
+            panel.current?.hidePopover();
+        }}
+      >
+        <div className="activity-menu-heading">
+          <h2>Activities</h2>
+          <Link to="/activities">
+            View all<Icon>arrow_forward</Icon>
+          </Link>
+        </div>
+        <ErrorText>{error}</ErrorText>
+        <p className="subtle" role="status">
+          {loading
+            ? "Loading activities…"
+            : count
+              ? `${count} in progress`
+              : "No activities running"}
+        </p>
+        {work.total > 0 && <ArtworkWork work={work} compact />}
+        {active.map((job) => (
+          <SidebarActivity key={job.id} job={job} />
+        ))}
+        {failures && (
+          <Link to="/activities" className="warning">
+            Review failed activities<Icon>chevron_right</Icon>
+          </Link>
+        )}
+        {!count && !loading && (
+          <p className="activity-menu-empty">
+            Open all activities for reports and completed work.
+          </p>
+        )}
+      </div>
+    </>
+  );
+}
 export function ArtworkWork({
   work,
   compact = false,
@@ -250,8 +334,10 @@ export function ArtworkWork({
   return compact ? (
     <Link to="/activities" className="sidebar-job artwork-work">
       <span className="sidebar-job-heading">
-        <Icon>downloading</Icon>
-        <strong>Downloading artwork</strong>
+        <Icon>{work.pending ? "downloading" : "photo_library"}</Icon>
+        <strong>
+          {work.pending ? "Downloading artwork" : "Artwork downloads"}
+        </strong>
         <Icon>chevron_right</Icon>
       </span>
       {progress}

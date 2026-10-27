@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/settings/{section}", get(index))
         .route("/spotify/connect-result/{attempt}", get(index))
         .route("/dashboard", get(index))
+        .route("/search", get(index))
         .route("/history", get(index))
         .route("/review", get(index))
         .route(
@@ -64,6 +65,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/consultation/choices/{kind}",
             get(crate::browse::choices),
+        )
+        .route(
+            "/api/v1/consultation/search/{kind}",
+            get(crate::browse::search),
         )
         .route("/music/now-playing", get(index))
         .route("/music/{kind}/{id}", get(index))
