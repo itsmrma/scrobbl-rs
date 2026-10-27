@@ -2577,6 +2577,7 @@ dialog {
 }
 .password-field .icon-button {
   position: absolute;
+  z-index: 1;
   right: 0;
   top: 50%;
   transform: translateY(-50%);
