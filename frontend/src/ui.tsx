@@ -1,5 +1,4 @@
 import { queueArtwork } from "./artwork-activity";
-import { downloadArtwork } from "./api";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
@@ -80,9 +79,11 @@ export function CopyButton({
 export function Cover({
   url,
   large = false,
+  children,
 }: {
   url?: string | null;
   large?: boolean;
+  children?: ReactNode;
 }) {
   const [failed, setFailed] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -103,7 +104,6 @@ export function Cover({
   }, [ready?.src]);
   useEffect(() => {
     if (!local || !source || !marker.current) return;
-    let cancel = () => {};
     let pending = false;
     let current = true;
     const observer = new IntersectionObserver(
@@ -114,36 +114,14 @@ export function Cover({
           setReady({ source, src: `${source}&cached=true` });
         } else if (!pending) {
           pending = true;
-          cancel = queueArtwork((done) => {
-            const rect = marker.current?.getBoundingClientRect();
-            // Scrolling away must not leave invisible cold images ahead of
-            // the page the owner is actually reading. Observe them again.
-            if (
-              !rect?.width ||
-              rect.bottom <= 0 ||
-              rect.top >= window.innerHeight
-            ) {
-              pending = false;
-              done(null);
-              return;
-            }
-            observer.disconnect();
-            void downloadArtwork(source)
-              .then((blobUrl) => {
-                done(true);
-                if (url) {
-                  window.dispatchEvent(
-                    new CustomEvent("artwork-downloaded", { detail: { url } }),
-                  );
-                }
-                if (current) setReady({ source, src: blobUrl });
-                else URL.revokeObjectURL(blobUrl);
-              })
-              .catch(() => {
-                done(false);
-                if (current) setFailed(true);
-              });
-          }, !!marker.current?.closest(".music-heading"));
+          observer.disconnect();
+          void queueArtwork(source, !!marker.current?.closest(".music-heading"))
+            .then((blob) => {
+              if (current) setReady({ source, src: URL.createObjectURL(blob) });
+            })
+            .catch(() => {
+              if (current) setFailed(true);
+            });
         }
       },
       { rootMargin: cacheMiss === source ? "0px" : "240px" },
@@ -152,7 +130,6 @@ export function Cover({
     return () => {
       current = false;
       observer.disconnect();
-      cancel();
     };
   }, [local, source, cacheMiss, url]);
   useEffect(() => setFailed(false), [url]);
@@ -217,6 +194,7 @@ export function Cover({
           setFailed(true);
         }}
       />
+      {children}
     </span>
   ) : (
     <span
@@ -226,6 +204,7 @@ export function Cover({
       className={`cover placeholder ${large ? "large" : ""}`}
     >
       <Icon>music_note</Icon>
+      {children}
     </span>
   );
 }

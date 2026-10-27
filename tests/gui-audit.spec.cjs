@@ -3381,10 +3381,10 @@ test("music header and history disclosure keep their geometry", async ({
     await page.setViewportSize({ width: 1280, height: 900 });
   }
   await page.goto("/activities");
-  await expect(page.locator(".activity-link")).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
+  await expect(
+    page.getByRole("button", { name: /^Activities:/ }),
+  ).toBeVisible();
+  await expect(page.locator(".sidebar-activities")).toHaveCount(0);
 });
 
 test("overview charts and activity reports have compact responsive layouts", async ({
@@ -3473,27 +3473,13 @@ test("overview charts and activity reports have compact responsive layouts", asy
     animations: "disabled",
   });
   await page.goto("/activities");
-  await expect(page.locator(".activity-link")).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  await expect(page.locator(".activity-link")).toHaveCSS(
-    "background-color",
-    await page
-      .locator(".sidebar nav a")
-      .first()
-      .evaluate((node) => {
-        const probe = document.createElement("span");
-        probe.style.backgroundColor = "var(--accent)";
-        node.append(probe);
-        const color = getComputedStyle(probe).backgroundColor;
-        probe.remove();
-        return color;
-      }),
-  );
+  const activityTrigger = page.getByRole("button", { name: /^Activities:/ });
+  await activityTrigger.click();
+  await expect(activityTrigger).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.locator(".sidebar-job").first().getByRole("progressbar"),
   ).toHaveAttribute("value", "1250");
+  await page.keyboard.press("Escape");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(page.locator(".activity-row").first()).toContainText(
@@ -3717,10 +3703,8 @@ test("artwork downloads appear in activities and continue across navigation", as
   });
   try {
     await login(page, "/rankings/albums?period=all");
-    await expect(page.locator(".sidebar .artwork-work")).toContainText(
-      "Downloading artwork",
-    );
-    await page.locator(".sidebar .artwork-work").click();
+    await page.getByRole("button", { name: /^Activities:/ }).click();
+    await page.locator("#activity-menu .artwork-work").click();
     const work = page.getByRole("article", {
       name: "Artwork downloads",
       exact: true,
@@ -3744,6 +3728,229 @@ test("artwork downloads appear in activities and continue across navigation", as
     expect(downloads).toBe(1);
   } finally {
     release();
+  }
+});
+
+test("queued artwork survives leaving the requesting page", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const downloaded = new Set();
+  await page.route(
+    "**/api/v1/consultation/rankings/albums?*",
+    async (route) => {
+      const data = await (await route.fetch()).json();
+      data.items = Array.from({ length: 3 }, (_, i) => ({
+        ...data.items[0],
+        id: `queued-${i}`,
+        name: `Queued album ${i}`,
+        cover_url: `/api/v1/artwork/albums/queued-${i}`,
+      }));
+      data.total = 3;
+      await route.fulfill({ json: data });
+    },
+  );
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/credit")) return route.fulfill({ json: null });
+    if (url.searchParams.has("cached"))
+      return route.fulfill({ status: 404, body: "" });
+    await gate;
+    downloaded.add(url.pathname);
+    await route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200"><rect width="600" height="200" fill="#7c9bac"/></svg>',
+    });
+  });
+  try {
+    await login(page, "/rankings/albums?period=all");
+    await page.getByRole("button", { name: /^Activities:/ }).click();
+    await expect(page.locator("#activity-menu .artwork-work")).toContainText(
+      "3 remaining",
+    );
+    await page.screenshot({
+      path: "test-results/artwork-activity-desktop.png",
+      animations: "disabled",
+    });
+    await page.keyboard.press("Escape");
+    // SPA navigation unmounts every requesting ranking card.
+    await page
+      .locator(".sidebar nav")
+      .getByRole("link", { name: "Settings", exact: true })
+      .click();
+    await page.evaluate(() => {
+      history.pushState({}, "", "/activities");
+      dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const work = page.getByRole("article", {
+      name: "Artwork downloads",
+      exact: true,
+    });
+    await expect(work).toContainText("3 remaining");
+    release();
+    await expect(work).toContainText("3 saved");
+    expect(
+      [...downloaded].filter((url) => url.includes("queued-")),
+    ).toHaveLength(3);
+  } finally {
+    release();
+  }
+});
+
+test("library search opens every music kind and keeps the query on return", async ({
+  page,
+}) => {
+  await login(page, "/search");
+  const nav = page.getByRole("navigation", { name: "Main navigation" });
+  expect(
+    await nav
+      .getByRole("link")
+      .evaluateAll((links) =>
+        links.slice(0, 2).map((link) => link.getAttribute("aria-label")),
+      ),
+  ).toEqual(["Overview", "Search"]);
+  await expect(page.locator(".sidebar-activities")).toHaveCount(0);
+  const query = page.getByRole("searchbox", {
+    name: "Artist, album or track name",
+  });
+  await query.fill("Seed");
+  await query.press("Enter");
+  for (const [kind, name] of [
+    ["artists", "Seed artist"],
+    ["albums", "Seed album"],
+    ["tracks", "Seed song"],
+  ]) {
+    const group = page.locator(`section[aria-labelledby="search-${kind}"]`);
+    await expect(group.getByRole("link")).toContainText(name);
+    await group.getByRole("link").click();
+    await expect(page.locator(".music-heading h1")).toContainText(name);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(query).toHaveValue("Seed");
+    await expect(page).toHaveURL(/\/search\?q=Seed$/);
+  }
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(page.locator(".search-result-list")).toHaveCount(3);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/library-search-${width}.png`,
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: /^Activities:/ }).click();
+    await expect(
+      page.getByRole("region", { name: "Current activities" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `test-results/activity-menu-${width}.png`,
+      animations: "disabled",
+    });
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("button", { name: /^Activities:/ }),
+    ).toBeFocused();
+  }
+  await page
+    .getByRole("group", { name: "Search categories" })
+    .getByRole("button", { name: "Tracks", exact: true })
+    .click();
+  await expect(page.locator(".search-result-group")).toHaveCount(1);
+  await page.reload();
+  await expect(query).toHaveValue("Seed");
+  await expect(
+    page.getByRole("button", { name: "Tracks", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await query.fill("No matching song");
+  await query.press("Enter");
+  await expect(page.locator(".search-no-matches")).toContainText(
+    "No tracks match",
+  );
+  await page.route("**/api/v1/consultation/search/tracks?*", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: "Search unavailable. Try again." },
+    }),
+  );
+  await query.fill("Seed");
+  await query.press("Enter");
+  await expect(
+    page.locator(".search-result-group").getByRole("alert"),
+  ).toContainText("Search unavailable");
+  await page.unroute("**/api/v1/consultation/search/tracks?*");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.locator(".search-result-list")).toContainText("Seed song");
+  await query.fill("");
+  await query.press("Enter");
+  await expect(page.locator(".search-result-list")).toHaveCount(0);
+  await expect(page.locator(".search-start")).toBeVisible();
+});
+
+test("image credits open beside square artwork without moving page content", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.route("**/api/v1/artwork/**", (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/credit"))
+      return route.fulfill({
+        json: {
+          provider: "wikidata",
+          source_url: "https://commons.wikimedia.org/wiki/File:Example.jpg",
+          image_url: "https://upload.wikimedia.org/example.jpg",
+          author: "<b>Example photographer</b>",
+          credit: "A long credit ".repeat(25),
+          license: "CC BY-SA 4.0",
+          license_url: "https://creativecommons.org/licenses/by-sa/4.0/",
+        },
+      });
+    return route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="200"><rect width="600" height="200" fill="#7c9bac"/></svg>',
+    });
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const kind of ["albums", "artists", "tracks"]) {
+      await page.goto(
+        `/music/${kind}/${archive.rankings[kind][0].id}?period=all`,
+      );
+      const credit = page.getByRole("button", {
+        name: "Image credits",
+        exact: true,
+      });
+      await expect(credit).toBeVisible();
+      const header = page.locator(".music-heading");
+      const before = await header.boundingBox();
+      await credit.click();
+      await expect(
+        page.getByRole("region", { name: "Image credits" }),
+      ).toContainText("Example photographer");
+      expect(await header.boundingBox()).toEqual(before);
+      await expect(page.locator(".music-heading .cover-image")).toHaveCSS(
+        "object-fit",
+        "cover",
+      );
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `test-results/image-credits-${kind}-${width}.png`,
+        animations: "disabled",
+      });
+      await page.keyboard.press("Escape");
+      await expect(credit).toBeFocused();
+    }
   }
 });
 

@@ -142,14 +142,18 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
     .click();
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
-  await page.getByLabel("Search", { exact: true }).fill("Earth");
+  await page
+    .getByRole("textbox", { name: "Search", exact: true })
+    .fill("Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/(?:\?|&)q=Earth(?:&|$)/);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
-  await expect(page.getByLabel("Search", { exact: true })).toHaveValue("Earth");
+  await expect(
+    page.getByRole("textbox", { name: "Search", exact: true }),
+  ).toHaveValue("Earth");
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.getByLabel("Period", { exact: true })).toHaveAttribute(
     "data-value",
@@ -201,7 +205,11 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     }),
   );
   await login(page);
+  await page
+    .getByRole("button", { name: "Activities: 1 active", exact: true })
+    .click();
   await expect(page.getByText("1 in progress")).toBeVisible();
+  await page.keyboard.press("Escape");
   const resizer = page.getByRole("separator", { name: "Sidebar width" });
   await resizer.focus();
   await page.keyboard.press("End");
@@ -210,8 +218,9 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
   await expect(resizer).toHaveAttribute("aria-valuenow", "360");
   await page.getByRole("button", { name: "Collapse sidebar" }).click();
   await page
-    .getByRole("link", { name: "Activities: 1 active", exact: true })
+    .getByRole("button", { name: "Activities: 1 active", exact: true })
     .click();
+  await page.getByRole("link", { name: "View all", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Activities." }),
   ).toBeVisible();
@@ -309,7 +318,7 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
   await page.getByRole("link", { name: "Appearance", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
-    page.getByRole("link", { name: "Activities (1)", exact: true }),
+    page.getByRole("button", { name: "Activities: 1 active", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Overview", exact: true }),

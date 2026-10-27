@@ -51,19 +51,21 @@ window.addEventListener("pageshow", () => {
 });
 // Artwork downloads survive SPA navigation but must be cancelled before the
 // document disappears, just like the JSON reads below (not left to WebKit).
-export async function downloadArtwork(path: string): Promise<string> {
+export async function downloadArtwork(path: string): Promise<Blob> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
   const controller = new AbortController();
   pendingRequests.add(controller);
+  const timeout = setTimeout(() => controller.abort(), 45_000);
   try {
     const response = await fetch(path, {
       signal: controller.signal,
       credentials: "same-origin",
     });
     if (!response.ok) throw new Error("Artwork download failed");
-    return URL.createObjectURL(await response.blob());
+    return await response.blob();
   } finally {
+    clearTimeout(timeout);
     pendingRequests.delete(controller);
   }
 }
@@ -265,6 +267,10 @@ export const api = {
   choices: (kind: string, q: string) =>
     request<EntityChoice[]>(
       `/api/v1/consultation/choices/${kind}?${new URLSearchParams({ q })}`,
+    ),
+  search: (kind: string, q: string) =>
+    request<EntityChoice[]>(
+      `/api/v1/consultation/search/${kind}?${new URLSearchParams({ q })}`,
     ),
   rankings: (kind: string, params: URLSearchParams) =>
     request<RankingPage>(`/api/v1/consultation/rankings/${kind}?${params}`),

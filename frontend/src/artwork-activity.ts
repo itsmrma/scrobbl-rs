@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { downloadArtwork } from "./api";
 
 export type ArtworkActivity = {
   total: number;
@@ -8,21 +9,35 @@ export type ArtworkActivity = {
 };
 let snapshot: ArtworkActivity = { total: 0, loaded: 0, failed: 0, pending: 0 };
 const listeners = new Set<() => void>();
-const queue: (() => void)[] = [];
+const queue: (() => Promise<void>)[] = [];
+const requests = new Map<string, Promise<Blob>>();
 let busy = false;
 function publish(next: ArtworkActivity) {
   snapshot = next;
   listeners.forEach((listener) => listener());
 }
-function pump() {
-  if (!busy) queue.shift()?.();
+async function pump() {
+  if (busy) return;
+  busy = true;
+  try {
+    while (queue.length) await queue.shift()!();
+  } finally {
+    busy = false;
+  }
 }
-export function queueArtwork(
-  start: (done: (loaded: boolean | null) => void) => void,
-  priority = false,
-) {
-  let started = false;
-  let finished = false;
+// A visible image hands the download to the session. Unmounting a card,
+// scrolling away or opening Activities must not discard queued work.
+export function queueArtwork(url: string, priority = false): Promise<Blob> {
+  const key = url.split("?")[0];
+  const existing = requests.get(key);
+  if (existing) return existing;
+  let resolve!: (blob: Blob) => void;
+  let reject!: (error: unknown) => void;
+  const result = new Promise<Blob>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  requests.set(key, result);
   publish(
     snapshot.pending
       ? {
@@ -32,36 +47,31 @@ export function queueArtwork(
         }
       : { total: 1, loaded: 0, failed: 0, pending: 1 },
   );
-  const done = (loaded: boolean | null) => {
-    if (finished) return;
-    finished = true;
-    publish({
-      total: snapshot.total - (loaded === null ? 1 : 0),
-      pending: snapshot.pending - 1,
-      loaded: snapshot.loaded + (loaded === true ? 1 : 0),
-      failed: snapshot.failed + (loaded === false ? 1 : 0),
-    });
-    if (started) {
-      busy = false;
-      pump();
+  const run = async () => {
+    let loaded = false;
+    try {
+      const blob = await downloadArtwork(url);
+      loaded = true;
+      window.dispatchEvent(
+        new CustomEvent("artwork-downloaded", { detail: { url: key } }),
+      );
+      resolve(blob);
+    } catch (error) {
+      reject(error);
+    } finally {
+      requests.delete(key);
+      publish({
+        ...snapshot,
+        pending: snapshot.pending - 1,
+        loaded: snapshot.loaded + (loaded ? 1 : 0),
+        failed: snapshot.failed + (loaded ? 0 : 1),
+      });
     }
-  };
-  const run = () => {
-    if (finished) {
-      pump();
-      return;
-    }
-    started = true;
-    busy = true;
-    start(done);
   };
   if (priority) queue.unshift(run);
   else queue.push(run);
-  pump();
-  // A started download saves to the server even after its card unmounts.
-  return () => {
-    if (!started) done(null);
-  };
+  void pump();
+  return result;
 }
 export function useArtworkActivity() {
   return useSyncExternalStore(

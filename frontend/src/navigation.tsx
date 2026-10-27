@@ -20,6 +20,7 @@ const selections = new Map<string, string>();
 const isConsultation = (path: string) =>
   path === "/" ||
   path === "/dashboard" ||
+  path === "/search" ||
   path === "/history" ||
   path.startsWith("/rankings/") ||
   path.startsWith("/music/");
