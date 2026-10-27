@@ -3927,6 +3927,7 @@ test("image credits open beside square artwork without moving page content", asy
         name: "Image credits",
         exact: true,
       });
+      await page.locator(".music-heading .cover").hover();
       await expect(credit).toBeVisible();
       const header = page.locator(".music-heading");
       const before = await header.boundingBox();
@@ -3950,6 +3951,12 @@ test("image credits open beside square artwork without moving page content", asy
       });
       await page.keyboard.press("Escape");
       await expect(credit).toBeFocused();
+      const coverImage = page.locator(".music-heading .cover-image");
+      await coverImage.click();
+      const lightbox = page.getByRole("dialog", { name: "Enlarged artwork" });
+      await expect(lightbox).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(lightbox).not.toBeVisible();
     }
   }
 });

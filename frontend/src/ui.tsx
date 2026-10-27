@@ -91,7 +91,19 @@ export function Cover({
     null,
   );
   const [cacheMiss, setCacheMiss] = useState("");
+  const [zoomed, setZoomed] = useState(false);
   const marker = useRef<HTMLElement | null>(null);
+  const lightboxRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    if (!zoomed) return;
+    const dialog = lightboxRef.current;
+    if (!dialog) return;
+    dialog.showModal();
+    return () => {
+      if (dialog.open) dialog.close();
+    };
+  }, [zoomed]);
   const local = !!url?.startsWith("/api/v1/artwork/");
   const source = local
     ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
@@ -180,11 +192,25 @@ export function Cover({
         ref={(node) => {
           marker.current = node;
         }}
-        className="cover-image"
+        className={`cover-image ${large ? "zoomable" : ""}`}
         src={ready.src}
         alt=""
         loading="eager"
         referrerPolicy="no-referrer"
+        tabIndex={large ? 0 : undefined}
+        role={large ? "button" : undefined}
+        aria-label={large ? "View enlarged artwork" : undefined}
+        onClick={large ? () => setZoomed(true) : undefined}
+        onKeyDown={
+          large
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setZoomed(true);
+                }
+              }
+            : undefined
+        }
         onError={() => {
           if (ready.src.endsWith("&cached=true")) {
             setReady(null);
@@ -195,6 +221,32 @@ export function Cover({
         }}
       />
       {children}
+      {large && zoomed && (
+        <dialog
+          ref={lightboxRef}
+          className="artwork-lightbox"
+          aria-label="Enlarged artwork"
+          onClick={(event) => {
+            if (event.target === lightboxRef.current) setZoomed(false);
+          }}
+          onCancel={(e) => {
+            e.preventDefault();
+            setZoomed(false);
+          }}
+        >
+          <div className="artwork-lightbox-container">
+            <button
+              type="button"
+              className="icon-button artwork-lightbox-close"
+              aria-label="Close enlarged artwork"
+              onClick={() => setZoomed(false)}
+            >
+              <Icon>close</Icon>
+            </button>
+            <img src={ready.src} alt="" className="artwork-lightbox-image" />
+          </div>
+        </dialog>
+      )}
     </span>
   ) : (
     <span
