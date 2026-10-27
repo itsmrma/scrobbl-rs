@@ -2565,17 +2565,21 @@ dialog {
 .rankings-panel .rank-value {
   max-width: 220px;
 }
+.password-control {
+  display: grid;
+  gap: 7px;
+}
 .password-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  position: relative;
 }
 .password-field input {
-  min-width: 0;
-  flex: 1;
+  padding-right: 52px;
 }
 .password-field .icon-button {
-  min-width: 44px;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .password-guidance {
   margin: 12px 0 20px;
@@ -3408,11 +3412,7 @@ dialog {
   gap: 8px;
 }
 /* Shared spacing rhythm: fields, actions and sections keep separate breathing room. */
-.password-field {
-  width: 100%;
-}
 .password-field .icon-button {
-  flex: 0 0 44px;
   width: 44px;
 }
 .password-match {

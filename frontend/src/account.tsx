@@ -194,6 +194,20 @@ export function Auth({
           </p>
         )}
         <form
+          onKeyDown={(e) => {
+            if (
+              e.key === "Enter" &&
+              !e.nativeEvent.isComposing &&
+              e.target instanceof HTMLInputElement
+            ) {
+              e.preventDefault();
+              const submit = e.currentTarget.querySelector<HTMLButtonElement>(
+                'button[type="submit"]',
+              );
+              if (submit && !submit.disabled)
+                e.currentTarget.requestSubmit(submit);
+            }
+          }}
           onSubmit={async (e) => {
             e.preventDefault();
             setBusy(true);
@@ -218,11 +232,11 @@ export function Auth({
           {(setup || usernameRequired) && (
             <Username value={username} change={setUsername} />
           )}
-          <label>
-            Password
+          <div className="password-control">
+            <label htmlFor="auth-password">Password</label>
             <div className="password-field">
               <input
-                aria-label="Password"
+                id="auth-password"
                 type={show ? "text" : "password"}
                 value={password}
                 required
@@ -241,7 +255,7 @@ export function Auth({
                 <Icon>{show ? "visibility_off" : "visibility"}</Icon>
               </button>
             </div>
-          </label>
+          </div>
           {setup && (
             <>
               <PasswordFeedback password={password} username={username} />
@@ -275,6 +289,7 @@ export function Auth({
           )}
           <ErrorText>{error}</ErrorText>
           <button
+            type="submit"
             className="primary"
             aria-busy={busy}
             disabled={busy || (setup && (!valid || password !== confirmation))}
