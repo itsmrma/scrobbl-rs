@@ -233,19 +233,46 @@ export function ActivityMenu({
   loading: boolean;
 }) {
   const panel = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const active = jobs.filter(isActive);
   const count = active.length + (work.pending > 0 ? 1 : 0);
   const failures = jobs.some((job) => job.state === "failed");
+
+  function updatePosition() {
+    if (!trigger.current || !panel.current) return;
+    const rect = trigger.current.getBoundingClientRect();
+    const menuWidth = Math.min(380, window.innerWidth - 28);
+    const triggerRightOffset = window.innerWidth - rect.right;
+    const right = Math.max(
+      14,
+      Math.min(triggerRightOffset, window.innerWidth - menuWidth - 14),
+    );
+    const top = Math.max(rect.bottom + 8, 68);
+    panel.current.style.right = `${right}px`;
+    panel.current.style.top = `${top}px`;
+    panel.current.style.maxHeight = `${Math.max(140, window.innerHeight - top - 16)}px`;
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const onResize = () => updatePosition();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [open]);
   return (
     <>
       <button
         type="button"
+        ref={trigger}
         className="icon-button activity-trigger"
         aria-label={`Activities: ${count} active`}
         aria-expanded={open}
         popoverTarget="activity-menu"
-        onClick={(event) => event.currentTarget.focus()}
+        onClick={(event) => {
+          event.currentTarget.focus();
+          updatePosition();
+        }}
       >
         <Icon>{count ? "sync" : "pending_actions"}</Icon>
         {count > 0 && (
@@ -267,30 +294,38 @@ export function ActivityMenu({
         className="activity-menu"
         role="region"
         aria-label="Current activities"
-        onToggle={(event) => setOpen(event.newState === "open")}
+        onToggle={(event) => {
+          const isOpen = event.newState === "open";
+          setOpen(isOpen);
+          if (isOpen) updatePosition();
+        }}
         onClick={(event) => {
           if ((event.target as Element).closest("a"))
             panel.current?.hidePopover();
         }}
       >
         <div className="activity-menu-heading">
-          <h2>Activities</h2>
-          <Link to="/activities">
+          <div className="activity-menu-title-group">
+            <h2>Activities</h2>
+            <p className="subtle activity-menu-status" role="status">
+              {loading
+                ? "Loading activities…"
+                : count
+                  ? `${count} in progress`
+                  : "No activities running"}
+            </p>
+          </div>
+          <Link to="/activities" className="activity-menu-view-all">
             View all<Icon>arrow_forward</Icon>
           </Link>
         </div>
         <ErrorText>{error}</ErrorText>
-        <p className="subtle" role="status">
-          {loading
-            ? "Loading activities…"
-            : count
-              ? `${count} in progress`
-              : "No activities running"}
-        </p>
-        {work.total > 0 && <ArtworkWork work={work} compact />}
-        {active.map((job) => (
-          <SidebarActivity key={job.id} job={job} />
-        ))}
+        <div className="activity-menu-list">
+          {work.total > 0 && <ArtworkWork work={work} compact />}
+          {active.map((job) => (
+            <SidebarActivity key={job.id} job={job} />
+          ))}
+        </div>
         {failures && (
           <Link to="/activities" className="warning">
             Review failed activities<Icon>chevron_right</Icon>

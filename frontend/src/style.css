@@ -6878,87 +6878,240 @@ dialog {
   position: relative;
   flex: 0 0 44px;
 }
+.activity-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--chart-accent) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--chart-accent) 30%, transparent);
+  color: var(--chart-accent);
+}
 .activity-trigger-count {
   position: absolute;
-  top: 0;
+  top: -1px;
   right: -2px;
   min-width: 18px;
-  padding: 0 4px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 9px;
   background: var(--accent);
   color: var(--accent-ink);
   font-size: 10px;
+  font-weight: 700;
   line-height: 18px;
+  text-align: center;
   font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--bg);
 }
 .activity-attention {
   position: absolute;
   bottom: 3px;
-  right: 2px;
-  width: 7px;
-  height: 7px;
+  right: 3px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--warning);
+  box-shadow: 0 0 0 2px var(--bg);
 }
 .activity-menu {
   position: fixed;
-  inset: 64px 20px auto auto;
-  width: min(400px, calc(100vw - 28px));
+  inset: 68px 20px auto auto;
+  width: min(380px, calc(100vw - 28px));
   max-height: calc(100dvh - 84px);
   overflow-y: auto;
   margin: 0;
-  padding: 20px;
-  border: 0;
-  border-radius: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   background: var(--surface-raised);
   color: var(--text);
-  box-shadow: 0 12px 32px #0005;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
 }
-.activity-menu-heading,
-.activity-menu-heading a,
+.activity-menu::backdrop {
+  background: transparent;
+}
+.activity-menu::-webkit-scrollbar {
+  width: 6px;
+}
+.activity-menu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+.activity-menu::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+.activity-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.activity-menu-title-group h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.activity-menu-status {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.activity-menu-view-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out;
+}
+.activity-menu-view-all:hover {
+  background: var(--surface-raised);
+  border-color: color-mix(in srgb, var(--chart-accent) 40%, var(--border));
+}
+.activity-menu-view-all .material-icons-outlined {
+  font-size: 15px;
+  color: var(--muted);
+  transition:
+    transform 150ms ease-out,
+    color 150ms ease-out;
+}
+.activity-menu-view-all:hover .material-icons-outlined {
+  transform: translateX(2px);
+  color: var(--chart-accent);
+}
+.activity-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.activity-menu-list:empty {
+  display: none;
+}
+.activity-menu .sidebar-job {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-decoration: none;
+  color: var(--text);
+  transition:
+    background-color 140ms ease-out,
+    border-color 140ms ease-out,
+    box-shadow 140ms ease-out;
+}
+.activity-menu .sidebar-job:hover {
+  background: color-mix(in srgb, var(--chart-accent) 5%, var(--surface));
+  border-color: color-mix(in srgb, var(--chart-accent) 35%, var(--border));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+.activity-menu .sidebar-job:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.activity-menu .sidebar-job-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.activity-menu .sidebar-job-heading > .material-icons-outlined:first-child {
+  font-size: 20px;
+  color: var(--chart-accent);
+  flex-shrink: 0;
+}
+.activity-menu .sidebar-job-heading strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text);
+}
+.activity-menu .sidebar-job-heading > .material-icons-outlined:last-child {
+  font-size: 18px;
+  color: var(--muted);
+  flex-shrink: 0;
+  transition:
+    transform 140ms ease-out,
+    color 140ms ease-out;
+}
+.activity-menu
+  .sidebar-job:hover
+  .sidebar-job-heading
+  > .material-icons-outlined:last-child {
+  color: var(--text);
+  transform: translateX(2px);
+}
+.activity-menu .sidebar-job > small {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.activity-menu .sidebar-job .activity-progress {
+  margin-top: 2px;
+}
+.activity-menu .sidebar-job .activity-progress small {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.activity-menu-empty {
+  margin: 10px 0 0;
+  padding: 16px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  text-align: center;
+}
 .activity-menu > .warning {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-.activity-menu h2 {
-  margin: 0;
-  font-size: 18px;
-}
-.activity-menu .sidebar-job {
-  padding: 16px 0;
-  border: 0;
-  border-radius: 0;
-  border-top: 1px solid var(--border);
-  background: transparent;
-}
-.activity-menu .sidebar-job:hover {
-  background: var(--surface);
-}
-.activity-menu .sidebar-job-heading strong {
-  font-size: 14px;
-  line-height: 1.5;
-}
-.activity-menu .sidebar-job-heading .material-icons-outlined {
-  color: var(--text);
-  font-size: 20px;
-}
-.activity-menu .sidebar-job > small,
-.activity-menu .sidebar-job .activity-progress small {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+  color: var(--warning);
   font-size: 12px;
-  line-height: 1.6;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background-color 140ms ease-out,
+    border-color 140ms ease-out;
 }
-.activity-menu .sidebar-job > small {
-  margin-block: 8px;
+.activity-menu > .warning:hover {
+  background: color-mix(in srgb, var(--warning) 18%, var(--surface));
+  border-color: var(--warning);
 }
-.activity-menu-empty {
-  font-size: 13px;
-  color: var(--muted);
-  line-height: 1.7;
+.activity-menu > .warning .material-icons-outlined {
+  font-size: 18px;
+  transition: transform 140ms ease-out;
 }
-.activity-menu > .warning {
-  margin-top: 16px;
+.activity-menu > .warning:hover .material-icons-outlined {
+  transform: translateX(2px);
 }
 
 .library-search-form {
