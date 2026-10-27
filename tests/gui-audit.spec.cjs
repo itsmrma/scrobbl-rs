@@ -3013,9 +3013,12 @@ test("sidebar playback card displays artwork, progress and remains usable collap
       );
     }),
   ).toBeLessThan(1);
-  await widget
-    .getByRole("button", { name: "Expand now playing artwork", exact: true })
-    .click();
+  const artworkToggle = widget.locator(".now-expand-toggle");
+  await page.mouse.move(800, 100);
+  await expect(artworkToggle).toHaveCSS("opacity", "0");
+  await widget.hover();
+  await expect(artworkToggle).toHaveCSS("opacity", "1");
+  await artworkToggle.click();
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeGreaterThan(compactHeight + 100);
@@ -3024,6 +3027,16 @@ test("sidebar playback card displays artwork, progress and remains usable collap
     "font-size",
     "16px",
   );
+  await page.locator("#main").click({ position: { x: 5, y: 5 } });
+  await page.mouse.move(800, 100);
+  await expect(artworkToggle).toHaveCSS("opacity", "0");
+  await artworkToggle.focus();
+  await expect(artworkToggle).toHaveCSS("opacity", "1");
+  await widget.hover();
+  await page.screenshot({
+    path: "test-results/now-playing-toggle-hover.png",
+    animations: "disabled",
+  });
   await widget
     .getByRole("button", { name: "Collapse now playing artwork", exact: true })
     .click();
@@ -3872,6 +3885,18 @@ test("library search opens every music kind and keeps the query on return", asyn
   for (const width of [1440, 768, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(page.locator(".search-result-list")).toHaveCount(3);
+    const form = await page.locator(".library-search-form").boundingBox();
+    const main = await page.locator(".library-search").boundingBox();
+    expect(Math.abs(form.width - main.width)).toBeLessThan(1);
+    await query.focus();
+    await expect(query).toHaveCSS("outline-style", "none");
+    await expect(page.locator(".library-search-form")).toHaveCSS(
+      "outline-style",
+      "none",
+    );
+    await expect(
+      page.locator(".search-result-list > li > a > .cover"),
+    ).toHaveCount(3);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -3927,6 +3952,86 @@ test("library search opens every music kind and keeps the query on return", asyn
   await query.press("Enter");
   await expect(page.locator(".search-result-list")).toHaveCount(0);
   await expect(page.locator(".search-start")).toBeVisible();
+});
+
+test("search editions show artwork and keep every edition accessible in both themes", async ({
+  page,
+}) => {
+  await login(page, "/search");
+  await page.route("**/api/v1/consultation/search/tracks?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          id: "popular-edition",
+          name: "NORMAL",
+          subtitle: "Artist · Album",
+          cover_url: "/api/v1/artwork/albums/search-test",
+          plays: 12,
+          editions: [
+            {
+              id: "popular-edition",
+              subtitle: "Artist · Album",
+              cover_url: "/api/v1/artwork/albums/search-test",
+              plays: 9,
+            },
+            {
+              id: "other-edition",
+              subtitle: "Artist · Another edition with a long album title",
+              cover_url: "/api/v1/artwork/albums/search-test",
+              plays: 3,
+            },
+          ],
+        },
+      ],
+    }),
+  );
+  await page.route("**/api/v1/artwork/albums/search-test*", (route) =>
+    route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY5kAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    }),
+  );
+  await page.goto("/search?q=Normal&kind=tracks");
+  const result = page.locator(".search-result-list > li");
+  await expect(result).toHaveCount(1);
+  await expect(result.locator(":scope > a")).toHaveAttribute(
+    "href",
+    "/music/tracks/popular-edition?period=all",
+  );
+  await expect(result.locator(":scope > a .search-result-plays")).toContainText(
+    "12",
+  );
+  await result.locator("summary").click();
+  await expect(result.locator(".search-editions a")).toHaveCount(2);
+  await expect(result.locator(".search-editions a").last()).toHaveAttribute(
+    "href",
+    "/music/tracks/other-edition?period=all",
+  );
+  await expect(result.locator(".cover-image")).toHaveCount(3);
+  for (const colorScheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: `test-results/search-editions-${colorScheme}-${width}.png`,
+        animations: "disabled",
+      });
+    }
+  }
+  await page.goto("/search");
+  await expect(page.locator(".search-start")).toBeVisible();
+  await page.screenshot({
+    path: "test-results/search-empty-dark.png",
+    animations: "disabled",
+  });
 });
 
 test("image credits open beside square artwork without moving page content", async ({
@@ -4284,6 +4389,91 @@ test("duplicate review controls share a height with flagged history first", asyn
   expect(boxes[2].height).toBe(boxes[3].height);
   await expect(group).toHaveCSS("border-top-width", "1px");
   await expect(comparisons).toHaveCSS("border-top-width", "0px");
+  await trash.hover();
+  await expect(trash).not.toHaveCSS("box-shadow", "none");
+  await trash.click();
+  await expect(trash).toHaveAttribute("aria-pressed", "true");
+  await expect(group).toHaveAttribute("data-view", "trash");
+  await expect(page.locator(".review-view-content")).toHaveCSS(
+    "animation-name",
+    "review-view-enter",
+  );
+  await expect
+    .poll(() =>
+      group.evaluate((node) => getComputedStyle(node, "::before").transform),
+    )
+    .not.toBe("none");
+  await page.screenshot({
+    path: "test-results/review-tabs-polished.png",
+    animations: "disabled",
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await comparisons.click();
+  await expect(page.locator(".review-view-content")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+});
+
+test("artwork editor keeps image credits beside the preview and fields in the wide column", async ({
+  page,
+}) => {
+  await login(page);
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.route("**/api/v1/library/artists/*", async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/group"))
+      return route.continue();
+    const data = await (await route.fetch()).json();
+    data.image_credit = {
+      provider: "wikidata",
+      source_url: "https://commons.wikimedia.org/wiki/File:Example.jpg",
+      image_url: "https://upload.wikimedia.org/example.jpg",
+      author: "Example photographer",
+      credit: null,
+      license: "CC BY-SA 4.0",
+      license_url: "https://creativecommons.org/licenses/by-sa/4.0/",
+    };
+    await route.fulfill({ json: data });
+  });
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto(`/music/artists/${archive.rankings.artists[0].id}/edit`);
+    const panel = page.locator(".artwork-editor");
+    const preview = panel.locator(".artwork-visual");
+    const credit = panel.getByRole("button", {
+      name: "Image credits",
+      exact: true,
+    });
+    await expect(credit).toBeVisible();
+    const coverBox = await preview.boundingBox();
+    const creditBox = await credit.boundingBox();
+    expect(creditBox.width).toBeLessThanOrEqual(44);
+    expect(creditBox.x).toBeGreaterThanOrEqual(coverBox.x);
+    expect(creditBox.x + creditBox.width).toBeLessThanOrEqual(
+      coverBox.x + coverBox.width,
+    );
+    const form = await panel.locator("form").boundingBox();
+    expect(form.width).toBeGreaterThan(200);
+    if (width > 600)
+      expect(form.x).toBeGreaterThan(coverBox.x + coverBox.width);
+    await credit.click();
+    await expect(
+      panel.getByRole("region", { name: "Image credits" }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/artwork-editor-polished-${width}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+  }
 });
 
 test("listening pattern values reserve room beside the scrollbar", async ({

@@ -99,6 +99,22 @@ pub struct EntityChoice {
     pub subtitle: String,
 }
 #[derive(Serialize, Deserialize, TS)]
+pub struct SearchEdition {
+    pub id: String,
+    pub subtitle: String,
+    pub cover_url: Option<String>,
+    pub plays: i64,
+}
+#[derive(Serialize, Deserialize, TS)]
+pub struct SearchItem {
+    pub id: String,
+    pub name: String,
+    pub subtitle: String,
+    pub cover_url: Option<String>,
+    pub plays: i64,
+    pub editions: Vec<SearchEdition>,
+}
+#[derive(Serialize, Deserialize, TS)]
 pub struct RankingPage {
     pub items: Vec<Ranking>,
     pub total: i64,
@@ -265,6 +281,8 @@ mod tests {
             Rankings::decl(&config),
             Dashboard::decl(&config),
             EntityChoice::decl(&config),
+            SearchEdition::decl(&config),
+            SearchItem::decl(&config),
             RankingPage::decl(&config),
             MusicPage::decl(&config),
             ActivityBucket::decl(&config),

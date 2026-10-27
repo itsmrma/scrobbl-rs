@@ -727,6 +727,83 @@ async fn competition_positions_use_only_the_primary_measure_and_names_break_comp
 }
 
 #[tokio::test]
+async fn library_search_groups_editions_and_orders_by_counted_listens() {
+    let (_dir, state, token) = setup().await;
+    let mut rows = Vec::new();
+    for (index, title, plays) in [(1, "Normal", 1), (2, "Normal", 3), (3, "Normal (Live)", 2)] {
+        for n in 0..plays {
+            let mut row = event(
+                index,
+                at("2025-01-01T12:00:00Z") + n * 300000,
+                Some(180000),
+                DurationKind::Actual,
+                &[("a", "Artist")],
+            );
+            row.track.title = title.into();
+            rows.push(row);
+        }
+    }
+    save(&state.storage, &rows).await;
+    let found = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/search/tracks?q=Normal",
+    )
+    .await;
+    assert_eq!(
+        found.as_array().unwrap().len(),
+        2,
+        "same song across albums must appear once"
+    );
+    assert_eq!(found[0]["name"], "Normal");
+    assert_eq!(found[0]["plays"], 4);
+    assert_eq!(found[0]["editions"].as_array().unwrap().len(), 2);
+    assert_eq!(found[0]["editions"][0]["plays"], 3);
+    assert_eq!(found[0]["id"], found[0]["editions"][0]["id"]);
+    assert!(
+        found[0]["cover_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("/api/v1/artwork/albums/")
+    );
+    assert_eq!(found[1]["name"], "Normal (Live)");
+    assert_eq!(found[1]["plays"], 2);
+    let albums = json_get(&state, &token, "/api/v1/consultation/search/albums?q=Album").await;
+    assert_eq!(albums[0]["name"], "Album 002");
+    assert_eq!(albums[0]["plays"], 3);
+    assert_eq!(albums[1]["plays"], 2);
+    let artists = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/search/artists?q=Artist",
+    )
+    .await;
+    assert_eq!(artists[0]["plays"], 6);
+    let mut other = event(
+        4,
+        at("2025-01-01T12:00:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("other", "Other artist")],
+    );
+    other.track.title = "Normal".into();
+    save(&state.storage, &[other]).await;
+    let found = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/search/tracks?q=Normal",
+    )
+    .await;
+    assert_eq!(
+        found.as_array().unwrap().len(),
+        3,
+        "same title by a different artist stays separate"
+    );
+    assert_eq!(found[0]["editions"].as_array().unwrap().len(), 2);
+    state.storage.close().await;
+}
+
+#[tokio::test]
 async fn library_search_is_bounded_and_validates_categories_and_queries() {
     let (_dir, state, token) = setup().await;
     let events: Vec<_> = (0..55)
