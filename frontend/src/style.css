@@ -6933,6 +6933,13 @@ dialog {
 
 /* On pointer devices with hover capability, keep the credit trigger concealed until the cover is hovered or focused */
 @media (hover: hover) and (pointer: fine) {
+  .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
+    opacity: 0;
+  }
+  .sidebar-now:hover :is(.now-expand-toggle, .now-section-toggle),
+  .sidebar-now:focus-within :is(.now-expand-toggle, .now-section-toggle) {
+    opacity: 1;
+  }
   .cover > .image-credit-trigger {
     opacity: 0;
   }

@@ -3013,9 +3013,12 @@ test("sidebar playback card displays artwork, progress and remains usable collap
       );
     }),
   ).toBeLessThan(1);
-  await widget
-    .getByRole("button", { name: "Expand now playing artwork", exact: true })
-    .click();
+  const artworkToggle = widget.locator(".now-expand-toggle");
+  await page.mouse.move(800, 100);
+  await expect(artworkToggle).toHaveCSS("opacity", "0");
+  await widget.hover();
+  await expect(artworkToggle).toHaveCSS("opacity", "1");
+  await artworkToggle.click();
   await expect
     .poll(async () => (await widget.boundingBox()).height)
     .toBeGreaterThan(compactHeight + 100);
@@ -3024,6 +3027,16 @@ test("sidebar playback card displays artwork, progress and remains usable collap
     "font-size",
     "16px",
   );
+  await page.locator("#main").click({ position: { x: 5, y: 5 } });
+  await page.mouse.move(800, 100);
+  await expect(artworkToggle).toHaveCSS("opacity", "0");
+  await artworkToggle.focus();
+  await expect(artworkToggle).toHaveCSS("opacity", "1");
+  await widget.hover();
+  await page.screenshot({
+    path: "test-results/now-playing-toggle-hover.png",
+    animations: "disabled",
+  });
   await widget
     .getByRole("button", { name: "Collapse now playing artwork", exact: true })
     .click();
