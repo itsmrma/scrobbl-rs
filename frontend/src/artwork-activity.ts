@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { downloadArtwork } from "./api";
+import { ArtworkRetry, downloadArtwork } from "./api";
 
 export type ArtworkActivity = {
   total: number;
@@ -49,6 +49,7 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
   );
   const run = async () => {
     let loaded = false;
+    let retry = false;
     try {
       const blob = await downloadArtwork(url);
       loaded = true;
@@ -57,17 +58,26 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
       );
       resolve(blob);
     } catch (error) {
-      reject(error);
+      if (error instanceof ArtworkRetry && attempts++ < 3) {
+        retry = true;
+        setTimeout(() => {
+          queue.push(run);
+          void pump();
+        }, error.delayMs);
+      } else reject(error);
     } finally {
-      requests.delete(key);
-      publish({
-        ...snapshot,
-        pending: snapshot.pending - 1,
-        loaded: snapshot.loaded + (loaded ? 1 : 0),
-        failed: snapshot.failed + (loaded ? 0 : 1),
-      });
+      if (!retry) {
+        requests.delete(key);
+        publish({
+          ...snapshot,
+          pending: snapshot.pending - 1,
+          loaded: snapshot.loaded + (loaded ? 1 : 0),
+          failed: snapshot.failed + (loaded ? 0 : 1),
+        });
+      }
     }
   };
+  let attempts = 0;
   if (priority) queue.unshift(run);
   else queue.push(run);
   void pump();

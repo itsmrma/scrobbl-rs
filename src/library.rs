@@ -533,12 +533,12 @@ pub async fn artwork(
         return Err(AppError::NotFound);
     }
     exists(&state, &kind, &id).await?;
-    let unavailable = || {
+    let unavailable = |retry_seconds: i64| {
         (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
             [
                 (header::CACHE_CONTROL, "no-store"),
-                (header::RETRY_AFTER, "60"),
+                (header::RETRY_AFTER, &retry_seconds.to_string()),
             ],
         )
             .into_response()
@@ -566,7 +566,7 @@ pub async fn artwork(
             .into_response());
     }
     match ensure_artwork_after_miss(&state, &kind, &id).await {
-        Ok(ArtworkFetch::Busy) => Ok(unavailable()),
+        Ok(ArtworkFetch::Busy) => Ok(unavailable(1)),
         Ok(ArtworkFetch::Missing) | Err(AppError::Unauthorized) => Err(AppError::NotFound),
         Ok(ArtworkFetch::Saved | ArtworkFetch::Cached) => {
             let bytes: Vec<u8> = sqlx::query_scalar(
@@ -578,7 +578,10 @@ pub async fn artwork(
             .await?;
             Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response())
         }
-        Err(_) => Ok(unavailable()),
+        Err(AppError::ArtworkWait { retry_at_ms }) => Ok(unavailable(
+            ((retry_at_ms.saturating_sub(auth::now_ms()) + 999) / 1000).max(1),
+        )),
+        Err(_) => Ok(unavailable(60)),
     }
 }
 
@@ -756,10 +759,12 @@ mod tests {
             result.is_ok(),
             "queued artwork holds browser HTTP connections while waiting for the provider"
         );
+        let response = result.unwrap().unwrap();
         assert_eq!(
-            result.unwrap().unwrap().status(),
+            response.status(),
             axum::http::StatusCode::SERVICE_UNAVAILABLE
         );
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
         let cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
             .fetch_one(&state.read_db)
             .await
