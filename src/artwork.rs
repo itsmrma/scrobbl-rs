@@ -655,9 +655,15 @@ mod tests {
         let paced = state.storage.job(&lease.id).await.unwrap();
         assert_eq!(paced.error_code.as_deref(), Some("artwork_pacing"));
         assert!(paced.retry_at_ms.unwrap() >= before + IMAGE_INTERVAL_MS);
-        // Ensure the cooldown does not expire during storage restart on slow Windows CI runners:
+        // Keep both persisted deadlines pending regardless of restart speed.
+        let deadline = i64::MAX;
+        sqlx::query("UPDATE settings SET value=? WHERE key='artwork_background_next_at_ms'")
+            .bind(deadline.to_string())
+            .execute(&state.db)
+            .await
+            .unwrap();
         sqlx::query("UPDATE jobs SET retry_at_ms=? WHERE id=?")
-            .bind(auth::now_ms() + 60_000)
+            .bind(deadline)
             .bind(&lease.id)
             .execute(&state.db)
             .await
