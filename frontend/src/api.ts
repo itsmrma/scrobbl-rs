@@ -4,6 +4,7 @@ import type {
   Dashboard,
   RankingPage,
   EntityChoice,
+  SearchItem,
   MusicPage,
   ActivityChart,
   History,
@@ -282,7 +283,7 @@ export const api = {
       `/api/v1/consultation/choices/${kind}?${new URLSearchParams({ q })}`,
     ),
   search: (kind: string, q: string) =>
-    request<EntityChoice[]>(
+    request<SearchItem[]>(
       `/api/v1/consultation/search/${kind}?${new URLSearchParams({ q })}`,
     ),
   rankings: (kind: string, params: URLSearchParams) =>

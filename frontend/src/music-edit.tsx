@@ -326,19 +326,21 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                 Upload a file or paste a direct image link. Your choice replaces
                 automatic artwork until you reset it.
               </p>
-              {preview ? (
-                <img
-                  className="artwork-preview"
-                  src={preview}
-                  alt="Selected image preview"
-                />
-              ) : (
-                <Cover
-                  url={`/api/v1/artwork/${kind}/${id}?v=${version}`}
-                  large
-                />
-              )}
-              <ImageCredits credit={details.data.image_credit} />
+              <div className="artwork-visual">
+                {preview ? (
+                  <img
+                    className="artwork-preview"
+                    src={preview}
+                    alt="Selected image preview"
+                  />
+                ) : (
+                  <Cover
+                    url={`/api/v1/artwork/${kind}/${id}?v=${version}`}
+                    large
+                  />
+                )}
+                <ImageCredits credit={details.data.image_credit} />
+              </div>
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();

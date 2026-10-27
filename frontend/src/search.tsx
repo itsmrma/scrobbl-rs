@@ -4,7 +4,7 @@ import { useLoad } from "./load";
 import { Link, navigate, useSearch } from "./navigation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
-import { ErrorText, Heading, Icon, number } from "./ui";
+import { Cover, ErrorText, Heading, Icon, number } from "./ui";
 import { SkeletonList } from "./skeleton";
 
 const labels: Record<Kind, string> = {
@@ -65,12 +65,44 @@ function SearchResults({ kind, query }: { kind: Kind; query: string }) {
               <Link
                 to={`/music/${kind}/${encodeURIComponent(item.id)}?period=all`}
               >
-                <span>
+                <Cover url={item.cover_url} />
+                <span className="search-result-copy">
                   <strong>{item.name}</strong>
                   <small>{item.subtitle}</small>
                 </span>
+                <span className="search-result-plays">
+                  <strong>{number.format(item.plays)}</strong>
+                  <small>{item.plays === 1 ? "listen" : "listens"}</small>
+                </span>
                 <Icon>chevron_right</Icon>
               </Link>
+              {item.editions.length > 1 && (
+                <details className="search-editions">
+                  <summary>
+                    {item.editions.length} editions · open an edition
+                  </summary>
+                  <p>Most listened edition shown above.</p>
+                  <ul>
+                    {item.editions.map((edition) => (
+                      <li key={edition.id}>
+                        <Link
+                          to={`/music/${kind}/${encodeURIComponent(edition.id)}?period=all`}
+                        >
+                          <Cover url={edition.cover_url} />
+                          <span className="search-result-copy">
+                            {edition.subtitle}
+                          </span>
+                          <small>
+                            {number.format(edition.plays)}{" "}
+                            {edition.plays === 1 ? "listen" : "listens"}
+                          </small>
+                          <Icon>chevron_right</Icon>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
             </li>
           ))}
         </ul>
@@ -127,7 +159,9 @@ export function SearchPage() {
           autoComplete="off"
           onChange={(event) => setDraft(event.target.value)}
         />
-        <button type="submit">Search</button>
+        <button type="submit" className="secondary">
+          Search
+        </button>
       </form>
       <div
         className="search-type-filters"
@@ -149,7 +183,7 @@ export function SearchPage() {
       {query ? (
         <>
           <p className="search-query-summary" role="status">
-            Results for <strong>“{query}”</strong>
+            Results for <strong>“{query}”</strong> · Most listened first
           </p>
           <div
             className={`search-result-groups ${kind ? "single-category" : ""}`}
@@ -161,6 +195,7 @@ export function SearchPage() {
         </>
       ) : (
         <div className="search-start">
+          <Icon>search</Icon>
           <h2>Find music you’ve listened to.</h2>
           <p>
             Search by name to open a music page, explore its listening history

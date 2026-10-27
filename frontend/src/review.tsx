@@ -327,7 +327,12 @@ export function ReviewPage({
         >
           <Icon>arrow_back</Icon>Flagged history
         </Link>
-        <div className="review-views" role="group" aria-label="Review views">
+        <div
+          className="review-views"
+          data-view={view}
+          role="group"
+          aria-label="Review views"
+        >
           <button
             className="secondary"
             aria-pressed={view === "comparisons"}
@@ -369,199 +374,206 @@ export function ReviewPage({
         </p>
       )}
       <ErrorText>{error}</ErrorText>
-      {view === "trash" ? (
-        <Trash
-          preferences={preferences}
-          version={version}
-          busy={busy || !!decidingId}
-          restore={(id) =>
-            void action(
-              () => api.undoReview(id),
-              "Decision restored. All associated records are back in the review list.",
-            )
-          }
-        />
-      ) : (
-        <>
-          <ErrorText>{result.error}</ErrorText>
-          <details
-            className="panel automatic-review"
-            role="region"
-            aria-label="Automatic duplicate review"
-          >
-            <summary>
-              <h2>Resolve matching duplicates automatically</h2>
-              <span
-                className="automatic-preview-count"
-                role="status"
-                aria-busy={!automatic.data && !automatic.error}
-              >
-                {automatic.error ? (
-                  "Preview unavailable"
-                ) : automatic.data ? (
-                  `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
-                ) : (
-                  <>
-                    <span className="visually-hidden">
-                      Checking automatic matches…
-                    </span>
-                    <SkeletonText widths={[100]} />
-                  </>
-                )}
-              </span>
-              <Icon>expand_more</Icon>
-            </summary>
-            <div className="automatic-review-body">
-              <p>
-                Only isolated pairs starting less than one second apart qualify.
-                They must describe the same Spotify track, or have exactly
-                matching title, album and artist credits. Repeats, competing
-                nearby records, incomplete metadata and conflicting playback
-                evidence stay for manual review.
-              </p>
-              <p>
-                The record with actual playback time takes priority, followed by
-                estimated time. Other records move to trash; every original
-                stays saved. You can undo the whole batch below.
-              </p>
-              <ErrorText>{automatic.error}</ErrorText>
-              {automatic.data ? (
-                <div className="review-actions">
-                  <span role="status">
-                    <strong>
-                      {number.format(automatic.data.groups)} matching{" "}
-                      {automatic.data.groups === 1 ? "pair" : "pairs"}
-                    </strong>{" "}
-                    · {number.format(automatic.data.records)} records ·{" "}
-                    {number.format(automatic.data.remaining)} remain for manual
-                    review
-                  </span>
-                  <button
-                    className="primary"
-                    disabled={busy || !!decidingId || !automatic.data.groups}
-                    onClick={() =>
-                      void action(
-                        () => api.executeAutomaticReview(automatic.data!.token),
-                        "Matching duplicates resolved. Undo below restores the entire batch.",
-                      )
-                    }
-                  >
-                    <Icon>done_all</Icon>Resolve{" "}
-                    {number.format(automatic.data.groups)}{" "}
-                    {automatic.data.groups === 1 ? "pair" : "pairs"}{" "}
-                    automatically
-                  </button>
-                </div>
-              ) : (
-                !automatic.error && (
-                  <SkeletonList count={1} label="Checking automatic matches…" />
-                )
-              )}
-            </div>
-          </details>
-          {!result.data && !result.error && (
-            <SkeletonCardList count={3} label="Loading comparisons…" />
-          )}
-          {visibleGroups.map((group) => (
-            <Comparison
-              key={`${group.id}:${group.items.map((i) => i.revision).join(":")}`}
-              group={group}
-              preferences={preferences}
-              busy={busy || decidingId === group.id}
-              decide={(keep) => decideOne(group, keep)}
-            />
-          ))}
-          {result.data && !visibleGroups.length && (
-            <div className="panel empty">
-              <Icon>task_alt</Icon>
-              <h2>
-                {currentTotal
-                  ? "No more records on this page"
-                  : "All caught up"}
-              </h2>
-              <p>
-                {currentTotal
-                  ? "Go back to review the remaining records."
-                  : "There are no flagged records to review."}
-              </p>
-            </div>
-          )}
-          {result.data && (page > 0 || result.data.total > 50) && (
-            <div className="pagination">
-              <button
-                className="secondary"
-                disabled={busy || page === 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Previous records
-              </button>
-              <span>Page {page + 1}</span>
-              <button
-                className="secondary"
-                disabled={busy || (page + 1) * 50 >= result.data.total}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next records
-              </button>
-            </div>
-          )}
-          {!!result.data &&
-            (result.data.decisions_total > 0 || decisionsPage > 0) && (
-              <details className="panel review-decisions">
-                <summary>Review decisions · Undo</summary>
-                <div>
-                  {result.data.recent.map((decision) => (
-                    <div className="review-decision" key={decision.id}>
-                      <span>
-                        <strong>
-                          {decision.removed
-                            ? `${decision.removed} moved to trash`
-                            : `${decision.count} kept separately`}
-                        </strong>
-                        <small>{date(decision.at_ms, preferences)}</small>
+      <div key={view} className="review-view-content">
+        {view === "trash" ? (
+          <Trash
+            preferences={preferences}
+            version={version}
+            busy={busy || !!decidingId}
+            restore={(id) =>
+              void action(
+                () => api.undoReview(id),
+                "Decision restored. All associated records are back in the review list.",
+              )
+            }
+          />
+        ) : (
+          <>
+            <ErrorText>{result.error}</ErrorText>
+            <details
+              className="panel automatic-review"
+              role="region"
+              aria-label="Automatic duplicate review"
+            >
+              <summary>
+                <h2>Resolve matching duplicates automatically</h2>
+                <span
+                  className="automatic-preview-count"
+                  role="status"
+                  aria-busy={!automatic.data && !automatic.error}
+                >
+                  {automatic.error ? (
+                    "Preview unavailable"
+                  ) : automatic.data ? (
+                    `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
+                  ) : (
+                    <>
+                      <span className="visually-hidden">
+                        Checking automatic matches…
                       </span>
-                      <button
-                        className="secondary"
-                        disabled={busy}
-                        onClick={() =>
-                          void action(
-                            () => api.undoReview(decision.id),
-                            "Decision undone. The records are back in the review list.",
-                          )
-                        }
-                      >
-                        <Icon>undo</Icon>Undo
-                      </button>
-                    </div>
-                  ))}
-                  {(result.data.decisions_total > 20 || decisionsPage > 0) && (
-                    <div className="pagination">
-                      <button
-                        className="secondary"
-                        disabled={busy || decisionsPage === 0}
-                        onClick={() => setDecisionsPage((p) => p - 1)}
-                      >
-                        Newer decisions
-                      </button>
-                      <span>Page {decisionsPage + 1}</span>
-                      <button
-                        className="secondary"
-                        disabled={
-                          busy ||
-                          (decisionsPage + 1) * 20 >=
-                            result.data.decisions_total
-                        }
-                        onClick={() => setDecisionsPage((p) => p + 1)}
-                      >
-                        Older decisions
-                      </button>
-                    </div>
+                      <SkeletonText widths={[100]} />
+                    </>
                   )}
-                </div>
-              </details>
+                </span>
+                <Icon>expand_more</Icon>
+              </summary>
+              <div className="automatic-review-body">
+                <p>
+                  Only isolated pairs starting less than one second apart
+                  qualify. They must describe the same Spotify track, or have
+                  exactly matching title, album and artist credits. Repeats,
+                  competing nearby records, incomplete metadata and conflicting
+                  playback evidence stay for manual review.
+                </p>
+                <p>
+                  The record with actual playback time takes priority, followed
+                  by estimated time. Other records move to trash; every original
+                  stays saved. You can undo the whole batch below.
+                </p>
+                <ErrorText>{automatic.error}</ErrorText>
+                {automatic.data ? (
+                  <div className="review-actions">
+                    <span role="status">
+                      <strong>
+                        {number.format(automatic.data.groups)} matching{" "}
+                        {automatic.data.groups === 1 ? "pair" : "pairs"}
+                      </strong>{" "}
+                      · {number.format(automatic.data.records)} records ·{" "}
+                      {number.format(automatic.data.remaining)} remain for
+                      manual review
+                    </span>
+                    <button
+                      className="primary"
+                      disabled={busy || !!decidingId || !automatic.data.groups}
+                      onClick={() =>
+                        void action(
+                          () =>
+                            api.executeAutomaticReview(automatic.data!.token),
+                          "Matching duplicates resolved. Undo below restores the entire batch.",
+                        )
+                      }
+                    >
+                      <Icon>done_all</Icon>Resolve{" "}
+                      {number.format(automatic.data.groups)}{" "}
+                      {automatic.data.groups === 1 ? "pair" : "pairs"}{" "}
+                      automatically
+                    </button>
+                  </div>
+                ) : (
+                  !automatic.error && (
+                    <SkeletonList
+                      count={1}
+                      label="Checking automatic matches…"
+                    />
+                  )
+                )}
+              </div>
+            </details>
+            {!result.data && !result.error && (
+              <SkeletonCardList count={3} label="Loading comparisons…" />
             )}
-        </>
-      )}
+            {visibleGroups.map((group) => (
+              <Comparison
+                key={`${group.id}:${group.items.map((i) => i.revision).join(":")}`}
+                group={group}
+                preferences={preferences}
+                busy={busy || decidingId === group.id}
+                decide={(keep) => decideOne(group, keep)}
+              />
+            ))}
+            {result.data && !visibleGroups.length && (
+              <div className="panel empty">
+                <Icon>task_alt</Icon>
+                <h2>
+                  {currentTotal
+                    ? "No more records on this page"
+                    : "All caught up"}
+                </h2>
+                <p>
+                  {currentTotal
+                    ? "Go back to review the remaining records."
+                    : "There are no flagged records to review."}
+                </p>
+              </div>
+            )}
+            {result.data && (page > 0 || result.data.total > 50) && (
+              <div className="pagination">
+                <button
+                  className="secondary"
+                  disabled={busy || page === 0}
+                  onClick={() => setPage((p) => p - 1)}
+                >
+                  Previous records
+                </button>
+                <span>Page {page + 1}</span>
+                <button
+                  className="secondary"
+                  disabled={busy || (page + 1) * 50 >= result.data.total}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  Next records
+                </button>
+              </div>
+            )}
+            {!!result.data &&
+              (result.data.decisions_total > 0 || decisionsPage > 0) && (
+                <details className="panel review-decisions">
+                  <summary>Review decisions · Undo</summary>
+                  <div>
+                    {result.data.recent.map((decision) => (
+                      <div className="review-decision" key={decision.id}>
+                        <span>
+                          <strong>
+                            {decision.removed
+                              ? `${decision.removed} moved to trash`
+                              : `${decision.count} kept separately`}
+                          </strong>
+                          <small>{date(decision.at_ms, preferences)}</small>
+                        </span>
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            void action(
+                              () => api.undoReview(decision.id),
+                              "Decision undone. The records are back in the review list.",
+                            )
+                          }
+                        >
+                          <Icon>undo</Icon>Undo
+                        </button>
+                      </div>
+                    ))}
+                    {(result.data.decisions_total > 20 ||
+                      decisionsPage > 0) && (
+                      <div className="pagination">
+                        <button
+                          className="secondary"
+                          disabled={busy || decisionsPage === 0}
+                          onClick={() => setDecisionsPage((p) => p - 1)}
+                        >
+                          Newer decisions
+                        </button>
+                        <span>Page {decisionsPage + 1}</span>
+                        <button
+                          className="secondary"
+                          disabled={
+                            busy ||
+                            (decisionsPage + 1) * 20 >=
+                              result.data.decisions_total
+                          }
+                          onClick={() => setDecisionsPage((p) => p + 1)}
+                        >
+                          Older decisions
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+          </>
+        )}
+      </div>
     </>
   );
 }

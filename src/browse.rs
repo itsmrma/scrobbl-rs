@@ -77,7 +77,7 @@ pub async fn search(
     headers: HeaderMap,
     Path(kind): Path<String>,
     Query(filters): Query<Filters>,
-) -> Result<Json<Vec<EntityChoice>>> {
+) -> Result<Json<Vec<SearchItem>>> {
     auth::session(&state, &headers).await?;
     let q = filters.q.as_deref().unwrap_or("").trim();
     let pattern = crate::db::search_pattern(q)?;
@@ -106,19 +106,32 @@ pub async fn search(
             ));
         }
     };
+    // Presentation groups do not merge archive identities. Keep every edition
+    // accessible and use the most-played identity as the primary destination.
+    let key = if kind == "tracks" {
+        "json_array(lower(trim(e.title)),COALESCE((SELECT group_concat(artist_id) FROM (SELECT artist_id FROM track_artists WHERE track_id=e.id ORDER BY artist_id)),e.id))"
+    } else {
+        "e.id"
+    };
+    let cover = match kind.as_str() {
+        "artists" => "'/api/v1/artwork/artists/'||e.id",
+        "albums" => "e.cover_url",
+        _ => "'/api/v1/artwork/albums/'||e.album_id",
+    };
     let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(format!(
-        "{}SELECT e.id,{name} AS name,{subtitle} AS subtitle FROM {join} WHERE EXISTS(SELECT 1 FROM listens l WHERE l.track_id=t.id AND l.trashed_at_ms IS NULL) AND {name} LIKE ",
+        "{}, search_rows AS (SELECT e.id,{name} AS name,{subtitle} AS subtitle,{cover} AS cover_url,{key} AS search_key,COUNT(DISTINCT CASE WHEN l.counted=1 THEN l.id END) AS plays FROM {join} JOIN listens l ON l.track_id=t.id AND l.trashed_at_ms IS NULL WHERE {name} LIKE ",
         crate::library::METADATA
     ));
-    query.push_bind(pattern).push(format!(
-        " ESCAPE '\\' GROUP BY e.id ORDER BY {name} COLLATE NOCASE,e.id LIMIT 50"
-    ));
+    query.push_bind(pattern).push(" ESCAPE '\\' GROUP BY e.id), ordered AS (SELECT *,SUM(plays) OVER(PARTITION BY search_key) AS total_plays,ROW_NUMBER() OVER(PARTITION BY search_key ORDER BY plays DESC,name COLLATE NOCASE,id) AS edition_rank FROM search_rows) SELECT json_object('id',o.id,'name',o.name,'subtitle',o.subtitle,'cover_url',o.cover_url,'plays',o.total_plays,'editions',json((SELECT json_group_array(json_object('id',id,'subtitle',subtitle,'cover_url',cover_url,'plays',plays)) FROM (SELECT * FROM search_rows WHERE search_key=o.search_key ORDER BY plays DESC,name COLLATE NOCASE,id)))) FROM ordered o WHERE edition_rank=1 ORDER BY total_plays DESC,name COLLATE NOCASE,id LIMIT 50");
     let mut view = state.storage.read_view().await?;
+    let rows: Vec<String> = query
+        .build_query_scalar()
+        .fetch_all(&mut *view.transaction)
+        .await?;
     Ok(Json(
-        query
-            .build_query_as()
-            .fetch_all(&mut *view.transaction)
-            .await?,
+        rows.into_iter()
+            .map(|row| serde_json::from_str(&row).map_err(|_| AppError::Internal))
+            .collect::<Result<_>>()?,
     ))
 }
 pub async fn rankings(
