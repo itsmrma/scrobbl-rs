@@ -51,6 +51,11 @@ window.addEventListener("pageshow", () => {
 });
 // Artwork downloads survive SPA navigation but must be cancelled before the
 // document disappears, just like the JSON reads below (not left to WebKit).
+export class ArtworkRetry extends Error {
+  constructor(public readonly delayMs: number) {
+    super("Artwork temporarily unavailable");
+  }
+}
 export async function downloadArtwork(path: string): Promise<Blob> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
@@ -62,6 +67,14 @@ export async function downloadArtwork(path: string): Promise<Blob> {
       signal: controller.signal,
       credentials: "same-origin",
     });
+    if (response.status === 503) {
+      const seconds = Number(response.headers.get("Retry-After"));
+      throw new ArtworkRetry(
+        Number.isFinite(seconds) && seconds > 0
+          ? Math.min(seconds * 1000, 2_147_483_647)
+          : 60_000,
+      );
+    }
     if (!response.ok) throw new Error("Artwork download failed");
     return await response.blob();
   } finally {

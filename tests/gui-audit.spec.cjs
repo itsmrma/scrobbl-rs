@@ -2663,6 +2663,43 @@ test("password field fills the form and visibility control stays compact", async
     ).width,
   ).toBeLessThanOrEqual(48);
 });
+test("visible artwork retries temporary server contention without a reload", async ({
+  page,
+}) => {
+  let attempts = 0;
+  await page.route("**/api/v1/artwork/**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.has("cached")) return route.fulfill({ status: 404 });
+    if (!url.pathname.endsWith("/retry-test"))
+      return route.fulfill({ status: 404 });
+    attempts++;
+    if (attempts === 1)
+      return route.fulfill({ status: 503, headers: { "Retry-After": "1" } });
+    return route.fulfill({
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aTwAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    });
+  });
+  await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    data.items = [
+      { ...data.items[0], cover_url: "/api/v1/artwork/albums/retry-test" },
+    ];
+    data.total = 1;
+    await route.fulfill({ json: data });
+  });
+  await login(page, "/rankings/albums?period=all");
+  await expect
+    .poll(() => attempts, { timeout: 2000, intervals: [100] })
+    .toBe(2);
+  await expect(
+    page.locator('.music-card .cover img[src^="blob:"]').first(),
+  ).toBeVisible();
+});
+
 test("cached artwork bypasses a slow cold image", async ({ page }) => {
   let release;
   const gate = new Promise((resolve) => (release = resolve));

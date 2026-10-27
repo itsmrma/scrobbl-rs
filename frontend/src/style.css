@@ -2565,17 +2565,32 @@ dialog {
 .rankings-panel .rank-value {
   max-width: 220px;
 }
+.password-control {
+  display: grid;
+  gap: 7px;
+}
 .password-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+.password-field:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 .password-field input {
-  min-width: 0;
   flex: 1;
+  width: 0;
+  border: 0;
+  background: transparent;
+}
+.password-field input:focus-visible {
+  outline: none;
 }
 .password-field .icon-button {
-  min-width: 44px;
+  flex: 0 0 44px;
 }
 .password-guidance {
   margin: 12px 0 20px;
@@ -3408,11 +3423,7 @@ dialog {
   gap: 8px;
 }
 /* Shared spacing rhythm: fields, actions and sections keep separate breathing room. */
-.password-field {
-  width: 100%;
-}
 .password-field .icon-button {
-  flex: 0 0 44px;
   width: 44px;
 }
 .password-match {

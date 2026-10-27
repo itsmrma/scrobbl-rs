@@ -46,6 +46,29 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(
     page.getByRole("heading", { name: "Make this space yours" }),
   ).toBeVisible();
+  const usernameWidth = (
+    await page.getByLabel("Username", { exact: true }).boundingBox()
+  ).width;
+  const passwordWidth = (await page.locator(".password-field").boundingBox())
+    .width;
+  expect(passwordWidth).toBeCloseTo(usernameWidth, 1);
+  const passwordInput = await page
+    .getByLabel("Password", { exact: true })
+    .boundingBox();
+  const visibilityButton = await page
+    .getByRole("button", { name: "Show password" })
+    .boundingBox();
+  expect(passwordInput.x + passwordInput.width).toBeLessThanOrEqual(
+    visibilityButton.x,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    (await page.locator(".password-field").boundingBox()).width,
+  ).toBeCloseTo(
+    (await page.getByLabel("Username", { exact: true }).boundingBox()).width,
+    1,
+  );
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page.getByLabel("Password", { exact: true }).fill("aaaaaaaaaaaaaaa");
   await page.getByLabel("Confirm password").fill("aaaaaaaaaaaaaaa");
@@ -65,7 +88,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page
     .getByLabel("Confirm password")
     .fill("a local browser test password 7!");
-  await page.getByRole("button", { name: "Create your archive" }).click();
+  await page.getByLabel("Confirm password").press("Enter");
   await expect(
     page.getByRole("heading", { name: "Your listening, at a glance." }),
   ).toBeVisible();
@@ -181,11 +204,17 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
+  expect(
+    (await page.locator(".password-field").boundingBox()).width,
+  ).toBeCloseTo(
+    (await page.getByLabel("Username", { exact: true }).boundingBox()).width,
+    1,
+  );
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page
     .getByLabel("Password", { exact: true })
     .fill("a local browser test password 7!");
-  await page.getByRole("button", { name: /^Sign in/ }).click();
+  await page.getByLabel("Password", { exact: true }).press("Enter");
   await expect(page.locator("#total-listens")).toHaveText("3");
   expect(errors).toEqual([]);
 });
