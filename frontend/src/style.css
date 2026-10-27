@@ -2570,17 +2570,27 @@ dialog {
   gap: 7px;
 }
 .password-field {
-  position: relative;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg);
+}
+.password-field:has(input:focus-visible) {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
 }
 .password-field input {
-  padding-right: 52px;
+  flex: 1;
+  width: 0;
+  border: 0;
+  background: transparent;
+}
+.password-field input:focus-visible {
+  outline: none;
 }
 .password-field .icon-button {
-  position: absolute;
-  z-index: 1;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  flex: 0 0 44px;
 }
 .password-guidance {
   margin: 12px 0 20px;

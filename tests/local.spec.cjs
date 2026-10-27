@@ -49,13 +49,21 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   const usernameWidth = (
     await page.getByLabel("Username", { exact: true }).boundingBox()
   ).width;
-  const passwordWidth = (
-    await page.getByLabel("Password", { exact: true }).boundingBox()
-  ).width;
+  const passwordWidth = (await page.locator(".password-field").boundingBox())
+    .width;
   expect(passwordWidth).toBeCloseTo(usernameWidth, 1);
+  const passwordInput = await page
+    .getByLabel("Password", { exact: true })
+    .boundingBox();
+  const visibilityButton = await page
+    .getByRole("button", { name: "Show password" })
+    .boundingBox();
+  expect(passwordInput.x + passwordInput.width).toBeLessThanOrEqual(
+    visibilityButton.x,
+  );
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
-    (await page.getByLabel("Password", { exact: true }).boundingBox()).width,
+    (await page.locator(".password-field").boundingBox()).width,
   ).toBeCloseTo(
     (await page.getByLabel("Username", { exact: true }).boundingBox()).width,
     1,
@@ -197,7 +205,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
   expect(
-    (await page.getByLabel("Password", { exact: true }).boundingBox()).width,
+    (await page.locator(".password-field").boundingBox()).width,
   ).toBeCloseTo(
     (await page.getByLabel("Username", { exact: true }).boundingBox()).width,
     1,
