@@ -89,6 +89,51 @@ async fn register(store: &Storage, path: &Path, manifest: &recovery::Manifest) -
 }
 
 #[tokio::test]
+async fn recovery_asset_paths_reject_non_hex_ids_and_unlisted_formats() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = storage::open(directory.path()).await.unwrap();
+    let id = recovery::enqueue_asset(&store, "backup", "zip", json!({}))
+        .await
+        .unwrap();
+    let mut asset = recovery::asset(&store, &id).await.unwrap();
+    for format in ["zip", "json", "csv"] {
+        asset.format = format.into();
+        assert_eq!(
+            recovery::asset_path(&store, &asset).unwrap(),
+            store
+                .directory
+                .join("backups")
+                .join(format!("{id}.{format}"))
+        );
+    }
+    for format in [
+        "../auth.db",
+        "zip/../../auth.db",
+        "zip\\..\\auth.db",
+        "html",
+        "",
+    ] {
+        asset.format = format.into();
+        assert!(recovery::asset_path(&store, &asset).is_err());
+    }
+    asset.format = "zip".into();
+    for invalid in [
+        "g".repeat(64),
+        "a".repeat(63),
+        "a".repeat(65),
+        "../private/auth.db".into(),
+        "..\\private\\auth.db".into(),
+        "/etc/passwd".into(),
+        "C:\\private\\auth.db".into(),
+    ] {
+        asset.id = invalid;
+        assert!(recovery::identifier(&asset.id).is_err());
+        assert!(recovery::asset_path(&store, &asset).is_err());
+    }
+    store.close().await;
+}
+
+#[tokio::test]
 async fn portable_backup_restores_originals_pending_jobs_and_files_without_any_access_storage() {
     let directory = tempfile::tempdir().unwrap();
     let store = storage::open(directory.path()).await.unwrap();
