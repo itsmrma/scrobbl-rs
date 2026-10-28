@@ -1343,7 +1343,7 @@ fn password_policy_accepts_eight_characters_and_rejects_sequences_and_account_na
     assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("owner")).is_ok());
     assert!(scrobbl_rs::auth::validate_password("M7!pL9$", Some("owner")).is_err());
     assert!(scrobbl_rs::auth::validate_password("M7!pL9$x", Some("m7pl9x")).is_err());
-    for password in [
+    for (case, password) in [
         "Abc!7mRp",
         "Zyx!7mRp",
         "M7!123xy",
@@ -1353,10 +1353,177 @@ fn password_policy_accepts_eight_characters_and_rejects_sequences_and_account_na
         "LongEnough!",
         "LongEnough7",
         "7777777!",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         assert!(
             scrobbl_rs::auth::validate_password(password, Some("owner")).is_err(),
-            "{password}"
+            "password policy case {case} was accepted"
         );
     }
+}
+
+#[tokio::test]
+async fn listenbrainz_source_download_requires_safe_ids_membership_and_retention() {
+    let (_dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, _) = sign_in(&app).await;
+    let contents = b"retained ListenBrainz source";
+    let file_id = state
+        .storage
+        .receive(&mut &contents[..], 1024)
+        .await
+        .unwrap();
+    let job = state
+        .storage
+        .enqueue(
+            "listenbrainz_file",
+            Some(&file_id),
+            Some("history.json"),
+            &json!({}),
+        )
+        .await
+        .unwrap();
+    let other_id = state
+        .storage
+        .receive(&mut &b"another activity"[..], 1024)
+        .await
+        .unwrap();
+    let url = |file: &str| format!("/api/v1/listenbrainz/jobs/{job}/files/{file}");
+    assert_eq!(
+        request(&app, "GET", &url(&file_id), json!({}), None, None)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    for invalid in [
+        "g".repeat(64),
+        "a".repeat(63),
+        "a".repeat(65),
+        "..%2farchive.db".into(),
+        "..%5cprivate%5cauth.db".into(),
+        other_id,
+    ] {
+        assert_eq!(
+            request(&app, "GET", &url(&invalid), json!({}), Some(&cookie), None)
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(url(&file_id))
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/octet-stream"
+    );
+    assert_eq!(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .as_ref(),
+        contents
+    );
+    sqlx::query("UPDATE source_files SET retained=0 WHERE id=?")
+        .bind(&file_id)
+        .execute(&state.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        request(&app, "GET", &url(&file_id), json!({}), Some(&cookie), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn recovery_upload_ignores_client_paths_and_cleans_up_rejected_multipart() {
+    let (dir, state) = state().await;
+    let app = web::router(state.clone());
+    let (cookie, csrf) = sign_in(&app).await;
+    let sentinel = dir.path().join("sentinel.zip");
+    std::fs::write(&sentinel, b"keep existing data").unwrap();
+    for (filename, extra_part) in [
+        ("../sentinel.zip", false),
+        ("C:\\private\\auth.db", false),
+        ("../../sentinel.zip", true),
+    ] {
+        let mut body = format!(
+            "--security-test\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: application/zip\r\n\r\nupload bytes\r\n"
+        );
+        if extra_part {
+            body.push_str("--security-test\r\nContent-Disposition: form-data; name=\"directory\"\r\n\r\n../../private\r\n");
+        }
+        body.push_str("--security-test--\r\n");
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/recovery/upload")
+                    .header("host", "127.0.0.1:3210")
+                    .header("origin", "http://127.0.0.1:3210")
+                    .header("cookie", &cookie)
+                    .header("x-csrf-token", &csrf)
+                    .header(
+                        "content-type",
+                        "multipart/form-data; boundary=security-test",
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if extra_part {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::OK
+            }
+        );
+        if !extra_part {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let data: Value = serde_json::from_slice(&bytes).unwrap();
+            let id = data["id"].as_str().unwrap();
+            scrobbl_rs::recovery::identifier(id).unwrap();
+            assert_eq!(
+                std::fs::read(dir.path().join("backups").join(format!("{id}.zip"))).unwrap(),
+                b"upload bytes"
+            );
+        }
+        assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep existing data");
+    }
+    let files = std::fs::read_dir(dir.path().join("backups"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(files.len(), 2, "only accepted uploads may leave files");
+    assert!(files.iter().all(|path| path.extension().unwrap() == "zip"));
+    assert_eq!(
+        scrobbl_rs::recovery::assets(&state.storage)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+    state.storage.close().await;
 }

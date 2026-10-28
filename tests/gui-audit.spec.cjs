@@ -133,6 +133,44 @@ const test = base.extend({
 
 test.describe.configure({ mode: "parallel" });
 
+test("artwork preview uses a revocable blob URL without interpreting the filename as HTML", async ({
+  page,
+}) => {
+  await login(page);
+  await page.addInitScript(() => {
+    window.revokedPreviewUrls = [];
+    const revoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (url) => {
+      window.revokedPreviewUrls.push(url);
+      revoke.call(URL, url);
+    };
+  });
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  await page.goto(`/music/artists/${archive.rankings.artists[0].id}/edit`);
+  const upload = page.getByLabel("Upload an image");
+  await upload.setInputFiles({
+    name: '<img src=x onerror="window.previewInjected=true">.png',
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  const preview = page.getByRole("img", { name: "Selected image preview" });
+  await expect(preview).toHaveAttribute("src", /^blob:http:\/\/127\.0\.0\.1:/);
+  await expect.poll(() => preview.evaluate((img) => img.naturalWidth)).toBe(1);
+  expect(await page.locator("img[onerror]").count()).toBe(0);
+  expect(await page.evaluate(() => window.previewInjected)).toBeUndefined();
+  const objectUrl = await preview.getAttribute("src");
+  await upload.setInputFiles([]);
+  await expect(preview).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => window.revokedPreviewUrls))
+    .toContain(objectUrl);
+});
+
 test("rankings keep artwork square and long metadata and durations visible", async ({
   page,
   browserName,
