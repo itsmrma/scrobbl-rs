@@ -352,15 +352,19 @@ export function Appearance({
 }
 
 export function MusicTemplatesSettings() {
-  const [template, setTemplate] = useState<"artist">("artist");
+  const [template, setTemplate] = useState<"artist" | "track">("artist");
   const [artists, setArtists] = useState<{ id: string; name: string }[]>([]);
+  const [tracks, setTracks] = useState<{ id: string; name: string }[]>([]);
   const [selectedArtist, setSelectedArtist] = useState<string>("");
-  const [loading, setLoading] = useState(true);
+  const [selectedTrack, setSelectedTrack] = useState<string>("");
+  const [loadingArtists, setLoadingArtists] = useState(true);
+  const [loadingTracks, setLoadingTracks] = useState(true);
 
   useEffect(() => {
     const params = new URLSearchParams();
+    params.set("period", "all");
     params.set("page", "1");
-    params.set("page_size", "20");
+    params.set("page_size", "25");
     api
       .rankings("artists", params)
       .then((data) => {
@@ -371,16 +375,38 @@ export function MusicTemplatesSettings() {
         }
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => setLoadingArtists(false));
+
+    api
+      .rankings("tracks", params)
+      .then((data) => {
+        const items = data.items.map((t: any) => ({ id: t.id, name: t.name }));
+        setTracks(items);
+        if (items.length > 0) {
+          setSelectedTrack(items[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingTracks(false));
   }, []);
 
   const handleCustomize = () => {
-    if (selectedArtist) {
-      navigate(
-        `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
-      );
+    if (template === "artist") {
+      if (selectedArtist) {
+        navigate(
+          `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/artists/preview?edit=template`);
+      }
     } else {
-      navigate(`/music/artists/preview?edit=template`);
+      if (selectedTrack) {
+        navigate(
+          `/music/tracks/${encodeURIComponent(selectedTrack)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/tracks/preview?edit=template`);
+      }
     }
   };
 
@@ -398,40 +424,73 @@ export function MusicTemplatesSettings() {
           <Select
             aria-label="Tipo di pagina"
             value={template}
-            onChange={(val) => setTemplate(val as any)}
+            onChange={(val) => setTemplate(val as "artist" | "track")}
           >
             <option value="artist">Pagina Artista</option>
+            <option value="track">Pagina Brano</option>
           </Select>
         </label>
-        <label>
-          Artista di anteprima
-          {artists.length > 0 ? (
-            <Select
-              aria-label="Artista di anteprima"
-              value={selectedArtist}
-              onChange={(val) => setSelectedArtist(val)}
-            >
-              {artists.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </Select>
-          ) : (
-            <span
-              className="empty-preview-notice"
-              style={{
-                display: "block",
-                marginTop: "8px",
-                color: "var(--muted)",
-              }}
-            >
-              {loading
-                ? "Caricamento artisti…"
-                : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
-            </span>
-          )}
-        </label>
+        {template === "artist" ? (
+          <label>
+            Artista di anteprima
+            {artists.length > 0 ? (
+              <Select
+                aria-label="Artista di anteprima"
+                value={selectedArtist}
+                onChange={(val) => setSelectedArtist(val)}
+              >
+                {artists.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span
+                className="empty-preview-notice"
+                style={{
+                  display: "block",
+                  marginTop: "8px",
+                  color: "var(--muted)",
+                }}
+              >
+                {loadingArtists
+                  ? "Caricamento artisti…"
+                  : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
+              </span>
+            )}
+          </label>
+        ) : (
+          <label>
+            Brano di anteprima
+            {tracks.length > 0 ? (
+              <Select
+                aria-label="Brano di anteprima"
+                value={selectedTrack}
+                onChange={(val) => setSelectedTrack(val)}
+              >
+                {tracks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span
+                className="empty-preview-notice"
+                style={{
+                  display: "block",
+                  marginTop: "8px",
+                  color: "var(--muted)",
+                }}
+              >
+                {loadingTracks
+                  ? "Caricamento brani…"
+                  : "Nessun brano presente nell'archivio. Verrà usata un'anteprima vuota."}
+              </span>
+            )}
+          </label>
+        )}
       </div>
       <div className="connection-actions">
         <button
@@ -439,7 +498,10 @@ export function MusicTemplatesSettings() {
           className="button secondary"
           onClick={handleCustomize}
         >
-          <Icon>tune</Icon> Personalizza template artista
+          <Icon>tune</Icon>{" "}
+          {template === "artist"
+            ? "Personalizza template artista"
+            : "Personalizza template brano"}
         </button>
       </div>
     </article>

@@ -1078,6 +1078,12 @@ const CATALOG_ITEMS = [
     description: "Confronto tra brani ascoltati per la prima volta e riascolti",
     defaultSpan: 3 as const,
   },
+  {
+    type: "history",
+    name: "Cronologia ascolti",
+    description: "Elenco cronologico dettagliato con filtri e ricerca.",
+    defaultSpan: 6 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1314,6 +1320,24 @@ export function RecentListensWidget({
   params: URLSearchParams;
   periodOverride?: string | null;
 }) {
+  const needsFetch = recent === undefined;
+  const historyParams = useMemo(() => {
+    if (!needsFetch) return null;
+    const hp = new URLSearchParams(params);
+    hp.set("page", "1");
+    hp.set("page_size", "8");
+    return hp;
+  }, [needsFetch, params]);
+  const isPreview =
+    params.get("track") === "preview" || params.get("artist") === "preview";
+  const fetched = useLoad(
+    () => api.history(historyParams!),
+    `recent-widget:${historyParams?.toString()}:${preferences.version}`,
+    needsFetch && !isPreview,
+  );
+  const items = recent !== undefined ? recent : (fetched.data?.items || []);
+  const isLoading = loading || (needsFetch && fetched.loading);
+
   return (
     <article className="panel padded widget-recent-listens">
       <div className="panel-title">
@@ -1331,10 +1355,10 @@ export function RecentListensWidget({
         <Link to={`/history?${context(params)}`}>View history</Link>
       </div>
       <div className="widget-recent-content">
-        {loading ? (
+        {isLoading ? (
           <ListenListSkeleton count={8} />
         ) : (
-          <ListenList items={recent || []} preferences={preferences} />
+          <ListenList items={items} preferences={preferences} />
         )}
       </div>
     </article>
@@ -1625,6 +1649,16 @@ export const DEFAULT_ARTIST_LAYOUT: DashboardLayout = {
   ],
 };
 
+export const DEFAULT_TRACK_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 6 },
+    { id: "history", type: "history", colSpan: 6 },
+  ],
+};
+
 export function isWidgetAllowedForTemplate(
   type: string,
   template: TemplateKind,
@@ -1860,7 +1894,11 @@ export function DashboardEditToolbar({
   const ariaLabel =
     template === "home"
       ? "Personalizza dashboard"
-      : "Personalizza template artista";
+      : template === "track"
+        ? "Personalizza template brano"
+        : template === "album"
+          ? "Personalizza template album"
+          : "Personalizza template artista";
   return (
     <div
       className="dashboard-edit-toolbar panel padded"
@@ -1905,6 +1943,12 @@ export function DashboardEditToolbar({
         <p className="dashboard-edit-notice">
           <Icon>info</Icon> Modifica del template artista: le modifiche verranno
           applicate a tutte le pagine artista dell'archivio.
+        </p>
+      )}
+      {template === "track" && (
+        <p className="dashboard-edit-notice">
+          <Icon>info</Icon> Modifica del template brano: le modifiche verranno
+          applicate a tutte le pagine brano dell'archivio.
         </p>
       )}
       {saving && (
@@ -1991,6 +2035,7 @@ export function WidgetCatalogDialog({
               <button
                 type="button"
                 className="button secondary"
+                aria-label={`Aggiungi ${item.name}`}
                 onClick={() => onAdd(item)}
               >
                 <Icon>add</Icon> Aggiungi
@@ -2110,11 +2155,28 @@ function OverriddenArtistTotalsWidget({
   widgetParams: URLSearchParams;
   periodOverride?: string;
 }) {
+  const isPreview = id === "preview";
   const result = useLoad(
     () => api.music(kind, id, widgetParams),
     `music-totals-override:${kind}:${id}:${widgetParams.toString()}`,
-    true,
+    !isPreview,
   );
+  if (isPreview) {
+    return (
+      <TotalsWidget
+        totals={{
+          records: 0,
+          listens: 0,
+          tracks: 0,
+          actual_ms: 0,
+          estimated_ms: 0,
+          unknown_durations: 0,
+        }}
+        ids
+        periodOverride={periodOverride}
+      />
+    );
+  }
   if (result.error && !result.data) {
     return (
       <article className="panel padded widget-read-error">
@@ -3247,10 +3309,15 @@ export function MusicPage({
   const selection = useSelection(true),
     params = scoped(selection.params, kind, id);
 
-  const artistEditor = useLayoutEditor({
-    template: "artist",
-    defaultLayout: DEFAULT_ARTIST_LAYOUT,
-    initialEditing: isInitialEdit,
+  const isMusicTemplate = kind === "artists" || kind === "tracks";
+  const templateKind: TemplateKind = kind === "tracks" ? "track" : "artist";
+  const defaultLayout =
+    kind === "tracks" ? DEFAULT_TRACK_LAYOUT : DEFAULT_ARTIST_LAYOUT;
+
+  const layoutEditor = useLayoutEditor({
+    template: templateKind,
+    defaultLayout,
+    initialEditing: isInitialEdit && isMusicTemplate,
   });
 
   const dummyTotals: Totals = {
@@ -3263,8 +3330,8 @@ export function MusicPage({
   };
   const dummyPreviewPage: MusicPageData = {
     id: "preview",
-    name: "Artista di anteprima",
-    kind: "artists",
+    name: kind === "tracks" ? "Brano di anteprima" : "Artista di anteprima",
+    kind,
     cover_url: null,
     album_id: null,
     album: null,
@@ -3312,7 +3379,7 @@ export function MusicPage({
     };
   }, [result.data?.id]);
 
-  if (kind !== "artists") {
+  if (!isMusicTemplate) {
     return (
       <>
         <ErrorText>{result.error}</ErrorText>
@@ -3390,8 +3457,8 @@ export function MusicPage({
     );
   }
 
-  // --- Artist Consultation with Shared Grid Engine ---
-  const renderArtistWidgetContent = (widget: WidgetConfig) => {
+  // --- Music Page (Artist / Track) Consultation with Shared Grid Engine ---
+  const renderMusicWidgetContent = (widget: WidgetConfig) => {
     const widgetParams = getWidgetParams(params, widget.periodOverride);
     switch (widget.type) {
       case "totals":
@@ -3484,6 +3551,7 @@ export function MusicPage({
           <div className="music-header-content" ref={introduction}>
             <div className="music-title-row">
               <Heading title={result.data.name}>
+                {kind === "tracks" && "Track by "}
                 {result.data.artists.map(
                   (a: { id: string; name: string }, i: number) => (
                     <span key={a.id}>
@@ -3494,6 +3562,17 @@ export function MusicPage({
                     </span>
                   ),
                 )}
+                {result.data.album_id && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link
+                      to={musicLink("albums", result.data.album_id, params)}
+                    >
+                      {result.data.album}
+                    </Link>
+                  </>
+                )}
               </Heading>
               <BackButton
                 fallback={`/rankings/${kind}?${context(selection.params)}`}
@@ -3501,14 +3580,21 @@ export function MusicPage({
             </div>
             {!isPreview && <MusicActions kind={kind} id={id} />}
             <div className="music-period">
-              {!artistEditor.editing && (
+              {!layoutEditor.editing && (
                 <button
                   type="button"
                   className="button secondary"
-                  aria-label="Personalizza template artista"
-                  onClick={() => artistEditor.handleStartEditing()}
+                  aria-label={
+                    kind === "tracks"
+                      ? "Personalizza template brano"
+                      : "Personalizza template artista"
+                  }
+                  onClick={() => layoutEditor.handleStartEditing()}
                 >
-                  <Icon>tune</Icon> Personalizza template artista
+                  <Icon>tune</Icon>{" "}
+                  {kind === "tracks"
+                    ? "Personalizza template brano"
+                    : "Personalizza template artista"}
                 </button>
               )}
               <PeriodFilters selection={selection} />
@@ -3519,31 +3605,31 @@ export function MusicPage({
         !result.error && <MusicPageSkeleton />
       )}
 
-      {artistEditor.editing && (
+      {layoutEditor.editing && (
         <DashboardEditToolbar
-          template="artist"
-          saving={artistEditor.saving}
-          saveError={artistEditor.saveError}
-          onAddWidget={() => artistEditor.setCatalogOpen(true)}
-          onReset={artistEditor.handleReset}
-          onCancel={artistEditor.handleCancel}
-          onSave={artistEditor.handleSave}
+          template={templateKind}
+          saving={layoutEditor.saving}
+          saveError={layoutEditor.saveError}
+          onAddWidget={() => layoutEditor.setCatalogOpen(true)}
+          onReset={layoutEditor.handleReset}
+          onCancel={layoutEditor.handleCancel}
+          onSave={layoutEditor.handleSave}
         />
       )}
 
       <WidgetCatalogDialog
-        open={artistEditor.catalogOpen}
-        onClose={() => artistEditor.setCatalogOpen(false)}
-        template="artist"
-        widgets={artistEditor.layout.widgets}
-        onAdd={artistEditor.addWidget}
+        open={layoutEditor.catalogOpen}
+        onClose={() => layoutEditor.setCatalogOpen(false)}
+        template={templateKind}
+        widgets={layoutEditor.layout.widgets}
+        onAdd={layoutEditor.addWidget}
       />
 
       <div
         id="dashboard-grid"
-        className={`dashboard-grid${artistEditor.editing ? " editing" : ""}`}
+        className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}`}
       >
-        {artistEditor.layout.widgets.length === 0 ? (
+        {layoutEditor.layout.widgets.length === 0 ? (
           <div className="dashboard-empty-notice panel padded">
             <p>
               Nessun widget configurato per questo template. Clicca su
@@ -3551,49 +3637,49 @@ export function MusicPage({
             </p>
           </div>
         ) : (
-          artistEditor.layout.widgets.map((w, index) => (
+          layoutEditor.layout.widgets.map((w, index) => (
             <div
               key={w.id}
-              className={`dashboard-widget span-${w.colSpan}${artistEditor.editing ? " editing" : ""}`}
+              className={`dashboard-widget span-${w.colSpan}${layoutEditor.editing ? " editing" : ""}`}
               data-widget-id={w.id}
               data-widget-type={w.type}
-              draggable={artistEditor.editing && !artistEditor.saving}
+              draggable={layoutEditor.editing && !layoutEditor.saving}
               onDragStart={(e) => {
-                if (!artistEditor.editing || artistEditor.saving) return;
+                if (!layoutEditor.editing || layoutEditor.saving) return;
                 e.dataTransfer.setData("text/plain", String(index));
                 e.dataTransfer.effectAllowed = "move";
               }}
               onDragOver={(e) => {
-                if (!artistEditor.editing || artistEditor.saving) return;
+                if (!layoutEditor.editing || layoutEditor.saving) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = "move";
               }}
               onDrop={(e) => {
-                if (!artistEditor.editing || artistEditor.saving) return;
+                if (!layoutEditor.editing || layoutEditor.saving) return;
                 e.preventDefault();
                 const sourceIndex = parseInt(
                   e.dataTransfer.getData("text/plain"),
                   10,
                 );
                 if (!isNaN(sourceIndex) && sourceIndex !== index) {
-                  artistEditor.setLayout((prev) => ({
+                  layoutEditor.setLayout((prev) => ({
                     ...prev,
                     widgets: reorderWidgets(prev.widgets, sourceIndex, index),
                   }));
                 }
               }}
             >
-              {artistEditor.editing && (
+              {layoutEditor.editing && (
                 <WidgetEditControls
                   widget={w}
                   index={index}
-                  totalWidgets={artistEditor.layout.widgets.length}
-                  saving={artistEditor.saving}
-                  onMove={artistEditor.moveWidget}
-                  onCycleSpan={artistEditor.cycleSpan}
-                  onRemove={artistEditor.removeWidget}
+                  totalWidgets={layoutEditor.layout.widgets.length}
+                  saving={layoutEditor.saving}
+                  onMove={layoutEditor.moveWidget}
+                  onCycleSpan={layoutEditor.cycleSpan}
+                  onRemove={layoutEditor.removeWidget}
                   onChangePeriod={(val) => {
-                    artistEditor.setLayout((prev) => ({
+                    layoutEditor.setLayout((prev) => ({
                       ...prev,
                       widgets: prev.widgets.map((item) =>
                         item.id === w.id
@@ -3604,7 +3690,7 @@ export function MusicPage({
                   }}
                 />
               )}
-              {renderArtistWidgetContent(w)}
+              {renderMusicWidgetContent(w)}
             </div>
           ))
         )}

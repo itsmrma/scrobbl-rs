@@ -1605,3 +1605,134 @@ async fn music_page_template_layout_persistence_matrix_validation_and_concurrenc
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn track_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. GET default track template layout
+    let (status, track_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(track_default["version"], 0);
+    let widgets = track_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(widgets.len(), 4);
+    assert_eq!(widgets[0]["type"], "totals");
+    assert_eq!(widgets[0]["colSpan"], 6);
+    assert_eq!(widgets[1]["type"], "activity_chart");
+    assert_eq!(widgets[1]["colSpan"], 6);
+    assert_eq!(widgets[2]["type"], "listening_patterns");
+    assert_eq!(widgets[2]["colSpan"], 6);
+    assert_eq!(widgets[3]["type"], "history");
+    assert_eq!(widgets[3]["colSpan"], 6);
+
+    // 2. Matrix validation: reject forbidden widgets on track template
+    for forbidden_type in &[
+        "top_albums",
+        "top_tracks",
+        "top_artists",
+        "now_playing",
+        "unified_rankings",
+        "discovery_ratio",
+    ] {
+        let mut invalid_track = track_default.clone();
+        invalid_track["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=track",
+            invalid_track,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected '{forbidden_type}' to be rejected on track template"
+        );
+    }
+
+    // 3. Matrix validation: allow all compatible widgets on track template
+    let valid_track_widgets = json!([
+        { "id": "totals-1", "type": "totals", "colSpan": 6 },
+        { "id": "activity-1", "type": "activity_chart", "colSpan": 6 },
+        { "id": "patterns-1", "type": "listening_patterns", "colSpan": 6 },
+        { "id": "recent-1", "type": "recent_listens", "colSpan": 6 },
+        { "id": "history-1", "type": "history", "colSpan": 6 }
+    ]);
+    let mut modified_track = track_default.clone();
+    modified_track["widgets"] = valid_track_widgets;
+
+    let (status, saved_track) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        modified_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_track["version"], 1);
+    assert_eq!(saved_track["widgets"].as_array().unwrap().len(), 5);
+
+    // 4. Persistence and isolation check in SQLite
+    let stored_track_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_track'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_track: Value = serde_json::from_str(&stored_track_json).unwrap();
+    assert_eq!(parsed_track["version"], 1);
+    assert_eq!(parsed_track["widgets"].as_array().unwrap().len(), 5);
+
+    // Isolation: home, artist, album keys are not affected
+    let stored_home: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_home.is_none());
+
+    let stored_artist: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_artist.is_none());
+
+    // 5. Stale version rejected with 409 Conflict
+    let mut stale_track = track_default.clone();
+    stale_track["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        stale_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 6. Empty track layout is permitted and persisted without fallback to default
+    let empty_track = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        empty_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+}
