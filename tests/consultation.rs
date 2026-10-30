@@ -1146,9 +1146,23 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    // 6. Valid modified layout persists successfully
+    // 5b. Invalid period override is rejected
+    let mut invalid_period = default_layout.clone();
+    invalid_period["widgets"][0]["periodOverride"] = json!("invalid_period_foo");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        invalid_period,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 6. Valid modified layout with period override persists successfully
     let mut modified = default_layout.clone();
     modified["widgets"][0]["colSpan"] = json!(3);
+    modified["widgets"][0]["periodOverride"] = json!("30d");
     modified["widgets"][1]["colSpan"] = json!(3);
     let (status, saved) = post(
         &state,
@@ -1161,12 +1175,14 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved["version"], 1);
     assert_eq!(saved["widgets"][0]["colSpan"], 3);
+    assert_eq!(saved["widgets"][0]["periodOverride"], "30d");
 
     // 7. GET returns identical persisted layout
     let (status, read_back) = get(&state, &token, "/api/v1/dashboard/layout").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read_back["version"], 1);
     assert_eq!(read_back["widgets"][0]["colSpan"], 3);
+    assert_eq!(read_back["widgets"][0]["periodOverride"], "30d");
     assert_eq!(read_back["widgets"][1]["colSpan"], 3);
 
     // 8. Direct database check: settings table stores JSON under 'dashboard_layout'
@@ -1178,6 +1194,7 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     let parsed: Value = serde_json::from_str(&stored_json).unwrap();
     assert_eq!(parsed["version"], 1);
     assert_eq!(parsed["widgets"][0]["colSpan"], 3);
+    assert_eq!(parsed["widgets"][0]["periodOverride"], "30d");
 
     // 9. Stale version update rejected with 409 Conflict
     let mut stale = default_layout.clone();

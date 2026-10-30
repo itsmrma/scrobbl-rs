@@ -42,7 +42,12 @@ import {
   SkeletonBlock,
   SkeletonList,
 } from "./skeleton";
-import { periods, isBool, useBrowserPreference } from "./preferences";
+import {
+  periods,
+  periodBadgeLabel,
+  isBool,
+  useBrowserPreference,
+} from "./preferences";
 import {
   context,
   kinds,
@@ -195,12 +200,30 @@ function Composition({
     </small>
   );
 }
-function Stats({ totals, ids = false }: { totals: Totals; ids?: boolean }) {
+function Stats({
+  totals,
+  ids = false,
+  periodOverride,
+}: {
+  totals: Totals;
+  ids?: boolean;
+  periodOverride?: string | null;
+}) {
   return (
     <>
       <div className="stats-grid">
         <article className="panel stat">
-          <span>Total listens</span>
+          <span>
+            Total listens
+            {periodOverride && (
+              <span
+                className="pill widget-period-badge"
+                data-period={periodOverride}
+              >
+                {periodBadgeLabel(periodOverride)}
+              </span>
+            )}
+          </span>
           <strong id={ids ? "total-listens" : undefined}>
             {number.format(totals.listens)}
           </strong>
@@ -737,10 +760,12 @@ function Chart({
   params,
   visible = true,
   version = 0,
+  periodOverride,
 }: {
   params: URLSearchParams;
   visible?: boolean;
   version?: number;
+  periodOverride?: string | null;
 }) {
   const chart = useRef<HTMLElement>(null);
   const [barLimit, setBarLimit] = useState(18);
@@ -800,7 +825,17 @@ function Chart({
   return (
     <article className="panel padded activity-chart chart-compact" ref={chart}>
       <div className="panel-title">
-        <h2>Listening activity</h2>
+        <h2>
+          Listening activity
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
       </div>
       <p className="subtle">
         Your archived listening over time. Select a bar to explore that period.
@@ -1010,20 +1045,24 @@ const CATALOG_ITEMS = [
 export function TotalsWidget({
   totals,
   ids = true,
+  periodOverride,
 }: {
   totals?: Totals;
   ids?: boolean;
+  periodOverride?: string | null;
 }) {
   if (!totals) return null;
-  return <Stats totals={totals} ids={ids} />;
+  return <Stats totals={totals} ids={ids} periodOverride={periodOverride} />;
 }
 
 export function UnifiedRankingsWidget({
   rankings,
   params,
+  periodOverride,
 }: {
   rankings?: Dashboard["rankings"];
   params: URLSearchParams;
+  periodOverride?: string | null;
 }) {
   if (!rankings) return null;
   return (
@@ -1031,7 +1070,17 @@ export function UnifiedRankingsWidget({
       {kinds.map((kind) => (
         <article className="panel padded" key={kind}>
           <div className="panel-title">
-            <h2>Top {kind}</h2>
+            <h2>
+              Top {kind}
+              {periodOverride && (
+                <span
+                  className="pill widget-period-badge"
+                  data-period={periodOverride}
+                >
+                  {periodBadgeLabel(periodOverride)}
+                </span>
+              )}
+            </h2>
             <Link to={`/rankings/${kind}?${context(params)}`}>
               View all {kind}
             </Link>
@@ -1052,15 +1101,27 @@ export function TopArtistsWidget({
   items,
   params,
   loading = false,
+  periodOverride,
 }: {
   items?: Ranking[];
   params: URLSearchParams;
   loading?: boolean;
+  periodOverride?: string | null;
 }) {
   return (
     <article className="panel padded overview-ranking-panel overview-rankings top-artists-panel">
       <div className="panel-title">
-        <h2>Top artists</h2>
+        <h2>
+          Top artists
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
         <Link to={`/rankings/artists?${context(params)}`}>
           View all artists
         </Link>
@@ -1080,15 +1141,27 @@ export function TopAlbumsWidget({
   items,
   params,
   loading = false,
+  periodOverride,
 }: {
   items?: Ranking[];
   params: URLSearchParams;
   loading?: boolean;
+  periodOverride?: string | null;
 }) {
   return (
     <article className="panel padded overview-ranking-panel overview-rankings top-albums-panel">
       <div className="panel-title">
-        <h2>Top albums</h2>
+        <h2>
+          Top albums
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
         <Link to={`/rankings/albums?${context(params)}`}>View all albums</Link>
       </div>
       {loading ? (
@@ -1106,15 +1179,27 @@ export function TopTracksWidget({
   items,
   params,
   loading = false,
+  periodOverride,
 }: {
   items?: Ranking[];
   params: URLSearchParams;
   loading?: boolean;
+  periodOverride?: string | null;
 }) {
   return (
     <article className="panel padded overview-ranking-panel overview-rankings top-tracks-panel">
       <div className="panel-title">
-        <h2>Top tracks</h2>
+        <h2>
+          Top tracks
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
         <Link to={`/rankings/tracks?${context(params)}`}>View all tracks</Link>
       </div>
       {loading ? (
@@ -1132,28 +1217,49 @@ export function ActivityChartWidget({
   params,
   visible,
   version,
+  periodOverride,
 }: {
   params: URLSearchParams;
   visible: boolean;
   version: number;
+  periodOverride?: string | null;
 }) {
-  return <Chart params={params} visible={visible} version={version} />;
+  return (
+    <Chart
+      params={params}
+      visible={visible}
+      version={version}
+      periodOverride={periodOverride}
+    />
+  );
 }
 
 export function RecentListensWidget({
   recent,
   preferences,
   params,
+  periodOverride,
 }: {
   recent?: Dashboard["recent"];
   preferences: Preferences;
   params: URLSearchParams;
+  periodOverride?: string | null;
 }) {
   if (!recent) return null;
   return (
     <article className="panel">
       <div className="panel-title padded">
-        <h2>Recent listening</h2>
+        <h2>
+          Recent listening
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
         <Link to={`/history?${context(params)}`}>View history</Link>
       </div>
       <ListenList items={recent} preferences={preferences} />
@@ -1164,9 +1270,11 @@ export function RecentListensWidget({
 export function DiscoveryRatioWidget({
   params,
   version,
+  periodOverride,
 }: {
   params: URLSearchParams;
   version: number;
+  periodOverride?: string | null;
 }) {
   const result = useLoad(
     () => api.discoveryRatio(params),
@@ -1182,7 +1290,17 @@ export function DiscoveryRatioWidget({
       aria-label="Nuove scoperte vs Riascolti"
     >
       <div className="panel-title">
-        <h2>Nuove scoperte vs Riascolti</h2>
+        <h2>
+          Nuove scoperte vs Riascolti
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
       </div>
       <p className="subtle">
         Confronto tra brani ascoltati per la prima volta e riascolti.
@@ -1284,6 +1402,150 @@ export function DiscoveryRatioWidget({
   );
 }
 
+function TotalsSkeleton() {
+  return (
+    <div className="stats-grid">
+      {[1, 2, 3].map((i) => (
+        <div className="stat skeleton-stat" key={i}>
+          <SkeletonBlock width="45%" height={13} borderRadius={4} />
+          <SkeletonBlock
+            width="60%"
+            height={32}
+            borderRadius={6}
+            style={{ margin: "6px 0" }}
+          />
+          <SkeletonBlock width="35%" height={11} borderRadius={4} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OverriddenDashboardWidget({
+  widget,
+  widgetParams,
+  preferences,
+  visible,
+  status,
+}: {
+  widget: WidgetConfig;
+  widgetParams: URLSearchParams;
+  preferences: Preferences;
+  visible: boolean;
+  status: SpotifyStatus | null;
+}) {
+  const queryParams = useMemo(() => {
+    const p = new URLSearchParams(widgetParams);
+    p.set("widgets", widget.type);
+    return p;
+  }, [widgetParams.toString(), widget.type]);
+
+  const result = useLoad<Dashboard>(
+    () => api.dashboard(queryParams),
+    `dashboard-override:${widget.id}:${queryParams.toString()}:${preferences.version}`,
+    visible,
+    (status?.sync_seconds || 120) * 1000,
+  );
+
+  const loading = !result.data && !result.error;
+
+  switch (widget.type) {
+    case "totals":
+      return result.data?.totals ? (
+        <TotalsWidget
+          totals={result.data.totals}
+          ids
+          periodOverride={widget.periodOverride}
+        />
+      ) : (
+        <TotalsSkeleton />
+      );
+    case "unified_rankings":
+      return result.data?.rankings ? (
+        <UnifiedRankingsWidget
+          rankings={result.data.rankings}
+          params={widgetParams}
+          periodOverride={widget.periodOverride}
+        />
+      ) : (
+        <RankingsSkeleton count={5} label="Loading rankings…" />
+      );
+    case "top_artists":
+      return (
+        <TopArtistsWidget
+          items={result.data?.rankings?.artists}
+          params={widgetParams}
+          loading={loading}
+          periodOverride={widget.periodOverride}
+        />
+      );
+    case "top_albums":
+      return (
+        <TopAlbumsWidget
+          items={result.data?.rankings?.albums}
+          params={widgetParams}
+          loading={loading}
+          periodOverride={widget.periodOverride}
+        />
+      );
+    case "top_tracks":
+      return (
+        <TopTracksWidget
+          items={result.data?.rankings?.tracks}
+          params={widgetParams}
+          loading={loading}
+          periodOverride={widget.periodOverride}
+        />
+      );
+    case "recent_listens":
+      return result.data?.recent ? (
+        <RecentListensWidget
+          recent={result.data.recent}
+          preferences={preferences}
+          params={widgetParams}
+          periodOverride={widget.periodOverride}
+        />
+      ) : (
+        <article className="panel">
+          <ListenListSkeleton count={5} />
+        </article>
+      );
+    default:
+      return null;
+  }
+}
+
+const OVERRIDE_PERIOD_OPTIONS: [string, string][] = [
+  ["", "Eredita globale"],
+  ["today", "Today"],
+  ["week", "This week"],
+  ["month", "This month"],
+  ["year", "This year"],
+  ["7d", "Last 7 days"],
+  ["30d", "Last 30 days"],
+  ["365d", "Last 365 days"],
+  ["all", "All time"],
+];
+
+function isTimeSensitiveWidget(type: string): boolean {
+  return type !== "now_playing";
+}
+
+function getWidgetParams(
+  params: URLSearchParams,
+  periodOverride?: string | null,
+): URLSearchParams {
+  const wp = new URLSearchParams(params);
+  if (periodOverride) {
+    wp.set("period", periodOverride);
+    wp.delete("from");
+    wp.delete("to");
+    wp.delete("bucket");
+    wp.delete("bucket_start");
+  }
+  return wp;
+}
+
 function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
   if (to < 0 || to >= widgets.length || from === to) return widgets;
   const copy = [...widgets];
@@ -1324,7 +1586,11 @@ export function Overview({
   }, [layoutResult.data]);
 
   const requestedWidgets = useMemo(() => {
-    return Array.from(new Set(layout.widgets.map((w) => w.type))).join(",");
+    return Array.from(
+      new Set(
+        layout.widgets.filter((w) => !w.periodOverride).map((w) => w.type),
+      ),
+    ).join(",");
   }, [layout.widgets]);
 
   const dashboardParams = useMemo(() => {
@@ -1338,7 +1604,7 @@ export function Overview({
   const result = useLoad<Dashboard>(
     () => api.dashboard(dashboardParams),
     `${dashboardParams}:${preferences.version}`,
-    visible,
+    visible && requestedWidgets.length > 0,
     (status?.sync_seconds || 120) * 1000,
   );
 
@@ -1419,6 +1685,49 @@ export function Overview({
   };
 
   const renderWidgetContent = (widget: WidgetConfig) => {
+    const widgetParams = getWidgetParams(params, widget.periodOverride);
+    if (widget.periodOverride) {
+      switch (widget.type) {
+        case "activity_chart":
+          return (
+            <ActivityChartWidget
+              params={widgetParams}
+              visible={visible}
+              version={preferences.version}
+              periodOverride={widget.periodOverride}
+            />
+          );
+        case "listening_patterns":
+          return (
+            <ListeningPatternsWidget
+              params={widgetParams}
+              version={preferences.version}
+              periodOverride={widget.periodOverride}
+            />
+          );
+        case "discovery_ratio":
+          return (
+            <DiscoveryRatioWidget
+              params={widgetParams}
+              version={preferences.version}
+              periodOverride={widget.periodOverride}
+            />
+          );
+        case "now_playing":
+          return <NowPlayingWidget status={status} />;
+        default:
+          return (
+            <OverriddenDashboardWidget
+              widget={widget}
+              widgetParams={widgetParams}
+              preferences={preferences}
+              visible={visible}
+              status={status}
+            />
+          );
+      }
+    }
+
     const loading = !result.data && !result.error;
     switch (widget.type) {
       case "totals":
@@ -1599,7 +1908,7 @@ export function Overview({
       )}
 
       <ErrorText>{result.error}</ErrorText>
-      {result.data ? (
+      {result.data || requestedWidgets.length === 0 ? (
         <div className={`dashboard-grid${editing ? " editing" : ""}`}>
           {layout.widgets.map((w, index) => (
             <div
@@ -1678,6 +1987,30 @@ export function Overview({
                     <Icon>view_column</Icon>
                     <span>{w.colSpan}/6</span>
                   </button>
+                  {isTimeSensitiveWidget(w.type) && (
+                    <div className="widget-period-override-control">
+                      <Select
+                        aria-label="Periodo widget"
+                        value={w.periodOverride || ""}
+                        onChange={(val) => {
+                          setLayout((prev) => ({
+                            ...prev,
+                            widgets: prev.widgets.map((item) =>
+                              item.id === w.id
+                                ? { ...item, periodOverride: val || undefined }
+                                : item,
+                            ),
+                          }));
+                        }}
+                      >
+                        {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
+                          <option key={val} value={val}>
+                            {label}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="widget-control widget-remove-button"

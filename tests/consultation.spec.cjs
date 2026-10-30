@@ -552,6 +552,98 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(discoveryReloaded).toBeVisible();
     await expect(discoveryReloaded).toHaveClass(/span-3/);
 
+    // Ticket #121: Override Locale del Periodo per Singolo Widget
+    // 1. Enter edit mode and set periodOverride="30d" on discovery_ratio widget
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+
+    const discoveryWidget121 = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    const discoveryPeriodSelect = discoveryWidget121.getByRole("combobox", {
+      name: "Periodo widget",
+    });
+    await expect(discoveryPeriodSelect).toBeVisible();
+    await chooseOption(discoveryPeriodSelect, "30d");
+
+    // Save changes
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    // 2. Verify .pill badge appears indicating the locked period
+    const discoveryBadge = discoveryWidget121.locator(
+      ".pill.widget-period-badge",
+    );
+    await expect(discoveryBadge).toBeVisible();
+    await expect(discoveryBadge).toHaveText("Last 30 days");
+    await expect(discoveryBadge).toHaveAttribute("data-period", "30d");
+
+    // For 30d (empty in test data), discovery_ratio shows empty state
+    await expect(
+      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+    ).toBeVisible();
+
+    // 3. Changing the global dashboard period filter does NOT alter the locked widget
+    const globalPeriod = page.getByRole("combobox", { name: "Period" });
+    await chooseOption(globalPeriod, "week");
+
+    // Verify locked widget maintains its empty state and badge
+    await expect(discoveryBadge).toBeVisible();
+    await expect(
+      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+    ).toBeVisible();
+
+    // Change global filter back to "all"
+    await chooseOption(globalPeriod, "all");
+    await expect(discoveryBadge).toBeVisible();
+    await expect(
+      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+    ).toBeVisible();
+
+    // 4. Persistence across page reload
+    await page.reload();
+    const discoveryAfterReload = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    const badgeAfterReload = discoveryAfterReload.locator(
+      ".pill.widget-period-badge",
+    );
+    await expect(badgeAfterReload).toBeVisible();
+    await expect(badgeAfterReload).toHaveText("Last 30 days");
+    await expect(
+      discoveryAfterReload.getByText("Nessun ascolto nel periodo selezionato."),
+    ).toBeVisible();
+
+    // 5. Test periodOverride on a dashboard-slice widget (e.g. totals)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const totalsWidget121 = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    const totalsPeriodSelect = totalsWidget121.getByRole("combobox", {
+      name: "Periodo widget",
+    });
+    await expect(totalsPeriodSelect).toBeVisible();
+    await chooseOption(totalsPeriodSelect, "30d");
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    const totalsBadge = totalsWidget121.locator(".pill.widget-period-badge");
+    await expect(totalsBadge).toBeVisible();
+    await expect(totalsBadge).toHaveText("Last 30 days");
+    // Under 30d, total listens is 0
+    await expect(totalsWidget121.locator("#total-listens")).toHaveText("0");
+
+    // Reload and verify persistence of totals override
+    await page.reload();
+    const totalsReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(
+      totalsReloaded.locator(".pill.widget-period-badge"),
+    ).toHaveText("Last 30 days");
+    await expect(totalsReloaded.locator("#total-listens")).toHaveText("0");
+
     // Reset to default
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
