@@ -129,6 +129,8 @@ function TimeHelp() {
         aria-label="How we calculate listening time"
         aria-expanded={open}
         aria-controls={id}
+        onPointerEnter={(event) => setHover(event.pointerType === "mouse")}
+        onPointerLeave={() => setHover(false)}
         onFocus={() => setFocus(true)}
         onBlur={() => setFocus(false)}
         onClick={() => {
@@ -1592,6 +1594,7 @@ export function Overview({
   );
 
   const [editing, setEditing] = useState(false);
+  const hasLoadedInitial = useRef(false);
   const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_V1_LAYOUT);
   const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1849,36 +1852,60 @@ export function Overview({
 
   if (!visible) return null;
 
-  if (result.loading && !result.data && !result.error) {
-    return (
-      <>
-        <div className="overview-heading">
-          <Heading title="Your listening, at a glance">
-            The songs, the repeats, the moments. All yours.
-          </Heading>
-          <div className="overview-heading-actions">
-            <PeriodFilters selection={selection} />
-          </div>
-        </div>
-        <OverviewSkeleton label="Loading your archive…" />
-      </>
-    );
+  if (result.data) {
+    hasLoadedInitial.current = true;
   }
 
-  if (result.error && !result.data) {
-    return (
-      <>
-        <div className="overview-heading">
-          <Heading title="Your listening, at a glance">
-            The songs, the repeats, the moments. All yours.
-          </Heading>
-          <div className="overview-heading-actions">
-            <PeriodFilters selection={selection} />
+  if (!hasLoadedInitial.current) {
+    if (result.loading && !result.data && !result.error) {
+      return (
+        <>
+          <div className="overview-heading">
+            <Heading title="Your listening, at a glance">
+              The songs, the repeats, the moments. All yours.
+            </Heading>
+            <div className="overview-heading-actions">
+              {!editing && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={handleStartEditing}
+                >
+                  <Icon>tune</Icon> Personalizza
+                </button>
+              )}
+              <PeriodFilters selection={selection} />
+            </div>
           </div>
-        </div>
-        <ErrorText>{result.error}</ErrorText>
-      </>
-    );
+          <OverviewSkeleton label="Loading your archive…" />
+        </>
+      );
+    }
+
+    if (result.error && !result.data) {
+      return (
+        <>
+          <div className="overview-heading">
+            <Heading title="Your listening, at a glance">
+              The songs, the repeats, the moments. All yours.
+            </Heading>
+            <div className="overview-heading-actions">
+              {!editing && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={handleStartEditing}
+                >
+                  <Icon>tune</Icon> Personalizza
+                </button>
+              )}
+              <PeriodFilters selection={selection} />
+            </div>
+          </div>
+          <ErrorText>{result.error}</ErrorText>
+        </>
+      );
+    }
   }
 
   return (
