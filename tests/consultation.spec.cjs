@@ -787,6 +787,222 @@ test.describe("consultation", () => {
     ).toHaveCount(0);
   });
 
+  test("dashboard polish contains long names, aligns controls and preserves loading geometry", async ({
+    archive: { page },
+  }, testInfo) => {
+    test.setTimeout(120000);
+    await page.route("**/api/dashboard?*", async (route) => {
+      const response = await route.fetch();
+      const data = await response.json();
+      for (const items of Object.values(data.rankings || {})) {
+        for (const item of items) {
+          item.name = "長いアーティスト名とアルバムのタイトル".repeat(12);
+          item.subtitle = "A very long album and artist name ".repeat(15);
+        }
+      }
+      for (const item of data.recent || []) {
+        item.title = "長い曲名と長いアルバムタイトル".repeat(12);
+        item.album = "Long album ".repeat(30);
+        item.artists = item.artists.map((artist) => ({
+          ...artist,
+          name: "長いアーティスト名".repeat(20),
+        }));
+      }
+      await route.fulfill({ response, json: data });
+    });
+    await page.reload();
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(
+      page.locator(".widget-patterns-content .pattern-row").first(),
+    ).toBeVisible();
+    const customize = page.getByRole("button", {
+      name: "Personalizza",
+      exact: true,
+    });
+    for (const width of [320, 390, 601, 768, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const theme of ["light", "dark"]) {
+        await page.evaluate((theme) => {
+          document.documentElement.classList.toggle(
+            "theme-light",
+            theme === "light",
+          );
+          document.documentElement.style.setProperty("--accent", "#c5a3ee");
+        }, theme);
+        await customize.click();
+        const failures = await page
+          .locator(".dashboard-grid")
+          .evaluate((grid) => {
+            const failures = [];
+            if (document.documentElement.scrollWidth > innerWidth)
+              failures.push("page overflows");
+            const cells = [
+              ...grid.querySelectorAll(":scope > .dashboard-widget"),
+            ];
+            for (const cell of cells) {
+              const rect = cell.getBoundingClientRect();
+              const mainPanel = cell.querySelector(".overview-ranking-panel");
+              if (
+                mainPanel &&
+                Math.abs(mainPanel.getBoundingClientRect().width - rect.width) >
+                  1
+              )
+                failures.push("ranking does not fill slot");
+              for (const panel of cell.querySelectorAll(
+                ".panel, .widget-edit-controls",
+              )) {
+                const box = panel.getBoundingClientRect();
+                if (box.bottom > rect.bottom + 1 || box.right > rect.right + 1)
+                  failures.push(cell.dataset.widgetType + " escapes slot");
+              }
+              for (const button of cell.querySelectorAll(
+                ".widget-control, .select-trigger",
+              )) {
+                const box = button.getBoundingClientRect();
+                if (box.width < 44 || box.height < 44)
+                  failures.push("small target");
+              }
+            }
+            for (let i = 0; i < cells.length; i++)
+              for (let j = i + 1; j < cells.length; j++) {
+                const a = cells[i].getBoundingClientRect(),
+                  b = cells[j].getBoundingClientRect();
+                if (
+                  a.left < b.right - 1 &&
+                  a.right > b.left + 1 &&
+                  a.top < b.bottom - 1 &&
+                  a.bottom > b.top + 1
+                )
+                  failures.push("overlap");
+              }
+            return failures;
+          });
+        expect(failures).toEqual([]);
+        for (const selector of [
+          ".rank-value",
+          ".rank-number",
+          ".pattern-readout",
+          ".chart-bar-value",
+          ".time-composition",
+        ]) {
+          await expect(
+            page.locator(".dashboard-widget " + selector).first(),
+          ).toHaveCSS("font-variant-numeric", "tabular-nums");
+        }
+        await expect(
+          page.locator(".widget-top-tracks .rank-name a").first(),
+        ).toHaveCSS("text-overflow", "ellipsis");
+        await page.screenshot({
+          path: testInfo.outputPath(
+            "dashboard-" + width + "-" + theme + ".png",
+          ),
+          fullPage: true,
+        });
+        await page
+          .getByRole("button", { name: "Annulla", exact: true })
+          .click();
+        await expect(customize).toBeFocused();
+      }
+    }
+    // Hold only the period read: the old, pending and empty states occupy the same slots.
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const heights = () =>
+      page
+        .locator(".dashboard-widget")
+        .evaluateAll((cells) =>
+          cells.map((cell) => Math.round(cell.getBoundingClientRect().height)),
+        );
+    const before = await heights();
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    await page.route("**/api/dashboard?*", async (route) => {
+      await gate;
+      await route.continue();
+    });
+    try {
+      await chooseOption(
+        page.getByRole("combobox", { name: "Period", exact: true }),
+        "30d",
+      );
+      await expect(page.locator(".dashboard-grid")).toHaveAttribute(
+        "aria-busy",
+        "true",
+      );
+      expect(await heights()).toEqual(before);
+      release();
+      await expect(page.locator("#total-listens")).toHaveText("0");
+      expect(await heights()).toEqual(before);
+    } finally {
+      release();
+    }
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await customize.click();
+    await expect(page.locator(".dashboard-edit-toolbar")).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    await expect(page.locator(".dashboard-widget").first()).toHaveCSS(
+      "transition-duration",
+      "0s",
+    );
+    // The optional catalog widgets use the same anatomy at every supported span.
+    for (const title of ["Classifiche Congiunte", "Rapporto scoperte"]) {
+      await page
+        .getByRole("button", { name: "Aggiungi widget", exact: true })
+        .click();
+      await page
+        .locator(".catalog-item-card")
+        .filter({
+          has: page.getByRole("heading", { name: title, exact: true }),
+        })
+        .getByRole("button", { name: "Aggiungi", exact: true })
+        .click();
+    }
+    for (const type of [
+      "now_playing",
+      "totals",
+      "unified_rankings",
+      "top_artists",
+      "top_albums",
+      "top_tracks",
+      "activity_chart",
+      "recent_listens",
+      "listening_patterns",
+      "discovery_ratio",
+    ]) {
+      const widget = page.locator(
+        '.dashboard-widget[data-widget-type="' + type + '"]',
+      );
+      for (let i = 0; i < 4; i++) {
+        await widget.locator(".widget-span-button").click();
+        expect(
+          await widget.evaluate((cell) => {
+            const bounds = cell.getBoundingClientRect();
+            return [
+              ...cell.querySelectorAll(".panel, .widget-edit-controls"),
+            ].every((panel) => {
+              const rect = panel.getBoundingClientRect();
+              return (
+                rect.right <= bounds.right + 1 &&
+                rect.bottom <= bounds.bottom + 1
+              );
+            });
+          }),
+          type,
+        ).toBeTruthy();
+      }
+    }
+    await page
+      .getByRole("button", { name: "Aggiungi widget", exact: true })
+      .click();
+    await page.screenshot({
+      path: testInfo.outputPath("widget-catalog.png"),
+      fullPage: true,
+    });
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".widget-catalog-dialog")).toBeHidden();
+  });
+
   test("listening time help remains accessible on touch screens and reports missing durations", async ({
     archive: { page, context, port },
     browser,

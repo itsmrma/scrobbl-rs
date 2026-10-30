@@ -239,67 +239,71 @@ export function ListeningPatternsWidget({
           </Select>
         </div>
       </div>
-      <ErrorText>{result.error}</ErrorText>
-      {!result.data && !result.error && (
-        <SkeletonPatterns label="Loading listening patterns…" />
-      )}
-      {result.data && (
-        <>
-          {result.data.total === 0 ? (
-            <p className="empty">
-              Nessun dato di ascolto nel periodo selezionato.
-            </p>
-          ) : (
-            <>
-              {selected && (
-                <p className="pattern-readout" aria-live="polite">
-                  {view === "weekdays"
-                    ? selected.label.slice(2)
-                    : selected.label}{" "}
-                  · {number.format(selected.count)} ascolti ·{" "}
-                  {((selected.count / result.data.total) * 100).toFixed(1)}%
-                </p>
-              )}
-              <div
-                className={`pattern-bars pattern-temporal pattern-${view}`}
-                style={{ "--pattern-columns": bins.length } as CSSProperties}
-                role="list"
-                aria-label={
-                  view === "hours" ? "Ore del giorno" : "Giorni della settimana"
-                }
-              >
-                {bins.map((bin) => {
-                  const label =
-                    view === "weekdays" ? bin.label.slice(2) : bin.label;
-                  const shortLabel =
+      <div className="widget-patterns-content">
+        <ErrorText>{result.error}</ErrorText>
+        {!result.data && !result.error && (
+          <SkeletonPatterns label="Loading listening patterns…" compact />
+        )}
+        {result.data && (
+          <>
+            {result.data.total === 0 ? (
+              <p className="empty">
+                Nessun dato di ascolto nel periodo selezionato.
+              </p>
+            ) : (
+              <>
+                {selected && (
+                  <p className="pattern-readout" aria-live="polite">
+                    {view === "weekdays"
+                      ? selected.label.slice(2)
+                      : selected.label}{" "}
+                    · {number.format(selected.count)} ascolti ·{" "}
+                    {((selected.count / result.data.total) * 100).toFixed(1)}%
+                  </p>
+                )}
+                <div
+                  className={`pattern-bars pattern-temporal pattern-${view}`}
+                  style={{ "--pattern-columns": bins.length } as CSSProperties}
+                  role="list"
+                  aria-label={
                     view === "hours"
-                      ? bin.label.slice(0, 2)
-                      : label.slice(0, 3);
-                  return (
-                    <div
-                      className="pattern-row"
-                      role="listitem"
-                      tabIndex={0}
-                      onFocus={() => setInspected(bin.label)}
-                      onMouseEnter={() => setInspected(bin.label)}
-                      onClick={() => setInspected(bin.label)}
-                      key={bin.label}
-                      aria-label={`${label}: ${number.format(bin.count)} ascolti`}
-                    >
-                      <span className="pattern-label">{shortLabel}</span>
-                      <span className="pattern-track" aria-hidden="true">
-                        <span
-                          style={{ height: `${(bin.count / max) * 100}%` }}
-                        />
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
-      )}
+                      ? "Ore del giorno"
+                      : "Giorni della settimana"
+                  }
+                >
+                  {bins.map((bin) => {
+                    const label =
+                      view === "weekdays" ? bin.label.slice(2) : bin.label;
+                    const shortLabel =
+                      view === "hours"
+                        ? bin.label.slice(0, 2)
+                        : label.slice(0, 3);
+                    return (
+                      <div
+                        className="pattern-row"
+                        role="listitem"
+                        tabIndex={0}
+                        onFocus={() => setInspected(bin.label)}
+                        onMouseEnter={() => setInspected(bin.label)}
+                        onClick={() => setInspected(bin.label)}
+                        key={bin.label}
+                        aria-label={`${label}: ${number.format(bin.count)} ascolti`}
+                      >
+                        <span className="pattern-label">{shortLabel}</span>
+                        <span className="pattern-track" aria-hidden="true">
+                          <span
+                            style={{ height: `${(bin.count / max) * 100}%` }}
+                          />
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </article>
   );
 }
