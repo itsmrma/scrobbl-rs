@@ -24,6 +24,7 @@ import { ReviewPage } from "./review";
 import { Heading, Icon, Toasts, Wordmark } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
+import "./dashboard.css";
 import { Auth, UsernameSetup } from "./account";
 import { AccountMenu } from "./account-settings";
 import { SearchPage } from "./search";

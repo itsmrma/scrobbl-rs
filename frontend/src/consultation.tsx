@@ -37,7 +37,6 @@ import {
   ChartSkeleton,
   ListenListSkeleton,
   MusicPageSkeleton,
-  OverviewSkeleton,
   RankingsSkeleton,
   SkeletonBlock,
   SkeletonList,
@@ -204,15 +203,19 @@ function Stats({
   totals,
   ids = false,
   periodOverride,
+  loading = false,
+  embedded = false,
 }: {
   totals: Totals;
+  loading?: boolean;
+  embedded?: boolean;
   ids?: boolean;
   periodOverride?: string | null;
 }) {
   return (
     <>
       <div className="stats-grid">
-        <article className="panel stat">
+        <article className={embedded ? "stat" : "panel stat"}>
           <span>
             Total listens
             {periodOverride && (
@@ -225,29 +228,51 @@ function Stats({
             )}
           </span>
           <strong id={ids ? "total-listens" : undefined}>
-            {number.format(totals.listens)}
+            {loading ? (
+              <SkeletonBlock width="60%" height={34} />
+            ) : (
+              number.format(totals.listens)
+            )}
           </strong>
         </article>
-        <article className="panel stat">
+        <article className={embedded ? "stat" : "panel stat"}>
           <span>
             Listening time <TimeHelp />
           </span>
           <strong id={ids ? "total-time" : undefined}>
-            {timeValue(totals)}
+            {loading ? (
+              <SkeletonBlock width="60%" height={34} />
+            ) : (
+              timeValue(totals)
+            )}
           </strong>
-          <Composition value={totals} />
+          {loading ? (
+            <small className="time-composition">
+              <SkeletonBlock width="80%" height={14} />
+            </small>
+          ) : (
+            <Composition value={totals} />
+          )}
         </article>
-        <article className="panel stat">
+        <article className={embedded ? "stat" : "panel stat"}>
           <span>Different tracks</span>
           <strong id={ids ? "total-tracks" : undefined}>
-            {number.format(totals.tracks)}
+            {loading ? (
+              <SkeletonBlock width="60%" height={34} />
+            ) : (
+              number.format(totals.tracks)
+            )}
           </strong>
         </article>
       </div>
-      {totals.unknown_durations > 0 && (
-        <p className="warning">
-          Missing durations limit the completeness of listening-time totals and
-          rankings.
+      {(embedded || totals.unknown_durations > 0) && (
+        <p className={embedded ? "warning widget-totals-note" : "warning"}>
+          {totals.unknown_durations > 0 && (
+            <>
+              Missing durations limit the completeness of listening-time totals
+              and rankings.
+            </>
+          )}
         </p>
       )}
     </>
@@ -839,125 +864,133 @@ function Chart({
       </div>
       <p className="subtle">
         Your archived listening over time. Select a bar to explore that period.
-        {grouped &&
-          " Quieter periods are combined to fit this view; each bar shows its exact date range."}
       </p>
-      {inspectedBucket && (
-        <div className="chart-readout" aria-live="polite" aria-atomic="true">
-          <div>
-            <small>{inspected ? "Period details" : "Most active period"}</small>
-            <strong>
-              {bucketLabel(inspectedBucket, true)}
-              {inspectedBucket.partial && (
-                <span className="partial-label">Partial period</span>
-              )}
-            </strong>
-            <span>
-              {inspectedBucket.start} – {inspectedBucket.through}
-            </span>
+      <div className="widget-chart-content">
+        {grouped && (
+          <p className="subtle">
+            Quieter periods are combined to fit this view; each bar shows its
+            exact date range.
+          </p>
+        )}
+        {inspectedBucket && (
+          <div className="chart-readout" aria-live="polite" aria-atomic="true">
+            <div>
+              <small>
+                {inspected ? "Period details" : "Most active period"}
+              </small>
+              <strong>
+                {bucketLabel(inspectedBucket, true)}
+                {inspectedBucket.partial && (
+                  <span className="partial-label">Partial period</span>
+                )}
+              </strong>
+              <span>
+                {inspectedBucket.start} – {inspectedBucket.through}
+              </span>
+            </div>
+            <div>
+              <strong>
+                {byTime
+                  ? timeValue(inspectedBucket)
+                  : number.format(inspectedBucket.listens)}
+              </strong>
+              <span>{byTime ? "listening time" : "listens"}</span>
+              {byTime && <Composition value={inspectedBucket} />}
+            </div>
           </div>
-          <div>
-            <strong>
-              {byTime
-                ? timeValue(inspectedBucket)
-                : number.format(inspectedBucket.listens)}
-            </strong>
-            <span>{byTime ? "listening time" : "listens"}</span>
-            {byTime && <Composition value={inspectedBucket} />}
-          </div>
-        </div>
-      )}
-      {byTime && (
-        <p className="chart-legend">
-          <span className="actual-key" />
-          Actual <span className="estimated-key" />
-          Estimated · Missing time is unavailable
-        </p>
-      )}
-      {result.data?.mixed_week_starts && (
-        <p className="warning">
-          This selection contains different assigned week starts. Weekly
-          segments can overlap in calendar dates; each listen belongs to exactly
-          one segment.
-        </p>
-      )}
-      <ErrorText>{result.error}</ErrorText>
-      {!!buckets.length && (
-        <div
-          className="chart-scroll"
-          tabIndex={0}
-          aria-label="Listening activity segments"
-        >
-          <div className="chart-bars">
-            {buckets.map((b) => {
-              const next = new URLSearchParams(params);
-              next.set("bucket", result.data!.grain);
-              next.set("bucket_start", b.start);
-              if (b.periods > 1) {
-                next.delete("bucket");
-                next.delete("bucket_start");
-                next.set("period", "custom");
-                next.set("from", b.start);
-                next.set("to", b.through);
-              }
-              next.delete("page");
-              const value = byTime
-                ? timeValue(b)
-                : `${number.format(b.listens)} listens`;
-              const label = `${b.start}${b.start === b.through ? "" : ` – ${b.through}`}: ${value}${b.partial ? " · partial segment" : ""}`;
-              const height = byTime
-                ? ((b.actual_ms + b.estimated_ms) / max) * 100
-                : (b.listens / max) * 100;
-              return (
-                <Link
-                  key={b.start}
-                  to={`/history?${next}`}
-                  className="chart-segment"
-                  aria-label={label}
-                  onMouseEnter={() => setInspected(b.start)}
-                  onFocus={() => setInspected(b.start)}
-                >
-                  <span className="bar-space">
-                    <span
-                      className={`bar ${b.partial ? "partial" : ""} ${byTime && b.unknown_durations > 0 && !b.actual_ms && !b.estimated_ms ? "unavailable" : ""}`}
-                      style={{ height: `${Math.max(2, height)}%` } as Style}
-                    >
-                      {byTime ? (
-                        <>
+        )}
+        {byTime && (
+          <p className="chart-legend">
+            <span className="actual-key" />
+            Actual <span className="estimated-key" />
+            Estimated · Missing time is unavailable
+          </p>
+        )}
+        {result.data?.mixed_week_starts && (
+          <p className="warning">
+            This selection contains different assigned week starts. Weekly
+            segments can overlap in calendar dates; each listen belongs to
+            exactly one segment.
+          </p>
+        )}
+        <ErrorText>{result.error}</ErrorText>
+        {!!buckets.length && (
+          <div
+            className="chart-scroll"
+            tabIndex={0}
+            aria-label="Listening activity segments"
+          >
+            <div className="chart-bars">
+              {buckets.map((b) => {
+                const next = new URLSearchParams(params);
+                next.set("bucket", result.data!.grain);
+                next.set("bucket_start", b.start);
+                if (b.periods > 1) {
+                  next.delete("bucket");
+                  next.delete("bucket_start");
+                  next.set("period", "custom");
+                  next.set("from", b.start);
+                  next.set("to", b.through);
+                }
+                next.delete("page");
+                const value = byTime
+                  ? timeValue(b)
+                  : `${number.format(b.listens)} listens`;
+                const label = `${b.start}${b.start === b.through ? "" : ` – ${b.through}`}: ${value}${b.partial ? " · partial segment" : ""}`;
+                const height = byTime
+                  ? ((b.actual_ms + b.estimated_ms) / max) * 100
+                  : (b.listens / max) * 100;
+                return (
+                  <Link
+                    key={b.start}
+                    to={`/history?${next}`}
+                    className="chart-segment"
+                    aria-label={label}
+                    onMouseEnter={() => setInspected(b.start)}
+                    onFocus={() => setInspected(b.start)}
+                  >
+                    <span className="bar-space">
+                      <span
+                        className={`bar ${b.partial ? "partial" : ""} ${byTime && b.unknown_durations > 0 && !b.actual_ms && !b.estimated_ms ? "unavailable" : ""}`}
+                        style={{ height: `${Math.max(2, height)}%` } as Style}
+                      >
+                        {byTime ? (
+                          <>
+                            <span
+                              className="actual-bar"
+                              style={{ flex: b.actual_ms } as Style}
+                            />
+                            <span
+                              className="estimated-bar"
+                              style={{ flex: b.estimated_ms } as Style}
+                            />
+                          </>
+                        ) : (
                           <span
                             className="actual-bar"
-                            style={{ flex: b.actual_ms } as Style}
+                            style={{ flex: 1 } as Style}
                           />
-                          <span
-                            className="estimated-bar"
-                            style={{ flex: b.estimated_ms } as Style}
-                          />
-                        </>
-                      ) : (
-                        <span
-                          className="actual-bar"
-                          style={{ flex: 1 } as Style}
-                        />
-                      )}
+                        )}
+                      </span>
                     </span>
-                  </span>
-                  <small>
-                    {bucketLabel(b)}
-                    {b.partial ? " *" : ""}
-                  </small>
-                  <small className="chart-bar-value">
-                    {byTime ? timeValue(b) : compactNumber.format(b.listens)}
-                  </small>
-                </Link>
-              );
-            })}
+                    <small>
+                      {bucketLabel(b)}
+                      {b.partial ? " *" : ""}
+                    </small>
+                    <small className="chart-bar-value">
+                      {byTime ? timeValue(b) : compactNumber.format(b.listens)}
+                    </small>
+                  </Link>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
-      {result.data && !buckets.length && (
-        <p className="empty">No activity in this selection.</p>
-      )}
-      {!result.data && !result.error && <ChartSkeleton />}
+        )}
+        {result.data && !buckets.length && (
+          <p className="empty">No activity in this selection.</p>
+        )}
+        {!result.data && !result.error && <ChartSkeleton embedded />}
+      </div>
       <p className="subtle">
         * Partial period. Each listen belongs to its assigned date.
       </p>
@@ -1050,15 +1083,31 @@ export function TotalsWidget({
   totals,
   ids = true,
   periodOverride,
+  loading = false,
 }: {
   totals?: Totals;
   ids?: boolean;
   periodOverride?: string | null;
+  loading?: boolean;
 }) {
-  if (!totals) return null;
   return (
-    <article className="panel padded widget-totals">
-      <Stats totals={totals} ids={ids} periodOverride={periodOverride} />
+    <article className="panel padded widget-totals" aria-busy={loading}>
+      <Stats
+        totals={
+          totals || {
+            records: 0,
+            listens: 0,
+            tracks: 0,
+            actual_ms: 0,
+            estimated_ms: 0,
+            unknown_durations: 0,
+          }
+        }
+        ids={ids && !loading}
+        periodOverride={periodOverride}
+        loading={loading}
+        embedded
+      />
     </article>
   );
 }
@@ -1067,43 +1116,34 @@ export function UnifiedRankingsWidget({
   rankings,
   params,
   periodOverride,
+  loading = false,
 }: {
   rankings?: Dashboard["rankings"];
   params: URLSearchParams;
   periodOverride?: string | null;
+  loading?: boolean;
 }) {
-  if (!rankings) return null;
   return (
-    <article className="panel padded widget-unified-rankings">
-      <div className="rankings-grid overview-rankings">
-        {kinds.map((kind) => (
-          <article className="panel padded" key={kind}>
-            <div className="panel-title">
-              <h2>
-                Top {kind}
-                {periodOverride && (
-                  <span
-                    className="pill widget-period-badge"
-                    data-period={periodOverride}
-                  >
-                    {periodBadgeLabel(periodOverride)}
-                  </span>
-                )}
-              </h2>
-              <Link to={`/rankings/${kind}?${context(params)}`}>
-                View all {kind}
-              </Link>
-            </div>
-            <RankingRows
-              bars
-              items={rankings[kind] || []}
-              kind={kind}
-              params={params}
-            />
-          </article>
-        ))}
-      </div>
-    </article>
+    <div className="widget-unified-rankings">
+      <TopArtistsWidget
+        items={rankings?.artists}
+        params={params}
+        periodOverride={periodOverride}
+        loading={loading}
+      />
+      <TopAlbumsWidget
+        items={rankings?.albums}
+        params={params}
+        periodOverride={periodOverride}
+        loading={loading}
+      />
+      <TopTracksWidget
+        items={rankings?.tracks}
+        params={params}
+        periodOverride={periodOverride}
+        loading={loading}
+      />
+    </div>
   );
 }
 
@@ -1137,13 +1177,15 @@ export function TopArtistsWidget({
             View all artists
           </Link>
         </div>
-        {loading ? (
-          <RankingsSkeleton count={5} label="Loading top artists…" />
-        ) : items && items.length > 0 ? (
-          <RankingRows bars items={items} kind="artists" params={params} />
-        ) : (
-          <p className="empty">No listens recorded in this period.</p>
-        )}
+        <div className="widget-ranking-content">
+          {loading ? (
+            <RankingsSkeleton count={5} label="Loading top artists…" />
+          ) : items && items.length > 0 ? (
+            <RankingRows bars items={items} kind="artists" params={params} />
+          ) : (
+            <p className="empty">No listens recorded in this period.</p>
+          )}
+        </div>
       </article>
     </div>
   );
@@ -1179,13 +1221,15 @@ export function TopAlbumsWidget({
             View all albums
           </Link>
         </div>
-        {loading ? (
-          <RankingsSkeleton count={5} label="Loading top albums…" />
-        ) : items && items.length > 0 ? (
-          <RankingRows bars items={items} kind="albums" params={params} />
-        ) : (
-          <p className="empty">No listens recorded in this period.</p>
-        )}
+        <div className="widget-ranking-content">
+          {loading ? (
+            <RankingsSkeleton count={5} label="Loading top albums…" />
+          ) : items && items.length > 0 ? (
+            <RankingRows bars items={items} kind="albums" params={params} />
+          ) : (
+            <p className="empty">No listens recorded in this period.</p>
+          )}
+        </div>
       </article>
     </div>
   );
@@ -1221,13 +1265,15 @@ export function TopTracksWidget({
             View all tracks
           </Link>
         </div>
-        {loading ? (
-          <RankingsSkeleton count={5} label="Loading top tracks…" />
-        ) : items && items.length > 0 ? (
-          <RankingRows bars items={items} kind="tracks" params={params} />
-        ) : (
-          <p className="empty">No listens recorded in this period.</p>
-        )}
+        <div className="widget-ranking-content">
+          {loading ? (
+            <RankingsSkeleton count={5} label="Loading top tracks…" />
+          ) : items && items.length > 0 ? (
+            <RankingRows bars items={items} kind="tracks" params={params} />
+          ) : (
+            <p className="empty">No listens recorded in this period.</p>
+          )}
+        </div>
       </article>
     </div>
   );
@@ -1259,13 +1305,14 @@ export function RecentListensWidget({
   preferences,
   params,
   periodOverride,
+  loading = false,
 }: {
   recent?: Dashboard["recent"];
+  loading?: boolean;
   preferences: Preferences;
   params: URLSearchParams;
   periodOverride?: string | null;
 }) {
-  if (!recent) return null;
   return (
     <article className="panel padded widget-recent-listens">
       <div className="panel-title">
@@ -1282,7 +1329,13 @@ export function RecentListensWidget({
         </h2>
         <Link to={`/history?${context(params)}`}>View history</Link>
       </div>
-      <ListenList items={recent} preferences={preferences} />
+      <div className="widget-recent-content">
+        {loading ? (
+          <ListenListSkeleton count={8} />
+        ) : (
+          <ListenList items={recent || []} preferences={preferences} />
+        )}
+      </div>
     </article>
   );
 }
@@ -1325,122 +1378,107 @@ export function DiscoveryRatioWidget({
       <p className="subtle">
         Confronto tra brani ascoltati per la prima volta e riascolti.
       </p>
-      {result.error && <ErrorText>{result.error}</ErrorText>}
-      {!result.data && !result.error && (
-        <div className="skeleton-container" role="status" aria-busy="true">
-          <span className="visually-hidden">
-            Caricamento rapporto scoperte…
-          </span>
-          <div className="discovery-ratio-skeleton">
-            <div className="skeleton-metrics">
-              <SkeletonBlock width="40%" height={38} borderRadius={4} />
-              <SkeletonBlock width="25%" height={14} borderRadius={4} />
-            </div>
-            <SkeletonBlock
-              width="100%"
-              height={12}
-              borderRadius={6}
-              style={{ margin: "14px 0 16px" }}
-            />
-            <div className="skeleton-legend">
-              <SkeletonBlock width="35%" height={14} borderRadius={4} />
-              <SkeletonBlock width="35%" height={14} borderRadius={4} />
-            </div>
-          </div>
-        </div>
-      )}
-      {result.data && result.data.total === 0 && (
-        <div className="empty" role="status">
-          <p>No listening data in this period.</p>
-        </div>
-      )}
-      {result.data && result.data.total > 0 && (
-        <div className="discovery-ratio-content">
-          <div className="discovery-ratio-metrics">
-            <div className="stat">
-              <span className="stat-number tabular-nums">
-                {Math.round(result.data.discovery_percent)}%
-              </span>
-              <span className="stat-label">nuove scoperte</span>
-            </div>
-            <div className="stat-secondary">
-              <span className="tabular-nums">
-                {100 - Math.round(result.data.discovery_percent)}%
-              </span>{" "}
-              <span className="subtle">riascolti</span>
-            </div>
-          </div>
-
-          <div
-            className="discovery-ratio-bar"
-            role="progressbar"
-            aria-valuenow={Math.round(result.data.discovery_percent)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`Rapporto scoperte: ${Math.round(result.data.discovery_percent)}% nuove scoperte, ${100 - Math.round(result.data.discovery_percent)}% riascolti`}
-          >
-            <div
-              className="discovery-ratio-segment discoveries"
-              style={{ width: `${result.data.discovery_percent}%` }}
-              title={`Nuove scoperte: ${result.data.discoveries} (${result.data.discovery_percent.toFixed(1)}%)`}
-            />
-            <div
-              className="discovery-ratio-segment repeats"
-              style={{ width: `${100 - result.data.discovery_percent}%` }}
-              title={`Riascolti: ${result.data.repeats} (${(100 - result.data.discovery_percent).toFixed(1)}%)`}
-            />
-          </div>
-
-          <div className="discovery-ratio-legend">
-            <div className="discovery-legend-item">
-              <span
-                className="legend-indicator discoveries"
-                aria-hidden="true"
+      <div className="widget-discovery-content">
+        {result.error && <ErrorText>{result.error}</ErrorText>}
+        {!result.data && !result.error && (
+          <div className="skeleton-container" role="status" aria-busy="true">
+            <span className="visually-hidden">
+              Caricamento rapporto scoperte…
+            </span>
+            <div className="discovery-ratio-skeleton">
+              <div className="skeleton-metrics">
+                <SkeletonBlock width="40%" height={38} borderRadius={4} />
+                <SkeletonBlock width="25%" height={14} borderRadius={4} />
+              </div>
+              <SkeletonBlock
+                width="100%"
+                height={12}
+                borderRadius={6}
+                style={{ margin: "14px 0 16px" }}
               />
-              <span className="legend-label">Nuove scoperte:</span>
-              <span className="legend-count tabular-nums">
-                {result.data.discoveries.toLocaleString()}
-              </span>
-              <span className="legend-percent tabular-nums">
-                ({result.data.discovery_percent.toFixed(1)}%)
-              </span>
-            </div>
-            <div className="discovery-legend-item">
-              <span className="legend-indicator repeats" aria-hidden="true" />
-              <span className="legend-label">Riascolti:</span>
-              <span className="legend-count tabular-nums">
-                {result.data.repeats.toLocaleString()}
-              </span>
-              <span className="legend-percent tabular-nums">
-                ({(100 - result.data.discovery_percent).toFixed(1)}%)
-              </span>
+              <div className="skeleton-legend">
+                <SkeletonBlock width="35%" height={14} borderRadius={4} />
+                <SkeletonBlock width="35%" height={14} borderRadius={4} />
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+        {result.data && result.data.total === 0 && (
+          <div className="empty" role="status">
+            <p>No listening data in this period.</p>
+          </div>
+        )}
+        {result.data && result.data.total > 0 && (
+          <div className="discovery-ratio-content">
+            <div className="discovery-ratio-metrics">
+              <div className="stat">
+                <span className="stat-number tabular-nums">
+                  {Math.round(result.data.discovery_percent)}%
+                </span>
+                <span className="stat-label">nuove scoperte</span>
+              </div>
+              <div className="stat-secondary">
+                <span className="tabular-nums">
+                  {100 - Math.round(result.data.discovery_percent)}%
+                </span>{" "}
+                <span className="subtle">riascolti</span>
+              </div>
+            </div>
+
+            <div
+              className="discovery-ratio-bar"
+              role="progressbar"
+              aria-valuenow={Math.round(result.data.discovery_percent)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`Rapporto scoperte: ${Math.round(result.data.discovery_percent)}% nuove scoperte, ${100 - Math.round(result.data.discovery_percent)}% riascolti`}
+            >
+              <div
+                className="discovery-ratio-segment discoveries"
+                style={{ width: `${result.data.discovery_percent}%` }}
+                title={`Nuove scoperte: ${result.data.discoveries} (${result.data.discovery_percent.toFixed(1)}%)`}
+              />
+              <div
+                className="discovery-ratio-segment repeats"
+                style={{ width: `${100 - result.data.discovery_percent}%` }}
+                title={`Riascolti: ${result.data.repeats} (${(100 - result.data.discovery_percent).toFixed(1)}%)`}
+              />
+            </div>
+
+            <div className="discovery-ratio-legend">
+              <div className="discovery-legend-item">
+                <span
+                  className="legend-indicator discoveries"
+                  aria-hidden="true"
+                />
+                <span className="legend-label">Nuove scoperte:</span>
+                <span className="legend-count tabular-nums">
+                  {result.data.discoveries.toLocaleString()}
+                </span>
+                <span className="legend-percent tabular-nums">
+                  ({result.data.discovery_percent.toFixed(1)}%)
+                </span>
+              </div>
+              <div className="discovery-legend-item">
+                <span className="legend-indicator repeats" aria-hidden="true" />
+                <span className="legend-label">Riascolti:</span>
+                <span className="legend-count tabular-nums">
+                  {result.data.repeats.toLocaleString()}
+                </span>
+                <span className="legend-percent tabular-nums">
+                  ({(100 - result.data.discovery_percent).toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </article>
   );
 }
 
 function TotalsSkeleton() {
-  return (
-    <article className="panel padded widget-totals">
-      <div className="stats-grid">
-        {[1, 2, 3].map((i) => (
-          <div className="stat skeleton-stat" key={i}>
-            <SkeletonBlock width="45%" height={13} borderRadius={4} />
-            <SkeletonBlock
-              width="60%"
-              height={32}
-              borderRadius={6}
-              style={{ margin: "6px 0" }}
-            />
-            <SkeletonBlock width="35%" height={11} borderRadius={4} />
-          </div>
-        ))}
-      </div>
-    </article>
-  );
+  return <TotalsWidget loading ids={false} />;
 }
 
 function OverriddenDashboardWidget({
@@ -1471,6 +1509,13 @@ function OverriddenDashboardWidget({
 
   const loading = !result.data && !result.error;
 
+  if (result.error && !result.data)
+    return (
+      <article className="panel padded widget-read-error">
+        <ErrorText>{result.error}</ErrorText>
+      </article>
+    );
+
   switch (widget.type) {
     case "totals":
       return result.data?.totals ? (
@@ -1483,16 +1528,13 @@ function OverriddenDashboardWidget({
         <TotalsSkeleton />
       );
     case "unified_rankings":
-      return result.data?.rankings ? (
+      return (
         <UnifiedRankingsWidget
-          rankings={result.data.rankings}
+          rankings={result.data?.rankings}
           params={widgetParams}
           periodOverride={widget.periodOverride}
+          loading={loading}
         />
-      ) : (
-        <article className="panel padded widget-unified-rankings">
-          <RankingsSkeleton count={5} label="Loading rankings…" />
-        </article>
       );
     case "top_artists":
       return (
@@ -1522,20 +1564,14 @@ function OverriddenDashboardWidget({
         />
       );
     case "recent_listens":
-      return result.data?.recent ? (
+      return (
         <RecentListensWidget
-          recent={result.data.recent}
+          recent={result.data?.recent}
+          loading={loading}
           preferences={preferences}
           params={widgetParams}
           periodOverride={widget.periodOverride}
         />
-      ) : (
-        <article className="panel padded widget-recent-listens">
-          <div className="panel-title">
-            <h2>Recent listening</h2>
-          </div>
-          <ListenListSkeleton count={5} />
-        </article>
       );
     default:
       return null;
@@ -1592,12 +1628,12 @@ export function Overview({
   );
 
   const [editing, setEditing] = useState(false);
-  const hasLoadedInitial = useRef(false);
   const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_V1_LAYOUT);
   const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
   const catalogDialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -1651,6 +1687,7 @@ export function Overview({
 
   const handleCancel = () => {
     setEditing(false);
+    editButtonRef.current?.focus();
     setLayout(savedLayout || DEFAULT_V1_LAYOUT);
     setSaveError(null);
   };
@@ -1670,6 +1707,7 @@ export function Overview({
       setLayout(saved);
       setSavedLayout(saved);
       setEditing(false);
+      editButtonRef.current?.focus();
     } catch (e: any) {
       setSaveError(e.message || "Failed to save dashboard layout.");
     } finally {
@@ -1764,6 +1802,23 @@ export function Overview({
       }
     }
 
+    if (
+      result.error &&
+      !result.data &&
+      [
+        "totals",
+        "unified_rankings",
+        "top_artists",
+        "top_albums",
+        "top_tracks",
+        "recent_listens",
+      ].includes(widget.type)
+    )
+      return (
+        <article className="panel padded widget-read-error">
+          <ErrorText>{result.error}</ErrorText>
+        </article>
+      );
     const loading = !result.data && !result.error;
     switch (widget.type) {
       case "totals":
@@ -1773,15 +1828,12 @@ export function Overview({
           <TotalsSkeleton />
         );
       case "unified_rankings":
-        return result.data?.rankings ? (
+        return (
           <UnifiedRankingsWidget
-            rankings={result.data.rankings}
+            rankings={result.data?.rankings}
             params={params}
+            loading={loading}
           />
-        ) : (
-          <article className="panel padded widget-unified-rankings">
-            <RankingsSkeleton count={5} label="Loading rankings…" />
-          </article>
         );
       case "top_artists":
         return (
@@ -1816,19 +1868,13 @@ export function Overview({
           />
         );
       case "recent_listens":
-        return result.data?.recent ? (
+        return (
           <RecentListensWidget
-            recent={result.data.recent}
+            recent={result.data?.recent}
+            loading={loading}
             preferences={preferences}
             params={params}
           />
-        ) : (
-          <article className="panel padded widget-recent-listens">
-            <div className="panel-title">
-              <h2>Recent listening</h2>
-            </div>
-            <ListenListSkeleton count={5} />
-          </article>
         );
       case "listening_patterns":
         return (
@@ -1850,62 +1896,6 @@ export function Overview({
 
   if (!visible) return null;
 
-  if (result.data) {
-    hasLoadedInitial.current = true;
-  }
-
-  if (!hasLoadedInitial.current) {
-    if (result.loading && !result.data && !result.error) {
-      return (
-        <>
-          <div className="overview-heading">
-            <Heading title="Your listening, at a glance">
-              The songs, the repeats, the moments. All yours.
-            </Heading>
-            <div className="overview-heading-actions">
-              {!editing && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={handleStartEditing}
-                >
-                  <Icon>tune</Icon> Personalizza
-                </button>
-              )}
-              <PeriodFilters selection={selection} />
-            </div>
-          </div>
-          <OverviewSkeleton label="Loading your archive…" />
-        </>
-      );
-    }
-
-    if (result.error && !result.data) {
-      return (
-        <>
-          <div className="overview-heading">
-            <Heading title="Your listening, at a glance">
-              The songs, the repeats, the moments. All yours.
-            </Heading>
-            <div className="overview-heading-actions">
-              {!editing && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={handleStartEditing}
-                >
-                  <Icon>tune</Icon> Personalizza
-                </button>
-              )}
-              <PeriodFilters selection={selection} />
-            </div>
-          </div>
-          <ErrorText>{result.error}</ErrorText>
-        </>
-      );
-    }
-  }
-
   return (
     <>
       <div className="overview-heading">
@@ -1913,15 +1903,17 @@ export function Overview({
           The songs, the repeats, the moments. All yours.
         </Heading>
         <div className="overview-heading-actions">
-          {!editing && (
-            <button
-              type="button"
-              className="button secondary"
-              onClick={handleStartEditing}
-            >
-              <Icon>tune</Icon> Personalizza
-            </button>
-          )}
+          <button
+            ref={editButtonRef}
+            aria-pressed={editing}
+            aria-controls="dashboard-grid"
+            type="button"
+            className="button secondary"
+            disabled={saving}
+            onClick={handleStartEditing}
+          >
+            <Icon>tune</Icon> Personalizza
+          </button>
           <PeriodFilters selection={selection} />
         </div>
       </div>
@@ -1936,6 +1928,7 @@ export function Overview({
             <button
               type="button"
               className="button secondary"
+              disabled={saving}
               onClick={() => setCatalogOpen(true)}
             >
               <Icon>add</Icon> Aggiungi widget
@@ -1943,6 +1936,7 @@ export function Overview({
             <button
               type="button"
               className="button secondary"
+              disabled={saving}
               onClick={handleReset}
             >
               <Icon>restart_alt</Icon> Ripristina predefinito
@@ -1950,6 +1944,7 @@ export function Overview({
             <button
               type="button"
               className="button secondary"
+              disabled={saving}
               onClick={handleCancel}
             >
               Annulla
@@ -1963,6 +1958,11 @@ export function Overview({
               <Icon>check</Icon> Salva modifiche
             </button>
           </div>
+          {saving && (
+            <span className="visually-hidden" role="status">
+              Salvataggio…
+            </span>
+          )}
           {saveError && <ErrorText>{saveError}</ErrorText>}
         </div>
       )}
@@ -2012,27 +2012,36 @@ export function Overview({
         )}
       </dialog>
 
-      <ErrorText>{result.error}</ErrorText>
-      <div className={`dashboard-grid${editing ? " editing" : ""}`}>
+      <ErrorText>{result.error || layoutResult.error}</ErrorText>
+      <div
+        id="dashboard-grid"
+        className={`dashboard-grid${editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
+        aria-busy={result.loading && !result.data}
+      >
+        {result.loading && !result.data && (
+          <span className="visually-hidden" role="status">
+            Loading your archive…
+          </span>
+        )}
         {layout.widgets.map((w, index) => (
           <div
             key={w.id}
             className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
             data-widget-id={w.id}
             data-widget-type={w.type}
-            draggable={editing}
+            draggable={editing && !saving}
             onDragStart={(e) => {
-              if (!editing) return;
+              if (!editing || saving) return;
               e.dataTransfer.setData("text/plain", String(index));
               e.dataTransfer.effectAllowed = "move";
             }}
             onDragOver={(e) => {
-              if (!editing) return;
+              if (!editing || saving) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
             }}
             onDrop={(e) => {
-              if (!editing) return;
+              if (!editing || saving) return;
               e.preventDefault();
               const sourceIndex = parseInt(
                 e.dataTransfer.getData("text/plain"),
@@ -2051,9 +2060,10 @@ export function Overview({
                 <button
                   type="button"
                   className="widget-control widget-drag-handle"
+                  disabled={saving}
                   title="Trascina per riordinare"
                   aria-label="Sposta widget"
-                  draggable={editing}
+                  draggable={editing && !saving}
                   onDragStart={(e) => {
                     e.dataTransfer.setData("text/plain", String(index));
                     e.dataTransfer.effectAllowed = "move";
@@ -2066,7 +2076,7 @@ export function Overview({
                   className="widget-control widget-move-up"
                   title="Sposta prima"
                   aria-label="Sposta widget prima"
-                  disabled={index === 0}
+                  disabled={saving || index === 0}
                   onClick={() => moveWidget(index, -1)}
                 >
                   <Icon>arrow_upward</Icon>
@@ -2076,7 +2086,7 @@ export function Overview({
                   className="widget-control widget-move-down"
                   title="Sposta dopo"
                   aria-label="Sposta widget dopo"
-                  disabled={index === layout.widgets.length - 1}
+                  disabled={saving || index === layout.widgets.length - 1}
                   onClick={() => moveWidget(index, 1)}
                 >
                   <Icon>arrow_downward</Icon>
@@ -2086,6 +2096,7 @@ export function Overview({
                   className="widget-control widget-span-button"
                   title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
                   aria-label={`Larghezza: ${w.colSpan} colonne`}
+                  disabled={saving}
                   onClick={() => cycleSpan(w.id)}
                 >
                   <Icon>view_column</Icon>
@@ -2095,6 +2106,7 @@ export function Overview({
                   <div className="widget-period-override-control">
                     <Select
                       aria-label="Periodo widget"
+                      disabled={saving}
                       value={w.periodOverride || ""}
                       onChange={(val) => {
                         setLayout((prev) => ({
@@ -2120,6 +2132,7 @@ export function Overview({
                   className="widget-control widget-remove-button"
                   title="Rimuovi widget"
                   aria-label="Rimuovi widget"
+                  disabled={saving}
                   onClick={() => removeWidget(w.id)}
                 >
                   <Icon>close</Icon>

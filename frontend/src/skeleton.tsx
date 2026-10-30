@@ -180,13 +180,35 @@ export function RankingsSkeleton({
 export function ChartSkeleton({
   label = "Loading activity…",
   standalone = true,
+  embedded = false,
 }: {
   label?: string;
   standalone?: boolean;
+  embedded?: boolean;
 }) {
   const bars = [
     35, 60, 20, 75, 45, 90, 30, 70, 50, 85, 40, 65, 80, 55, 95, 30, 70, 45,
   ];
+  if (embedded)
+    return (
+      <div
+        className="skeleton-container widget-chart-skeleton"
+        role="status"
+        aria-busy="true"
+      >
+        <span className="visually-hidden">{label}</span>
+        <SkeletonBlock width="40%" height={64} />
+        <div className="chart-bars">
+          {bars.map((height, i) => (
+            <SkeletonBlock
+              key={i}
+              className="skeleton-bar"
+              height={`${height}%`}
+            />
+          ))}
+        </div>
+      </div>
+    );
   const content = (
     <article className="panel padded skeleton-chart-panel">
       <div className="panel-title" style={{ marginBottom: 16 }}>
@@ -417,9 +439,33 @@ export function SkeletonList({
 
 export function SkeletonPatterns({
   label = "Loading listening patterns…",
+  compact = false,
 }: {
   label?: string;
+  compact?: boolean;
 }) {
+  if (compact)
+    return (
+      <div
+        className="skeleton-container widget-patterns-skeleton"
+        role="status"
+        aria-busy="true"
+      >
+        <span className="visually-hidden">{label}</span>
+        <SkeletonBlock width="60%" height={20} />
+        <div
+          className="pattern-bars pattern-temporal pattern-hours"
+          style={{ "--pattern-columns": 24 } as CSSProperties}
+        >
+          {Array.from({ length: 24 }, (_, i) => (
+            <div className="pattern-row" key={i}>
+              <SkeletonBlock className="pattern-track" />
+              <SkeletonBlock width="80%" height={15} />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   return (
     <div className="skeleton-container" role="status" aria-busy="true">
       <span className="visually-hidden">{label}</span>
