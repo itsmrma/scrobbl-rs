@@ -9,6 +9,7 @@ pub mod browse;
 pub mod calendar;
 pub mod config;
 pub mod consultation;
+pub mod dashboard_layout;
 pub mod db;
 pub mod dto;
 pub mod error;

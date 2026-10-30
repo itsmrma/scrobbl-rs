@@ -10,11 +10,13 @@ import {
 } from "react";
 import type {
   Dashboard,
+  DashboardLayout,
   History,
   Preferences,
   Ranking,
   SpotifyStatus,
   Totals,
+  WidgetConfig,
 } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
@@ -922,6 +924,118 @@ function Chart({
     </article>
   );
 }
+export const DEFAULT_V1_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "unified_rankings", type: "unified_rankings", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "recent_listens", type: "recent_listens", colSpan: 6 },
+  ],
+};
+
+const CATALOG_ITEMS = [
+  {
+    type: "totals",
+    name: "Riepilogo Totali",
+    description:
+      "Ascolti totali, brani distinti e tempo riprodotto effettivo o stimato.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "unified_rankings",
+    name: "Classifiche Congiunte",
+    description:
+      "Le classifiche dei brani, artisti e album più ascoltati nel periodo.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "activity_chart",
+    name: "Grafico Attività",
+    description:
+      "Istogramma temporale del volume di ascolti nel corso del tempo.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "recent_listens",
+    name: "Ascolti Recenti",
+    description:
+      "Elenco cronologico degli ascolti recenti registrati nell'archivio.",
+    defaultSpan: 6 as const,
+  },
+];
+
+export function TotalsWidget({
+  totals,
+  ids = true,
+}: {
+  totals: Totals;
+  ids?: boolean;
+}) {
+  return <Stats totals={totals} ids={ids} />;
+}
+
+export function UnifiedRankingsWidget({
+  rankings,
+  params,
+}: {
+  rankings: Dashboard["rankings"];
+  params: URLSearchParams;
+}) {
+  return (
+    <div className="rankings-grid overview-rankings">
+      {kinds.map((kind) => (
+        <article className="panel padded" key={kind}>
+          <div className="panel-title">
+            <h2>Top {kind}</h2>
+            <Link to={`/rankings/${kind}?${context(params)}`}>
+              View all {kind}
+            </Link>
+          </div>
+          <RankingRows
+            bars
+            items={rankings[kind]}
+            kind={kind}
+            params={params}
+          />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+export function ActivityChartWidget({
+  params,
+  visible,
+  version,
+}: {
+  params: URLSearchParams;
+  visible: boolean;
+  version: number;
+}) {
+  return <Chart params={params} visible={visible} version={version} />;
+}
+
+export function RecentListensWidget({
+  recent,
+  preferences,
+  params,
+}: {
+  recent: Dashboard["recent"];
+  preferences: Preferences;
+  params: URLSearchParams;
+}) {
+  return (
+    <article className="panel">
+      <div className="panel-title padded">
+        <h2>Recent listening</h2>
+        <Link to={`/history?${context(params)}`}>View history</Link>
+      </div>
+      <ListenList items={recent} preferences={preferences} />
+    </article>
+  );
+}
+
 export function Overview({
   preferences,
   visible,
@@ -939,6 +1053,140 @@ export function Overview({
     visible,
     (status?.sync_seconds || 120) * 1000,
   );
+
+  const layoutResult = useLoad<DashboardLayout>(
+    () => api.dashboardLayout(),
+    "dashboard-layout",
+    visible,
+  );
+
+  const [editing, setEditing] = useState(false);
+  const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_V1_LAYOUT);
+  const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+
+  useEffect(() => {
+    if (layoutResult.data && !editing) {
+      setLayout(layoutResult.data);
+      setSavedLayout(layoutResult.data);
+    }
+  }, [layoutResult.data, editing]);
+
+  const handleStartEditing = () => {
+    setEditing(true);
+    setSaveError(null);
+  };
+
+  const handleCancel = () => {
+    setEditing(false);
+    setLayout(savedLayout || DEFAULT_V1_LAYOUT);
+    setSaveError(null);
+  };
+
+  const handleReset = () => {
+    setLayout({
+      version: layout.version,
+      widgets: JSON.parse(JSON.stringify(DEFAULT_V1_LAYOUT.widgets)),
+    });
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const saved = await api.saveDashboardLayout(layout);
+      setLayout(saved);
+      setSavedLayout(saved);
+      setEditing(false);
+    } catch (e: any) {
+      setSaveError(e.message || "Failed to save dashboard layout.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cycleSpan = (id: string) => {
+    setLayout((prev) => {
+      const spans: (2 | 3 | 4 | 6)[] = [2, 3, 4, 6];
+      return {
+        ...prev,
+        widgets: prev.widgets.map((w) => {
+          if (w.id !== id) return w;
+          const next = spans[(spans.indexOf(w.colSpan) + 1) % spans.length];
+          return { ...w, colSpan: next };
+        }),
+      };
+    });
+  };
+
+  const removeWidget = (id: string) => {
+    setLayout((prev) => ({
+      ...prev,
+      widgets: prev.widgets.filter((w) => w.id !== id),
+    }));
+  };
+
+  const moveWidget = (index: number, delta: number) => {
+    setLayout((prev) => {
+      const target = index + delta;
+      if (target < 0 || target >= prev.widgets.length) return prev;
+      const widgets = [...prev.widgets];
+      const [item] = widgets.splice(index, 1);
+      widgets.splice(target, 0, item);
+      return { ...prev, widgets };
+    });
+  };
+
+  const addWidget = (item: (typeof CATALOG_ITEMS)[number]) => {
+    setLayout((prev) => ({
+      ...prev,
+      widgets: [
+        ...prev.widgets,
+        {
+          id: item.type,
+          type: item.type,
+          colSpan: item.defaultSpan,
+        },
+      ],
+    }));
+    setCatalogOpen(false);
+  };
+
+  const renderWidgetContent = (widget: WidgetConfig) => {
+    if (!result.data) return null;
+    switch (widget.type) {
+      case "totals":
+        return <TotalsWidget totals={result.data.totals} ids />;
+      case "unified_rankings":
+        return (
+          <UnifiedRankingsWidget
+            rankings={result.data.rankings}
+            params={params}
+          />
+        );
+      case "activity_chart":
+        return (
+          <ActivityChartWidget
+            params={params}
+            visible={visible}
+            version={preferences.version}
+          />
+        );
+      case "recent_listens":
+        return (
+          <RecentListensWidget
+            recent={result.data.recent}
+            preferences={preferences}
+            params={params}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
   if (!visible) return null;
   return (
     <>
@@ -946,43 +1194,199 @@ export function Overview({
         <Heading title="Your listening, at a glance">
           The songs, the repeats, the moments. All yours.
         </Heading>
-        <PeriodFilters selection={selection} />
+        <div className="overview-heading-actions">
+          {!editing && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={handleStartEditing}
+            >
+              <Icon>tune</Icon> Personalizza
+            </button>
+          )}
+          <PeriodFilters selection={selection} />
+        </div>
       </div>
+
+      {editing && (
+        <div
+          className="dashboard-edit-toolbar panel padded"
+          role="toolbar"
+          aria-label="Personalizza dashboard"
+        >
+          <div className="dashboard-edit-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setCatalogOpen(true)}
+            >
+              <Icon>add</Icon> Aggiungi widget
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={handleReset}
+            >
+              <Icon>restart_alt</Icon> Ripristina predefinito
+            </button>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={handleCancel}
+            >
+              Annulla
+            </button>
+            <button
+              type="button"
+              className="button primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              <Icon>check</Icon> Salva modifiche
+            </button>
+          </div>
+          {saveError && <ErrorText>{saveError}</ErrorText>}
+        </div>
+      )}
+
+      {catalogOpen && (
+        <dialog
+          className="modal widget-catalog-dialog"
+          open
+          aria-label="Aggiungi widget"
+        >
+          <div className="dialog-header">
+            <h2>Aggiungi widget</h2>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Chiudi catalogo"
+              onClick={() => setCatalogOpen(false)}
+            >
+              <Icon>close</Icon>
+            </button>
+          </div>
+          {CATALOG_ITEMS.filter(
+            (item) => !layout.widgets.some((w) => w.type === item.type),
+          ).length === 0 ? (
+            <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
+          ) : (
+            <div className="catalog-items-grid">
+              {CATALOG_ITEMS.filter(
+                (item) => !layout.widgets.some((w) => w.type === item.type),
+              ).map((item) => (
+                <div key={item.type} className="panel padded catalog-item-card">
+                  <div className="catalog-item-info">
+                    <h3>{item.name}</h3>
+                    <p>{item.description}</p>
+                    <small>Dimensione: {item.defaultSpan} colonne</small>
+                  </div>
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => addWidget(item)}
+                  >
+                    <Icon>add</Icon> Aggiungi
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </dialog>
+      )}
+
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
-        <>
-          <Stats totals={result.data.totals} ids />
-          <div className="rankings-grid overview-rankings">
-            {kinds.map((kind) => (
-              <article className="panel padded" key={kind}>
-                <div className="panel-title">
-                  <h2>Top {kind}</h2>
-                  <Link to={`/rankings/${kind}?${context(params)}`}>
-                    View all {kind}
-                  </Link>
+        <div className={`dashboard-grid${editing ? " editing" : ""}`}>
+          {layout.widgets.map((w, index) => (
+            <div
+              key={w.id}
+              className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
+              data-widget-id={w.id}
+              data-widget-type={w.type}
+              draggable={editing}
+              onDragStart={(e) => {
+                if (!editing) return;
+                e.dataTransfer.setData("text/plain", String(index));
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (!editing) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                if (!editing) return;
+                e.preventDefault();
+                const sourceIndex = parseInt(
+                  e.dataTransfer.getData("text/plain"),
+                  10,
+                );
+                if (!isNaN(sourceIndex) && sourceIndex !== index) {
+                  setLayout((prev) => {
+                    const widgets = [...prev.widgets];
+                    const [item] = widgets.splice(sourceIndex, 1);
+                    widgets.splice(index, 0, item);
+                    return { ...prev, widgets };
+                  });
+                }
+              }}
+            >
+              {editing && (
+                <div className="widget-edit-controls">
+                  <button
+                    type="button"
+                    className="widget-control widget-drag-handle"
+                    title="Trascina per riordinare"
+                    aria-label="Sposta widget"
+                  >
+                    <Icon>drag_indicator</Icon>
+                  </button>
+                  <button
+                    type="button"
+                    className="widget-control widget-move-up"
+                    title="Sposta prima"
+                    aria-label="Sposta widget prima"
+                    disabled={index === 0}
+                    onClick={() => moveWidget(index, -1)}
+                  >
+                    <Icon>arrow_upward</Icon>
+                  </button>
+                  <button
+                    type="button"
+                    className="widget-control widget-move-down"
+                    title="Sposta dopo"
+                    aria-label="Sposta widget dopo"
+                    disabled={index === layout.widgets.length - 1}
+                    onClick={() => moveWidget(index, 1)}
+                  >
+                    <Icon>arrow_downward</Icon>
+                  </button>
+                  <button
+                    type="button"
+                    className="widget-control widget-span-button"
+                    title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
+                    aria-label={`Larghezza: ${w.colSpan} colonne`}
+                    onClick={() => cycleSpan(w.id)}
+                  >
+                    <Icon>view_column</Icon>
+                    <span>{w.colSpan}/6</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="widget-control widget-remove-button"
+                    title="Rimuovi widget"
+                    aria-label="Rimuovi widget"
+                    onClick={() => removeWidget(w.id)}
+                  >
+                    <Icon>close</Icon>
+                  </button>
                 </div>
-                <RankingRows
-                  bars
-                  items={result.data!.rankings[kind]}
-                  kind={kind}
-                  params={params}
-                />
-              </article>
-            ))}
-          </div>
-          <Chart
-            params={params}
-            visible={visible}
-            version={preferences.version}
-          />
-          <article className="panel">
-            <div className="panel-title padded">
-              <h2>Recent listening</h2>
-              <Link to={`/history?${context(params)}`}>View history</Link>
+              )}
+              {renderWidgetContent(w)}
             </div>
-            <ListenList items={result.data.recent} preferences={preferences} />
-          </article>
-        </>
+          ))}
+        </div>
       ) : (
         !result.error && <OverviewSkeleton />
       )}

@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-30T12:08:00Z",
+  "title": "Design System: scrobbl.rs",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Lime Chartreuse",
+        "canonical": "#c9ee8b",
+        "tonalRamp": [
+          "color-mix(in oklab, #c9ee8b 20%, #13151b)",
+          "color-mix(in oklab, #c9ee8b 50%, #13151b)",
+          "#c9ee8b",
+          "color-mix(in oklab, #c9ee8b 80%, #ffffff)"
+        ]
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Slate Surface Dark",
+        "canonical": "color-mix(in oklab, #1c1f27 95%, var(--accent))",
+        "tonalRamp": ["#13151b", "#1c1f27", "#292d38", "#454a58"]
+      },
+      "surface-light": {
+        "role": "neutral",
+        "displayName": "Soft Gray Surface Light",
+        "canonical": "color-mix(in oklab, #ffffff 97%, var(--accent))",
+        "tonalRamp": ["#f5f6fa", "#ffffff", "#e9ecf3", "#9da7b6"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display / H1",
+        "purpose": "Primary page headings with balanced line wrapping."
+      },
+      "headline": {
+        "displayName": "Headline / H2",
+        "purpose": "Panel and widget container headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Primary narrative text and record descriptions."
+      },
+      "label": {
+        "displayName": "Eyebrow / Category",
+        "purpose": "Small uppercase section delimiters."
+      }
+    },
+    "shadows": [
+      {
+        "name": "control-hover",
+        "value": "0 2px 8px color-mix(in srgb, var(--text) 10%, transparent)",
+        "purpose": "Tactile lift under buttons upon pointer hover."
+      },
+      {
+        "name": "select-popup",
+        "value": "0 10px 30px rgba(0, 0, 0, 0.25), 0 2px 6px rgba(0, 0, 0, 0.15)",
+        "purpose": "Floating custom select dropdown menu elevation."
+      },
+      {
+        "name": "popover-flyout",
+        "value": "0 16px 40px rgba(0, 0, 0, 0.28)",
+        "purpose": "Floating utility menus (Activity menu, Account menu, Time explanation)."
+      },
+      {
+        "name": "modal-dialog",
+        "value": "0 16px 48px rgba(0, 0, 0, 0.35)",
+        "purpose": "Centered modal dialog window over blurred backdrop."
+      },
+      {
+        "name": "toast-notification",
+        "value": "0 8px 35px rgba(0, 0, 0, 0.25)",
+        "purpose": "Transient floating status toast in viewport corner."
+      }
+    ],
+    "motion": [
+      {
+        "name": "motion-fast",
+        "value": "140ms",
+        "purpose": "Hover, border color, and active click state transitions."
+      },
+      {
+        "name": "motion-view",
+        "value": "200ms",
+        "purpose": "Sidebar drawer expansion and page view entrances."
+      },
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Decelerating curve for crisp spatial feedback."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "600px"
+      },
+      {
+        "name": "drawer",
+        "value": "900px"
+      },
+      {
+        "name": "desktop-wide",
+        "value": "1100px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Widget Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Standard dashboard container for widgets, stats, rankings, and charts.",
+      "html": "<article class=\"panel padded\"><div class=\"panel-title\"><h2>Top Artists</h2><a href=\"#\">View all</a></div><p>Widget content here</p></article>",
+      "css": ".panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 24px; min-width: 0; } .padded { padding: 26px; } .panel-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; } .panel-title h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.035em; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary call to action with 44px touch target.",
+      "html": "<button class=\"button primary\">SAVE CHANGES</button>",
+      "css": "button.primary { background: var(--accent); color: var(--accent-ink); border: 1px solid transparent; border-radius: 8px; padding: 10px 15px; font-size: 13px; font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; } button.primary:hover { filter: brightness(1.1); box-shadow: 0 4px 12px #0002; } button.primary:active { transform: scale(0.98); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral button for filters, options, and auxiliary actions.",
+      "html": "<button class=\"button secondary\">RESET FILTERS</button>",
+      "css": "button.secondary { background: var(--surface-raised); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 10px 15px; font-size: 13px; font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; } button.secondary:hover { background: var(--bg); border-color: var(--muted); } button.secondary:active { transform: scale(0.98); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Precision Listening Ledger",
+    "overview": "scrobbl.rs merges the quiet authority of an archivist's catalog with the tactile clarity of an audiophile dashboard. Surfaces are tinted with the accent color via OKLab color-mix to guarantee organic harmony in any theme.",
+    "keyCharacteristics": [
+      "Dynamic OKLab surface tinting with user accent",
+      "Tonal layering over ambient shadows",
+      "Terminal accent dot on headings",
+      "Compact tabular data density",
+      "44px minimum touch targets"
+    ],
+    "rules": [
+      {
+        "name": "The Dynamic Tinting Rule",
+        "body": "Never declare hardcoded neutral grays in component styling. Always use var(--surface), var(--surface-raised), var(--border), and var(--bg).",
+        "section": "colors"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "Cards, panels, and widgets must never have ambient box-shadows when resting on the page. Depth is achieved via 1px border framing and surface contrast.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Balanced Headline Rule",
+        "body": "All h1, h2, and h3 headings enforce text-wrap: balance to eliminate typographic orphans.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do use var(--surface), var(--surface-raised), and var(--border) for widget containers.",
+      "Do terminate primary h1 headings with <span class=\"accent\">.</span>",
+      "Do ensure all interactive buttons and inputs have at least min-height: 44px.",
+      "Do mirror widget geometries with SkeletonBlock placeholders during async loading."
+    ],
+    "donts": [
+      "Don't add raw gray hex codes like #222 or #eee.",
+      "Don't add ambient box-shadows to stationary dashboard panels or cards.",
+      "Don't import external Google Fonts or CDN stylesheets; use local Material Icons Outlined.",
+      "Don't use spinning wheel loaders for widget data; use shimmer skeletons."
+    ]
+  }
+}

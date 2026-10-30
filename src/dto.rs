@@ -319,6 +319,8 @@ mod tests {
             crate::read_api::ApiListen::decl(&config),
             crate::read_api::ApiRemoval::decl(&config),
             crate::read_api::ApiPage::decl(&config),
+            crate::dashboard_layout::WidgetConfig::decl(&config),
+            crate::dashboard_layout::DashboardLayout::decl(&config),
         ];
         let content = format!(
             "// Generated from Rust DTOs. Run UPDATE_BROWSER_TYPES=1 cargo test browser_contract_is_current.\n{}\n",

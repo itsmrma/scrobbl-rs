@@ -1053,3 +1053,142 @@ async fn music_browse_latency() {
         assert!(!chart.buckets.is_empty());
     }
 }
+
+async fn post(
+    state: &AppState,
+    token: Option<&str>,
+    csrf: Option<&str>,
+    path: &str,
+    body: Value,
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method("POST")
+        .uri(path)
+        .header("host", "127.0.0.1:3210")
+        .header("origin", "http://127.0.0.1:3210")
+        .header("content-type", "application/json");
+    if let Some(t) = token {
+        builder = builder.header("cookie", format!("scrobbl_session={t}"));
+    }
+    if let Some(c) = csrf {
+        builder = builder.header("x-csrf-token", c);
+    }
+    let response = web::router(state.clone())
+        .oneshot(
+            builder
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Unauthenticated request rejected
+    let (status, _) = get(&state, "invalid-token", "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // 2. Unconfigured layout returns deterministic V1 default layout
+    let (status, default_layout) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(default_layout["version"], 0);
+    let widgets = default_layout["widgets"].as_array().expect("widgets array");
+    assert_eq!(widgets.len(), 4);
+    assert_eq!(widgets[0]["type"], "totals");
+    assert_eq!(widgets[0]["colSpan"], 6);
+    assert_eq!(widgets[1]["type"], "unified_rankings");
+    assert_eq!(widgets[1]["colSpan"], 6);
+    assert_eq!(widgets[2]["type"], "activity_chart");
+    assert_eq!(widgets[2]["colSpan"], 6);
+    assert_eq!(widgets[3]["type"], "recent_listens");
+    assert_eq!(widgets[3]["colSpan"], 6);
+
+    // 3. POST without CSRF is rejected
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        None,
+        "/api/v1/dashboard/layout",
+        default_layout.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // 4. Invalid column span (e.g. 5) is rejected
+    let mut invalid_span = default_layout.clone();
+    invalid_span["widgets"][0]["colSpan"] = json!(5);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        invalid_span,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 5. Unknown widget type is rejected
+    let mut invalid_type = default_layout.clone();
+    invalid_type["widgets"][0]["type"] = json!("non_existent_widget");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        invalid_type,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 6. Valid modified layout persists successfully
+    let mut modified = default_layout.clone();
+    modified["widgets"][0]["colSpan"] = json!(3);
+    modified["widgets"][1]["colSpan"] = json!(3);
+    let (status, saved) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        modified.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["version"], 1);
+    assert_eq!(saved["widgets"][0]["colSpan"], 3);
+
+    // 7. GET returns identical persisted layout
+    let (status, read_back) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_back["version"], 1);
+    assert_eq!(read_back["widgets"][0]["colSpan"], 3);
+    assert_eq!(read_back["widgets"][1]["colSpan"], 3);
+
+    // 8. Direct database check: settings table stores JSON under 'dashboard_layout'
+    let stored_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed: Value = serde_json::from_str(&stored_json).unwrap();
+    assert_eq!(parsed["version"], 1);
+    assert_eq!(parsed["widgets"][0]["colSpan"], 3);
+
+    // 9. Stale version update rejected with 409 Conflict
+    let mut stale = default_layout.clone();
+    stale["version"] = json!(0); // current is 1
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        stale,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
