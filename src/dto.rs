@@ -162,6 +162,44 @@ pub struct DiscoveryRatio {
     pub total: i64,
     pub discovery_percent: f64,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CalendarDay {
+    pub date: String,
+    pub count: i64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ListeningCalendar {
+    pub days: Vec<CalendarDay>,
+    pub min_date: Option<String>,
+    pub max_date: Option<String>,
+    pub total_listens: i64,
+    pub years: Vec<i32>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ListenMilestone {
+    pub played_at_ms: i64,
+    pub track_title: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct MilestoneThreshold {
+    pub count: i64,
+    pub reached_at_ms: i64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct MilestoneStreak {
+    pub days: i64,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct ListeningMilestones {
+    pub total_listens: i64,
+    pub first_listen: Option<ListenMilestone>,
+    pub last_listen: Option<ListenMilestone>,
+    pub thresholds: Vec<MilestoneThreshold>,
+    pub longest_streak: MilestoneStreak,
+    pub current_streak: MilestoneStreak,
+}
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
     pub track_id: Option<String>,
@@ -301,6 +339,12 @@ mod tests {
             ActivityBucket::decl(&config),
             ActivityChart::decl(&config),
             DiscoveryRatio::decl(&config),
+            CalendarDay::decl(&config),
+            ListeningCalendar::decl(&config),
+            ListenMilestone::decl(&config),
+            MilestoneThreshold::decl(&config),
+            MilestoneStreak::decl(&config),
+            ListeningMilestones::decl(&config),
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
             SpotifyIntervals::decl(&config),

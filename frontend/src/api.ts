@@ -31,6 +31,8 @@ import type {
   Listen,
   DashboardLayout,
   DiscoveryRatio,
+  ListeningCalendar,
+  ListeningMilestones,
 } from "./generated";
 
 class SessionExpired extends Error {}
@@ -311,6 +313,10 @@ export const api = {
     request<ActivityChart>(`/api/v1/consultation/activity?${params}`),
   discoveryRatio: (params: URLSearchParams) =>
     request<DiscoveryRatio>(`/api/v1/consultation/discovery-ratio?${params}`),
+  calendar: (params: URLSearchParams) =>
+    request<ListeningCalendar>(`/api/v1/consultation/calendar?${params}`),
+  milestones: (params: URLSearchParams) =>
+    request<ListeningMilestones>(`/api/v1/consultation/milestones?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

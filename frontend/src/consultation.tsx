@@ -32,7 +32,7 @@ import {
 } from "./listening-patterns";
 import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
-import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
+import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
 import {
   ChartSkeleton,
@@ -1087,6 +1087,19 @@ const CATALOG_ITEMS = [
     description: "Elenco cronologico dettagliato con filtri e ricerca.",
     defaultSpan: 6 as const,
   },
+  {
+    type: "listening_calendar",
+    name: "Calendario ascolti",
+    description: "Mappa di calore giornaliera del volume di ascolti nel tempo.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "listening_milestones",
+    name: "Traguardi di ascolto",
+    description:
+      "Primo e ultimo ascolto, soglie raggiunte e serie consecutive.",
+    defaultSpan: 6 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1368,6 +1381,288 @@ export function RecentListensWidget({
   );
 }
 
+export function ListeningCalendarWidget({
+  params,
+  version,
+  periodOverride,
+}: {
+  params: URLSearchParams;
+  version: number;
+  periodOverride?: string | null;
+}) {
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+
+  const queryParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (selectedYear) {
+      p.set("year", String(selectedYear));
+    }
+    return p;
+  }, [params, selectedYear]);
+
+  const result = useLoad(
+    () => api.calendar(queryParams),
+    `calendar:${queryParams.toString()}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+
+  const days = result.data?.days || [];
+  const maxCount = useMemo(() => {
+    let max = 0;
+    for (const d of days) {
+      if (d.count > max) max = d.count;
+    }
+    return max;
+  }, [days]);
+
+  const getLevel = (count: number) => {
+    if (count <= 0) return 0;
+    if (maxCount <= 4) return Math.min(count, 4);
+    const ratio = count / maxCount;
+    if (ratio <= 0.25) return 1;
+    if (ratio <= 0.5) return 2;
+    if (ratio <= 0.75) return 3;
+    return 4;
+  };
+
+  return (
+    <article
+      className="panel padded widget-listening-calendar"
+      aria-label="Calendario ascolti"
+    >
+      <div className="panel-title">
+        <h2>
+          Calendario ascolti
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
+        {result.data && result.data.years.length > 1 && (
+          <div
+            className="calendar-year-nav"
+            role="group"
+            aria-label="Navigazione anni"
+          >
+            {result.data.years.map((y) => (
+              <button
+                key={y}
+                type="button"
+                className={`button secondary-button${(selectedYear ?? result.data?.years[0]) === y ? " active" : ""}`}
+                onClick={() => setSelectedYear(y)}
+                aria-pressed={(selectedYear ?? result.data?.years[0]) === y}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="subtle">Frequenza e volume di ascolti giornalieri.</p>
+      <div className="widget-calendar-content">
+        {result.error && <ErrorText>{result.error}</ErrorText>}
+        {!result.data && !result.error && (
+          <div className="skeleton-container" role="status" aria-busy="true">
+            <span className="visually-hidden">Caricamento calendario…</span>
+            <div className="calendar-skeleton">
+              <SkeletonBlock width="100%" height={120} borderRadius={6} />
+            </div>
+          </div>
+        )}
+        {result.data && result.data.total_listens === 0 && (
+          <div className="empty" role="status">
+            <p>Nessun dato di ascolto nel periodo.</p>
+          </div>
+        )}
+        {result.data && result.data.total_listens > 0 && (
+          <div className="calendar-heatmap-wrapper">
+            <div
+              className="calendar-heatmap-container"
+              tabIndex={0}
+              role="region"
+              aria-label="Mappa di calore degli ascolti"
+            >
+              <div className="calendar-heatmap">
+                {days.map((day) => {
+                  const level = getLevel(day.count);
+                  return (
+                    <div
+                      key={day.date}
+                      className={`calendar-cell level-${level}`}
+                      title={`${day.date}: ${day.count} ${day.count === 1 ? "ascolto" : "ascolti"}`}
+                      aria-label={`${day.date}: ${day.count} ascolti`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div className="calendar-legend" aria-hidden="true">
+              <span className="subtle">Meno</span>
+              <div className="calendar-cell level-0" />
+              <div className="calendar-cell level-1" />
+              <div className="calendar-cell level-2" />
+              <div className="calendar-cell level-3" />
+              <div className="calendar-cell level-4" />
+              <span className="subtle">Più</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+export function ListeningMilestonesWidget({
+  params,
+  preferences,
+  version,
+}: {
+  params: URLSearchParams;
+  preferences: Preferences;
+  version: number;
+}) {
+  const result = useLoad(
+    () => api.milestones(params),
+    `milestones:${params.toString()}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+
+  return (
+    <article
+      className="panel padded widget-listening-milestones"
+      aria-label="Traguardi di ascolto"
+    >
+      <div className="panel-title">
+        <h2>
+          Traguardi di ascolto
+          <span className="pill widget-period-badge all-time">
+            Tutto lo storico
+          </span>
+        </h2>
+      </div>
+      <p className="subtle">
+        Primo e ultimo ascolto documentato, serie e soglie raggiunte.
+      </p>
+      <div className="widget-milestones-content">
+        {result.error && <ErrorText>{result.error}</ErrorText>}
+        {!result.data && !result.error && (
+          <div className="skeleton-container" role="status" aria-busy="true">
+            <span className="visually-hidden">Caricamento traguardi…</span>
+            <div className="milestones-skeleton">
+              <SkeletonBlock width="100%" height={80} borderRadius={6} />
+              <SkeletonBlock width="100%" height={80} borderRadius={6} />
+            </div>
+          </div>
+        )}
+        {result.data && result.data.total_listens === 0 && (
+          <div className="empty" role="status">
+            <p>Nessun traguardo raggiunto nello storico.</p>
+          </div>
+        )}
+        {result.data && result.data.total_listens > 0 && (
+          <div className="milestones-grid">
+            <div className="milestones-section">
+              <div className="milestones-row">
+                {result.data.first_listen && (
+                  <div className="milestone-card">
+                    <span className="milestone-label">
+                      Primo ascolto documentato
+                    </span>
+                    <strong className="milestone-value">
+                      {result.data.first_listen.track_title}
+                    </strong>
+                    <span className="milestone-time subtle">
+                      {date(result.data.first_listen.played_at_ms, preferences)}
+                    </span>
+                  </div>
+                )}
+                {result.data.last_listen && (
+                  <div className="milestone-card">
+                    <span className="milestone-label">Ultimo ascolto</span>
+                    <strong className="milestone-value">
+                      {result.data.last_listen.track_title}
+                    </strong>
+                    <span className="milestone-time subtle">
+                      {date(result.data.last_listen.played_at_ms, preferences)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="milestones-section">
+              <div className="milestones-row">
+                <div className="milestone-card">
+                  <span className="milestone-label">Serie più lunga</span>
+                  <strong className="milestone-value tabular-nums">
+                    {result.data.longest_streak.days}{" "}
+                    {result.data.longest_streak.days === 1
+                      ? "giorno"
+                      : "giorni"}
+                  </strong>
+                  {result.data.longest_streak.start_date &&
+                    result.data.longest_streak.end_date && (
+                      <span className="milestone-time subtle">
+                        {result.data.longest_streak.start_date} →{" "}
+                        {result.data.longest_streak.end_date}
+                      </span>
+                    )}
+                </div>
+                <div className="milestone-card">
+                  <span className="milestone-label">Serie in corso</span>
+                  <strong className="milestone-value tabular-nums">
+                    {result.data.current_streak.days}{" "}
+                    {result.data.current_streak.days === 1
+                      ? "giorno"
+                      : "giorni"}
+                  </strong>
+                  {result.data.current_streak.days > 0 ? (
+                    <span className="pill streak-active">In corso</span>
+                  ) : (
+                    <span className="milestone-time subtle">
+                      Nessuna serie attiva
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="milestones-section thresholds-section">
+              <span className="milestone-label">Soglie raggiunte</span>
+              {result.data.thresholds.length === 0 ? (
+                <p className="subtle">
+                  Nessuna soglia raggiunta (prima soglia: 10 ascolti).
+                </p>
+              ) : (
+                <div className="thresholds-chips">
+                  {result.data.thresholds.map((t) => (
+                    <div key={t.count} className="threshold-chip">
+                      <span className="threshold-count tabular-nums">
+                        {number.format(t.count)} ascolti
+                      </span>
+                      <span className="threshold-date subtle">
+                        {date(t.reached_at_ms, preferences)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
 export function DiscoveryRatioWidget({
   params,
   version,
@@ -1612,7 +1907,7 @@ const OVERRIDE_PERIOD_OPTIONS: [string, string][] = [
 ];
 
 function isTimeSensitiveWidget(type: string): boolean {
-  return type !== "now_playing";
+  return type !== "now_playing" && type !== "listening_milestones";
 }
 
 function getWidgetParams(
@@ -1700,6 +1995,9 @@ export function isWidgetAllowedForTemplate(
         "top_tracks",
         "history",
         "recent_listens",
+        "discovery_ratio",
+        "listening_calendar",
+        "listening_milestones",
       ].includes(type);
     case "album":
       return [
@@ -1709,6 +2007,9 @@ export function isWidgetAllowedForTemplate(
         "top_tracks",
         "history",
         "recent_listens",
+        "discovery_ratio",
+        "listening_calendar",
+        "listening_milestones",
       ].includes(type);
     case "track":
       return [
@@ -1717,6 +2018,8 @@ export function isWidgetAllowedForTemplate(
         "listening_patterns",
         "history",
         "recent_listens",
+        "listening_calendar",
+        "listening_milestones",
       ].includes(type);
   }
 }
@@ -2595,13 +2898,17 @@ export function Overview({
           </button>
         </div>
         {CATALOG_ITEMS.filter(
-          (item) => !layout.widgets.some((w) => w.type === item.type),
+          (item) =>
+            isWidgetAllowedForTemplate(item.type, "home") &&
+            !layout.widgets.some((w) => w.type === item.type),
         ).length === 0 ? (
           <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
         ) : (
           <div className="catalog-items-grid">
             {CATALOG_ITEMS.filter(
-              (item) => !layout.widgets.some((w) => w.type === item.type),
+              (item) =>
+                isWidgetAllowedForTemplate(item.type, "home") &&
+                !layout.widgets.some((w) => w.type === item.type),
             ).map((item) => (
               <div key={item.type} className="panel padded catalog-item-card">
                 <div className="catalog-item-info">
@@ -3588,6 +3895,22 @@ export function MusicPage({
             params={widgetParams}
             version={preferences.version}
             periodOverride={widget.periodOverride}
+          />
+        );
+      case "listening_calendar":
+        return (
+          <ListeningCalendarWidget
+            params={widgetParams}
+            version={preferences.version}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      case "listening_milestones":
+        return (
+          <ListeningMilestonesWidget
+            params={widgetParams}
+            preferences={preferences}
+            version={preferences.version}
           />
         );
       default:

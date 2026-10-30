@@ -24,6 +24,33 @@ pub struct Filters {
     pub bucket: Option<String>,
     pub bucket_start: Option<String>,
     pub widgets: Option<String>,
+    pub kind: Option<String>,
+    pub id: Option<String>,
+    pub entity_type: Option<String>,
+    pub entity_id: Option<String>,
+    pub year: Option<i32>,
+}
+
+impl Filters {
+    pub fn normalize_scope(&mut self) -> Result<()> {
+        let kind = self.kind.as_deref().or(self.entity_type.as_deref());
+        let id = self.id.as_deref().or(self.entity_id.as_deref());
+        match (kind, id) {
+            (Some(k), Some(i)) => match k {
+                "artists" | "artist" => self.artist = Some(i.to_string()),
+                "albums" | "album" => self.album = Some(i.to_string()),
+                "tracks" | "track" => self.track = Some(i.to_string()),
+                _ => return Err(AppError::BadRequest(format!("Unknown entity kind '{k}'."))),
+            },
+            (Some(_), None) | (None, Some(_)) => {
+                return Err(AppError::BadRequest(
+                    "Both kind and id must be provided.".into(),
+                ));
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
 }
 pub async fn selection(
     conn: &mut sqlx::SqliteConnection,
@@ -58,13 +85,23 @@ pub(crate) async fn selection_at(
             })
             .transpose()
     };
-    let period = if filters.from.as_deref().is_some_and(|s| !s.is_empty())
-        || filters.to.as_deref().is_some_and(|s| !s.is_empty())
+    let (from_str, to_str) = match filters.year {
+        Some(y) => (
+            filters
+                .from
+                .clone()
+                .or_else(|| Some(format!("{y:04}-01-01"))),
+            filters.to.clone().or_else(|| Some(format!("{y:04}-12-31"))),
+        ),
+        None => (filters.from.clone(), filters.to.clone()),
+    };
+    let period = if from_str.as_deref().is_some_and(|s| !s.is_empty())
+        || to_str.as_deref().is_some_and(|s| !s.is_empty())
         || filters.period.as_deref() == Some("custom")
     {
         crate::calendar::Period::Dates {
-            from: parse(&filters.from)?,
-            through: parse(&filters.to)?,
+            from: parse(&from_str)?,
+            through: parse(&to_str)?,
         }
     } else {
         match filters.period.as_deref().unwrap_or("all") {

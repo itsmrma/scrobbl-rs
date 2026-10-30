@@ -2009,4 +2009,203 @@ test.describe("consultation", () => {
     ).toBeVisible();
     await expect(page.locator(".dashboard-grid")).toBeVisible();
   });
+  test("music templates support listening_calendar and listening_milestones, with scoped discovery_ratio and home catalog isolation", async ({
+    archive: { page },
+  }) => {
+    // 1. Home template catalog MUST NOT contain listening_calendar or listening_milestones
+    await page.goto("/dashboard");
+    const homeCustomizeBtn = page.getByRole("button", {
+      name: "Personalizza",
+    });
+    await expect(homeCustomizeBtn).toBeVisible();
+    await homeCustomizeBtn.click();
+
+    const homeToolbar = page.getByRole("toolbar", {
+      name: "Personalizza dashboard",
+    });
+    await expect(homeToolbar).toBeVisible();
+    await homeToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+
+    const homeCatalog = page.locator(".widget-catalog-dialog");
+    await expect(homeCatalog).toBeVisible();
+    await expect(homeCatalog.getByText("Calendario ascolti")).toHaveCount(0);
+    await expect(homeCatalog.getByText("Traguardi di ascolto")).toHaveCount(0);
+    await homeCatalog.getByRole("button", { name: "Chiudi catalogo" }).click();
+    await homeToolbar.getByRole("button", { name: "Annulla" }).click();
+
+    // 2. Artist template: add listening_calendar, listening_milestones, and discovery_ratio
+    await page.goto("/rankings/artists?period=all");
+    const firstArtist = page.locator(".rank-name a").first();
+    await expect(firstArtist).toBeVisible();
+    const artistName = await firstArtist.innerText();
+    await firstArtist.click();
+    await expect(
+      page.getByRole("heading", { name: artistName, exact: false }),
+    ).toBeVisible();
+
+    const artistGrid = page.locator(".dashboard-grid");
+    const artistCustomizeBtn = page.getByRole("button", {
+      name: "Personalizza template artista",
+    });
+    await expect(artistCustomizeBtn).toBeVisible();
+    await artistCustomizeBtn.click();
+
+    const artistToolbar = page.getByRole("toolbar", {
+      name: "Personalizza template artista",
+    });
+    await expect(artistToolbar).toBeVisible();
+
+    // Open catalog on Artist template
+    await artistToolbar
+      .getByRole("button", { name: "Aggiungi widget" })
+      .click();
+    const artistCatalog = page.locator(".widget-catalog-dialog");
+    await expect(artistCatalog).toBeVisible();
+
+    // Verify all 3 advanced widgets are present in Artist catalog
+    const addCalendarBtn = artistCatalog.getByRole("button", {
+      name: /Calendario ascolti/i,
+    });
+    await expect(addCalendarBtn).toBeVisible();
+    const addMilestonesBtn = artistCatalog.getByRole("button", {
+      name: /Traguardi di ascolto/i,
+    });
+    await expect(addMilestonesBtn).toBeVisible();
+    const addDiscoveryBtn = artistCatalog.getByRole("button", {
+      name: /Rapporto scoperte/i,
+    });
+    await expect(addDiscoveryBtn).toBeVisible();
+
+    // Add Calendario ascolti
+    await addCalendarBtn.click();
+    await expect(artistCatalog).toBeHidden();
+    const calendarWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='listening_calendar']",
+    );
+    await expect(calendarWidget).toBeVisible();
+
+    // Verify calendar has period override select in edit mode
+    await expect(
+      calendarWidget.getByRole("combobox", { name: "Periodo widget" }),
+    ).toBeVisible();
+
+    // Add Traguardi di ascolto
+    await artistToolbar
+      .getByRole("button", { name: "Aggiungi widget" })
+      .click();
+    await addMilestonesBtn.click();
+    await expect(artistCatalog).toBeHidden();
+    const milestonesWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='listening_milestones']",
+    );
+    await expect(milestonesWidget).toBeVisible();
+
+    // Verify milestones widget displays 'Tutto lo storico' badge
+    await expect(
+      milestonesWidget.locator(".widget-period-badge.all-time"),
+    ).toHaveText("Tutto lo storico");
+
+    // Verify milestones widget has NO period override selector
+    await expect(
+      milestonesWidget.getByRole("combobox", { name: "Periodo widget" }),
+    ).toHaveCount(0);
+
+    // Add Rapporto scoperte
+    await artistToolbar
+      .getByRole("button", { name: "Aggiungi widget" })
+      .click();
+    await addDiscoveryBtn.click();
+    await expect(artistCatalog).toBeHidden();
+    const discoveryWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    await expect(discoveryWidget).toBeVisible();
+
+    // Save artist template
+    await artistToolbar
+      .getByRole("button", { name: "Salva modifiche" })
+      .click();
+    await expect(artistToolbar).toBeHidden();
+
+    // Reload and assert all 3 widgets persist on Artist page
+    await page.reload();
+    await expect(
+      artistGrid.locator(
+        ".dashboard-widget[data-widget-type='listening_calendar']",
+      ),
+    ).toBeVisible();
+    await expect(
+      artistGrid.locator(
+        ".dashboard-widget[data-widget-type='listening_milestones']",
+      ),
+    ).toBeVisible();
+    await expect(
+      artistGrid.locator(
+        ".dashboard-widget[data-widget-type='discovery_ratio']",
+      ),
+    ).toBeVisible();
+
+    // 3. Track template: verify discovery_ratio is EXCLUDED from catalog, while calendar & milestones are available
+    await page.goto("/rankings/tracks?period=all");
+    const firstTrack = page.locator(".rank-name a").first();
+    await expect(firstTrack).toBeVisible();
+    await firstTrack.click();
+
+    const trackGrid = page.locator(".dashboard-grid");
+    const trackCustomizeBtn = page.getByRole("button", {
+      name: "Personalizza template brano",
+    });
+    await expect(trackCustomizeBtn).toBeVisible();
+    await trackCustomizeBtn.click();
+
+    const trackToolbar = page.getByRole("toolbar", {
+      name: "Personalizza template brano",
+    });
+    await expect(trackToolbar).toBeVisible();
+
+    await trackToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const trackCatalog = page.locator(".widget-catalog-dialog");
+    await expect(trackCatalog).toBeVisible();
+
+    // Discovery ratio MUST NOT be present in Track catalog
+    await expect(trackCatalog.getByText("Rapporto scoperte")).toHaveCount(0);
+
+    // Calendar and Milestones MUST be present
+    const addTrackCalBtn = trackCatalog.getByRole("button", {
+      name: /Calendario ascolti/i,
+    });
+    await expect(addTrackCalBtn).toBeVisible();
+    const addTrackMsBtn = trackCatalog.getByRole("button", {
+      name: /Traguardi di ascolto/i,
+    });
+    await expect(addTrackMsBtn).toBeVisible();
+
+    // Add both to track
+    await addTrackCalBtn.click();
+    await trackToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await addTrackMsBtn.click();
+
+    // Save track template
+    await trackToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(trackToolbar).toBeHidden();
+
+    // Reload and assert widgets persist on Track page
+    await page.reload();
+    await expect(
+      trackGrid.locator(
+        ".dashboard-widget[data-widget-type='listening_calendar']",
+      ),
+    ).toBeVisible();
+    await expect(
+      trackGrid.locator(
+        ".dashboard-widget[data-widget-type='listening_milestones']",
+      ),
+    ).toBeVisible();
+    // Discovery ratio still absent on track
+    await expect(
+      trackGrid.locator(
+        ".dashboard-widget[data-widget-type='discovery_ratio']",
+      ),
+    ).toHaveCount(0);
+  });
 });

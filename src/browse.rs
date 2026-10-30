@@ -13,7 +13,7 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc};
 use sqlx::{FromRow, Row, SqliteConnection};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -267,13 +267,354 @@ pub async fn activity(
 pub async fn discovery_ratio(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(filters): Query<Filters>,
+    Query(mut filters): Query<Filters>,
 ) -> Result<Json<DiscoveryRatio>> {
     auth::session(&state, &headers).await?;
+    filters.normalize_scope()?;
+    if filters.track.is_some() {
+        return Err(AppError::BadRequest(
+            "Discovery ratio is not supported for tracks.".into(),
+        ));
+    }
     let mut view = state.storage.read_view().await?;
     Ok(Json(
         discovery_ratio_calc(&mut view.transaction, &filters, auth::now_ms()).await?,
     ))
+}
+
+pub async fn calendar(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(mut filters): Query<Filters>,
+) -> Result<Json<ListeningCalendar>> {
+    auth::session(&state, &headers).await?;
+    filters.normalize_scope()?;
+    if filters.artist.is_none() && filters.album.is_none() && filters.track.is_none() {
+        return Err(AppError::BadRequest(
+            "Entity scope (artist, album, or track) is required.".into(),
+        ));
+    }
+    let mut view = state.storage.read_view().await?;
+    Ok(Json(
+        listening_calendar(&mut view.transaction, &filters, auth::now_ms()).await?,
+    ))
+}
+
+pub async fn milestones(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(mut filters): Query<Filters>,
+) -> Result<Json<ListeningMilestones>> {
+    auth::session(&state, &headers).await?;
+    filters.normalize_scope()?;
+    if filters.artist.is_none() && filters.album.is_none() && filters.track.is_none() {
+        return Err(AppError::BadRequest(
+            "Entity scope (artist, album, or track) is required.".into(),
+        ));
+    }
+    let mut view = state.storage.read_view().await?;
+    Ok(Json(
+        listening_milestones(&mut view.transaction, &filters, auth::now_ms()).await?,
+    ))
+}
+
+pub async fn listening_calendar(
+    conn: &mut SqliteConnection,
+    filters: &Filters,
+    now: i64,
+) -> Result<ListeningCalendar> {
+    let mut query = consultation::selection_at(conn, filters, false, now).await?;
+    query.push(
+        "SELECT local_date, COUNT(*) AS listens FROM selected WHERE counted = 1 GROUP BY local_date ORDER BY local_date ASC",
+    );
+    let rows = query.build().fetch_all(&mut *conn).await?;
+    let mut counts = BTreeMap::new();
+    let mut total_listens = 0i64;
+    for r in rows {
+        let d: String = r.try_get("local_date")?;
+        let c: i64 = r.try_get("listens")?;
+        total_listens += c;
+        counts.insert(d, c);
+    }
+
+    let mut all_time_filters = filters.clone();
+    all_time_filters.period = Some("all".into());
+    all_time_filters.from = None;
+    all_time_filters.to = None;
+    all_time_filters.bucket = None;
+    all_time_filters.bucket_start = None;
+    all_time_filters.year = None;
+    let mut all_time_query =
+        consultation::selection_at(conn, &all_time_filters, false, now).await?;
+    all_time_query.push(
+        "SELECT DISTINCT CAST(substr(local_date, 1, 4) AS INTEGER) AS y FROM selected WHERE counted = 1 ORDER BY y DESC",
+    );
+    let all_time_rows = all_time_query.build().fetch_all(&mut *conn).await?;
+    let mut years: Vec<i32> = Vec::new();
+    for r in all_time_rows {
+        let y: i32 = r.try_get("y")?;
+        years.push(y);
+    }
+
+    let calendar = crate::calendar::current(conn).await?;
+    let today = calendar_day(&calendar, now)?;
+    let period = filters.period.as_deref().unwrap_or("all");
+    let custom = period == "custom"
+        || filters.from.as_deref().is_some_and(|s| !s.is_empty())
+        || filters.to.as_deref().is_some_and(|s| !s.is_empty())
+        || filters.year.is_some();
+
+    let (from, through) = if let Some(y) = filters.year {
+        let year_start = NaiveDate::from_ymd_opt(y, 1, 1)
+            .ok_or_else(|| AppError::BadRequest("Invalid year.".into()))?;
+        let year_end = if y < today.year() {
+            NaiveDate::from_ymd_opt(y, 12, 31)
+                .ok_or_else(|| AppError::BadRequest("Invalid year.".into()))?
+        } else {
+            today
+        };
+        if !years.contains(&y) {
+            years.push(y);
+            years.sort_by(|a, b| b.cmp(a));
+        }
+        (Some(year_start), Some(year_end))
+    } else if custom {
+        let min_d = counts.keys().next().and_then(|s| date(s).ok());
+        let max_d = counts.keys().next_back().and_then(|s| date(s).ok());
+        (
+            filters
+                .from
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(date)
+                .transpose()?
+                .or(min_d),
+            filters
+                .to
+                .as_deref()
+                .filter(|s| !s.is_empty())
+                .map(date)
+                .transpose()?
+                .or(max_d),
+        )
+    } else {
+        match period {
+            "all" => {
+                let min_d = counts.keys().next().and_then(|s| date(s).ok());
+                let max_d = counts.keys().next_back().and_then(|s| date(s).ok());
+                (min_d, max_d)
+            }
+            "today" => (Some(today), Some(today)),
+            "week" => (
+                Some(bucket_bounds(today, "week", calendar.week_start)?.0),
+                Some(today),
+            ),
+            "month" => (
+                Some(bucket_bounds(today, "month", calendar.week_start)?.0),
+                Some(today),
+            ),
+            "year" => (
+                Some(bucket_bounds(today, "year", calendar.week_start)?.0),
+                Some(today),
+            ),
+            "7d" | "30d" | "365d" => {
+                let days = period
+                    .trim_end_matches('d')
+                    .parse::<i64>()
+                    .map_err(|_| AppError::Internal)?;
+                (
+                    Some(calendar_day(&calendar, now - days * 86_400_000)?),
+                    Some(today),
+                )
+            }
+            _ => return Err(AppError::BadRequest("Unknown period.".into())),
+        }
+    };
+
+    let mut days = Vec::new();
+    let min_date = from.map(|d| d.to_string());
+    let max_date = through.map(|d| d.to_string());
+
+    if let (Some(from_date), Some(through_date)) = (from, through) {
+        if (through_date - from_date).num_days() > 4000 {
+            return Err(AppError::BadRequest(
+                "Calendar range exceeds 4,000 days. Please choose a shorter period or navigate by year."
+                    .into(),
+            ));
+        }
+        let mut curr = from_date;
+        while curr <= through_date {
+            let d_str = curr.to_string();
+            let count = counts.get(&d_str).copied().unwrap_or(0);
+            days.push(CalendarDay { date: d_str, count });
+            curr += chrono::Duration::days(1);
+        }
+    }
+
+    Ok(ListeningCalendar {
+        days,
+        min_date,
+        max_date,
+        total_listens,
+        years,
+    })
+}
+
+pub async fn listening_milestones(
+    conn: &mut SqliteConnection,
+    filters: &Filters,
+    now: i64,
+) -> Result<ListeningMilestones> {
+    let mut all_time_filters = filters.clone();
+    all_time_filters.period = Some("all".into());
+    all_time_filters.from = None;
+    all_time_filters.to = None;
+    all_time_filters.bucket = None;
+    all_time_filters.bucket_start = None;
+    all_time_filters.year = None;
+
+    let mut total_query = consultation::selection_at(conn, &all_time_filters, false, now).await?;
+    total_query.push("SELECT COUNT(*) FROM selected WHERE counted = 1");
+    let total_listens: i64 = total_query
+        .build_query_scalar()
+        .fetch_one(&mut *conn)
+        .await?;
+
+    if total_listens == 0 {
+        return Ok(ListeningMilestones {
+            total_listens: 0,
+            first_listen: None,
+            last_listen: None,
+            thresholds: Vec::new(),
+            longest_streak: MilestoneStreak {
+                days: 0,
+                start_date: None,
+                end_date: None,
+            },
+            current_streak: MilestoneStreak {
+                days: 0,
+                start_date: None,
+                end_date: None,
+            },
+        });
+    }
+
+    let mut first_query = consultation::selection_at(conn, &all_time_filters, true, now).await?;
+    first_query.push(
+        "SELECT s.played_at_ms, s.title FROM selected s WHERE s.counted = 1 ORDER BY s.played_at_ms ASC, s.id ASC LIMIT 1",
+    );
+    let first_row = first_query.build().fetch_optional(&mut *conn).await?;
+    let first_listen = first_row.map(|r| ListenMilestone {
+        played_at_ms: r.get("played_at_ms"),
+        track_title: r.get("title"),
+    });
+
+    let mut last_query = consultation::selection_at(conn, &all_time_filters, true, now).await?;
+    last_query.push(
+        "SELECT s.played_at_ms, s.title FROM selected s WHERE s.counted = 1 ORDER BY s.played_at_ms DESC, s.id DESC LIMIT 1",
+    );
+    let last_row = last_query.build().fetch_optional(&mut *conn).await?;
+    let last_listen = last_row.map(|r| ListenMilestone {
+        played_at_ms: r.get("played_at_ms"),
+        track_title: r.get("title"),
+    });
+
+    let mut thresholds = Vec::new();
+    if total_listens >= 10 {
+        let mut thresh_query =
+            consultation::selection_at(conn, &all_time_filters, false, now).await?;
+        thresh_query.push(
+            "SELECT row_num, played_at_ms FROM (                 SELECT ROW_NUMBER() OVER (ORDER BY played_at_ms ASC, id ASC) AS row_num, played_at_ms                 FROM selected                 WHERE counted = 1             ) WHERE row_num IN (10, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 25000, 50000, 100000)             ORDER BY row_num ASC",
+        );
+        let rows = thresh_query.build().fetch_all(&mut *conn).await?;
+        for r in rows {
+            thresholds.push(MilestoneThreshold {
+                count: r.get("row_num"),
+                reached_at_ms: r.get("played_at_ms"),
+            });
+        }
+    }
+
+    let mut dates_query = consultation::selection_at(conn, &all_time_filters, false, now).await?;
+    dates_query
+        .push("SELECT DISTINCT local_date FROM selected WHERE counted = 1 ORDER BY local_date ASC");
+    let date_rows = dates_query.build().fetch_all(&mut *conn).await?;
+
+    let dates: Vec<NaiveDate> = date_rows
+        .iter()
+        .filter_map(|r| {
+            let s: String = r.get("local_date");
+            date(&s).ok()
+        })
+        .collect();
+
+    let mut longest_days = 0i64;
+    let mut longest_start: Option<NaiveDate> = None;
+    let mut longest_end: Option<NaiveDate> = None;
+
+    let mut streak_days = 0i64;
+    let mut streak_start: Option<NaiveDate> = None;
+    let mut prev_date: Option<NaiveDate> = None;
+
+    for &curr in &dates {
+        match prev_date {
+            None => {
+                streak_days = 1;
+                streak_start = Some(curr);
+            }
+            Some(prev) => {
+                if curr == prev + chrono::Duration::days(1) {
+                    streak_days += 1;
+                } else {
+                    if streak_days > longest_days {
+                        longest_days = streak_days;
+                        longest_start = streak_start;
+                        longest_end = Some(prev);
+                    }
+                    streak_days = 1;
+                    streak_start = Some(curr);
+                }
+            }
+        }
+        prev_date = Some(curr);
+    }
+
+    if streak_days > longest_days {
+        longest_days = streak_days;
+        longest_start = streak_start;
+        longest_end = prev_date;
+    }
+
+    let calendar = crate::calendar::current(conn).await?;
+    let today = calendar_day(&calendar, now)?;
+    let yesterday = today - chrono::Duration::days(1);
+
+    let (current_days, current_start, current_end) = if let Some(&last_date) = dates.last() {
+        if last_date == today || last_date == yesterday {
+            (streak_days, streak_start, Some(last_date))
+        } else {
+            (0, None, None)
+        }
+    } else {
+        (0, None, None)
+    };
+
+    Ok(ListeningMilestones {
+        total_listens,
+        first_listen,
+        last_listen,
+        thresholds,
+        longest_streak: MilestoneStreak {
+            days: longest_days,
+            start_date: longest_start.map(|d| d.to_string()),
+            end_date: longest_end.map(|d| d.to_string()),
+        },
+        current_streak: MilestoneStreak {
+            days: current_days,
+            start_date: current_start.map(|d| d.to_string()),
+            end_date: current_end.map(|d| d.to_string()),
+        },
+    })
 }
 pub async fn discovery_ratio_calc(
     conn: &mut SqliteConnection,
