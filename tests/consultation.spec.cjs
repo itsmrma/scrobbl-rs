@@ -332,6 +332,63 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     );
     await expect(totalsReloaded).toHaveClass(/span-2/);
 
+    // Test adding listening_patterns widget from catalog (#120)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog = page.locator(".widget-catalog-dialog");
+    await expect(catalogDialog).toBeVisible();
+    const patternCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Pattern di ascolto" });
+    await expect(patternCard).toBeVisible();
+    await patternCard.getByRole("button", { name: "Aggiungi" }).click();
+
+    const patternsWidget = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await expect(patternsWidget).toBeVisible();
+    await expect(patternsWidget).toHaveClass(/span-3/);
+
+    // Save and verify rendered listening_patterns widget
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await expect(
+      patternsWidget.getByRole("heading", { name: "Pattern di ascolto" }),
+    ).toBeVisible();
+    await expect(patternsWidget.locator(".pattern-bars")).toBeVisible();
+    await expect(
+      patternsWidget.locator(".pattern-hours .pattern-row"),
+    ).toHaveCount(24);
+
+    // Switch view to weekdays
+    await chooseOption(patternsWidget.getByRole("combobox"), "weekdays");
+    await expect(
+      patternsWidget.locator(".pattern-weekdays .pattern-row"),
+    ).toHaveCount(7);
+
+    // Switch view back to hours
+    await chooseOption(patternsWidget.getByRole("combobox"), "hours");
+    await expect(
+      patternsWidget.locator(".pattern-hours .pattern-row"),
+    ).toHaveCount(24);
+
+    // Cycle span (3 -> 4 -> 6) and verify persistence
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const patternSpanBtn = patternsWidget.locator(".widget-span-button");
+    await patternSpanBtn.click(); // 3 -> 4
+    await expect(patternsWidget).toHaveClass(/span-4/);
+    await patternSpanBtn.click(); // 4 -> 6
+    await expect(patternsWidget).toHaveClass(/span-6/);
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    await page.reload();
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-6/);
+
     // Reset to default
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
@@ -342,6 +399,9 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsAfterReset).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveCount(0);
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
     await expect(editToolbar).toBeHidden();
 

@@ -5173,6 +5173,9 @@ dialog {
 .dashboard-widget.span-6 {
   grid-column: span 6;
 }
+.dashboard-widget > .panel {
+  margin-bottom: 0;
+}
 .dashboard-widget.editing {
   border: 1px dashed var(--border);
   border-radius: 12px;
