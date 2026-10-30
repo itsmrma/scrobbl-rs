@@ -3770,25 +3770,25 @@ export function MusicPage({
             </div>
             {!isPreview && <MusicActions kind={kind} id={id} />}
             <div className="music-period">
-              {!layoutEditor.editing && (
-                <button
-                  type="button"
-                  className="button secondary"
-                  aria-label={customizeAriaLabel}
-                  onClick={() => layoutEditor.handleStartEditing()}
-                >
-                  <Icon>tune</Icon>{" "}
-                  <span className="customize-template-label">
-                    {customizeAriaLabel}
-                  </span>
-                </button>
-              )}
               <PeriodFilters selection={selection} />
             </div>
           </div>
         </div>
       ) : (
         !result.error && <MusicPageSkeleton />
+      )}
+
+      {!layoutEditor.editing && (
+        <div className="music-template-toolbar">
+          <button
+            type="button"
+            className="button secondary customize-template-button"
+            aria-label={customizeAriaLabel}
+            onClick={() => layoutEditor.handleStartEditing()}
+          >
+            <Icon>tune</Icon> {customizeAriaLabel}
+          </button>
+        </div>
       )}
 
       {layoutEditor.editing && (

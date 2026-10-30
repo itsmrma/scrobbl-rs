@@ -1301,11 +1301,10 @@ dialog.widget-catalog-dialog {
   padding: 8px 0;
 }
 
-.music-heading .music-period {
+.music-template-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px;
+  justify-content: flex-end;
+  margin-bottom: 16px;
 }
 .customize-template-button {
   display: inline-flex;
@@ -1314,15 +1313,12 @@ dialog.widget-catalog-dialog {
   max-width: 100%;
   min-height: 44px;
 }
-.customize-template-button .customize-template-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-@media (max-width: 360px) {
-  .customize-template-button {
-    font-size: 12px;
-    padding-inline: 8px;
-    gap: 4px;
+@media (max-width: 600px) {
+  .music-template-toolbar {
+    justify-content: stretch;
+  }
+  .music-template-toolbar .customize-template-button {
+    width: 100%;
+    justify-content: center;
   }
 }
