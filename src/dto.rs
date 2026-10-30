@@ -155,6 +155,13 @@ pub struct ActivityChart {
     pub mixed_week_starts: bool,
     pub partial: bool,
 }
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+pub struct DiscoveryRatio {
+    pub discoveries: i64,
+    pub repeats: i64,
+    pub total: i64,
+    pub discovery_percent: f64,
+}
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
     pub track_id: Option<String>,
@@ -293,6 +300,7 @@ mod tests {
             MusicPage::decl(&config),
             ActivityBucket::decl(&config),
             ActivityChart::decl(&config),
+            DiscoveryRatio::decl(&config),
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
             SpotifyIntervals::decl(&config),

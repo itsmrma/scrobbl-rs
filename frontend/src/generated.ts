@@ -19,6 +19,7 @@ export type RankingPage = { items: Array<Ranking>, total: number, page: number, 
 export type MusicPage = { id: string, name: string, kind: string, cover_url: string | null, album_id: string | null, album: string | null, artists: Array<Artist>, totals: Totals, };
 export type ActivityBucket = { start: string, through: string, listens: number, actual_ms: number, estimated_ms: number, unknown_durations: number, partial: boolean, };
 export type ActivityChart = { grain: string, buckets: Array<ActivityBucket>, mixed_week_starts: boolean, partial: boolean, };
+export type DiscoveryRatio = { discoveries: number, repeats: number, total: number, discovery_percent: number, };
 export type NowPlaying = { track_id: string | null, title: string, artists: Array<Artist>, album: string | null, cover_url: string | null, spotify_url: string, duration_ms: number | null, progress_ms: number | null, observed_at_ms: number, source_timestamp_ms: number | null, requested_at_ms: number, source_requested_at_ms: number, response_received_at_ms: number, served_at_ms: number, };
 export type NowPlayingTiming = { source_timestamp_ms: number | null, requested_at_ms: number, source_requested_at_ms: number, response_received_at_ms: number, };
 export type SpotifyIntervals = { sync_seconds: number, now_playing_seconds: number, };

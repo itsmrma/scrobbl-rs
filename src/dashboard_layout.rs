@@ -18,6 +18,7 @@ pub const VALID_WIDGET_TYPES: &[&str] = &[
     "top_tracks",
     "now_playing",
     "listening_patterns",
+    "discovery_ratio",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]

@@ -513,6 +513,45 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
     ).toHaveClass(/span-6/);
 
+    // Add DiscoveryRatioWidget from catalog (#122)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog122 = page.locator(".widget-catalog-dialog");
+    await expect(catalogDialog122).toBeVisible();
+    const addDiscoveryBtn = catalogDialog122
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Rapporto scoperte" })
+      .getByRole("button", { name: "Aggiungi" });
+    await expect(addDiscoveryBtn).toBeVisible();
+    await addDiscoveryBtn.click();
+    await expect(catalogDialog122).toBeHidden();
+
+    // Verify discovery_ratio widget appears in dashboard with default span 3
+    const discoveryWidget = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    await expect(discoveryWidget).toBeVisible();
+    await expect(discoveryWidget).toHaveClass(/span-3/);
+
+    // Save and verify rendering after save
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await expect(
+      discoveryWidget.getByRole("heading", {
+        name: "Nuove scoperte vs Riascolti",
+      }),
+    ).toBeVisible();
+    await expect(discoveryWidget.getByRole("progressbar")).toBeVisible();
+
+    // Verify persistence across reload
+    await page.reload();
+    const discoveryReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    await expect(discoveryReloaded).toBeVisible();
+    await expect(discoveryReloaded).toHaveClass(/span-3/);
+
     // Reset to default
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();

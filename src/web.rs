@@ -84,6 +84,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/consultation/activity",
             get(crate::browse::activity),
         )
+        .route(
+            "/api/v1/consultation/discovery-ratio",
+            get(crate::browse::discovery_ratio),
+        )
         .route("/music/{kind}/{id}/edit", get(index))
         .route(
             "/api/v1/library/{kind}/{id}",
