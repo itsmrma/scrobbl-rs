@@ -1605,3 +1605,297 @@ async fn music_page_template_layout_persistence_matrix_validation_and_concurrenc
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn album_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Unconfigured album template layout returns deterministic default
+    let (status, album_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_default["version"], 0);
+    let album_widgets = album_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(album_widgets.len(), 5);
+    assert_eq!(album_widgets[0]["type"], "totals");
+    assert_eq!(album_widgets[0]["colSpan"], 6);
+    assert_eq!(album_widgets[1]["type"], "activity_chart");
+    assert_eq!(album_widgets[1]["colSpan"], 6);
+    assert_eq!(album_widgets[2]["type"], "listening_patterns");
+    assert_eq!(album_widgets[2]["colSpan"], 6);
+    assert_eq!(album_widgets[3]["type"], "top_tracks");
+    assert_eq!(album_widgets[3]["colSpan"], 6);
+    assert_eq!(album_widgets[4]["type"], "history");
+    assert_eq!(album_widgets[4]["colSpan"], 6);
+
+    // 2. Matrix validation: reject forbidden widgets on album template
+    // forbidden: top_albums, top_artists, now_playing, unified_rankings
+    for forbidden_type in &[
+        "top_albums",
+        "top_artists",
+        "now_playing",
+        "unified_rankings",
+    ] {
+        let mut invalid_album = album_default.clone();
+        invalid_album["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=album",
+            invalid_album,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {forbidden_type} to be rejected on album template"
+        );
+    }
+
+    // 3. Matrix validation: allow valid widgets on album template
+    // allowed: totals, activity_chart, listening_patterns, recent_listens, history, top_tracks
+    let valid_album = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "w1", "type": "totals", "colSpan": 6 },
+            { "id": "w2", "type": "activity_chart", "colSpan": 6 },
+            { "id": "w3", "type": "listening_patterns", "colSpan": 6 },
+            { "id": "w4", "type": "top_tracks", "colSpan": 6 },
+            { "id": "w5", "type": "recent_listens", "colSpan": 3 },
+            { "id": "w6", "type": "history", "colSpan": 6 }
+        ]
+    });
+    let (status, saved_valid) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        valid_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_valid["version"], 1);
+    assert_eq!(saved_valid["widgets"].as_array().unwrap().len(), 6);
+
+    // 4. Persistence isolation: settings table has 'dashboard_layout_album',
+    // while 'dashboard_layout', 'dashboard_layout_artist', 'dashboard_layout_track' remain absent.
+    let stored_album_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_album'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_album: Value = serde_json::from_str(&stored_album_json).unwrap();
+    assert_eq!(parsed_album["version"], 1);
+
+    let stored_artist: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_artist.is_none());
+
+    let (status, read_home) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_home["version"], 0);
+
+    let (status, read_artist) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_artist["version"], 0);
+
+    // 5. Optimistic concurrency conflict on album template
+    let mut stale_album = album_default.clone();
+    stale_album["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        stale_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 6. Empty album layout is permitted and persisted (does NOT fall back to default)
+    let empty_album = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        empty_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) = get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn album_scoped_consultation_aggregations_and_cache_isolation() {
+    let (_dir, state, token) = setup().await;
+
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "t1:1".into(),
+        source_timestamp_ms: at("2025-06-01T10:00:00Z"),
+        played_at_ms: at("2025-06-01T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "t1:2".into(),
+        source_timestamp_ms: at("2025-06-01T12:00:00Z"),
+        played_at_ms: at("2025-06-01T12:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "t2:1".into(),
+        source_timestamp_ms: at("2025-06-01T14:00:00Z"),
+        played_at_ms: at("2025-06-01T14:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000002",
+            "type": "track",
+            "name": "Track Two",
+            "duration_ms": 180000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "t3:1".into(),
+        source_timestamp_ms: at("2025-06-01T16:00:00Z"),
+        played_at_ms: at("2025-06-01T16:00:00Z"),
+        listened_ms: Some(150000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 150000,
+            "album": { "id": "album-b", "name": "Album Beta", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist 2" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4]).await;
+
+    let album_a_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Alpha'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let album_b_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Beta'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Query Album A
+    let (status, album_a) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_a["totals"]["listens"], 3);
+    assert_eq!(album_a["totals"]["tracks"], 2);
+    assert_eq!(album_a["totals"]["actual_ms"], 580000);
+
+    // Rankings for tracks in Album A
+    let (status, tracks_a) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/rankings/tracks?album={album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items_a = tracks_a["items"].as_array().expect("items array");
+    assert_eq!(items_a.len(), 2);
+    assert_eq!(items_a[0]["name"], "Track One");
+    assert_eq!(items_a[0]["plays"], 2);
+    assert_eq!(items_a[1]["name"], "Track Two");
+    assert_eq!(items_a[1]["plays"], 1);
+
+    // Query Album B
+    let (status, album_b) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_b_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_b["totals"]["listens"], 1);
+    assert_eq!(album_b["totals"]["tracks"], 1);
+    assert_eq!(album_b["totals"]["actual_ms"], 150000);
+
+    // Rankings for tracks in Album B
+    let (status, tracks_b) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/rankings/tracks?album={album_b_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items_b = tracks_b["items"].as_array().expect("items array");
+    assert_eq!(items_b.len(), 1);
+    assert_eq!(items_b[0]["name"], "Track Three");
+    assert_eq!(items_b[0]["plays"], 1);
+
+    // Cache isolation: Query Album A again and ensure results are identical
+    let (status, album_a_cached) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_a_cached["totals"]["listens"], 3);
+    assert_eq!(album_a_cached["totals"]["tracks"], 2);
+    assert_eq!(album_a_cached["totals"]["actual_ms"], 580000);
+}
