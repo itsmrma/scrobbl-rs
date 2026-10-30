@@ -1095,4 +1095,281 @@ test.describe("consultation", () => {
       }),
     ).toBeVisible();
   });
+
+  test("artist template customization persists layout, updates across artists, and isolates home", async ({
+    archive: { page },
+  }) => {
+    // 1. Navigate to rankings and click an artist to open Artist consultation page
+    await page.goto("/rankings/artists?period=all");
+    const firstArtist = page.locator(".rank-name a").first();
+    await expect(firstArtist).toBeVisible();
+    const artistName = await firstArtist.innerText();
+    await firstArtist.click();
+    await expect(
+      page.getByRole("heading", { name: artistName, exact: false }),
+    ).toBeVisible();
+
+    // 2. Verify external entity header components
+    await expect(page.locator(".music-heading")).toBeVisible();
+    await expect(page.locator(".music-personal")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
+    await expect(page.getByLabel("Period", { exact: true })).toBeVisible();
+
+    // 3. Verify default 6-widget artist template layout in .dashboard-grid
+    const artistGrid = page.locator(".dashboard-grid");
+    await expect(artistGrid).toBeVisible();
+
+    const totalsWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(totalsWidget).toBeVisible();
+    await expect(totalsWidget).toHaveClass(/span-6/);
+
+    const activityWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='activity_chart']",
+    );
+    await expect(activityWidget).toBeVisible();
+    await expect(activityWidget).toHaveClass(/span-6/);
+
+    const patternsWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await expect(patternsWidget).toBeVisible();
+    await expect(patternsWidget).toHaveClass(/span-6/);
+
+    const topAlbumsWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='top_albums']",
+    );
+    await expect(topAlbumsWidget).toBeVisible();
+    await expect(topAlbumsWidget).toHaveClass(/span-3/);
+
+    const topTracksWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='top_tracks']",
+    );
+    await expect(topTracksWidget).toBeVisible();
+    await expect(topTracksWidget).toHaveClass(/span-3/);
+
+    const historyWidget = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='history']",
+    );
+    await expect(historyWidget).toBeVisible();
+    await expect(historyWidget).toHaveClass(/span-6/);
+
+    // 4. Click "Personalizza template artista" action to enter Edit mode
+    const customizeBtn = page.getByRole("button", {
+      name: "Personalizza template artista",
+    });
+    await expect(customizeBtn).toBeVisible();
+    await customizeBtn.click();
+
+    // 5. Verify toolbar
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Personalizza template artista",
+    });
+    await expect(editToolbar).toBeVisible();
+    await expect(
+      editToolbar.getByText(/applicate a tutte le pagine artista/i),
+    ).toBeVisible();
+
+    // 6. Verify Catalog Modal does NOT show home-only widgets
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog = page.locator(".widget-catalog-dialog");
+    await expect(catalogDialog).toBeVisible();
+    // home-only widgets must NOT be present
+    await expect(catalogDialog.getByText("In riproduzione")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top Artisti")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Classifiche Congiunte")).toHaveCount(
+      0,
+    );
+    await catalogDialog
+      .getByRole("button", { name: "Chiudi catalogo" })
+      .click();
+    await expect(catalogDialog).toBeHidden();
+
+    // 7. Cycle span on top_albums (3 -> 4)
+    const albumSpanBtn = topAlbumsWidget.locator(".widget-span-button");
+    await albumSpanBtn.click();
+    await expect(topAlbumsWidget).toHaveClass(/span-4/);
+
+    // Remove top_tracks
+    await topTracksWidget.locator(".widget-remove-button").click();
+    await expect(
+      artistGrid.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveCount(0);
+
+    // 8. Save changes
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    // 9. Reload page and assert persistence
+    await page.reload();
+    await expect(
+      artistGrid.locator(".dashboard-widget[data-widget-type='top_albums']"),
+    ).toHaveClass(/span-4/);
+    await expect(
+      artistGrid.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveCount(0);
+
+    // 10. Navigate to a second artist and verify identical template layout
+    await page.goto("/rankings/artists?period=all");
+    const artists = page.locator(".rank-name a");
+    if ((await artists.count()) > 1) {
+      const secondArtist = artists.nth(1);
+      const secondArtistName = await secondArtist.innerText();
+      await secondArtist.click();
+      await expect(
+        page.getByRole("heading", { name: secondArtistName, exact: false }),
+      ).toBeVisible();
+      const secondGrid = page.locator(".dashboard-grid");
+      await expect(
+        secondGrid.locator(".dashboard-widget[data-widget-type='top_albums']"),
+      ).toHaveClass(/span-4/);
+      await expect(
+        secondGrid.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+      ).toHaveCount(0);
+    }
+
+    // 11. Verify Home dashboard layout is independent / untouched
+    await page.goto("/dashboard");
+    const homeGrid = page.locator(".dashboard-grid");
+    await expect(
+      homeGrid.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toBeVisible();
+    await expect(
+      homeGrid.locator(".dashboard-widget[data-widget-type='top_artists']"),
+    ).toBeVisible();
+
+    // 12. Verify Settings entry point for template customization
+    await page.goto("/settings/appearance");
+    await expect(
+      page.getByRole("heading", { name: "Template pagine musicali" }),
+    ).toBeVisible();
+    const settingsCustomizeBtn = page.getByRole("button", {
+      name: "Personalizza template artista",
+    });
+    await expect(settingsCustomizeBtn).toBeVisible();
+    await settingsCustomizeBtn.click();
+    // Navigates to artist page with editor toolbar open
+    await expect(
+      page.getByRole("toolbar", { name: "Personalizza template artista" }),
+    ).toBeVisible();
+  });
+
+  test("artist template handles dirty cancel confirmation, 409 conflict preserving draft, and empty preview", async ({
+    archive: { page },
+  }) => {
+    // 1. Open artist page
+    await page.goto("/rankings/artists?period=all");
+    const firstArtist = page.locator(".rank-name a").first();
+    await firstArtist.click();
+
+    // 2. Click "Personalizza template artista"
+    await page
+      .getByRole("button", { name: "Personalizza template artista" })
+      .click();
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Personalizza template artista",
+    });
+    await expect(editToolbar).toBeVisible();
+
+    // Make a change to create dirty draft
+    const artistGrid = page.locator(".dashboard-grid");
+    const topAlbums = artistGrid.locator(
+      ".dashboard-widget[data-widget-type='top_albums']",
+    );
+    await topAlbums.locator(".widget-span-button").click();
+
+    // 3. Test Dirty confirmation on Cancel
+    // When dialog is dismissed, stay in edit mode
+    let dialogMessage = "";
+    page.once("dialog", async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    expect(dialogMessage).toContain("modifiche non salvate");
+    await expect(editToolbar).toBeVisible();
+
+    // When dialog is accepted, exit edit mode and restore
+    page.once("dialog", async (dialog) => {
+      await dialog.accept();
+    });
+    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    // 4. Test 409 Concurrency Conflict preserving draft
+    await page
+      .getByRole("button", { name: "Personalizza template artista" })
+      .click();
+    await expect(editToolbar).toBeVisible();
+    // Remove history widget
+    await artistGrid
+      .locator(".dashboard-widget[data-widget-type='history']")
+      .locator(".widget-remove-button")
+      .click();
+    await expect(
+      artistGrid.locator(".dashboard-widget[data-widget-type='history']"),
+    ).toHaveCount(0);
+
+    // Mock 409 Conflict from backend
+    await page.route(
+      "**/api/v1/dashboard/layout?template=artist",
+      async (route) => {
+        if (route.request().method() === "POST") {
+          await route.fulfill({
+            status: 409,
+            json: {
+              error:
+                "Dashboard layout changed in another session. Reload before saving.",
+            },
+          });
+        } else {
+          await route.continue();
+        }
+      },
+    );
+
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    // Conflict message shown
+    await expect(
+      editToolbar.getByText("Dashboard layout changed in another session"),
+    ).toBeVisible();
+    // Draft preserved: editor is still open and history is still removed
+    await expect(editToolbar).toBeVisible();
+    await expect(
+      artistGrid.locator(".dashboard-widget[data-widget-type='history']"),
+    ).toHaveCount(0);
+
+    await page.unroute("**/api/v1/dashboard/layout?template=artist");
+
+    // 5. Test empty library preview from Settings
+    await page.route(
+      "**/api/v1/consultation/rankings/artists*",
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          json: { items: [], total: 0, page: 1, page_size: 20 },
+        });
+      },
+    );
+
+    await page.goto("/settings/appearance");
+    await expect(
+      page.getByText(
+        "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota.",
+      ),
+    ).toBeVisible();
+    await page
+      .getByRole("button", { name: "Personalizza template artista" })
+      .click();
+
+    // Navigates to /music/artists/preview?edit=template with editor open
+    await expect(
+      page.getByRole("toolbar", { name: "Personalizza template artista" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Artista di anteprima" }),
+    ).toBeVisible();
+    await expect(page.locator(".dashboard-grid")).toBeVisible();
+  });
 });

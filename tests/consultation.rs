@@ -1394,3 +1394,214 @@ async fn discovery_ratio_over_period_and_empty_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved_layout["widgets"][0]["type"], "discovery_ratio");
 }
+
+#[tokio::test]
+async fn music_page_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Unconfigured template layouts return deterministic defaults
+    let (status, artist_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(artist_default["version"], 0);
+    let artist_widgets = artist_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(artist_widgets.len(), 6);
+    assert_eq!(artist_widgets[0]["type"], "totals");
+    assert_eq!(artist_widgets[0]["colSpan"], 6);
+    assert_eq!(artist_widgets[1]["type"], "activity_chart");
+    assert_eq!(artist_widgets[1]["colSpan"], 6);
+    assert_eq!(artist_widgets[2]["type"], "listening_patterns");
+    assert_eq!(artist_widgets[2]["colSpan"], 6);
+    assert_eq!(artist_widgets[3]["type"], "top_albums");
+    assert_eq!(artist_widgets[3]["colSpan"], 3);
+    assert_eq!(artist_widgets[4]["type"], "top_tracks");
+    assert_eq!(artist_widgets[4]["colSpan"], 3);
+    assert_eq!(artist_widgets[5]["type"], "history");
+    assert_eq!(artist_widgets[5]["colSpan"], 6);
+
+    let (status, album_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_default["version"], 0);
+    let album_widgets = album_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(album_widgets.len(), 5);
+    assert_eq!(album_widgets[0]["type"], "totals");
+    assert_eq!(album_widgets[0]["colSpan"], 6);
+    assert_eq!(album_widgets[1]["type"], "activity_chart");
+    assert_eq!(album_widgets[1]["colSpan"], 6);
+    assert_eq!(album_widgets[2]["type"], "listening_patterns");
+    assert_eq!(album_widgets[2]["colSpan"], 6);
+    assert_eq!(album_widgets[3]["type"], "top_tracks");
+    assert_eq!(album_widgets[3]["colSpan"], 6);
+    assert_eq!(album_widgets[4]["type"], "history");
+    assert_eq!(album_widgets[4]["colSpan"], 6);
+
+    let (status, track_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(track_default["version"], 0);
+    let track_widgets = track_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(track_widgets.len(), 4);
+    assert_eq!(track_widgets[0]["type"], "totals");
+    assert_eq!(track_widgets[0]["colSpan"], 6);
+    assert_eq!(track_widgets[1]["type"], "activity_chart");
+    assert_eq!(track_widgets[1]["colSpan"], 6);
+    assert_eq!(track_widgets[2]["type"], "listening_patterns");
+    assert_eq!(track_widgets[2]["colSpan"], 6);
+    assert_eq!(track_widgets[3]["type"], "history");
+    assert_eq!(track_widgets[3]["colSpan"], 6);
+
+    // 2. Unknown template rejected with 400 Bad Request
+    let (status, _) = get(&state, &token, "/api/v1/dashboard/layout?template=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=invalid",
+        artist_default.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 3. Matrix validation: reject home-only widgets on artist template
+    for forbidden_type in &["now_playing", "top_artists", "unified_rankings"] {
+        let mut invalid_artist = artist_default.clone();
+        invalid_artist["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=artist",
+            invalid_artist,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {forbidden_type} to be rejected on artist template"
+        );
+    }
+
+    // Matrix validation: reject music-only widget (history) on home template
+    let (status, home_default) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    let mut invalid_home = home_default.clone();
+    invalid_home["widgets"][0]["type"] = json!("history");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        invalid_home,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected history widget to be rejected on home template"
+    );
+
+    // 4. Modify and persist artist template layout
+    let mut modified_artist = artist_default.clone();
+    modified_artist["widgets"] = json!([
+        {
+            "id": "totals-custom",
+            "type": "totals",
+            "colSpan": 6
+        },
+        {
+            "id": "history-custom",
+            "type": "history",
+            "colSpan": 6
+        }
+    ]);
+    let (status, saved_artist) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        modified_artist.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_artist["version"], 1);
+    assert_eq!(saved_artist["widgets"].as_array().unwrap().len(), 2);
+
+    // 5. Verify direct database storage and isolation:
+    // settings has 'dashboard_layout_artist', while 'dashboard_layout' and others are untouched.
+    let stored_artist_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_artist: Value = serde_json::from_str(&stored_artist_json).unwrap();
+    assert_eq!(parsed_artist["version"], 1);
+
+    let stored_home: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_home.is_none());
+
+    let (status, read_home) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_home["version"], 0);
+
+    let (status, read_album) = get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_album["version"], 0);
+
+    // 6. Optimistic concurrency conflict on artist template
+    let mut stale_artist = artist_default.clone();
+    stale_artist["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        stale_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 7. Empty music layout is permitted and persisted (does NOT fall back to default)
+    let empty_artist = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        empty_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+
+    // Empty home layout is rejected
+    let empty_home = json!({
+        "version": 0,
+        "widgets": []
+    });
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        empty_home,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
