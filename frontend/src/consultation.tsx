@@ -25,7 +25,10 @@ import { Collage } from "./collage";
 import { ArtworkCredits } from "./image-credit";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
-import { ListeningPatterns } from "./listening-patterns";
+import {
+  ListeningPatterns,
+  ListeningPatternsWidget,
+} from "./listening-patterns";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
@@ -963,6 +966,13 @@ const CATALOG_ITEMS = [
       "Elenco cronologico degli ascolti recenti registrati nell'archivio.",
     defaultSpan: 6 as const,
   },
+  {
+    type: "listening_patterns",
+    name: "Pattern di ascolto",
+    description:
+      "Distribuzione degli ascolti per ora del giorno e giorno della settimana.",
+    defaultSpan: 3 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1076,11 +1086,11 @@ export function Overview({
   const [catalogOpen, setCatalogOpen] = useState(false);
 
   useEffect(() => {
-    if (layoutResult.data && !editing) {
+    if (layoutResult.data) {
       setLayout(layoutResult.data);
       setSavedLayout(layoutResult.data);
     }
-  }, [layoutResult.data, editing]);
+  }, [layoutResult.data]);
 
   const handleStartEditing = () => {
     setEditing(true);
@@ -1184,6 +1194,13 @@ export function Overview({
             recent={result.data.recent}
             preferences={preferences}
             params={params}
+          />
+        );
+      case "listening_patterns":
+        return (
+          <ListeningPatternsWidget
+            params={params}
+            version={preferences.version}
           />
         );
       default:
