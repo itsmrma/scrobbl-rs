@@ -112,7 +112,7 @@ function TimeHelp() {
   return (
     <span
       className="time-help"
-      onPointerEnter={(event) => setHover(event.pointerType === "mouse")}
+      onPointerOver={(event) => setHover(event.pointerType === "mouse")}
       onPointerLeave={() => setHover(false)}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -129,8 +129,6 @@ function TimeHelp() {
         aria-label="How we calculate listening time"
         aria-expanded={open}
         aria-controls={id}
-        onPointerEnter={(event) => setHover(event.pointerType === "mouse")}
-        onPointerLeave={() => setHover(false)}
         onFocus={() => setFocus(true)}
         onBlur={() => setFocus(false)}
         onClick={() => {

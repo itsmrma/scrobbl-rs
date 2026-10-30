@@ -1,5 +1,5 @@
 const { chooseOption, settleDisclosure } = require("./controls.cjs");
-const { test, expect } = require("@playwright/test");
+const { test: base, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
 const { mkdtemp, rm } = require("node:fs/promises");
@@ -7,114 +7,130 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const net = require("node:net");
 
-test("consultation navigation, tied pages, persistent views, chart drilldown and accessible time help", async ({
-  browser,
-  browserName,
-}) => {
-  const directory = await mkdtemp(join(tmpdir(), "scrobbl-consultation-"));
-  const socket = net.createServer();
-  socket.listen(0, "127.0.0.1");
-  await once(socket, "listening");
-  const port = socket.address().port;
-  await new Promise((resolve) => socket.close(resolve));
-  const child = spawn(
-    resolve(
-      process.env.CARGO_TARGET_DIR || "target",
-      "debug",
-      "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
-    ),
-    [],
-    {
-      env: {
-        ...process.env,
-        SCROBBL_PORT: String(port),
-        SCROBBL_BIND: "127.0.0.1",
-        SCROBBL_DATA_DIR: directory,
-        SCROBBL_EXTERNAL_ORIGIN: `http://127.0.0.1:${port}`,
-        SPOTIFY_CLIENT_ID: "",
-        SPOTIFY_CLIENT_SECRET: "",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  let logs = "";
-  child.stdout.on("data", (data) => (logs += data));
-  child.stderr.on("data", (data) => (logs += data));
-  const context = await browser.newContext({
-    baseURL: `http://127.0.0.1:${port}`,
-  });
-  const page = await context.newPage();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  try {
-    await expect
-      .poll(async () => {
-        if (child.exitCode !== null) throw new Error(logs);
-        try {
-          return (await context.request.get("/healthz")).status();
-        } catch {
-          return 0;
-        }
-      })
-      .toBe(200);
-    await page.goto("/");
-    await page.getByLabel("Username", { exact: true }).fill("owner");
-    await page
-      .getByLabel("Password", { exact: true })
-      .fill("consultation browser password 7!");
-    await page
-      .getByLabel("Confirm password")
-      .fill("consultation browser password 7!");
-    await page.getByRole("button", { name: "Create your archive" }).click();
-    await expect(page.locator("#total-listens")).toHaveText("0");
-    const rows = [];
-    for (let i = 0; i < 115; i++) {
-      for (let n = 0; n < (i < 9 ? 3 : i < 11 ? 2 : 1); n++)
-        rows.push({
-          ts: new Date(Date.UTC(2025, 5, 1, 12, i * 5 + n)).toISOString(),
-          ms_played: 60000 + i,
-          master_metadata_track_name: `Consultation track ${String(i).padStart(3, "0")}`,
-          master_metadata_album_artist_name: "Consultation artist",
-          master_metadata_album_album_name: `Consultation album ${String(i).padStart(3, "0")}`,
-          spotify_track_uri: `spotify:track:${String(i).padStart(22, "0")}`,
-        });
-    }
-    rows.push({
-      ts: "2025-06-02T12:00:00Z",
-      ms_played: 29000,
-      master_metadata_track_name: "Below threshold only",
-      master_metadata_album_artist_name: "Consultation artist",
-      master_metadata_album_album_name: "Hidden album",
-      spotify_track_uri: "spotify:track:9999999999999999999999",
-    });
-    const session = await (await page.request.get("/api/session")).json();
-    const upload = await page.request.post("/api/import/spotify", {
-      headers: {
-        "x-csrf-token": session.csrf,
-        origin: new URL(page.url()).origin,
-      },
-      multipart: {
-        files: {
-          name: "consultation.json",
-          mimeType: "application/json",
-          buffer: Buffer.from(JSON.stringify(rows)),
+const test = base.extend({
+  archive: async ({ browser }, use) => {
+    const directory = await mkdtemp(join(tmpdir(), "scrobbl-consultation-"));
+    const socket = net.createServer();
+    socket.listen(0, "127.0.0.1");
+    await once(socket, "listening");
+    const port = socket.address().port;
+    await new Promise((resolve) => socket.close(resolve));
+    const child = spawn(
+      resolve(
+        process.env.CARGO_TARGET_DIR || "target",
+        "debug",
+        "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
+      ),
+      [],
+      {
+        env: {
+          ...process.env,
+          SCROBBL_PORT: String(port),
+          SCROBBL_BIND: "127.0.0.1",
+          SCROBBL_DATA_DIR: directory,
+          SCROBBL_EXTERNAL_ORIGIN: `http://127.0.0.1:${port}`,
+          SPOTIFY_CLIENT_ID: "",
+          SPOTIFY_CLIENT_SECRET: "",
         },
+        stdio: ["ignore", "pipe", "pipe"],
       },
+    );
+    let logs = "";
+    child.stdout.on("data", (data) => (logs += data));
+    child.stderr.on("data", (data) => (logs += data));
+    const context = await browser.newContext({
+      baseURL: `http://127.0.0.1:${port}`,
     });
-    expect(upload.ok(), await upload.text()).toBeTruthy();
-    const { job_id } = await upload.json();
-    await expect
-      .poll(
-        async () =>
-          (
-            await (
-              await page.request.get(`/api/v1/activities/${job_id}`)
-            ).json()
-          ).activity.state,
-      )
-      .toBe("completed");
-    await page.goto("/dashboard");
-    await expect(page.locator("#total-listens")).toHaveText("135");
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+      await expect
+        .poll(async () => {
+          if (child.exitCode !== null) throw new Error(logs);
+          try {
+            return (await context.request.get("/healthz")).status();
+          } catch {
+            return 0;
+          }
+        })
+        .toBe(200);
+      await page.goto("/");
+      await page.getByLabel("Username", { exact: true }).fill("owner");
+      await page
+        .getByLabel("Password", { exact: true })
+        .fill("consultation browser password 7!");
+      await page
+        .getByLabel("Confirm password")
+        .fill("consultation browser password 7!");
+      await page.getByRole("button", { name: "Create your archive" }).click();
+      await expect(page.locator("#total-listens")).toHaveText("0");
+      const rows = [];
+      for (let i = 0; i < 115; i++) {
+        for (let n = 0; n < (i < 9 ? 3 : i < 11 ? 2 : 1); n++)
+          rows.push({
+            ts: new Date(Date.UTC(2025, 5, 1, 12, i * 5 + n)).toISOString(),
+            ms_played: 60000 + i,
+            master_metadata_track_name: `Consultation track ${String(i).padStart(3, "0")}`,
+            master_metadata_album_artist_name: "Consultation artist",
+            master_metadata_album_album_name: `Consultation album ${String(i).padStart(3, "0")}`,
+            spotify_track_uri: `spotify:track:${String(i).padStart(22, "0")}`,
+          });
+      }
+      rows.push({
+        ts: "2025-06-02T12:00:00Z",
+        ms_played: 29000,
+        master_metadata_track_name: "Below threshold only",
+        master_metadata_album_artist_name: "Consultation artist",
+        master_metadata_album_album_name: "Hidden album",
+        spotify_track_uri: "spotify:track:9999999999999999999999",
+      });
+      const session = await (await page.request.get("/api/session")).json();
+      const upload = await page.request.post("/api/import/spotify", {
+        headers: {
+          "x-csrf-token": session.csrf,
+          origin: new URL(page.url()).origin,
+        },
+        multipart: {
+          files: {
+            name: "consultation.json",
+            mimeType: "application/json",
+            buffer: Buffer.from(JSON.stringify(rows)),
+          },
+        },
+      });
+      expect(upload.ok(), await upload.text()).toBeTruthy();
+      const { job_id } = await upload.json();
+      await expect
+        .poll(
+          async () =>
+            (
+              await (
+                await page.request.get(`/api/v1/activities/${job_id}`)
+              ).json()
+            ).activity.state,
+        )
+        .toBe("completed");
+      await page.goto("/dashboard");
+      await expect(page.locator("#total-listens")).toHaveText("135");
+      await use({ page, context, port });
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close().catch(() => {});
+      if (child.exitCode === null) {
+        const exited = once(child, "exit");
+        child.kill("SIGTERM");
+        await exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+});
+
+test.describe("consultation", () => {
+  test("consultation navigation, tied pages, persistent views, chart drilldown and accessible time help", async ({
+    archive: { page },
+  }) => {
     const help = page.getByRole("button", {
       name: "How we calculate listening time",
       exact: true,
@@ -285,6 +301,11 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       path: "test-results/consultation-desktop.png",
       fullPage: true,
     });
+  });
+
+  test("dashboard customization persists layout, playback, rankings and listening patterns", async ({
+    archive: { page },
+  }) => {
     // Customization Edit Mode verification
     const customizeBtn = page.getByRole("button", { name: "Personalizza" });
     await expect(customizeBtn).toBeVisible();
@@ -558,7 +579,14 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
     ).toHaveClass(/span-6/);
+  });
 
+  test("discovery widget and local period overrides persist independently of the global period", async ({
+    archive: { page },
+  }) => {
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Personalizza dashboard",
+    });
     // Add DiscoveryRatioWidget from catalog (#122)
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
@@ -757,7 +785,13 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
     ).toHaveCount(0);
+  });
 
+  test("listening time help remains accessible on touch screens and reports missing durations", async ({
+    archive: { page, context, port },
+    browser,
+    browserName,
+  }) => {
     if (browserName !== "firefox") {
       const touch = await browser.newContext({
         baseURL: `http://127.0.0.1:${port}`,
@@ -844,14 +878,5 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
         exact: false,
       }),
     ).toBeVisible();
-    expect(errors).toEqual([]);
-  } finally {
-    await context.close().catch(() => {});
-    if (child.exitCode === null) {
-      const exited = once(child, "exit");
-      child.kill("SIGTERM");
-      await exited;
-    }
-    await rm(directory, { recursive: true, force: true });
-  }
+  });
 });
