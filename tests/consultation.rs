@@ -1192,3 +1192,130 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn discovery_ratio_over_period_and_empty_state() {
+    let (_dir, state, token) = setup().await;
+
+    // Period 1: January 2025
+    // Track 1 listened on 2025-01-10 (historical)
+    // Track 2 listened on 2025-01-15 (historical)
+    let historical_1 = event(
+        1,
+        at("2025-01-10T10:00:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("art1", "Artist 1")],
+    );
+    let historical_2 = event(
+        2,
+        at("2025-01-15T12:00:00Z"),
+        Some(200000),
+        DurationKind::Actual,
+        &[("art2", "Artist 2")],
+    );
+
+    // Period 2: February 2025 (target period: 2025-02-01 to 2025-02-28)
+    // Track 1 played again -> Repeat
+    let repeat_1 = event(
+        1,
+        at("2025-02-10T14:00:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("art1", "Artist 1")],
+    );
+    // Track 3 played for the first time -> Discovery
+    let discovery_3 = event(
+        3,
+        at("2025-02-12T09:00:00Z"),
+        Some(210000),
+        DurationKind::Actual,
+        &[("art3", "Artist 3")],
+    );
+    // Track 4 played twice for the first time -> Discovery (counted once as a discovered track)
+    let discovery_4a = event(
+        4,
+        at("2025-02-14T15:00:00Z"),
+        Some(190000),
+        DurationKind::Actual,
+        &[("art4", "Artist 4")],
+    );
+    let discovery_4b = event(
+        4,
+        at("2025-02-15T16:00:00Z"),
+        Some(190000),
+        DurationKind::Actual,
+        &[("art4", "Artist 4")],
+    );
+    // Track 5 played with short listen (<30s) -> uncounted, should be ignored
+    let uncounted_5 = event(
+        5,
+        at("2025-02-16T18:00:00Z"),
+        Some(10000),
+        DurationKind::Actual,
+        &[("art5", "Artist 5")],
+    );
+
+    save(
+        &state.storage,
+        &[
+            historical_1,
+            historical_2,
+            repeat_1,
+            discovery_3,
+            discovery_4a,
+            discovery_4b,
+            uncounted_5,
+        ],
+    )
+    .await;
+
+    // Query February 2025
+    let (status, body) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?from=2025-02-01&to=2025-02-28",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["discoveries"], 2); // Track 3, Track 4
+    assert_eq!(body["repeats"], 1); // Track 1
+    assert_eq!(body["total"], 3);
+    let percent = body["discovery_percent"].as_f64().unwrap();
+    assert!((percent - (2.0 / 3.0 * 100.0)).abs() < 1e-6);
+
+    // Query an empty period (March 2025)
+    let (status, empty_body) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?from=2025-03-01&to=2025-03-31",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty_body["discoveries"], 0);
+    assert_eq!(empty_body["repeats"], 0);
+    assert_eq!(empty_body["total"], 0);
+    assert_eq!(empty_body["discovery_percent"], 0.0);
+
+    // Layout validation accepts discovery_ratio widget
+    let layout_with_discovery = json!({
+        "version": 0,
+        "widgets": [
+            {
+                "id": "dr-1",
+                "type": "discovery_ratio",
+                "colSpan": 3
+            }
+        ]
+    });
+    let (status, saved_layout) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        layout_with_discovery,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_layout["widgets"][0]["type"], "discovery_ratio");
+}

@@ -35,6 +35,7 @@ import {
   MusicPageSkeleton,
   OverviewSkeleton,
   RankingsSkeleton,
+  SkeletonBlock,
   SkeletonList,
 } from "./skeleton";
 import { periods, isBool, useBrowserPreference } from "./preferences";
@@ -963,6 +964,12 @@ const CATALOG_ITEMS = [
       "Elenco cronologico degli ascolti recenti registrati nell'archivio.",
     defaultSpan: 6 as const,
   },
+  {
+    type: "discovery_ratio",
+    name: "Rapporto scoperte",
+    description: "Confronto tra brani ascoltati per la prima volta e riascolti",
+    defaultSpan: 3 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1036,6 +1043,129 @@ export function RecentListensWidget({
   );
 }
 
+export function DiscoveryRatioWidget({
+  params,
+  version,
+}: {
+  params: URLSearchParams;
+  version: number;
+}) {
+  const result = useLoad(
+    () => api.discoveryRatio(params),
+    `discovery-ratio:${params}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+
+  return (
+    <article
+      className="panel padded discovery-ratio-widget"
+      aria-label="Nuove scoperte vs Riascolti"
+    >
+      <div className="panel-title">
+        <h2>Nuove scoperte vs Riascolti</h2>
+      </div>
+      <p className="subtle">
+        Confronto tra brani ascoltati per la prima volta e riascolti.
+      </p>
+      {result.error && <ErrorText>{result.error}</ErrorText>}
+      {!result.data && !result.error && (
+        <div className="skeleton-container" role="status" aria-busy="true">
+          <span className="visually-hidden">
+            Caricamento rapporto scoperte…
+          </span>
+          <div className="discovery-ratio-skeleton">
+            <div className="skeleton-metrics">
+              <SkeletonBlock width="40%" height={38} borderRadius={4} />
+              <SkeletonBlock width="25%" height={14} borderRadius={4} />
+            </div>
+            <SkeletonBlock
+              width="100%"
+              height={12}
+              borderRadius={6}
+              style={{ margin: "14px 0 16px" }}
+            />
+            <div className="skeleton-legend">
+              <SkeletonBlock width="35%" height={14} borderRadius={4} />
+              <SkeletonBlock width="35%" height={14} borderRadius={4} />
+            </div>
+          </div>
+        </div>
+      )}
+      {result.data && result.data.total === 0 && (
+        <div className="empty-state" role="status">
+          <p>Nessun ascolto nel periodo selezionato.</p>
+        </div>
+      )}
+      {result.data && result.data.total > 0 && (
+        <div className="discovery-ratio-content">
+          <div className="discovery-ratio-metrics">
+            <div className="stat">
+              <span className="stat-number tabular-nums">
+                {Math.round(result.data.discovery_percent)}%
+              </span>
+              <span className="stat-label">nuove scoperte</span>
+            </div>
+            <div className="stat-secondary">
+              <span className="tabular-nums">
+                {100 - Math.round(result.data.discovery_percent)}%
+              </span>{" "}
+              <span className="subtle">riascolti</span>
+            </div>
+          </div>
+
+          <div
+            className="discovery-ratio-bar"
+            role="progressbar"
+            aria-valuenow={Math.round(result.data.discovery_percent)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Rapporto scoperte: ${Math.round(result.data.discovery_percent)}% nuove scoperte, ${100 - Math.round(result.data.discovery_percent)}% riascolti`}
+          >
+            <div
+              className="discovery-ratio-segment discoveries"
+              style={{ width: `${result.data.discovery_percent}%` }}
+              title={`Nuove scoperte: ${result.data.discoveries} (${result.data.discovery_percent.toFixed(1)}%)`}
+            />
+            <div
+              className="discovery-ratio-segment repeats"
+              style={{ width: `${100 - result.data.discovery_percent}%` }}
+              title={`Riascolti: ${result.data.repeats} (${(100 - result.data.discovery_percent).toFixed(1)}%)`}
+            />
+          </div>
+
+          <div className="discovery-ratio-legend">
+            <div className="discovery-legend-item">
+              <span
+                className="legend-indicator discoveries"
+                aria-hidden="true"
+              />
+              <span className="legend-label">Nuove scoperte:</span>
+              <span className="legend-count tabular-nums">
+                {result.data.discoveries.toLocaleString()}
+              </span>
+              <span className="legend-percent tabular-nums">
+                ({result.data.discovery_percent.toFixed(1)}%)
+              </span>
+            </div>
+            <div className="discovery-legend-item">
+              <span className="legend-indicator repeats" aria-hidden="true" />
+              <span className="legend-label">Riascolti:</span>
+              <span className="legend-count tabular-nums">
+                {result.data.repeats.toLocaleString()}
+              </span>
+              <span className="legend-percent tabular-nums">
+                ({(100 - result.data.discovery_percent).toFixed(1)}%)
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
   if (to < 0 || to >= widgets.length || from === to) return widgets;
   const copy = [...widgets];
@@ -1080,7 +1210,7 @@ export function Overview({
       setLayout(layoutResult.data);
       setSavedLayout(layoutResult.data);
     }
-  }, [layoutResult.data, editing]);
+  }, [layoutResult.data]);
 
   const handleStartEditing = () => {
     setEditing(true);
@@ -1185,6 +1315,10 @@ export function Overview({
             preferences={preferences}
             params={params}
           />
+        );
+      case "discovery_ratio":
+        return (
+          <DiscoveryRatioWidget params={params} version={preferences.version} />
         );
       default:
         return null;

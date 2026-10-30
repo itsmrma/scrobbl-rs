@@ -30,6 +30,7 @@ import type {
   GroupPage,
   Listen,
   DashboardLayout,
+  DiscoveryRatio,
 } from "./generated";
 
 class SessionExpired extends Error {}
@@ -298,6 +299,8 @@ export const api = {
     ),
   chart: (params: URLSearchParams) =>
     request<ActivityChart>(`/api/v1/consultation/activity?${params}`),
+  discoveryRatio: (params: URLSearchParams) =>
+    request<DiscoveryRatio>(`/api/v1/consultation/discovery-ratio?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

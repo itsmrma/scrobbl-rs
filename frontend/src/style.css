@@ -5300,6 +5300,123 @@ dialog {
     grid-template-columns: 34px minmax(0, 1fr) 90px;
   }
 }
+.discovery-ratio-widget {
+  min-height: 180px;
+}
+.discovery-ratio-widget .empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.discovery-ratio-metrics {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.discovery-ratio-metrics .stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.discovery-ratio-metrics .stat-number {
+  font-size: 38px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.discovery-ratio-metrics .stat-label {
+  font-size: 14px;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+.discovery-ratio-metrics .stat-secondary {
+  font-size: 14px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.discovery-ratio-bar {
+  display: flex;
+  height: 12px;
+  border-radius: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  margin: 14px 0 16px;
+}
+.discovery-ratio-segment {
+  height: 100%;
+  transition: width 240ms ease-out;
+}
+.discovery-ratio-segment.discoveries {
+  background: var(--accent);
+}
+.discovery-ratio-segment.repeats {
+  background: var(--muted);
+}
+.discovery-ratio-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 14px;
+}
+.discovery-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.discovery-legend-item .legend-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.discovery-legend-item .legend-indicator.discoveries {
+  background: var(--accent);
+}
+.discovery-legend-item .legend-indicator.repeats {
+  background: var(--muted);
+}
+.discovery-legend-item .legend-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+.discovery-legend-item .legend-count {
+  font-weight: 500;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.discovery-legend-item .legend-percent {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.discovery-ratio-skeleton {
+  padding: 8px 0;
+}
+.discovery-ratio-skeleton .skeleton-metrics {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+}
+.discovery-ratio-skeleton .skeleton-legend {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .discovery-ratio-segment {
+    transition: none !important;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .dashboard-edit-toolbar {
     animation: none !important;
