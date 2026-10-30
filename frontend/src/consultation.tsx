@@ -2250,7 +2250,7 @@ export function DashboardEditToolbar({
       <div className="dashboard-edit-actions">
         <button
           type="button"
-          className="button secondary"
+          className="button secondary customize-template-button"
           disabled={saving}
           onClick={onAddWidget}
         >
@@ -3777,7 +3777,10 @@ export function MusicPage({
                   aria-label={customizeAriaLabel}
                   onClick={() => layoutEditor.handleStartEditing()}
                 >
-                  <Icon>tune</Icon> {customizeAriaLabel}
+                  <Icon>tune</Icon>{" "}
+                  <span className="customize-template-label">
+                    {customizeAriaLabel}
+                  </span>
                 </button>
               )}
               <PeriodFilters selection={selection} />

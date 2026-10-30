@@ -910,6 +910,58 @@ dialog.widget-catalog-dialog {
   .widget-totals .stats-grid {
     grid-template-columns: 1fr;
   }
+  .dashboard-widget .ranking-toolbar {
+    display: flex;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .dashboard-widget .ranking-toolbar .search-inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    width: 100%;
+    max-width: none;
+    flex: none;
+    align-items: stretch;
+  }
+  .dashboard-widget .ranking-toolbar .view-toggle {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: 100%;
+    flex: none;
+    gap: 4px;
+  }
+  .dashboard-widget .ranking-toolbar .view-toggle button {
+    min-width: 0;
+    gap: 4px;
+    padding-inline: 4px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dashboard-widget .ranking-toolbar .view-toggle .material-icons-outlined,
+  .dashboard-widget .ranking-toolbar .view-toggle .material-icons {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+  .dashboard-widget .ranking-toolbar .card-size-control {
+    border-left: 0;
+    padding-left: 0;
+    flex: none;
+  }
+  .dashboard-widget .ranking-toolbar .card-size-control.inactive {
+    display: none;
+  }
+}
+@container (max-width: 320px) {
+  .dashboard-widget .ranking-toolbar .view-toggle button {
+    padding-inline: 2px;
+    font-size: 11px;
+    gap: 2px;
+  }
 }
 @media (max-width: 600px) {
   .catalog-item-card {
@@ -1126,25 +1178,13 @@ dialog.widget-catalog-dialog {
   border: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
 }
 .calendar-cell.level-1 {
-  background: color-mix(
-    in oklab,
-    var(--chart-accent) 35%,
-    transparent
-  );
+  background: color-mix(in oklab, var(--chart-accent) 35%, transparent);
 }
 .calendar-cell.level-2 {
-  background: color-mix(
-    in oklab,
-    var(--chart-accent) 60%,
-    transparent
-  );
+  background: color-mix(in oklab, var(--chart-accent) 60%, transparent);
 }
 .calendar-cell.level-3 {
-  background: color-mix(
-    in oklab,
-    var(--chart-accent) 85%,
-    transparent
-  );
+  background: color-mix(in oklab, var(--chart-accent) 85%, transparent);
 }
 .calendar-cell.level-4 {
   background: var(--chart-accent);
@@ -1171,11 +1211,7 @@ dialog.widget-catalog-dialog {
   flex-direction: column;
 }
 .widget-period-badge.all-time {
-  background: color-mix(
-    in oklab,
-    var(--chart-accent) 20%,
-    transparent
-  );
+  background: color-mix(in oklab, var(--chart-accent) 20%, transparent);
   color: var(--text);
   font-weight: 500;
 }
@@ -1263,4 +1299,30 @@ dialog.widget-catalog-dialog {
   flex-direction: column;
   gap: 12px;
   padding: 8px 0;
+}
+
+.music-heading .music-period {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+.customize-template-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 44px;
+}
+.customize-template-button .customize-template-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 360px) {
+  .customize-template-button {
+    font-size: 12px;
+    padding-inline: 8px;
+    gap: 4px;
+  }
 }
