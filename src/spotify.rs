@@ -56,7 +56,7 @@ impl Spotify {
         }
     }
 }
-pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')";
+pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','now_playing_retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')";
 
 async fn credentials(state: &AppState) -> Result<Option<(String, String)>> {
     if let (Some(id), Some(secret)) = (&state.config.env_client_id, &state.config.env_client_secret)
@@ -108,10 +108,10 @@ pub async fn save_intervals(
 ) -> Result<Json<crate::dto::SpotifyIntervals>> {
     auth::require_write(&state, &headers).await?;
     if !(60..=86400).contains(&form.sync_seconds)
-        || !(15..=86400).contains(&form.now_playing_seconds)
+        || !(form.now_playing_seconds == 0 || (15..=86400).contains(&form.now_playing_seconds))
     {
         return Err(AppError::BadRequest(
-            "Use 60–86400 seconds for collection and 15–86400 seconds for now playing.".into(),
+            "Use 60–86400 seconds for collection and 0 or 15–86400 seconds for now playing.".into(),
         ));
     }
     let _now = state.spotify.now_gate.lock().await;
@@ -145,6 +145,7 @@ pub async fn status(
             'spotify_intervals',
             'spotify_verified_at_ms',
             'retry_at_ms',
+            'now_playing_retry_at_ms',
             'spotify_action_required',
             'spotify_error',
             'collection_error',
@@ -490,6 +491,55 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
         .await
         .map_err(|_| AppError::Spotify("Spotify returned an unreadable response.".into()))
 }
+async fn checked_json_now_playing(state: &AppState, response: reqwest::Response) -> Result<Value> {
+    let status = response.status();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let wait = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(300)
+            .clamp(1, 604_800);
+        let retry_at = auth::now_ms() + wait * 1000;
+        diagnostics(
+            state,
+            &[
+                ("now_playing_retry_at_ms", &retry_at.to_string()),
+                (
+                    "now_playing_error",
+                    &format!("Spotify player request limit reached. Retrying in {wait} seconds."),
+                ),
+            ],
+        )
+        .await?;
+        return Err(AppError::Spotify(format!(
+            "Spotify player request limit reached. Retrying in {wait} seconds."
+        )));
+    }
+    if matches!(status.as_u16(), 400 | 401 | 403) {
+        diagnostic(state, "spotify_action_required", "true").await?;
+    }
+    if !status.is_success() && status != StatusCode::NO_CONTENT {
+        let message = match status.as_u16() {
+            400 | 401 => {
+                "Spotify authorization expired or was rejected. Please reconnect your account."
+            }
+            403 => {
+                "Spotify denied access. Check Premium, the app allowlist and granted permissions."
+            }
+            _ => "Spotify player is temporarily unavailable.",
+        };
+        return Err(AppError::Spotify(message.into()));
+    }
+    if status == StatusCode::NO_CONTENT {
+        return Ok(Value::Null);
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| AppError::Spotify("Spotify returned an unreadable response.".into()))
+}
 async fn access_token(state: &AppState, force_refresh: bool) -> Result<String> {
     if let Some(retry) = db::setting(&state.db, "retry_at_ms")
         .await?
@@ -546,6 +596,7 @@ async fn api_get_locked(
     path: &str,
     params: &[(&str, String)],
 ) -> Result<(Value, i64, i64)> {
+    let is_now_playing = path == "/me/player/currently-playing";
     let token = access_token(state, false).await?;
     let url = format!("{}{path}", state.spotify.api_base);
     let mut source_requested_at_ms = auth::now_ms();
@@ -573,7 +624,11 @@ async fn api_get_locked(
                 AppError::Spotify("Could not reach Spotify. Collection will retry.".into())
             })?;
     }
-    let value = checked_json(state, response).await?;
+    let value = if is_now_playing {
+        checked_json_now_playing(state, response).await?
+    } else {
+        checked_json(state, response).await?
+    };
     let response_received_at_ms = auth::now_ms();
     diagnostics(
         state,
@@ -866,27 +921,51 @@ async fn now_playing_in_window(
     {
         return Ok(Json(Value::Null));
     }
+    let intervals = intervals(&state).await?;
+    if intervals.now_playing_seconds == 0 {
+        return Ok(Json(Value::Null));
+    }
     let requested_at_ms = auth::now_ms();
     let _now = state.spotify.now_gate.lock().await;
-    let interval = intervals(&state).await?.now_playing_seconds as i64 * 1000;
-    if let Some((time, value)) = &*state.spotify.cache.lock().await
-        && poll_at_ms.unwrap_or_else(auth::now_ms) / interval == time / interval
-    {
-        let mut value = value.clone();
-        let external = value["spotify_url"]
-            .as_str()
-            .and_then(|url| url.strip_prefix("https://open.spotify.com/track/"))
-            .map(|id| format!("spotify:track:{id}"));
-        let (track_id, cover_url) =
-            local_now_playing_links(&state.read_db, external.as_deref(), None).await?;
-        if let Some(object) = value.as_object_mut() {
-            object.insert("served_at_ms".into(), json!(auth::now_ms()));
-            object.insert("track_id".into(), json!(track_id));
-            if cover_url.is_some() || !object.contains_key("cover_url") {
-                object.insert("cover_url".into(), json!(cover_url));
+    let interval = intervals.now_playing_seconds as i64 * 1000;
+    let now = poll_at_ms.unwrap_or(requested_at_ms);
+    if let Some((time, value)) = &*state.spotify.cache.lock().await {
+        let ttl = if value.is_null() {
+            interval.max(60_000)
+        } else {
+            interval
+        };
+        if now.saturating_sub(*time) < ttl {
+            let mut value = value.clone();
+            let external = value["spotify_url"]
+                .as_str()
+                .and_then(|url| url.strip_prefix("https://open.spotify.com/track/"))
+                .map(|id| format!("spotify:track:{id}"));
+            let (track_id, cover_url) =
+                local_now_playing_links(&state.read_db, external.as_deref(), None).await?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert("served_at_ms".into(), json!(auth::now_ms()));
+                object.insert("track_id".into(), json!(track_id));
+                if cover_url.is_some() || !object.contains_key("cover_url") {
+                    object.insert("cover_url".into(), json!(cover_url));
+                }
             }
+            return Ok(Json(value));
         }
-        return Ok(Json(value));
+    }
+    if let Some(retry) = db::setting(&state.db, "now_playing_retry_at_ms")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok())
+        && retry > now
+    {
+        return Ok(Json(Value::Null));
+    }
+    if let Some(retry) = db::setting(&state.db, "retry_at_ms")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok())
+        && retry > now
+    {
+        return Ok(Json(Value::Null));
     }
     let connected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM spotify_tokens)")
         .fetch_one(&state.private_db)
@@ -1886,16 +1965,106 @@ mod tests {
         state.storage.close().await;
     }
     #[tokio::test]
-    async fn a_new_poll_window_refreshes_even_when_previous_sample_is_younger_than_the_interval() {
+    async fn now_playing_refreshes_when_sample_is_older_than_the_interval() {
         let (_dir,state,mock,handle)=fixture(vec![reply("/v1/me/player/currently-playing",json!({"is_playing":true,"currently_playing_type":"track","item":track(),"timestamp":1234}))],false).await;
         let headers = owner_headers(&state).await;
-        let bucket = auth::now_ms() / 30000 * 30000;
-        *state.spotify.cache.lock().await = Some((bucket - 1, json!({"title":"stale sample"})));
-        let sample = now_playing_in_window(state.clone(), headers, Some(bucket))
+        let now = auth::now_ms();
+        *state.spotify.cache.lock().await = Some((now - 30_001, json!({"title":"stale sample"})));
+        let sample = now_playing_in_window(state.clone(), headers, Some(now))
             .await
             .unwrap()
             .0;
         assert_eq!(sample["title"], "Test track");
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn now_playing_rate_limit_does_not_block_collection_sync() {
+        let at = 1_749_000_000_000;
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/me/player/currently-playing",
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: json!({}),
+                    retry: Some("3600"),
+                },
+                reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
+            ],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        assert!(
+            now_playing(State(state.clone()), headers.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            db::setting(&state.db, "retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::setting(&state.db, "now_playing_retry_at_ms")
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let report = sync(&state).await.unwrap();
+        assert_eq!(report["added"], 1);
+        let s = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(s.collection, "active");
+        assert!(s.now_playing_error.is_some());
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn now_playing_disabled_when_interval_is_zero() {
+        let (_dir, state, mock, handle) = fixture(vec![], false).await;
+        let headers = owner_headers(&state).await;
+        let configured = crate::dto::SpotifyIntervals {
+            sync_seconds: 60,
+            now_playing_seconds: 0,
+        };
+        let mut save_headers = headers.clone();
+        save_headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        let _ = save_intervals(State(state.clone()), save_headers, Json(configured))
+            .await
+            .unwrap();
+        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        assert!(sample.is_null());
+        assert_eq!(mock.calls.lock().await.len(), 0);
+        handle.abort();
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn now_playing_caches_null_for_at_least_sixty_seconds_when_idle() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/currently-playing",
+                status: StatusCode::NO_CONTENT,
+                body: json!(null),
+                retry: None,
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        let first = now_playing(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert!(first.is_null());
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        let poll_at = auth::now_ms() + 45_000;
+        let second = now_playing_in_window(state.clone(), headers, Some(poll_at))
+            .await
+            .unwrap()
+            .0;
+        assert!(second.is_null());
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
         state.storage.close().await;

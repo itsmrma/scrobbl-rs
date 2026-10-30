@@ -50,10 +50,12 @@ export function NowPlayingProvider({
   statusError: string;
   children: ReactNode;
 }) {
+  const enabled =
+    !!status?.connected && (status?.now_playing_seconds ?? 30) > 0;
   const { data, error, loading } = useLoad<NowPlaying | null>(
     api.nowPlaying,
-    `now:${!!status?.connected}`,
-    !!status?.connected,
+    `now:${enabled}`,
+    enabled,
     (status?.now_playing_seconds || 30) * 1000,
   );
   return (

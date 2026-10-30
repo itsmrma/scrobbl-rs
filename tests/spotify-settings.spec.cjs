@@ -91,6 +91,20 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
     data: { sync_seconds: 59, now_playing_seconds: 14 },
   });
   expect(invalid.status()).toBe(400);
+  const zeroNow = await page.request.post("/api/spotify/intervals", {
+    headers: { Origin: baseURL, "X-CSRF-Token": owner.csrf },
+    data: { sync_seconds: 90, now_playing_seconds: 0 },
+  });
+  expect(zeroNow.status()).toBe(200);
+  effective = await (await page.request.get("/api/spotify/status")).json();
+  expect([effective.sync_seconds, effective.now_playing_seconds]).toEqual([
+    90, 0,
+  ]);
+  const restoreNow = await page.request.post("/api/spotify/intervals", {
+    headers: { Origin: baseURL, "X-CSRF-Token": owner.csrf },
+    data: { sync_seconds: 90, now_playing_seconds: 20 },
+  });
+  expect(restoreNow.status()).toBe(200);
   effective = await (await page.request.get("/api/spotify/status")).json();
   expect([effective.sync_seconds, effective.now_playing_seconds]).toEqual([
     90, 20,
