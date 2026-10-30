@@ -285,6 +285,71 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       path: "test-results/consultation-desktop.png",
       fullPage: true,
     });
+    // Customization Edit Mode verification
+    const customizeBtn = page.getByRole("button", { name: "Personalizza" });
+    await expect(customizeBtn).toBeVisible();
+    await customizeBtn.click();
+
+    // Verify Edit Mode toolbar is displayed
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Personalizza dashboard",
+    });
+    await expect(editToolbar).toBeVisible();
+    await expect(
+      editToolbar.getByRole("button", { name: "Aggiungi widget" }),
+    ).toBeVisible();
+    await expect(
+      editToolbar.getByRole("button", { name: "Ripristina predefinito" }),
+    ).toBeVisible();
+    await expect(
+      editToolbar.getByRole("button", { name: "Annulla" }),
+    ).toBeVisible();
+    await expect(
+      editToolbar.getByRole("button", { name: "Salva modifiche" }),
+    ).toBeVisible();
+
+    // Verify widgets show dashed border and edit controls
+    const totalsWidget = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(totalsWidget).toHaveClass(/span-6/);
+    await expect(totalsWidget).toHaveClass(/editing/);
+    const spanButton = totalsWidget.locator(".widget-span-button");
+    await expect(spanButton).toBeVisible();
+
+    // Cycle span (6 -> 2)
+    await spanButton.click();
+    await expect(totalsWidget).toHaveClass(/span-2/);
+
+    // Save changes
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    // Verify persistence across page reload
+    await page.reload();
+    const totalsReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(totalsReloaded).toHaveClass(/span-2/);
+
+    // Reset to default
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar
+      .getByRole("button", { name: "Ripristina predefinito" })
+      .click();
+    const totalsAfterReset = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(totalsAfterReset).toHaveClass(/span-6/);
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    await page.reload();
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='totals']"),
+    ).toHaveClass(/span-6/);
+
     if (browserName !== "firefox") {
       const touch = await browser.newContext({
         baseURL: `http://127.0.0.1:${port}`,

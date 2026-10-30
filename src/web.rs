@@ -118,6 +118,10 @@ pub fn router(state: AppState) -> Router {
             get(crate::preferences::get).post(crate::preferences::save),
         )
         .route(
+            "/api/v1/dashboard/layout",
+            get(crate::dashboard_layout::get).post(crate::dashboard_layout::save),
+        )
+        .route(
             "/api/v1/listenbrainz/limits",
             get(crate::listenbrainz::limits),
         )

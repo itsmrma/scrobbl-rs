@@ -51,3 +51,5 @@ export type ApiSelection = { from_ms: number | null, until_ms: number | null, co
 export type ApiListen = { id: string, played_at_ms: number, track_id: string, title: string, album_id: string | null, album: string | null, artists: Array<Artist>, track_duration_ms: number | null, listened_ms: number | null, duration_kind: DurationKind, counted: boolean, sources: Array<string>, };
 export type ApiRemoval = { id: string, replacement_id: string | null, };
 export type ApiPage = { api_version: number, instance_id: string, generation: string, from_revision: number | null, revision: number, retained_from: number, snapshot_id: string, expires_at_ms: number, selection: ApiSelection, items: Array<ApiListen>, removed: Array<ApiRemoval>, next_cursor: string | null, sync_cursor: string | null, complete: boolean, };
+export type WidgetConfig = { id: string, type: string, colSpan: 2 | 3 | 4 | 6, periodOverride?: string | null, };
+export type DashboardLayout = { version: number, widgets: Array<WidgetConfig>, };

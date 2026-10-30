@@ -29,6 +29,7 @@ import type {
   Edit,
   GroupPage,
   Listen,
+  DashboardLayout,
 } from "./generated";
 
 class SessionExpired extends Error {}
@@ -274,6 +275,9 @@ export const api = {
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>
     post<SavedPreferences>("/api/v1/preferences", form),
+  dashboardLayout: () => request<DashboardLayout>("/api/v1/dashboard/layout"),
+  saveDashboardLayout: (layout: DashboardLayout) =>
+    post<DashboardLayout>("/api/v1/dashboard/layout", layout),
   dashboard: (params: URLSearchParams) =>
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>

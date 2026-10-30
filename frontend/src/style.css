@@ -5134,6 +5134,177 @@ dialog {
   gap: 24px;
   margin-bottom: 24px;
 }
+.overview-heading-actions {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.overview-heading-actions > .button {
+  min-height: 44px;
+}
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 18px;
+  width: 100%;
+}
+@media (max-width: 600px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-grid > .dashboard-widget {
+    grid-column: 1 / -1 !important;
+  }
+}
+.dashboard-widget {
+  container-type: inline-size;
+  min-width: 0;
+}
+.dashboard-widget.span-2 {
+  grid-column: span 2;
+}
+.dashboard-widget.span-3 {
+  grid-column: span 3;
+}
+.dashboard-widget.span-4 {
+  grid-column: span 4;
+}
+.dashboard-widget.span-6 {
+  grid-column: span 6;
+}
+.dashboard-widget.editing {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 4px;
+  transition: border-color 160ms ease-out;
+}
+.dashboard-widget.editing:hover {
+  border-color: var(--accent);
+}
+.dashboard-edit-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+  animation: view-in 160ms ease-out;
+}
+.dashboard-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.dashboard-edit-actions .button {
+  min-height: 44px;
+}
+.widget-edit-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-raised);
+  border-bottom: 1px dashed var(--border);
+  border-radius: 8px 8px 0 0;
+  margin-bottom: 8px;
+}
+.widget-control {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.widget-control:hover:not(:disabled) {
+  background: var(--surface-raised);
+  border-color: var(--muted);
+}
+.widget-control:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.widget-remove-button:hover:not(:disabled) {
+  border-color: var(--error);
+  color: var(--error);
+}
+.widget-catalog-dialog .dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.widget-catalog-dialog .dialog-header .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.widget-catalog-dialog .dialog-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.catalog-items-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.catalog-item-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-radius: 10px;
+}
+.catalog-item-info h3 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.catalog-item-info p {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.catalog-item-info small {
+  font-size: 12px;
+  color: var(--muted);
+}
+@container (max-width: 600px) {
+  .dashboard-widget .rankings-grid.overview-rankings {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-widget .stats-grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-widget .listen-row.listen-context-albums {
+    grid-template-columns: minmax(0, 1fr) 70px;
+  }
+  .dashboard-widget .listen-row.listen-context-tracks {
+    grid-template-columns: minmax(0, 1fr) 100px;
+  }
+  .dashboard-widget .listen-row.listen-context-artists {
+    grid-template-columns: 34px minmax(0, 1fr) 90px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-edit-toolbar {
+    animation: none !important;
+  }
+}
 .overview-heading .page-heading {
   margin-bottom: 0;
 }
