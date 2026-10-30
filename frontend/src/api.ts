@@ -31,6 +31,8 @@ import type {
   Listen,
   DashboardLayout,
   DiscoveryRatio,
+  ListeningCalendar,
+  ListeningMilestones,
 } from "./generated";
 
 class SessionExpired extends Error {}
@@ -276,9 +278,19 @@ export const api = {
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>
     post<SavedPreferences>("/api/v1/preferences", form),
-  dashboardLayout: () => request<DashboardLayout>("/api/v1/dashboard/layout"),
-  saveDashboardLayout: (layout: DashboardLayout) =>
-    post<DashboardLayout>("/api/v1/dashboard/layout", layout),
+  dashboardLayout: (template?: string) =>
+    request<DashboardLayout>(
+      template
+        ? `/api/v1/dashboard/layout?template=${encodeURIComponent(template)}`
+        : "/api/v1/dashboard/layout",
+    ),
+  saveDashboardLayout: (layout: DashboardLayout, template?: string) =>
+    post<DashboardLayout>(
+      template
+        ? `/api/v1/dashboard/layout?template=${encodeURIComponent(template)}`
+        : "/api/v1/dashboard/layout",
+      layout,
+    ),
   dashboard: (params: URLSearchParams) =>
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>
@@ -301,6 +313,10 @@ export const api = {
     request<ActivityChart>(`/api/v1/consultation/activity?${params}`),
   discoveryRatio: (params: URLSearchParams) =>
     request<DiscoveryRatio>(`/api/v1/consultation/discovery-ratio?${params}`),
+  calendar: (params: URLSearchParams) =>
+    request<ListeningCalendar>(`/api/v1/consultation/calendar?${params}`),
+  milestones: (params: URLSearchParams) =>
+    request<ListeningMilestones>(`/api/v1/consultation/milestones?${params}`),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

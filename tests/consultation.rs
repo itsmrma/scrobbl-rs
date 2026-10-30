@@ -1394,3 +1394,1566 @@ async fn discovery_ratio_over_period_and_empty_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(saved_layout["widgets"][0]["type"], "discovery_ratio");
 }
+
+#[tokio::test]
+async fn music_page_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Unconfigured template layouts return deterministic defaults
+    let (status, artist_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(artist_default["version"], 0);
+    let artist_widgets = artist_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(artist_widgets.len(), 6);
+    assert_eq!(artist_widgets[0]["type"], "totals");
+    assert_eq!(artist_widgets[0]["colSpan"], 6);
+    assert_eq!(artist_widgets[1]["type"], "activity_chart");
+    assert_eq!(artist_widgets[1]["colSpan"], 6);
+    assert_eq!(artist_widgets[2]["type"], "listening_patterns");
+    assert_eq!(artist_widgets[2]["colSpan"], 6);
+    assert_eq!(artist_widgets[3]["type"], "top_albums");
+    assert_eq!(artist_widgets[3]["colSpan"], 3);
+    assert_eq!(artist_widgets[4]["type"], "top_tracks");
+    assert_eq!(artist_widgets[4]["colSpan"], 3);
+    assert_eq!(artist_widgets[5]["type"], "history");
+    assert_eq!(artist_widgets[5]["colSpan"], 6);
+
+    let (status, album_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_default["version"], 0);
+    let album_widgets = album_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(album_widgets.len(), 5);
+    assert_eq!(album_widgets[0]["type"], "totals");
+    assert_eq!(album_widgets[0]["colSpan"], 6);
+    assert_eq!(album_widgets[1]["type"], "activity_chart");
+    assert_eq!(album_widgets[1]["colSpan"], 6);
+    assert_eq!(album_widgets[2]["type"], "listening_patterns");
+    assert_eq!(album_widgets[2]["colSpan"], 6);
+    assert_eq!(album_widgets[3]["type"], "top_tracks");
+    assert_eq!(album_widgets[3]["colSpan"], 6);
+    assert_eq!(album_widgets[4]["type"], "history");
+    assert_eq!(album_widgets[4]["colSpan"], 6);
+
+    let (status, track_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(track_default["version"], 0);
+    let track_widgets = track_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(track_widgets.len(), 4);
+    assert_eq!(track_widgets[0]["type"], "totals");
+    assert_eq!(track_widgets[0]["colSpan"], 6);
+    assert_eq!(track_widgets[1]["type"], "activity_chart");
+    assert_eq!(track_widgets[1]["colSpan"], 6);
+    assert_eq!(track_widgets[2]["type"], "listening_patterns");
+    assert_eq!(track_widgets[2]["colSpan"], 6);
+    assert_eq!(track_widgets[3]["type"], "history");
+    assert_eq!(track_widgets[3]["colSpan"], 6);
+
+    // 2. Unknown template rejected with 400 Bad Request
+    let (status, _) = get(&state, &token, "/api/v1/dashboard/layout?template=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=invalid",
+        artist_default.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 3. Matrix validation: reject home-only widgets on artist template
+    for forbidden_type in &["now_playing", "top_artists", "unified_rankings"] {
+        let mut invalid_artist = artist_default.clone();
+        invalid_artist["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=artist",
+            invalid_artist,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {forbidden_type} to be rejected on artist template"
+        );
+    }
+
+    // Matrix validation: reject music-only widget (history) on home template
+    let (status, home_default) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    let mut invalid_home = home_default.clone();
+    invalid_home["widgets"][0]["type"] = json!("history");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        invalid_home,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected history widget to be rejected on home template"
+    );
+
+    // 4. Modify and persist artist template layout
+    let mut modified_artist = artist_default.clone();
+    modified_artist["widgets"] = json!([
+        {
+            "id": "totals-custom",
+            "type": "totals",
+            "colSpan": 6
+        },
+        {
+            "id": "history-custom",
+            "type": "history",
+            "colSpan": 6
+        }
+    ]);
+    let (status, saved_artist) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        modified_artist.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_artist["version"], 1);
+    assert_eq!(saved_artist["widgets"].as_array().unwrap().len(), 2);
+
+    // 5. Verify direct database storage and isolation:
+    // settings has 'dashboard_layout_artist', while 'dashboard_layout' and others are untouched.
+    let stored_artist_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_artist: Value = serde_json::from_str(&stored_artist_json).unwrap();
+    assert_eq!(parsed_artist["version"], 1);
+
+    let stored_home: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_home.is_none());
+
+    let (status, read_home) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_home["version"], 0);
+
+    let (status, read_album) = get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_album["version"], 0);
+
+    // 6. Optimistic concurrency conflict on artist template
+    let mut stale_artist = artist_default.clone();
+    stale_artist["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        stale_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 7. Empty music layout is permitted and persisted (does NOT fall back to default)
+    let empty_artist = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        empty_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+
+    // Empty home layout is rejected
+    let empty_home = json!({
+        "version": 0,
+        "widgets": []
+    });
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        empty_home,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn album_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Unconfigured album template layout returns deterministic default
+    let (status, album_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_default["version"], 0);
+    let album_widgets = album_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(album_widgets.len(), 5);
+    assert_eq!(album_widgets[0]["type"], "totals");
+    assert_eq!(album_widgets[0]["colSpan"], 6);
+    assert_eq!(album_widgets[1]["type"], "activity_chart");
+    assert_eq!(album_widgets[1]["colSpan"], 6);
+    assert_eq!(album_widgets[2]["type"], "listening_patterns");
+    assert_eq!(album_widgets[2]["colSpan"], 6);
+    assert_eq!(album_widgets[3]["type"], "top_tracks");
+    assert_eq!(album_widgets[3]["colSpan"], 6);
+    assert_eq!(album_widgets[4]["type"], "history");
+    assert_eq!(album_widgets[4]["colSpan"], 6);
+
+    // 2. Matrix validation: reject forbidden widgets on album template
+    // forbidden: top_albums, top_artists, now_playing, unified_rankings
+    for forbidden_type in &[
+        "top_albums",
+        "top_artists",
+        "now_playing",
+        "unified_rankings",
+    ] {
+        let mut invalid_album = album_default.clone();
+        invalid_album["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=album",
+            invalid_album,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {forbidden_type} to be rejected on album template"
+        );
+    }
+
+    // 3. Matrix validation: allow valid widgets on album template
+    // allowed: totals, activity_chart, listening_patterns, recent_listens, history, top_tracks
+    let valid_album = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "w1", "type": "totals", "colSpan": 6 },
+            { "id": "w2", "type": "activity_chart", "colSpan": 6 },
+            { "id": "w3", "type": "listening_patterns", "colSpan": 6 },
+            { "id": "w4", "type": "top_tracks", "colSpan": 6 },
+            { "id": "w5", "type": "recent_listens", "colSpan": 3 },
+            { "id": "w6", "type": "history", "colSpan": 6 }
+        ]
+    });
+    let (status, saved_valid) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        valid_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_valid["version"], 1);
+    assert_eq!(saved_valid["widgets"].as_array().unwrap().len(), 6);
+
+    // 4. Persistence isolation: settings table has 'dashboard_layout_album',
+    // while 'dashboard_layout', 'dashboard_layout_artist', 'dashboard_layout_track' remain absent.
+    let stored_album_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_album'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_album: Value = serde_json::from_str(&stored_album_json).unwrap();
+    assert_eq!(parsed_album["version"], 1);
+
+    let stored_artist: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_artist.is_none());
+
+    let (status, read_home) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_home["version"], 0);
+
+    let (status, read_artist) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_artist["version"], 0);
+
+    // 5. Optimistic concurrency conflict on album template
+    let mut stale_album = album_default.clone();
+    stale_album["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        stale_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 6. Empty album layout is permitted and persisted (does NOT fall back to default)
+    let empty_album = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        empty_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) = get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn track_template_layout_persistence_matrix_validation_and_concurrency() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. GET default track template layout
+    let (status, track_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(track_default["version"], 0);
+    let widgets = track_default["widgets"].as_array().expect("widgets array");
+    assert_eq!(widgets.len(), 4);
+    assert_eq!(widgets[0]["type"], "totals");
+    assert_eq!(widgets[0]["colSpan"], 6);
+    assert_eq!(widgets[1]["type"], "activity_chart");
+    assert_eq!(widgets[1]["colSpan"], 6);
+    assert_eq!(widgets[2]["type"], "listening_patterns");
+    assert_eq!(widgets[2]["colSpan"], 6);
+    assert_eq!(widgets[3]["type"], "history");
+    assert_eq!(widgets[3]["colSpan"], 6);
+
+    // 2. Matrix validation: reject forbidden widgets on track template
+    for forbidden_type in &[
+        "top_albums",
+        "top_tracks",
+        "top_artists",
+        "now_playing",
+        "unified_rankings",
+        "discovery_ratio",
+    ] {
+        let mut invalid_track = track_default.clone();
+        invalid_track["widgets"][0]["type"] = json!(forbidden_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout?template=track",
+            invalid_track,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected '{forbidden_type}' to be rejected on track template"
+        );
+    }
+
+    // 3. Matrix validation: allow all compatible widgets on track template
+    let valid_track_widgets = json!([
+        { "id": "totals-1", "type": "totals", "colSpan": 6 },
+        { "id": "activity-1", "type": "activity_chart", "colSpan": 6 },
+        { "id": "patterns-1", "type": "listening_patterns", "colSpan": 6 },
+        { "id": "recent-1", "type": "recent_listens", "colSpan": 6 },
+        { "id": "history-1", "type": "history", "colSpan": 6 }
+    ]);
+    let mut modified_track = track_default.clone();
+    modified_track["widgets"] = valid_track_widgets;
+
+    let (status, saved_track) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        modified_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_track["version"], 1);
+    assert_eq!(saved_track["widgets"].as_array().unwrap().len(), 5);
+
+    // 4. Persistence and isolation check in SQLite
+    let stored_track_json: String =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_track'")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+    let parsed_track: Value = serde_json::from_str(&stored_track_json).unwrap();
+    assert_eq!(parsed_track["version"], 1);
+    assert_eq!(parsed_track["widgets"].as_array().unwrap().len(), 5);
+
+    // Isolation: home, artist, album keys are not affected
+    let stored_home: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_home.is_none());
+
+    let stored_artist: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='dashboard_layout_artist'")
+            .fetch_optional(&state.read_db)
+            .await
+            .unwrap();
+    assert!(stored_artist.is_none());
+
+    // 5. Stale version rejected with 409 Conflict
+    let mut stale_track = track_default.clone();
+    stale_track["version"] = json!(0);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        stale_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // 6. Empty track layout is permitted and persisted without fallback to default
+    let empty_track = json!({
+        "version": 1,
+        "widgets": []
+    });
+    let (status, saved_empty) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        empty_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_empty["version"], 2);
+    assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
+
+    let (status, read_empty) = get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_empty["version"], 2);
+    assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn album_scoped_consultation_aggregations_and_cache_isolation() {
+    let (_dir, state, token) = setup().await;
+
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "t1:1".into(),
+        source_timestamp_ms: at("2025-06-01T10:00:00Z"),
+        played_at_ms: at("2025-06-01T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "t1:2".into(),
+        source_timestamp_ms: at("2025-06-01T12:00:00Z"),
+        played_at_ms: at("2025-06-01T12:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "t2:1".into(),
+        source_timestamp_ms: at("2025-06-01T14:00:00Z"),
+        played_at_ms: at("2025-06-01T14:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000002",
+            "type": "track",
+            "name": "Track Two",
+            "duration_ms": 180000,
+            "album": { "id": "album-a", "name": "Album Alpha", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist 1" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "t3:1".into(),
+        source_timestamp_ms: at("2025-06-01T16:00:00Z"),
+        played_at_ms: at("2025-06-01T16:00:00Z"),
+        listened_ms: Some(150000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 150000,
+            "album": { "id": "album-b", "name": "Album Beta", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist 2" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4]).await;
+
+    let album_a_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Alpha'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let album_b_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Beta'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Query Album A
+    let (status, album_a) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_a["totals"]["listens"], 3);
+    assert_eq!(album_a["totals"]["tracks"], 2);
+    assert_eq!(album_a["totals"]["actual_ms"], 580000);
+
+    // Rankings for tracks in Album A
+    let (status, tracks_a) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/rankings/tracks?album={album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items_a = tracks_a["items"].as_array().expect("items array");
+    assert_eq!(items_a.len(), 2);
+    assert_eq!(items_a[0]["name"], "Track One");
+    assert_eq!(items_a[0]["plays"], 2);
+    assert_eq!(items_a[1]["name"], "Track Two");
+    assert_eq!(items_a[1]["plays"], 1);
+
+    // Query Album B
+    let (status, album_b) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_b_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_b["totals"]["listens"], 1);
+    assert_eq!(album_b["totals"]["tracks"], 1);
+    assert_eq!(album_b["totals"]["actual_ms"], 150000);
+
+    // Rankings for tracks in Album B
+    let (status, tracks_b) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/rankings/tracks?album={album_b_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items_b = tracks_b["items"].as_array().expect("items array");
+    assert_eq!(items_b.len(), 1);
+    assert_eq!(items_b[0]["name"], "Track Three");
+    assert_eq!(items_b[0]["plays"], 1);
+
+    // Cache isolation: Query Album A again and ensure results are identical
+    let (status, album_a_cached) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/albums/{album_a_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_a_cached["totals"]["listens"], 3);
+    assert_eq!(album_a_cached["totals"]["tracks"], 2);
+    assert_eq!(album_a_cached["totals"]["actual_ms"], 580000);
+}
+
+#[tokio::test]
+async fn calendar_milestones_and_discovery_ratio_layout_matrix_validation() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Home template rejects listening_calendar and listening_milestones
+    let (status, home_layout) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+
+    for widget_type in &["listening_calendar", "listening_milestones"] {
+        let mut invalid_home = home_layout.clone();
+        invalid_home["widgets"][0]["type"] = json!(widget_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout",
+            invalid_home,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {widget_type} to be rejected on home template"
+        );
+    }
+
+    // 2. Artist template allows listening_calendar, listening_milestones, discovery_ratio
+    let (status, artist_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut valid_artist = artist_layout.clone();
+    valid_artist["widgets"] = json!([
+        { "id": "cal-1", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-1", "type": "listening_milestones", "colSpan": 6 },
+        { "id": "dr-1", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, saved_artist) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        valid_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_artist["widgets"].as_array().unwrap().len(), 3);
+
+    // 3. Album template allows listening_calendar, listening_milestones, discovery_ratio
+    let (status, album_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut valid_album = album_layout.clone();
+    valid_album["widgets"] = json!([
+        { "id": "cal-alb", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-alb", "type": "listening_milestones", "colSpan": 6 },
+        { "id": "dr-alb", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, saved_album) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        valid_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_album["widgets"].as_array().unwrap().len(), 3);
+
+    // 4. Track template allows listening_calendar and listening_milestones, but REJECTS discovery_ratio
+    let (status, track_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // discovery_ratio rejected on track template
+    let mut invalid_track = track_layout.clone();
+    invalid_track["widgets"] = json!([
+        { "id": "dr-trk", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        invalid_track,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery_ratio to be rejected on track template"
+    );
+
+    // listening_calendar and listening_milestones accepted on track template
+    let mut valid_track = track_layout.clone();
+    valid_track["widgets"] = json!([
+        { "id": "cal-trk", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-trk", "type": "listening_milestones", "colSpan": 6 }
+    ]);
+    let (status, saved_track) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        valid_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_track["widgets"].as_array().unwrap().len(), 2);
+
+    // 5. listening_milestones MUST NOT accept period_override (reject with 400 Bad Request)
+    for template_name in &["artist", "album", "track"] {
+        let (status, base_layout) = get(
+            &state,
+            &token,
+            &format!("/api/v1/dashboard/layout?template={template_name}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let mut invalid_override = base_layout.clone();
+        invalid_override["widgets"] = json!([
+            {
+                "id": "ms-override",
+                "type": "listening_milestones",
+                "colSpan": 6,
+                "periodOverride": "30d"
+            }
+        ]);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            &format!("/api/v1/dashboard/layout?template={template_name}"),
+            invalid_override,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected listening_milestones with period_override to be rejected on {template_name} template"
+        );
+    }
+}
+
+#[tokio::test]
+async fn discovery_ratio_scoped_and_rejected_for_track() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed events:
+    // Artist 1 / Album 1:
+    // - Track 1: historical play in Jan 2025
+    // - Track 1: repeated play in Feb 2025
+    // - Track 2: discovery play in Feb 2025
+    // Artist 2 / Album 2:
+    // - Track 3: historical play in Jan 2025
+    // - Track 3: repeat in Feb 2025
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "t1:1".into(),
+        source_timestamp_ms: at("2025-01-10T10:00:00Z"),
+        played_at_ms: at("2025-01-10T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "t1:2".into(),
+        source_timestamp_ms: at("2025-02-10T10:00:00Z"),
+        played_at_ms: at("2025-02-10T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "t2:1".into(),
+        source_timestamp_ms: at("2025-02-15T12:00:00Z"),
+        played_at_ms: at("2025-02-15T12:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000002",
+            "type": "track",
+            "name": "Track Two",
+            "duration_ms": 180000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "t3:1".into(),
+        source_timestamp_ms: at("2025-01-05T10:00:00Z"),
+        played_at_ms: at("2025-01-05T10:00:00Z"),
+        listened_ms: Some(220000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 220000,
+            "album": { "id": "alb-2", "name": "Album Two", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist Two" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e5 = Event {
+        source: "spotify_api",
+        source_key: "t3:2".into(),
+        source_timestamp_ms: at("2025-02-20T10:00:00Z"),
+        played_at_ms: at("2025-02-20T10:00:00Z"),
+        listened_ms: Some(220000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 220000,
+            "album": { "id": "alb-2", "name": "Album Two", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist Two" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4, e5]).await;
+
+    let art1_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let art2_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist Two'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let alb1_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let trk1_id: String = sqlx::query_scalar("SELECT id FROM tracks WHERE title='Track One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Scoped to Artist One in Feb 2025: 1 discovery (Track 2), 1 repeat (Track 1)
+    let (status, dr_art1) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=artists&id={art1_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_art1["discoveries"], 1);
+    assert_eq!(dr_art1["repeats"], 1);
+    assert_eq!(dr_art1["total"], 2);
+    assert_eq!(dr_art1["discovery_percent"], 50.0);
+
+    // 2. Scoped to Artist Two in Feb 2025: 0 discoveries, 1 repeat (Track 3)
+    let (status, dr_art2) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=artists&id={art2_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_art2["discoveries"], 0);
+    assert_eq!(dr_art2["repeats"], 1);
+    assert_eq!(dr_art2["total"], 1);
+    assert_eq!(dr_art2["discovery_percent"], 0.0);
+
+    // 3. Scoped to Album One in Feb 2025
+    let (status, dr_alb1) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=albums&id={alb1_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_alb1["discoveries"], 1);
+    assert_eq!(dr_alb1["repeats"], 1);
+
+    // 4. Discovery ratio REJECTED for track scope (400 Bad Request)
+    let (status, _) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=tracks&id={trk1_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery ratio with kind=tracks to return 400"
+    );
+
+    let (status, _) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?track={trk1_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery ratio with track param to return 400"
+    );
+
+    // 5. Invalid kind rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?kind=invalid&id=123",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 6. Kind without id rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?kind=artists",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 7. Id without kind rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?id=123",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn listening_calendar_scoping_zeros_dst_and_years() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed listens for Artist A across June 2024:
+    // - 2024-06-10: 2 counted listens
+    // - 2024-06-11: 1 counted listen
+    // - 2024-06-12: 0 listens (empty day)
+    // - 2024-06-13: 1 counted listen
+    // - 2024-06-14: 1 uncounted short listen (15s) -> count must be 0!
+    // - 2024-06-15: 1 listen for Artist B (must NOT be counted for Artist A)
+    // - 2025-01-15: 1 counted listen in 2025 (multi-year interval)
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "cal:1".into(),
+        source_timestamp_ms: at("2024-06-10T08:00:00Z"),
+        played_at_ms: at("2024-06-10T08:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "cal:2".into(),
+        source_timestamp_ms: at("2024-06-10T20:00:00Z"),
+        played_at_ms: at("2024-06-10T20:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "cal:3".into(),
+        source_timestamp_ms: at("2024-06-11T12:00:00Z"),
+        played_at_ms: at("2024-06-11T12:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "cal:4".into(),
+        source_timestamp_ms: at("2024-06-13T14:00:00Z"),
+        played_at_ms: at("2024-06-13T14:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // Uncounted short play (<30s)
+    let e5 = Event {
+        source: "spotify_api",
+        source_key: "cal:5".into(),
+        source_timestamp_ms: at("2024-06-14T10:00:00Z"),
+        played_at_ms: at("2024-06-14T10:00:00Z"),
+        listened_ms: Some(15000),
+        duration_kind: DurationKind::Actual,
+        counted: false,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // Play for Artist B
+    let e6 = Event {
+        source: "spotify_api",
+        source_key: "cal:6".into(),
+        source_timestamp_ms: at("2024-06-15T10:00:00Z"),
+        played_at_ms: at("2024-06-15T10:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000020",
+            "type": "track",
+            "name": "Track B1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-b", "name": "Album Cal B", "images": [] },
+            "artists": [{ "id": "cal-art-b", "name": "Artist Cal B" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // 2025 play for Artist A
+    let e7 = Event {
+        source: "spotify_api",
+        source_key: "cal:7".into(),
+        source_timestamp_ms: at("2025-01-15T10:00:00Z"),
+        played_at_ms: at("2025-01-15T10:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4, e5, e6, e7]).await;
+
+    let art_a_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist Cal A'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let alb_a_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Cal A'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let trk_a_id: String = sqlx::query_scalar("SELECT id FROM tracks WHERE title='Track A1'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Missing entity scope rejected (400 Bad Request)
+    let (status, _) = get(&state, &token, "/api/v1/consultation/calendar").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 2. Query June 10 - June 14, 2024 for Artist A
+    let (status, cal) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=artists&id={art_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal["total_listens"], 4);
+    let days = cal["days"].as_array().expect("days array");
+    assert_eq!(days.len(), 5);
+
+    // Day 0: 2024-06-10 (2 counted listens)
+    assert_eq!(days[0]["date"], "2024-06-10");
+    assert_eq!(days[0]["count"], 2);
+
+    // Day 1: 2024-06-11 (1 counted listen)
+    assert_eq!(days[1]["date"], "2024-06-11");
+    assert_eq!(days[1]["count"], 1);
+
+    // Day 2: 2024-06-12 (0 listens - included explicitly!)
+    assert_eq!(days[2]["date"], "2024-06-12");
+    assert_eq!(days[2]["count"], 0);
+
+    // Day 3: 2024-06-13 (1 counted listen)
+    assert_eq!(days[3]["date"], "2024-06-13");
+    assert_eq!(days[3]["count"], 1);
+
+    // Day 4: 2024-06-14 (1 uncounted listen -> count is 0)
+    assert_eq!(days[4]["date"], "2024-06-14");
+    assert_eq!(days[4]["count"], 0);
+
+    // 3. Years list contains all active years for Artist A
+    let years = cal["years"].as_array().expect("years array");
+    assert_eq!(years.len(), 2);
+    assert_eq!(years[0], 2025);
+    assert_eq!(years[1], 2024);
+
+    // 4. Year navigation: query year=2024
+    let (status, cal_2024) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_a_id}&year=2024"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // 2024 is a leap year (366 days)
+    assert_eq!(cal_2024["days"].as_array().unwrap().len(), 366);
+    assert_eq!(cal_2024["total_listens"], 4);
+
+    // 5. Scoped to album
+    let (status, cal_alb) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=albums&id={alb_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal_alb["total_listens"], 4);
+
+    // 6. Scoped to track
+    let (status, cal_trk) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=tracks&id={trk_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal_trk["total_listens"], 4);
+
+    // 7. Empty entity returns totalListens = 0 and valid structure
+    let (status, empty_cal) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/calendar?kind=artists&id=non-existent-artist",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty_cal["total_listens"], 0);
+    assert_eq!(empty_cal["days"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn listening_milestones_thresholds_streaks_and_all_time() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed 12 events for Artist MS:
+    // First listen on 2024-01-01 10:00:00: "First Song"
+    // Streaks:
+    // - 2024-01-01: 1 listen
+    // - 2024-01-02: 2 listens (same day - does not lengthen streak!)
+    // - 2024-01-03: 1 listen -> streak is 3 days (Jan 1, Jan 2, Jan 3)
+    // - Gap: Jan 4 no listens (breaks streak!)
+    // - 2024-01-05: 1 listen
+    // - 2024-01-06: 1 listen -> streak is 2 days
+    // - Jan 7 to Jan 12: 1 listen each day to reach 12 listens total
+    //   Threshold 10 reached on Jan 10!
+    // Last listen on 2024-01-12: "Last Song"
+    let mut events = Vec::new();
+
+    let titles = [
+        "First Song",
+        "Second Song",
+        "Third Song",
+        "Fourth Song",
+        "Fifth Song",
+        "Sixth Song",
+        "Seventh Song",
+        "Eighth Song",
+        "Ninth Song",
+        "Tenth Song",
+        "Eleventh Song",
+        "Last Song",
+    ];
+
+    let timestamps = [
+        "2024-01-01T10:00:00Z",
+        "2024-01-02T09:00:00Z",
+        "2024-01-02T20:00:00Z", // multiple listens on Jan 2
+        "2024-01-03T10:00:00Z", // streak end (3 days)
+        // gap Jan 4
+        "2024-01-05T10:00:00Z",
+        "2024-01-06T10:00:00Z",
+        "2024-01-07T10:00:00Z",
+        "2024-01-08T10:00:00Z",
+        "2024-01-09T10:00:00Z",
+        "2024-01-10T10:00:00Z", // 10th listen!
+        "2024-01-11T10:00:00Z",
+        "2024-01-12T10:00:00Z", // 12th listen!
+    ];
+
+    for i in 0..12 {
+        let ts = at(timestamps[i]);
+        events.push(Event {
+            source: "spotify_api",
+            source_key: format!("ms:{i}"),
+            source_timestamp_ms: ts,
+            played_at_ms: ts,
+            listened_ms: Some(200000),
+            duration_kind: DurationKind::Actual,
+            counted: true,
+            track: parse_track(&json!({
+                "uri": format!("spotify:track:{:022}", i + 100),
+                "type": "track",
+                "name": titles[i],
+                "duration_ms": 200000,
+                "album": { "id": "ms-alb", "name": "Milestone Album", "images": [] },
+                "artists": [{ "id": "ms-art", "name": "Artist MS" }]
+            }))
+            .unwrap(),
+            raw: json!({}),
+        });
+    }
+
+    save(&state.storage, &events).await;
+
+    let art_ms_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist MS'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Missing scope rejected (400)
+    let (status, _) = get(&state, &token, "/api/v1/consultation/milestones").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 2. Query milestones
+    let (status, ms) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/milestones?kind=artists&id={art_ms_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms["total_listens"], 12);
+
+    // First listen
+    assert_eq!(ms["first_listen"]["track_title"], "First Song");
+    assert_eq!(
+        ms["first_listen"]["played_at_ms"],
+        at("2024-01-01T10:00:00Z")
+    );
+
+    // Last listen
+    assert_eq!(ms["last_listen"]["track_title"], "Last Song");
+    assert_eq!(
+        ms["last_listen"]["played_at_ms"],
+        at("2024-01-12T10:00:00Z")
+    );
+
+    // Threshold 10
+    let thresholds = ms["thresholds"].as_array().expect("thresholds array");
+    assert_eq!(thresholds.len(), 1);
+    assert_eq!(thresholds[0]["count"], 10);
+    assert_eq!(thresholds[0]["reached_at_ms"], at("2024-01-10T10:00:00Z"));
+
+    // Longest streak: Jan 5 - Jan 12 is 8 consecutive calendar days!
+    // (Jan 1, 2, 3 was 3 days. Jan 5, 6, 7, 8, 9, 10, 11, 12 is 8 days!)
+    assert_eq!(ms["longest_streak"]["days"], 8);
+    assert_eq!(ms["longest_streak"]["start_date"], "2024-01-05");
+    assert_eq!(ms["longest_streak"]["end_date"], "2024-01-12");
+
+    // Current streak: ended in Jan 2024 (well before today/yesterday) -> 0 days
+    assert_eq!(ms["current_streak"]["days"], 0);
+
+    // 3. All-time behavior: passing ?period=today or custom dates still evaluates whole history!
+    let (status, ms_filtered) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/milestones?kind=artists&id={art_ms_id}&period=today"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms_filtered["total_listens"], 12);
+    assert_eq!(ms_filtered["first_listen"]["track_title"], "First Song");
+    assert_eq!(ms_filtered["last_listen"]["track_title"], "Last Song");
+
+    // 4. Empty entity returns zero/None state without error
+    let (status, ms_empty) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/milestones?kind=artists&id=non-existent-artist",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms_empty["total_listens"], 0);
+    assert!(ms_empty["first_listen"].is_null());
+    assert!(ms_empty["last_listen"].is_null());
+    assert_eq!(ms_empty["thresholds"].as_array().unwrap().len(), 0);
+    assert_eq!(ms_empty["longest_streak"]["days"], 0);
+    assert_eq!(ms_empty["current_streak"]["days"], 0);
+}
+
+#[tokio::test]
+async fn dashboard_layout_rejects_duplicate_widget_ids_and_duplicate_widget_types() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Duplicate widget ID
+    let layout_dup_id = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "dup-id", "type": "totals", "colSpan": 6 },
+            { "id": "dup-id", "type": "activity_chart", "colSpan": 6 }
+        ]
+    });
+    let (status, err) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        layout_dup_id,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Duplicate widget ID 'dup-id'")
+    );
+
+    // 2. Duplicate widget type
+    let layout_dup_type = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "totals-1", "type": "totals", "colSpan": 6 },
+            { "id": "totals-2", "type": "totals", "colSpan": 6 }
+        ]
+    });
+    let (status, err) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        layout_dup_type,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Duplicate widget type 'totals'")
+    );
+}
+
+#[tokio::test]
+async fn music_page_selective_totals_skips_heavy_query_when_disabled() {
+    let (_dir, state, token) = setup().await;
+    save(
+        &state.storage,
+        &[event(
+            1,
+            at("2024-06-10T12:00:00Z"),
+            Some(180_000),
+            DurationKind::Actual,
+            &[("art-select-totals", "Selective Artist")],
+        )],
+    )
+    .await;
+    let art_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Selective Artist'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Default request includes totals
+    let (status, with_totals) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/artists/{art_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(with_totals["totals"]["records"], 1);
+    assert_eq!(with_totals["totals"]["listens"], 1);
+
+    // include_totals=false skips query and returns zeroed Totals
+    let (status, without_totals) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/artists/{art_id}?include_totals=false"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(without_totals["totals"]["records"], 0);
+    assert_eq!(without_totals["totals"]["listens"], 0);
+    assert_eq!(without_totals["totals"]["tracks"], 0);
+    assert_eq!(without_totals["totals"]["actual_ms"], 0);
+}
+
+#[tokio::test]
+async fn calendar_long_history_defaults_to_most_recent_active_year_without_failing() {
+    let (_dir, state, token) = setup().await;
+    // 2012 and 2025 are ~13 years apart (>4700 days!)
+    save(
+        &state.storage,
+        &[
+            event(
+                1,
+                at("2012-01-15T12:00:00Z"),
+                Some(180_000),
+                DurationKind::Actual,
+                &[("art-long-history", "Archive Legend")],
+            ),
+            event(
+                2,
+                at("2025-05-20T14:00:00Z"),
+                Some(200_000),
+                DurationKind::Actual,
+                &[("art-long-history", "Archive Legend")],
+            ),
+        ],
+    )
+    .await;
+    let art_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Archive Legend'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Initial load with default "all" and no year param must succeed, defaulting to 2025
+    let (status, cal) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let years = cal["years"].as_array().expect("years array");
+    assert_eq!(years.len(), 2);
+    assert_eq!(years[0], 2025);
+    assert_eq!(years[1], 2012);
+
+    // Days are returned for the most recent year (2025)
+    let days = cal["days"].as_array().expect("days array");
+    assert!(!days.is_empty());
+    assert!(days[0]["date"].as_str().unwrap().starts_with("2025"));
+    assert_eq!(cal["total_listens"], 1);
+
+    // Year navigation to 2012 works as expected
+    let (status, cal_2012) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_id}&year=2012"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let days_2012 = cal_2012["days"].as_array().expect("days array");
+    assert!(!days_2012.is_empty());
+    assert!(days_2012[0]["date"].as_str().unwrap().starts_with("2012"));
+    assert_eq!(cal_2012["total_listens"], 1);
+}

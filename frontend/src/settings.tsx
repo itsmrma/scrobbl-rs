@@ -263,83 +263,286 @@ export function Appearance({
     "#64d9c3",
   ];
   return (
-    <article className="panel padded settings-form">
-      <h2>Appearance</h2>
-      <p>
-        Saved immediately in this browser. Other browsers keep their own
-        appearance.
-      </p>
-      <label>
-        Theme
-        <Select
-          aria-label="Theme"
-          id="theme"
-          value={theme}
-          onChange={(value) => setTheme(value)}
-        >
-          <option value="auto">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </Select>
-      </label>
-      <fieldset>
-        <legend>Accent colour</legend>
-        <div className="palette">
-          {palette.map((color) => (
-            <button
-              key={color}
-              className="swatch"
-              style={{ background: color, color: ink(color) }}
-              aria-label={`Use ${color}`}
-              aria-pressed={accent === color}
-              onClick={() => setAccent(color)}
-            >
-              {accent === color && <Icon>check</Icon>}
-            </button>
+    <>
+      <article className="panel padded settings-form">
+        <h2>Appearance</h2>
+        <p>
+          Saved immediately in this browser. Other browsers keep their own
+          appearance.
+        </p>
+        <label>
+          Theme
+          <Select
+            aria-label="Theme"
+            id="theme"
+            value={theme}
+            onChange={(value) => setTheme(value)}
+          >
+            <option value="auto">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </Select>
+        </label>
+        <fieldset>
+          <legend>Accent colour</legend>
+          <div className="palette">
+            {palette.map((color) => (
+              <button
+                key={color}
+                className="swatch"
+                style={{ background: color, color: ink(color) }}
+                aria-label={`Use ${color}`}
+                aria-pressed={accent === color}
+                onClick={() => setAccent(color)}
+              >
+                {accent === color && <Icon>check</Icon>}
+              </button>
+            ))}
+          </div>
+          <div className="connection-actions">
+            <label>
+              Pick a colour
+              <input
+                type="color"
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+              />
+            </label>
+            <label>
+              HEX colour
+              <input
+                value={hex}
+                maxLength={7}
+                aria-invalid={!isHex(hex)}
+                onChange={(e) => {
+                  setHex(e.target.value);
+                  if (isHex(e.target.value)) setAccent(e.target.value);
+                }}
+              />
+            </label>
+          </div>
+          {!isHex(hex) && (
+            <p className="form-error">
+              Enter a six-digit HEX colour, for example #c9ee8b.
+            </p>
+          )}
+          <button
+            className="secondary"
+            onClick={() => setAccent(defaultAccent)}
+          >
+            Reset accent
+          </button>
+        </fieldset>
+        <div className="previews">
+          {["light", "dark"].map((mode) => (
+            <div className={`preview ${mode}`} key={mode}>
+              <strong>{mode === "light" ? "Light" : "Dark"} preview</strong>
+              <p>Your listening archive</p>
+              <span style={{ background: accent, color: ink(accent) }}>
+                Selected action
+              </span>
+              <p className="preview-error">An error remains recognisable.</p>
+            </div>
           ))}
         </div>
-        <div className="connection-actions">
+      </article>
+      <MusicTemplatesSettings />
+    </>
+  );
+}
+
+export function MusicTemplatesSettings() {
+  const [template, setTemplate] = useState<"artist" | "album" | "track">(
+    "artist",
+  );
+  const [artists, setArtists] = useState<{ id: string; name: string }[]>([]);
+  const [albums, setAlbums] = useState<{ id: string; name: string }[]>([]);
+  const [tracks, setTracks] = useState<{ id: string; name: string }[]>([]);
+  const [selectedArtist, setSelectedArtist] = useState<string>("");
+  const [selectedAlbum, setSelectedAlbum] = useState<string>("");
+  const [selectedTrack, setSelectedTrack] = useState<string>("");
+  const [loadingArtists, setLoadingArtists] = useState(true);
+  const [loadingAlbums, setLoadingAlbums] = useState(true);
+  const [loadingTracks, setLoadingTracks] = useState(true);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("period", "all");
+    params.set("page", "1");
+    params.set("page_size", "25");
+
+    api
+      .rankings("artists", params)
+      .then((data) => {
+        const items = data.items.map((a: any) => ({ id: a.id, name: a.name }));
+        setArtists(items);
+        if (items.length > 0) {
+          setSelectedArtist(items[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingArtists(false));
+
+    api
+      .rankings("albums", params)
+      .then((data) => {
+        const items = data.items.map((a: any) => ({ id: a.id, name: a.name }));
+        setAlbums(items);
+        if (items.length > 0) {
+          setSelectedAlbum(items[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingAlbums(false));
+
+    api
+      .rankings("tracks", params)
+      .then((data) => {
+        const items = data.items.map((t: any) => ({ id: t.id, name: t.name }));
+        setTracks(items);
+        if (items.length > 0) {
+          setSelectedTrack(items[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingTracks(false));
+  }, []);
+
+  const handleCustomize = () => {
+    if (template === "artist") {
+      if (selectedArtist) {
+        navigate(
+          `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/artists/preview?edit=template`);
+      }
+    } else if (template === "album") {
+      if (selectedAlbum) {
+        navigate(
+          `/music/albums/${encodeURIComponent(selectedAlbum)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/albums/preview?edit=template`);
+      }
+    } else {
+      if (selectedTrack) {
+        navigate(
+          `/music/tracks/${encodeURIComponent(selectedTrack)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/tracks/preview?edit=template`);
+      }
+    }
+  };
+
+  return (
+    <article className="panel padded settings-form">
+      <h2>Template pagine musicali</h2>
+      <p>
+        Personalizza la disposizione e i widget condivisi dalle pagine di
+        consultazione musicale. Le modifiche a un template vengono applicate a
+        tutte le pagine di quel tipo.
+      </p>
+      <div className="form-grid">
+        <label>
+          Tipo di pagina
+          <Select
+            aria-label="Tipo di pagina"
+            value={template}
+            onChange={(val) => setTemplate(val as "artist" | "album" | "track")}
+          >
+            <option value="artist">Pagina Artista</option>
+            <option value="album">Pagina Album</option>
+            <option value="track">Pagina Brano</option>
+          </Select>
+        </label>
+        {template === "artist" && (
           <label>
-            Pick a colour
-            <input
-              type="color"
-              value={accent}
-              onChange={(e) => setAccent(e.target.value)}
-            />
+            Artista di anteprima
+            {artists.length > 0 ? (
+              <Select
+                aria-label="Artista di anteprima"
+                value={selectedArtist}
+                onChange={(val) => setSelectedArtist(val)}
+              >
+                {artists.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span className="empty-preview-notice field-hint">
+                {loadingArtists
+                  ? "Caricamento artisti…"
+                  : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
+              </span>
+            )}
           </label>
-          <label>
-            HEX colour
-            <input
-              value={hex}
-              maxLength={7}
-              aria-invalid={!isHex(hex)}
-              onChange={(e) => {
-                setHex(e.target.value);
-                if (isHex(e.target.value)) setAccent(e.target.value);
-              }}
-            />
-          </label>
-        </div>
-        {!isHex(hex) && (
-          <p className="form-error">
-            Enter a six-digit HEX colour, for example #c9ee8b.
-          </p>
         )}
-        <button className="secondary" onClick={() => setAccent(defaultAccent)}>
-          Reset accent
+        {template === "album" && (
+          <label>
+            Album di anteprima
+            {albums.length > 0 ? (
+              <Select
+                aria-label="Album di anteprima"
+                value={selectedAlbum}
+                onChange={(val) => setSelectedAlbum(val)}
+              >
+                {albums.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span className="empty-preview-notice field-hint">
+                {loadingAlbums
+                  ? "Caricamento album…"
+                  : "Nessun album presente nell'archivio. Verrà usata un'anteprima vuota."}
+              </span>
+            )}
+          </label>
+        )}
+        {template === "track" && (
+          <label>
+            Brano di anteprima
+            {tracks.length > 0 ? (
+              <Select
+                aria-label="Brano di anteprima"
+                value={selectedTrack}
+                onChange={(val) => setSelectedTrack(val)}
+              >
+                {tracks.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <span className="empty-preview-notice field-hint">
+                {loadingTracks
+                  ? "Caricamento brani…"
+                  : "Nessun brano presente nell'archivio. Verrà usata un'anteprima vuota."}
+              </span>
+            )}
+          </label>
+        )}
+      </div>
+      <div className="connection-actions">
+        <button
+          type="button"
+          className="button secondary"
+          onClick={handleCustomize}
+        >
+          <Icon>tune</Icon>{" "}
+          {template === "artist"
+            ? "Personalizza template artista"
+            : template === "album"
+              ? "Personalizza template album"
+              : "Personalizza template brano"}
         </button>
-      </fieldset>
-      <div className="previews">
-        {["light", "dark"].map((mode) => (
-          <div className={`preview ${mode}`} key={mode}>
-            <strong>{mode === "light" ? "Light" : "Dark"} preview</strong>
-            <p>Your listening archive</p>
-            <span style={{ background: accent, color: ink(accent) }}>
-              Selected action
-            </span>
-            <p className="preview-error">An error remains recognisable.</p>
-          </div>
-        ))}
       </div>
     </article>
   );

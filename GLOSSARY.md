@@ -72,3 +72,17 @@ La consultazione congiunta di schede artista con lo stesso nome, o album con lo 
 **Separazione dal gruppo**:
 La scelta di consultare separatamente una o più schede prima raggruppate per nome, per distinguere per esempio degli omonimi. È reversibile e non cancella ascolti o informazioni originali.
 _Avoid_: Decoupling, cancellazione di duplicati.
+
+**Template di pagina musicale**:
+La disposizione personalizzabile dei widget condivisa da tutte le pagine di uno stesso tipo: artista, album o brano. L'utente dispone di un template per ciascun tipo; modificarlo cambia la disposizione per tutte le pagine di quel tipo.
+_Avoid_: Layout del singolo artista, layout del singolo album, layout del singolo brano.
+
+**Calendario degli ascolti**:
+La rappresentazione giorno per giorno degli ascolti conteggiati di un artista, album o brano, secondo il calendario assegnato. L'intensità del colore esprime il numero degli ascolti.
+
+**Traguardo di ascolto**:
+Un evento significativo nello storico degli ascolti conteggiati di un artista, album o brano, come il primo ascolto o il raggiungimento di una soglia di ascolti. Il riferimento è l'intero storico dell'entità, indipendentemente dal periodo consultato.
+
+**Serie di giorni di ascolto**:
+Una successione di giorni consecutivi, secondo il calendario assegnato, con almeno un ascolto conteggiato dello stesso artista, album o brano per giorno. La serie in corso termina oggi o ieri; la serie più lunga può appartenere a qualsiasi periodo dello storico.
+_Avoid_: Streak senza indicazione dell'entità ascoltata.

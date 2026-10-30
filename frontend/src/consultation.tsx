@@ -17,6 +17,7 @@ import type {
   SpotifyStatus,
   Totals,
   WidgetConfig,
+  MusicPage as MusicPageData,
 } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
@@ -31,7 +32,7 @@ import {
 } from "./listening-patterns";
 import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
-import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
+import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
 import {
   ChartSkeleton,
@@ -519,6 +520,7 @@ function RankingsPanel({
   version = 0,
   standalone = false,
   scrolling = false,
+  bars = false,
 }: {
   kind: Kind;
   params: URLSearchParams;
@@ -528,6 +530,7 @@ function RankingsPanel({
   version?: number;
   standalone?: boolean;
   scrolling?: boolean;
+  bars?: boolean;
 }) {
   const list = useListPreferences(kind === "albums" ? "grid" : "list", kind);
   const cardSizes = [100, 140, 220];
@@ -720,6 +723,7 @@ function RankingsPanel({
                 kind={kind}
                 params={params}
                 grid={(!showView && kind === "albums") || list.view === "grid"}
+                bars={bars}
               />
             </div>
           )}
@@ -1077,6 +1081,25 @@ const CATALOG_ITEMS = [
     description: "Confronto tra brani ascoltati per la prima volta e riascolti",
     defaultSpan: 3 as const,
   },
+  {
+    type: "history",
+    name: "Cronologia ascolti",
+    description: "Elenco cronologico dettagliato con filtri e ricerca.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "listening_calendar",
+    name: "Calendario ascolti",
+    description: "Mappa di calore giornaliera del volume di ascolti nel tempo.",
+    defaultSpan: 6 as const,
+  },
+  {
+    type: "listening_milestones",
+    name: "Traguardi di ascolto",
+    description:
+      "Primo e ultimo ascolto, soglie raggiunte e serie consecutive.",
+    defaultSpan: 6 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1313,6 +1336,24 @@ export function RecentListensWidget({
   params: URLSearchParams;
   periodOverride?: string | null;
 }) {
+  const needsFetch = recent === undefined;
+  const historyParams = useMemo(() => {
+    if (!needsFetch) return null;
+    const hp = new URLSearchParams(params);
+    hp.set("page", "1");
+    hp.set("page_size", "8");
+    return hp;
+  }, [needsFetch, params]);
+  const isPreview =
+    params.get("track") === "preview" || params.get("artist") === "preview";
+  const fetched = useLoad(
+    () => api.history(historyParams!),
+    `recent-widget:${historyParams?.toString()}:${preferences.version}`,
+    needsFetch && !isPreview,
+  );
+  const items = recent !== undefined ? recent : fetched.data?.items || [];
+  const isLoading = loading || (needsFetch && fetched.loading);
+
   return (
     <article className="panel padded widget-recent-listens">
       <div className="panel-title">
@@ -1330,10 +1371,292 @@ export function RecentListensWidget({
         <Link to={`/history?${context(params)}`}>View history</Link>
       </div>
       <div className="widget-recent-content">
-        {loading ? (
+        {isLoading ? (
           <ListenListSkeleton count={8} />
         ) : (
-          <ListenList items={recent || []} preferences={preferences} />
+          <ListenList items={items} preferences={preferences} />
+        )}
+      </div>
+    </article>
+  );
+}
+
+export function ListeningCalendarWidget({
+  params,
+  version,
+  periodOverride,
+}: {
+  params: URLSearchParams;
+  version: number;
+  periodOverride?: string | null;
+}) {
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
+
+  const queryParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (selectedYear) {
+      p.set("year", String(selectedYear));
+    }
+    return p;
+  }, [params, selectedYear]);
+
+  const result = useLoad(
+    () => api.calendar(queryParams),
+    `calendar:${queryParams.toString()}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+
+  const days = result.data?.days || [];
+  const maxCount = useMemo(() => {
+    let max = 0;
+    for (const d of days) {
+      if (d.count > max) max = d.count;
+    }
+    return max;
+  }, [days]);
+
+  const getLevel = (count: number) => {
+    if (count <= 0) return 0;
+    if (maxCount <= 4) return Math.min(count, 4);
+    const ratio = count / maxCount;
+    if (ratio <= 0.25) return 1;
+    if (ratio <= 0.5) return 2;
+    if (ratio <= 0.75) return 3;
+    return 4;
+  };
+
+  return (
+    <article
+      className="panel padded widget-listening-calendar"
+      aria-label="Calendario ascolti"
+    >
+      <div className="panel-title">
+        <h2>
+          Calendario ascolti
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
+        {result.data && result.data.years.length > 1 && (
+          <div
+            className="calendar-year-nav"
+            role="group"
+            aria-label="Navigazione anni"
+          >
+            {result.data.years.map((y) => (
+              <button
+                key={y}
+                type="button"
+                className={`button secondary-button${(selectedYear ?? result.data?.years[0]) === y ? " active" : ""}`}
+                onClick={() => setSelectedYear(y)}
+                aria-pressed={(selectedYear ?? result.data?.years[0]) === y}
+              >
+                {y}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="subtle">Frequenza e volume di ascolti giornalieri.</p>
+      <div className="widget-calendar-content">
+        {result.error && <ErrorText>{result.error}</ErrorText>}
+        {!result.data && !result.error && (
+          <div className="skeleton-container" role="status" aria-busy="true">
+            <span className="visually-hidden">Caricamento calendario…</span>
+            <div className="calendar-skeleton">
+              <SkeletonBlock width="100%" height={120} borderRadius={6} />
+            </div>
+          </div>
+        )}
+        {result.data && result.data.total_listens === 0 && (
+          <div className="empty" role="status">
+            <p>Nessun dato di ascolto nel periodo.</p>
+          </div>
+        )}
+        {result.data && result.data.total_listens > 0 && (
+          <div className="calendar-heatmap-wrapper">
+            <div
+              className="calendar-heatmap-container"
+              tabIndex={0}
+              role="region"
+              aria-label="Mappa di calore degli ascolti"
+            >
+              <div className="calendar-heatmap">
+                {days.map((day) => {
+                  const level = getLevel(day.count);
+                  return (
+                    <div
+                      key={day.date}
+                      className={`calendar-cell level-${level}`}
+                      title={`${day.date}: ${day.count} ${day.count === 1 ? "ascolto" : "ascolti"}`}
+                      aria-label={`${day.date}: ${day.count} ascolti`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div className="calendar-legend" aria-hidden="true">
+              <span className="subtle">Meno</span>
+              <div className="calendar-cell level-0" />
+              <div className="calendar-cell level-1" />
+              <div className="calendar-cell level-2" />
+              <div className="calendar-cell level-3" />
+              <div className="calendar-cell level-4" />
+              <span className="subtle">Più</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+export function ListeningMilestonesWidget({
+  params,
+  preferences,
+  version,
+}: {
+  params: URLSearchParams;
+  preferences: Preferences;
+  version: number;
+}) {
+  const result = useLoad(
+    () => api.milestones(params),
+    `milestones:${params.toString()}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+
+  return (
+    <article
+      className="panel padded widget-listening-milestones"
+      aria-label="Traguardi di ascolto"
+    >
+      <div className="panel-title">
+        <h2>
+          Traguardi di ascolto
+          <span className="pill widget-period-badge all-time">
+            Tutto lo storico
+          </span>
+        </h2>
+      </div>
+      <p className="subtle">
+        Primo e ultimo ascolto documentato, serie e soglie raggiunte.
+      </p>
+      <div className="widget-milestones-content">
+        {result.error && <ErrorText>{result.error}</ErrorText>}
+        {!result.data && !result.error && (
+          <div className="skeleton-container" role="status" aria-busy="true">
+            <span className="visually-hidden">Caricamento traguardi…</span>
+            <div className="milestones-skeleton">
+              <SkeletonBlock width="100%" height={80} borderRadius={6} />
+              <SkeletonBlock width="100%" height={80} borderRadius={6} />
+            </div>
+          </div>
+        )}
+        {result.data && result.data.total_listens === 0 && (
+          <div className="empty" role="status">
+            <p>Nessun traguardo raggiunto nello storico.</p>
+          </div>
+        )}
+        {result.data && result.data.total_listens > 0 && (
+          <div className="milestones-grid">
+            <div className="milestones-section">
+              <div className="milestones-row">
+                {result.data.first_listen && (
+                  <div className="milestone-card">
+                    <span className="milestone-label">
+                      Primo ascolto documentato
+                    </span>
+                    <strong className="milestone-value">
+                      {result.data.first_listen.track_title}
+                    </strong>
+                    <span className="milestone-time subtle">
+                      {date(result.data.first_listen.played_at_ms, preferences)}
+                    </span>
+                  </div>
+                )}
+                {result.data.last_listen && (
+                  <div className="milestone-card">
+                    <span className="milestone-label">Ultimo ascolto</span>
+                    <strong className="milestone-value">
+                      {result.data.last_listen.track_title}
+                    </strong>
+                    <span className="milestone-time subtle">
+                      {date(result.data.last_listen.played_at_ms, preferences)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="milestones-section">
+              <div className="milestones-row">
+                <div className="milestone-card">
+                  <span className="milestone-label">Serie più lunga</span>
+                  <strong className="milestone-value tabular-nums">
+                    {result.data.longest_streak.days}{" "}
+                    {result.data.longest_streak.days === 1
+                      ? "giorno"
+                      : "giorni"}
+                  </strong>
+                  {result.data.longest_streak.start_date &&
+                    result.data.longest_streak.end_date && (
+                      <span className="milestone-time subtle">
+                        {result.data.longest_streak.start_date} →{" "}
+                        {result.data.longest_streak.end_date}
+                      </span>
+                    )}
+                </div>
+                <div className="milestone-card">
+                  <span className="milestone-label">Serie in corso</span>
+                  <strong className="milestone-value tabular-nums">
+                    {result.data.current_streak.days}{" "}
+                    {result.data.current_streak.days === 1
+                      ? "giorno"
+                      : "giorni"}
+                  </strong>
+                  {result.data.current_streak.days > 0 ? (
+                    <span className="pill streak-active">In corso</span>
+                  ) : (
+                    <span className="milestone-time subtle">
+                      Nessuna serie attiva
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="milestones-section thresholds-section">
+              <span className="milestone-label">Soglie raggiunte</span>
+              {result.data.thresholds.length === 0 ? (
+                <p className="subtle">
+                  Nessuna soglia raggiunta (prima soglia: 10 ascolti).
+                </p>
+              ) : (
+                <div className="thresholds-chips">
+                  {result.data.thresholds.map((t) => (
+                    <div key={t.count} className="threshold-chip">
+                      <span className="threshold-count tabular-nums">
+                        {number.format(t.count)} ascolti
+                      </span>
+                      <span className="threshold-date subtle">
+                        {date(t.reached_at_ms, preferences)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </article>
@@ -1584,7 +1907,7 @@ const OVERRIDE_PERIOD_OPTIONS: [string, string][] = [
 ];
 
 function isTimeSensitiveWidget(type: string): boolean {
-  return type !== "now_playing";
+  return type !== "now_playing" && type !== "listening_milestones";
 }
 
 function getWidgetParams(
@@ -1610,75 +1933,166 @@ function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
   return copy;
 }
 
-export function Overview({
-  preferences,
-  visible,
-  status,
+export type TemplateKind = "home" | "artist" | "album" | "track";
+
+export const DEFAULT_ARTIST_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 6 },
+    { id: "top_albums", type: "top_albums", colSpan: 3 },
+    { id: "top_tracks", type: "top_tracks", colSpan: 3 },
+    { id: "history", type: "history", colSpan: 6 },
+  ],
+};
+
+export const DEFAULT_ALBUM_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 6 },
+    { id: "top_tracks", type: "top_tracks", colSpan: 6 },
+    { id: "history", type: "history", colSpan: 6 },
+  ],
+};
+
+export const DEFAULT_TRACK_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 6 },
+    { id: "history", type: "history", colSpan: 6 },
+  ],
+};
+
+export function isWidgetAllowedForTemplate(
+  type: string,
+  template: TemplateKind,
+): boolean {
+  switch (template) {
+    case "home":
+      return [
+        "totals",
+        "unified_rankings",
+        "top_artists",
+        "top_albums",
+        "top_tracks",
+        "activity_chart",
+        "recent_listens",
+        "listening_patterns",
+        "now_playing",
+        "discovery_ratio",
+      ].includes(type);
+    case "artist":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "top_albums",
+        "top_tracks",
+        "history",
+        "recent_listens",
+        "discovery_ratio",
+        "listening_calendar",
+        "listening_milestones",
+      ].includes(type);
+    case "album":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "top_tracks",
+        "history",
+        "recent_listens",
+        "discovery_ratio",
+        "listening_calendar",
+        "listening_milestones",
+      ].includes(type);
+    case "track":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "history",
+        "recent_listens",
+        "listening_calendar",
+        "listening_milestones",
+      ].includes(type);
+  }
+}
+
+export function useLayoutEditor({
+  template,
+  defaultLayout,
+  initialEditing = false,
+  visible = true,
+  onSaved,
+  onCancel,
 }: {
-  preferences: Preferences;
-  visible: boolean;
-  status: SpotifyStatus | null;
+  template: TemplateKind;
+  defaultLayout: DashboardLayout;
+  initialEditing?: boolean;
+  visible?: boolean;
+  onSaved?: (saved: DashboardLayout) => void;
+  onCancel?: () => void;
 }) {
-  const selection = useSelection(visible, preferences.initial_period),
-    { params } = selection;
   const layoutResult = useLoad<DashboardLayout>(
-    () => api.dashboardLayout(),
-    "dashboard-layout",
+    () => api.dashboardLayout(template === "home" ? undefined : template),
+    `dashboard-layout:${template}`,
     visible,
+    undefined,
+    true,
   );
 
-  const [editing, setEditing] = useState(false);
-  const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_V1_LAYOUT);
+  const [editing, setEditing] = useState(initialEditing);
+  const [layout, setLayout] = useState<DashboardLayout>(defaultLayout);
   const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
-  const editButtonRef = useRef<HTMLButtonElement>(null);
-  const catalogDialogRef = useRef<HTMLDialogElement>(null);
+
+  const isDirty = useMemo(() => {
+    if (!savedLayout) return false;
+    return JSON.stringify(layout) !== JSON.stringify(savedLayout);
+  }, [layout, savedLayout]);
+
+  const hasLoadedInitialRef = useRef(false);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
 
   useEffect(() => {
-    const dialog = catalogDialogRef.current;
-    if (!dialog) return;
-    if (catalogOpen) {
-      if (!dialog.open) {
-        dialog.showModal();
+    if (!layoutResult.data) return;
+    const remote = layoutResult.data;
+    setSavedLayout((prev) => {
+      if (!prev || remote.version > prev.version) {
+        if (!hasLoadedInitialRef.current) {
+          hasLoadedInitialRef.current = true;
+          if (!isDirtyRef.current) {
+            setLayout(remote);
+          }
+        } else if (!isDirtyRef.current && !editingRef.current) {
+          setLayout(remote);
+        }
+        return remote;
       }
-    } else {
-      if (dialog.open) {
-        dialog.close();
-      }
-    }
-  }, [catalogOpen]);
-
-  useEffect(() => {
-    if (layoutResult.data) {
-      setLayout(layoutResult.data);
-      setSavedLayout(layoutResult.data);
-    }
+      return prev;
+    });
   }, [layoutResult.data]);
 
-  const requestedWidgets = useMemo(() => {
-    return Array.from(
-      new Set(
-        layout.widgets.filter((w) => !w.periodOverride).map((w) => w.type),
-      ),
-    ).join(",");
-  }, [layout.widgets]);
-
-  const dashboardParams = useMemo(() => {
-    const p = new URLSearchParams(params);
-    if (requestedWidgets) {
-      p.set("widgets", requestedWidgets);
-    }
-    return p;
-  }, [params, requestedWidgets]);
-
-  const result = useLoad<Dashboard>(
-    () => api.dashboard(dashboardParams),
-    `${dashboardParams}:${preferences.version}`,
-    visible && requestedWidgets.length > 0,
-    (status?.sync_seconds || 120) * 1000,
-  );
+  useEffect(() => {
+    if (!editing || !isDirty) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [editing, isDirty]);
 
   const handleStartEditing = () => {
     setEditing(true);
@@ -1686,16 +2100,25 @@ export function Overview({
   };
 
   const handleCancel = () => {
+    if (isDirty) {
+      if (
+        !window.confirm(
+          "Ci sono modifiche non salvate al template. Vuoi davvero annullare?",
+        )
+      ) {
+        return;
+      }
+    }
     setEditing(false);
-    editButtonRef.current?.focus();
-    setLayout(savedLayout || DEFAULT_V1_LAYOUT);
+    setLayout(savedLayout || defaultLayout);
     setSaveError(null);
+    onCancel?.();
   };
 
   const handleReset = () => {
     setLayout({
       version: layout.version,
-      widgets: JSON.parse(JSON.stringify(DEFAULT_V1_LAYOUT.widgets)),
+      widgets: JSON.parse(JSON.stringify(defaultLayout.widgets)),
     });
   };
 
@@ -1703,11 +2126,14 @@ export function Overview({
     setSaving(true);
     setSaveError(null);
     try {
-      const saved = await api.saveDashboardLayout(layout);
+      const saved = await api.saveDashboardLayout(
+        layout,
+        template === "home" ? undefined : template,
+      );
       setLayout(saved);
       setSavedLayout(saved);
       setEditing(false);
-      editButtonRef.current?.focus();
+      onSaved?.(saved);
     } catch (e: any) {
       setSaveError(e.message || "Failed to save dashboard layout.");
     } finally {
@@ -1744,6 +2170,15 @@ export function Overview({
   };
 
   const addWidget = (item: (typeof CATALOG_ITEMS)[number]) => {
+    let span: 2 | 3 | 4 | 6 = item.defaultSpan;
+    if (
+      template === "artist" &&
+      (item.type === "top_albums" || item.type === "top_tracks")
+    ) {
+      span = 3;
+    } else if (template === "album" && item.type === "top_tracks") {
+      span = 6;
+    }
     setLayout((prev) => ({
       ...prev,
       widgets: [
@@ -1751,12 +2186,415 @@ export function Overview({
         {
           id: item.type,
           type: item.type,
-          colSpan: item.defaultSpan,
+          colSpan: span,
         },
       ],
     }));
     setCatalogOpen(false);
   };
+
+  return {
+    editing,
+    setEditing,
+    layout,
+    setLayout,
+    savedLayout,
+    saving,
+    saveError,
+    catalogOpen,
+    setCatalogOpen,
+    isDirty,
+    handleStartEditing,
+    handleCancel,
+    handleReset,
+    handleSave,
+    cycleSpan,
+    removeWidget,
+    moveWidget,
+    addWidget,
+    layoutResult,
+  };
+}
+
+export function DashboardEditToolbar({
+  template,
+  saving,
+  saveError,
+  onAddWidget,
+  onReset,
+  onCancel,
+  onSave,
+}: {
+  template: TemplateKind;
+  saving: boolean;
+  saveError: string | null;
+  onAddWidget: () => void;
+  onReset: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const ariaLabel =
+    template === "home"
+      ? "Personalizza dashboard"
+      : template === "artist"
+        ? "Personalizza template artista"
+        : template === "album"
+          ? "Personalizza template album"
+          : "Personalizza template brano";
+  return (
+    <div
+      className="dashboard-edit-toolbar panel padded"
+      role="toolbar"
+      aria-label={ariaLabel}
+    >
+      <div className="dashboard-edit-actions">
+        <button
+          type="button"
+          className="button secondary customize-template-button"
+          disabled={saving}
+          onClick={onAddWidget}
+        >
+          <Icon>add</Icon> Aggiungi widget
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={saving}
+          onClick={onReset}
+        >
+          <Icon>restart_alt</Icon> Ripristina predefinito
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Annulla
+        </button>
+        <button
+          type="button"
+          className="button primary"
+          onClick={onSave}
+          disabled={saving}
+        >
+          <Icon>check</Icon> Salva modifiche
+        </button>
+      </div>
+      {template === "artist" && (
+        <p className="dashboard-edit-notice">
+          <Icon>info</Icon> Modifica del template artista: le modifiche verranno
+          applicate a tutte le pagine artista dell'archivio.
+        </p>
+      )}
+      {template === "album" && (
+        <p className="dashboard-edit-notice">
+          <Icon>info</Icon> Modifica del template album: le modifiche verranno
+          applicate a tutte le pagine album dell'archivio.
+        </p>
+      )}
+      {template === "track" && (
+        <p className="dashboard-edit-notice">
+          <Icon>info</Icon> Modifica del template brano: le modifiche verranno
+          applicate a tutte le pagine brano dell'archivio.
+        </p>
+      )}
+      {saving && (
+        <span className="visually-hidden" role="status">
+          Salvataggio…
+        </span>
+      )}
+      {saveError && <ErrorText>{saveError}</ErrorText>}
+    </div>
+  );
+}
+
+export function WidgetCatalogDialog({
+  open,
+  onClose,
+  template,
+  widgets,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  template: TemplateKind;
+  widgets: WidgetConfig[];
+  onAdd: (item: (typeof CATALOG_ITEMS)[number]) => void;
+}) {
+  const catalogDialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = catalogDialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    } else {
+      if (dialog.open) {
+        dialog.close();
+      }
+    }
+  }, [open]);
+
+  const availableItems = CATALOG_ITEMS.filter(
+    (item) =>
+      isWidgetAllowedForTemplate(item.type, template) &&
+      !widgets.some((w) => w.type === item.type),
+  );
+
+  return (
+    <dialog
+      ref={catalogDialogRef}
+      className="modal widget-catalog-dialog"
+      aria-label="Aggiungi widget"
+      onClose={onClose}
+    >
+      <div className="dialog-header">
+        <h2>Aggiungi widget</h2>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Chiudi catalogo"
+          onClick={onClose}
+        >
+          <Icon>close</Icon>
+        </button>
+      </div>
+      {availableItems.length === 0 ? (
+        <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
+      ) : (
+        <div className="catalog-items-grid">
+          {availableItems.map((item) => (
+            <div key={item.type} className="panel padded catalog-item-card">
+              <div className="catalog-item-info">
+                <h3>
+                  {template === "album" && item.type === "top_tracks"
+                    ? "Brani dell'album"
+                    : item.name}
+                </h3>
+                <p>{item.description}</p>
+                <small>
+                  Dimensione:{" "}
+                  {template === "artist" &&
+                  (item.type === "top_albums" || item.type === "top_tracks")
+                    ? 3
+                    : template === "album" && item.type === "top_tracks"
+                      ? 6
+                      : item.defaultSpan}{" "}
+                  colonne
+                </small>
+              </div>
+              <button
+                type="button"
+                className="button secondary"
+                aria-label={
+                  template === "home" ? undefined : `Aggiungi ${item.name}`
+                }
+                onClick={() => onAdd(item)}
+              >
+                <Icon>add</Icon> Aggiungi
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </dialog>
+  );
+}
+
+export function WidgetEditControls({
+  widget,
+  index,
+  totalWidgets,
+  saving,
+  onMove,
+  onCycleSpan,
+  onRemove,
+  onChangePeriod,
+}: {
+  widget: WidgetConfig;
+  index: number;
+  totalWidgets: number;
+  saving: boolean;
+  onMove: (index: number, delta: number) => void;
+  onCycleSpan: (id: string) => void;
+  onRemove: (id: string) => void;
+  onChangePeriod?: (period: string | undefined) => void;
+}) {
+  return (
+    <div className="widget-edit-controls">
+      <button
+        type="button"
+        className="widget-control widget-drag-handle"
+        disabled={saving}
+        title="Trascina per riordinare"
+        aria-label="Sposta widget"
+        draggable={!saving}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", String(index));
+          e.dataTransfer.effectAllowed = "move";
+        }}
+      >
+        <Icon>drag_indicator</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-move-up"
+        title="Sposta prima"
+        aria-label="Sposta widget prima"
+        disabled={saving || index === 0}
+        onClick={() => onMove(index, -1)}
+      >
+        <Icon>arrow_upward</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-move-down"
+        title="Sposta dopo"
+        aria-label="Sposta widget dopo"
+        disabled={saving || index === totalWidgets - 1}
+        onClick={() => onMove(index, 1)}
+      >
+        <Icon>arrow_downward</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-span-button"
+        title={`Larghezza: ${widget.colSpan} colonne. Clicca per modificare.`}
+        aria-label={`Larghezza: ${widget.colSpan} colonne`}
+        disabled={saving}
+        onClick={() => onCycleSpan(widget.id)}
+      >
+        <Icon>view_column</Icon>
+        <span>{widget.colSpan}/6</span>
+      </button>
+      {isTimeSensitiveWidget(widget.type) && onChangePeriod && (
+        <div className="widget-period-override-control">
+          <Select
+            aria-label="Periodo widget"
+            disabled={saving}
+            value={widget.periodOverride || ""}
+            onChange={(val) => onChangePeriod(val || undefined)}
+          >
+            {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
+              <option key={val} value={val}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+      <button
+        type="button"
+        className="widget-control widget-remove-button"
+        title="Rimuovi widget"
+        aria-label="Rimuovi widget"
+        disabled={saving}
+        onClick={() => onRemove(widget.id)}
+      >
+        <Icon>close</Icon>
+      </button>
+    </div>
+  );
+}
+
+function OverriddenArtistTotalsWidget({
+  kind,
+  id,
+  widgetParams,
+  periodOverride,
+}: {
+  kind: Kind;
+  id: string;
+  widgetParams: URLSearchParams;
+  periodOverride?: string;
+}) {
+  const isPreview = id === "preview";
+  const result = useLoad(
+    () => api.music(kind, id, widgetParams),
+    `music-totals-override:${kind}:${id}:${widgetParams.toString()}`,
+    !isPreview,
+  );
+  if (isPreview) {
+    return (
+      <TotalsWidget
+        totals={{
+          records: 0,
+          listens: 0,
+          tracks: 0,
+          actual_ms: 0,
+          estimated_ms: 0,
+          unknown_durations: 0,
+        }}
+        ids
+        periodOverride={periodOverride}
+      />
+    );
+  }
+  if (result.error && !result.data) {
+    return (
+      <article className="panel padded widget-read-error">
+        <ErrorText>{result.error}</ErrorText>
+      </article>
+    );
+  }
+  if (!result.data) return <TotalsSkeleton />;
+  return (
+    <TotalsWidget
+      totals={result.data.totals}
+      ids
+      periodOverride={periodOverride}
+    />
+  );
+}
+
+export function Overview({
+  preferences,
+  visible,
+  status,
+}: {
+  preferences: Preferences;
+  visible: boolean;
+  status: SpotifyStatus | null;
+}) {
+  const selection = useSelection(visible, preferences.initial_period),
+    { params } = selection;
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+
+  const layoutEditor = useLayoutEditor({
+    template: "home",
+    defaultLayout: DEFAULT_V1_LAYOUT,
+    visible,
+    onCancel: () => editButtonRef.current?.focus(),
+    onSaved: () => editButtonRef.current?.focus(),
+  });
+
+  const requestedWidgets = useMemo(() => {
+    return Array.from(
+      new Set(
+        layoutEditor.layout.widgets
+          .filter((w) => !w.periodOverride)
+          .map((w) => w.type),
+      ),
+    ).join(",");
+  }, [layoutEditor.layout.widgets]);
+
+  const dashboardParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (requestedWidgets) {
+      p.set("widgets", requestedWidgets);
+    }
+    return p;
+  }, [params, requestedWidgets]);
+
+  const result = useLoad<Dashboard>(
+    () => api.dashboard(dashboardParams),
+    `${dashboardParams}:${preferences.version}`,
+    visible && requestedWidgets.length > 0,
+    (status?.sync_seconds || 120) * 1000,
+  );
 
   const renderWidgetContent = (widget: WidgetConfig) => {
     const widgetParams = getWidgetParams(params, widget.periodOverride);
@@ -1905,12 +2743,12 @@ export function Overview({
         <div className="overview-heading-actions">
           <button
             ref={editButtonRef}
-            aria-pressed={editing}
+            aria-pressed={layoutEditor.editing}
             aria-controls="dashboard-grid"
             type="button"
             className="button secondary"
-            disabled={saving}
-            onClick={handleStartEditing}
+            disabled={layoutEditor.saving}
+            onClick={layoutEditor.handleStartEditing}
           >
             <Icon>tune</Icon> Personalizza
           </button>
@@ -1918,104 +2756,30 @@ export function Overview({
         </div>
       </div>
 
-      {editing && (
-        <div
-          className="dashboard-edit-toolbar panel padded"
-          role="toolbar"
-          aria-label="Personalizza dashboard"
-        >
-          <div className="dashboard-edit-actions">
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={() => setCatalogOpen(true)}
-            >
-              <Icon>add</Icon> Aggiungi widget
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={handleReset}
-            >
-              <Icon>restart_alt</Icon> Ripristina predefinito
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={handleCancel}
-            >
-              Annulla
-            </button>
-            <button
-              type="button"
-              className="button primary"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              <Icon>check</Icon> Salva modifiche
-            </button>
-          </div>
-          {saving && (
-            <span className="visually-hidden" role="status">
-              Salvataggio…
-            </span>
-          )}
-          {saveError && <ErrorText>{saveError}</ErrorText>}
-        </div>
+      {layoutEditor.editing && (
+        <DashboardEditToolbar
+          template="home"
+          saving={layoutEditor.saving}
+          saveError={layoutEditor.saveError}
+          onAddWidget={() => layoutEditor.setCatalogOpen(true)}
+          onReset={layoutEditor.handleReset}
+          onCancel={layoutEditor.handleCancel}
+          onSave={layoutEditor.handleSave}
+        />
       )}
 
-      <dialog
-        ref={catalogDialogRef}
-        className="modal widget-catalog-dialog"
-        aria-label="Aggiungi widget"
-        onClose={() => setCatalogOpen(false)}
-      >
-        <div className="dialog-header">
-          <h2>Aggiungi widget</h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Chiudi catalogo"
-            onClick={() => setCatalogOpen(false)}
-          >
-            <Icon>close</Icon>
-          </button>
-        </div>
-        {CATALOG_ITEMS.filter(
-          (item) => !layout.widgets.some((w) => w.type === item.type),
-        ).length === 0 ? (
-          <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
-        ) : (
-          <div className="catalog-items-grid">
-            {CATALOG_ITEMS.filter(
-              (item) => !layout.widgets.some((w) => w.type === item.type),
-            ).map((item) => (
-              <div key={item.type} className="panel padded catalog-item-card">
-                <div className="catalog-item-info">
-                  <h3>{item.name}</h3>
-                  <p>{item.description}</p>
-                  <small>Dimensione: {item.defaultSpan} colonne</small>
-                </div>
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => addWidget(item)}
-                >
-                  <Icon>add</Icon> Aggiungi
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </dialog>
+      <WidgetCatalogDialog
+        open={layoutEditor.catalogOpen}
+        onClose={() => layoutEditor.setCatalogOpen(false)}
+        template="home"
+        widgets={layoutEditor.layout.widgets}
+        onAdd={layoutEditor.addWidget}
+      />
 
-      <ErrorText>{result.error || layoutResult.error}</ErrorText>
+      <ErrorText>{result.error || layoutEditor.layoutResult.error}</ErrorText>
       <div
         id="dashboard-grid"
-        className={`dashboard-grid${editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
+        className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
         aria-busy={result.loading && !result.data}
       >
         {result.loading && !result.data && (
@@ -2023,121 +2787,58 @@ export function Overview({
             Loading your archive…
           </span>
         )}
-        {layout.widgets.map((w, index) => (
+        {layoutEditor.layout.widgets.map((w, index) => (
           <div
             key={w.id}
-            className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
+            className={`dashboard-widget span-${w.colSpan}${layoutEditor.editing ? " editing" : ""}`}
             data-widget-id={w.id}
             data-widget-type={w.type}
-            draggable={editing && !saving}
+            draggable={layoutEditor.editing && !layoutEditor.saving}
             onDragStart={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.dataTransfer.setData("text/plain", String(index));
               e.dataTransfer.effectAllowed = "move";
             }}
             onDragOver={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
             }}
             onDrop={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.preventDefault();
               const sourceIndex = parseInt(
                 e.dataTransfer.getData("text/plain"),
                 10,
               );
               if (!isNaN(sourceIndex) && sourceIndex !== index) {
-                setLayout((prev) => ({
+                layoutEditor.setLayout((prev) => ({
                   ...prev,
                   widgets: reorderWidgets(prev.widgets, sourceIndex, index),
                 }));
               }
             }}
           >
-            {editing && (
-              <div className="widget-edit-controls">
-                <button
-                  type="button"
-                  className="widget-control widget-drag-handle"
-                  disabled={saving}
-                  title="Trascina per riordinare"
-                  aria-label="Sposta widget"
-                  draggable={editing && !saving}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("text/plain", String(index));
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                >
-                  <Icon>drag_indicator</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-move-up"
-                  title="Sposta prima"
-                  aria-label="Sposta widget prima"
-                  disabled={saving || index === 0}
-                  onClick={() => moveWidget(index, -1)}
-                >
-                  <Icon>arrow_upward</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-move-down"
-                  title="Sposta dopo"
-                  aria-label="Sposta widget dopo"
-                  disabled={saving || index === layout.widgets.length - 1}
-                  onClick={() => moveWidget(index, 1)}
-                >
-                  <Icon>arrow_downward</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-span-button"
-                  title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
-                  aria-label={`Larghezza: ${w.colSpan} colonne`}
-                  disabled={saving}
-                  onClick={() => cycleSpan(w.id)}
-                >
-                  <Icon>view_column</Icon>
-                  <span>{w.colSpan}/6</span>
-                </button>
-                {isTimeSensitiveWidget(w.type) && (
-                  <div className="widget-period-override-control">
-                    <Select
-                      aria-label="Periodo widget"
-                      disabled={saving}
-                      value={w.periodOverride || ""}
-                      onChange={(val) => {
-                        setLayout((prev) => ({
-                          ...prev,
-                          widgets: prev.widgets.map((item) =>
-                            item.id === w.id
-                              ? { ...item, periodOverride: val || undefined }
-                              : item,
-                          ),
-                        }));
-                      }}
-                    >
-                      {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
-                        <option key={val} value={val}>
-                          {label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="widget-control widget-remove-button"
-                  title="Rimuovi widget"
-                  aria-label="Rimuovi widget"
-                  disabled={saving}
-                  onClick={() => removeWidget(w.id)}
-                >
-                  <Icon>close</Icon>
-                </button>
-              </div>
+            {layoutEditor.editing && (
+              <WidgetEditControls
+                widget={w}
+                index={index}
+                totalWidgets={layoutEditor.layout.widgets.length}
+                saving={layoutEditor.saving}
+                onMove={layoutEditor.moveWidget}
+                onCycleSpan={layoutEditor.cycleSpan}
+                onRemove={layoutEditor.removeWidget}
+                onChangePeriod={(val) => {
+                  layoutEditor.setLayout((prev) => ({
+                    ...prev,
+                    widgets: prev.widgets.map((item) =>
+                      item.id === w.id
+                        ? { ...item, periodOverride: val }
+                        : item,
+                    ),
+                  }));
+                }}
+              />
             )}
             {renderWidgetContent(w)}
           </div>
@@ -2717,15 +3418,85 @@ export function MusicPage({
   kind: Kind;
   id: string;
 }) {
+  const isPreview = id === "preview";
+  const searchParams = new URLSearchParams(location.search);
+  const isInitialEdit =
+    searchParams.get("edit") === "template" || searchParams.get("edit") === "1";
+
   const selection = useSelection(true),
     params = scoped(selection.params, kind, id);
-  const result = useLoad(
-    () => api.music(kind, id, params),
-    `music:${kind}:${id}:${params}:${preferences.version}`,
-    true,
+
+  const isMusicTemplate =
+    kind === "artists" || kind === "albums" || kind === "tracks";
+  const templateKind: TemplateKind =
+    kind === "tracks" ? "track" : kind === "albums" ? "album" : "artist";
+  const defaultLayout =
+    kind === "tracks"
+      ? DEFAULT_TRACK_LAYOUT
+      : kind === "albums"
+        ? DEFAULT_ALBUM_LAYOUT
+        : DEFAULT_ARTIST_LAYOUT;
+
+  const layoutEditor = useLayoutEditor({
+    template: templateKind,
+    defaultLayout,
+    initialEditing: isInitialEdit && isMusicTemplate,
+  });
+
+  const dummyTotals: Totals = {
+    records: 0,
+    listens: 0,
+    tracks: 0,
+    actual_ms: 0,
+    estimated_ms: 0,
+    unknown_durations: 0,
+  };
+  const dummyPreviewPage: MusicPageData = {
+    id: "preview",
+    name:
+      kind === "tracks"
+        ? "Brano di anteprima"
+        : kind === "albums"
+          ? "Album di anteprima"
+          : "Artista di anteprima",
+    kind,
+    cover_url: null,
+    album_id: null,
+    album: null,
+    artists:
+      kind === "albums"
+        ? [{ id: "preview-artist", name: "Artista di anteprima" }]
+        : [],
+    totals: dummyTotals,
+  };
+
+  const needsTotals = useMemo(() => {
+    if (!isMusicTemplate) return true;
+    return layoutEditor.layout.widgets.some(
+      (w) => w.type === "totals" && !w.periodOverride,
+    );
+  }, [isMusicTemplate, layoutEditor.layout.widgets]);
+
+  const musicParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (!needsTotals) {
+      p.set("include_totals", "false");
+    }
+    return p;
+  }, [params, needsTotals]);
+
+  const apiResult = useLoad(
+    () => api.music(kind, id, musicParams),
+    `music:${kind}:${id}:${musicParams}:${preferences.version}`,
+    !isPreview,
     undefined,
     true,
   );
+
+  const result = isPreview
+    ? { data: dummyPreviewPage, error: null, loading: false }
+    : apiResult;
+
   const introduction = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const content = introduction.current;
@@ -2740,8 +3511,6 @@ export function MusicPage({
       if (header.style.getPropertyValue("--music-artwork-size") !== value)
         header.style.setProperty("--music-artwork-size", value);
     };
-    // Apply measurements outside ResizeObserver delivery: changing the column
-    // can reflow a wrapped title, especially in WebKit.
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
@@ -2755,87 +3524,363 @@ export function MusicPage({
       cancelAnimationFrame(frame);
     };
   }, [result.data?.id]);
+
+  if (!isMusicTemplate) {
+    return (
+      <>
+        <ErrorText>{result.error}</ErrorText>
+        {result.data ? (
+          <>
+            <div className="music-heading">
+              <Cover url={result.data.cover_url} large>
+                <ArtworkCredits url={result.data.cover_url} />
+              </Cover>
+              <div className="music-header-content" ref={introduction}>
+                <div className="music-title-row">
+                  <Heading title={result.data.name}>
+                    {result.data.artists.map(
+                      (a: { id: string; name: string }, i: number) => (
+                        <span key={a.id}>
+                          {i > 0 && ", "}
+                          <Link to={musicLink("artists", a.id, params)}>
+                            {a.name}
+                          </Link>
+                        </span>
+                      ),
+                    )}
+                    {result.data.album_id && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <Link
+                          to={musicLink("albums", result.data.album_id, params)}
+                        >
+                          {result.data.album}
+                        </Link>
+                      </>
+                    )}
+                  </Heading>
+                  <BackButton
+                    fallback={`/rankings/${kind}?${context(selection.params)}`}
+                  />
+                </div>
+                {!isPreview && <MusicActions kind={kind} id={id} />}
+                <div className="music-period">
+                  <PeriodFilters selection={selection} />
+                </div>
+              </div>
+            </div>
+            <Stats totals={result.data.totals} />
+          </>
+        ) : (
+          !result.error && <MusicPageSkeleton />
+        )}
+        <Chart params={params} version={preferences.version} />
+        <ListeningPatterns params={params} version={preferences.version} />
+        <div>
+          <RankingsPanel
+            kind="tracks"
+            params={params}
+            title="Tracks in this period"
+            version={preferences.version}
+          />
+        </div>
+        <h2>Listening history</h2>
+        <HistoryPage
+          preferences={preferences}
+          visible
+          params={params}
+          embedded
+          musicKind={kind}
+        />
+      </>
+    );
+  }
+
+  // --- Music Page Consultation with Shared Grid Engine ---
+  const renderMusicWidgetContent = (widget: WidgetConfig) => {
+    const widgetParams = getWidgetParams(params, widget.periodOverride);
+    switch (widget.type) {
+      case "totals":
+        if (widget.periodOverride) {
+          if (isPreview) {
+            return (
+              <TotalsWidget
+                totals={dummyTotals}
+                ids
+                periodOverride={widget.periodOverride}
+              />
+            );
+          }
+          return (
+            <OverriddenArtistTotalsWidget
+              kind={kind}
+              id={id}
+              widgetParams={widgetParams}
+              periodOverride={widget.periodOverride}
+            />
+          );
+        }
+        return result.data?.totals ? (
+          <TotalsWidget totals={result.data.totals} ids />
+        ) : (
+          <TotalsSkeleton />
+        );
+      case "activity_chart":
+        return <Chart params={widgetParams} version={preferences.version} />;
+      case "listening_patterns":
+        return (
+          <ListeningPatterns
+            params={widgetParams}
+            version={preferences.version}
+          />
+        );
+      case "top_albums":
+        return (
+          <RankingsPanel
+            kind="albums"
+            params={widgetParams}
+            version={preferences.version}
+            title="Albums in this period"
+          />
+        );
+      case "top_tracks":
+        if (kind === "albums") {
+          return (
+            <RankingsPanel
+              kind="tracks"
+              params={widgetParams}
+              title="Brani dell'album"
+              version={preferences.version}
+              scrolling
+              bars
+            />
+          );
+        }
+        return (
+          <RankingsPanel
+            kind="tracks"
+            params={widgetParams}
+            title="Tracks in this period"
+            version={preferences.version}
+          />
+        );
+      case "history":
+        return (
+          <article
+            className="panel padded widget-history"
+            aria-label="Listening history"
+          >
+            <div className="panel-title">
+              <h2 className="panel-title">Listening history</h2>
+            </div>
+            <HistoryPage
+              preferences={preferences}
+              visible
+              params={widgetParams}
+              embedded
+              musicKind={kind}
+            />
+          </article>
+        );
+      case "recent_listens":
+        return (
+          <RecentListensWidget
+            recent={undefined}
+            loading={false}
+            preferences={preferences}
+            params={widgetParams}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      case "discovery_ratio":
+        return (
+          <DiscoveryRatioWidget
+            params={widgetParams}
+            version={preferences.version}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      case "listening_calendar":
+        return (
+          <ListeningCalendarWidget
+            params={widgetParams}
+            version={preferences.version}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      case "listening_milestones":
+        return (
+          <ListeningMilestonesWidget
+            params={widgetParams}
+            preferences={preferences}
+            version={preferences.version}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  const customizeAriaLabel =
+    kind === "tracks"
+      ? "Personalizza template brano"
+      : kind === "albums"
+        ? "Personalizza template album"
+        : "Personalizza template artista";
+
   return (
     <>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
-        <>
-          <div className="music-heading">
-            <Cover url={result.data.cover_url} large>
-              <ArtworkCredits url={result.data.cover_url} />
-            </Cover>
-            <div className="music-header-content" ref={introduction}>
-              <div className="music-title-row">
-                <Heading title={result.data.name}>
-                  {kind === "albums"
-                    ? "Album by "
-                    : kind === "tracks"
-                      ? "Track by "
-                      : ""}
-                  {result.data.artists.map((a, i) => (
+        <div className="music-heading">
+          <Cover url={result.data.cover_url} large>
+            <ArtworkCredits url={result.data.cover_url} />
+          </Cover>
+          <div className="music-header-content" ref={introduction}>
+            <div className="music-title-row">
+              <Heading title={result.data.name}>
+                {kind === "albums" && "Album by "}
+                {kind === "tracks" && "Track by "}
+                {result.data.artists.map(
+                  (a: { id: string; name: string }, i: number) => (
                     <span key={a.id}>
                       {i > 0 && ", "}
                       <Link to={musicLink("artists", a.id, params)}>
                         {a.name}
                       </Link>
                     </span>
-                  ))}
-                  {result.data.album_id && (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <Link
-                        to={musicLink("albums", result.data.album_id, params)}
-                      >
-                        {result.data.album}
-                      </Link>
-                    </>
-                  )}
-                </Heading>
-                <BackButton
-                  fallback={`/rankings/${kind}?${context(selection.params)}`}
-                />
-              </div>
-              <MusicActions kind={kind} id={id} />
-              <div className="music-period">
-                <PeriodFilters selection={selection} />
-              </div>
+                  ),
+                )}
+                {result.data.album_id && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link
+                      to={musicLink("albums", result.data.album_id, params)}
+                    >
+                      {result.data.album}
+                    </Link>
+                  </>
+                )}
+              </Heading>
+              <BackButton
+                fallback={`/rankings/${kind}?${context(selection.params)}`}
+              />
+            </div>
+            {!isPreview && <MusicActions kind={kind} id={id} />}
+            <div className="music-period">
+              <PeriodFilters selection={selection} />
             </div>
           </div>
-          <Stats totals={result.data.totals} />
-        </>
+        </div>
       ) : (
         !result.error && <MusicPageSkeleton />
       )}
-      <Chart params={params} version={preferences.version} />
-      <ListeningPatterns params={params} version={preferences.version} />
-      {kind !== "tracks" && (
-        <div className={kind === "artists" ? "music-collections" : undefined}>
-          {kind === "artists" && (
-            <RankingsPanel
-              kind="albums"
-              params={params}
-              version={preferences.version}
-              title="Albums in this period"
-            />
-          )}
-          <RankingsPanel
-            kind="tracks"
-            params={params}
-            title="Tracks in this period"
-            version={preferences.version}
-            scrolling={kind === "albums"}
-          />
+
+      {!layoutEditor.editing && (
+        <div className="music-template-toolbar">
+          <button
+            type="button"
+            className="button secondary customize-template-button"
+            aria-label={customizeAriaLabel}
+            onClick={() => layoutEditor.handleStartEditing()}
+          >
+            <Icon>tune</Icon> {customizeAriaLabel}
+          </button>
         </div>
       )}
-      <h2>Listening history</h2>
-      <HistoryPage
-        preferences={preferences}
-        visible
-        params={params}
-        embedded
-        musicKind={kind}
+
+      {layoutEditor.editing && (
+        <DashboardEditToolbar
+          template={templateKind}
+          saving={layoutEditor.saving}
+          saveError={layoutEditor.saveError}
+          onAddWidget={() => layoutEditor.setCatalogOpen(true)}
+          onReset={layoutEditor.handleReset}
+          onCancel={layoutEditor.handleCancel}
+          onSave={layoutEditor.handleSave}
+        />
+      )}
+
+      <WidgetCatalogDialog
+        open={layoutEditor.catalogOpen}
+        onClose={() => layoutEditor.setCatalogOpen(false)}
+        template={templateKind}
+        widgets={layoutEditor.layout.widgets}
+        onAdd={layoutEditor.addWidget}
       />
+
+      <div
+        id="dashboard-grid"
+        className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}`}
+      >
+        {layoutEditor.layout.widgets.length === 0 ? (
+          <div className="dashboard-empty-notice panel padded">
+            <p>
+              Nessun widget configurato per questo template. Clicca su
+              &quot;Aggiungi widget&quot; per personalizzare la pagina.
+            </p>
+          </div>
+        ) : (
+          layoutEditor.layout.widgets.map((w, index) => (
+            <div
+              key={w.id}
+              className={`dashboard-widget span-${w.colSpan}${layoutEditor.editing ? " editing" : ""}`}
+              data-widget-id={w.id}
+              data-widget-type={w.type}
+              draggable={layoutEditor.editing && !layoutEditor.saving}
+              onDragStart={(e) => {
+                if (!layoutEditor.editing || layoutEditor.saving) return;
+                e.dataTransfer.setData("text/plain", String(index));
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (!layoutEditor.editing || layoutEditor.saving) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                if (!layoutEditor.editing || layoutEditor.saving) return;
+                e.preventDefault();
+                const sourceIndex = parseInt(
+                  e.dataTransfer.getData("text/plain"),
+                  10,
+                );
+                if (!isNaN(sourceIndex) && sourceIndex !== index) {
+                  layoutEditor.setLayout((prev) => ({
+                    ...prev,
+                    widgets: reorderWidgets(prev.widgets, sourceIndex, index),
+                  }));
+                }
+              }}
+            >
+              {layoutEditor.editing && (
+                <WidgetEditControls
+                  widget={w}
+                  index={index}
+                  totalWidgets={layoutEditor.layout.widgets.length}
+                  saving={layoutEditor.saving}
+                  onMove={layoutEditor.moveWidget}
+                  onCycleSpan={layoutEditor.cycleSpan}
+                  onRemove={layoutEditor.removeWidget}
+                  onChangePeriod={(val) => {
+                    layoutEditor.setLayout((prev) => ({
+                      ...prev,
+                      widgets: prev.widgets.map((item) =>
+                        item.id === w.id
+                          ? { ...item, periodOverride: val }
+                          : item,
+                      ),
+                    }));
+                  }}
+                />
+              )}
+              {renderMusicWidgetContent(w)}
+            </div>
+          ))
+        )}
+      </div>
     </>
   );
 }
