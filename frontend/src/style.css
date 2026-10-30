@@ -5230,7 +5230,7 @@ dialog {
 }
 .widget-control:hover:not(:disabled) {
   background: var(--surface-raised);
-  border-color: var(--text-muted);
+  border-color: var(--muted);
 }
 .widget-control:disabled {
   opacity: 0.4;
@@ -5245,6 +5245,10 @@ dialog {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 18px;
+}
+.widget-catalog-dialog .dialog-header .icon-button {
+  min-width: 44px;
+  min-height: 44px;
 }
 .widget-catalog-dialog .dialog-header h2 {
   margin: 0;
@@ -5273,11 +5277,11 @@ dialog {
 .catalog-item-info p {
   margin: 0 0 4px 0;
   font-size: 14px;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 .catalog-item-info small {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 @container (max-width: 600px) {
   .dashboard-widget .rankings-grid.overview-rankings {
@@ -5285,6 +5289,15 @@ dialog {
   }
   .dashboard-widget .stats-grid {
     grid-template-columns: 1fr;
+  }
+  .dashboard-widget .listen-row.listen-context-albums {
+    grid-template-columns: minmax(0, 1fr) 70px;
+  }
+  .dashboard-widget .listen-row.listen-context-tracks {
+    grid-template-columns: minmax(0, 1fr) 100px;
+  }
+  .dashboard-widget .listen-row.listen-context-artists {
+    grid-template-columns: 34px minmax(0, 1fr) 90px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

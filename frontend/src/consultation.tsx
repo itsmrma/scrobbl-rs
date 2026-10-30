@@ -1036,6 +1036,14 @@ export function RecentListensWidget({
   );
 }
 
+function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
+  if (to < 0 || to >= widgets.length || from === to) return widgets;
+  const copy = [...widgets];
+  const [item] = copy.splice(from, 1);
+  copy.splice(to, 0, item);
+  return copy;
+}
+
 export function Overview({
   preferences,
   visible,
@@ -1129,14 +1137,10 @@ export function Overview({
   };
 
   const moveWidget = (index: number, delta: number) => {
-    setLayout((prev) => {
-      const target = index + delta;
-      if (target < 0 || target >= prev.widgets.length) return prev;
-      const widgets = [...prev.widgets];
-      const [item] = widgets.splice(index, 1);
-      widgets.splice(target, 0, item);
-      return { ...prev, widgets };
-    });
+    setLayout((prev) => ({
+      ...prev,
+      widgets: reorderWidgets(prev.widgets, index, index + delta),
+    }));
   };
 
   const addWidget = (item: (typeof CATALOG_ITEMS)[number]) => {
@@ -1323,12 +1327,10 @@ export function Overview({
                   10,
                 );
                 if (!isNaN(sourceIndex) && sourceIndex !== index) {
-                  setLayout((prev) => {
-                    const widgets = [...prev.widgets];
-                    const [item] = widgets.splice(sourceIndex, 1);
-                    widgets.splice(index, 0, item);
-                    return { ...prev, widgets };
-                  });
+                  setLayout((prev) => ({
+                    ...prev,
+                    widgets: reorderWidgets(prev.widgets, sourceIndex, index),
+                  }));
                 }
               }}
             >
@@ -1339,6 +1341,11 @@ export function Overview({
                     className="widget-control widget-drag-handle"
                     title="Trascina per riordinare"
                     aria-label="Sposta widget"
+                    draggable={editing}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", String(index));
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
                   >
                     <Icon>drag_indicator</Icon>
                   </button>
