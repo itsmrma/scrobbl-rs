@@ -5337,6 +5337,13 @@ dialog.widget-catalog-dialog::backdrop {
   font-size: 12px;
   color: var(--muted);
 }
+.dashboard-widget > :is(.rankings-grid, .overview-rankings) {
+  display: block;
+  height: 100%;
+}
+.dashboard-widget > :is(.rankings-grid, .overview-rankings) > article {
+  height: 100%;
+}
 @container (max-width: 600px) {
   .dashboard-widget .rankings-grid.overview-rankings {
     grid-template-columns: 1fr;
@@ -5352,6 +5359,16 @@ dialog.widget-catalog-dialog::backdrop {
   }
   .dashboard-widget .listen-row.listen-context-artists {
     grid-template-columns: 34px minmax(0, 1fr) 90px;
+  }
+  .dashboard-widget .listen-row {
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding: 12px 14px;
+    gap: 8px 12px;
+  }
+  .dashboard-widget .listen-row .listen-album,
+  .dashboard-widget .listen-row .listen-date,
+  .dashboard-widget .listen-row .listen-duration {
+    display: none;
   }
 }
 .widget-totals .stats-grid {

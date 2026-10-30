@@ -37,6 +37,7 @@ import {
   ChartSkeleton,
   ListenListSkeleton,
   MusicPageSkeleton,
+  OverviewSkeleton,
   RankingsSkeleton,
   SkeletonBlock,
   SkeletonList,
@@ -1118,31 +1119,33 @@ export function TopArtistsWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded widget-top-artists overview-ranking-panel">
-      <div className="panel-title">
-        <h2>
-          Top artists
-          {periodOverride && (
-            <span
-              className="pill widget-period-badge"
-              data-period={periodOverride}
-            >
-              {periodBadgeLabel(periodOverride)}
-            </span>
-          )}
-        </h2>
-        <Link to={`/rankings/artists?${context(params)}`}>
-          View all artists
-        </Link>
-      </div>
-      {loading ? (
-        <RankingsSkeleton count={5} label="Loading top artists…" />
-      ) : items && items.length > 0 ? (
-        <RankingRows bars items={items} kind="artists" params={params} />
-      ) : (
-        <p className="empty">No listens recorded in this period.</p>
-      )}
-    </article>
+    <div className="rankings-grid overview-rankings">
+      <article className="panel padded widget-top-artists overview-ranking-panel">
+        <div className="panel-title">
+          <h2>
+            Top artists
+            {periodOverride && (
+              <span
+                className="pill widget-period-badge"
+                data-period={periodOverride}
+              >
+                {periodBadgeLabel(periodOverride)}
+              </span>
+            )}
+          </h2>
+          <Link to={`/rankings/artists?${context(params)}`}>
+            View all artists
+          </Link>
+        </div>
+        {loading ? (
+          <RankingsSkeleton count={5} label="Loading top artists…" />
+        ) : items && items.length > 0 ? (
+          <RankingRows bars items={items} kind="artists" params={params} />
+        ) : (
+          <p className="empty">No listens recorded in this period.</p>
+        )}
+      </article>
+    </div>
   );
 }
 
@@ -1158,29 +1161,33 @@ export function TopAlbumsWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded widget-top-albums overview-ranking-panel">
-      <div className="panel-title">
-        <h2>
-          Top albums
-          {periodOverride && (
-            <span
-              className="pill widget-period-badge"
-              data-period={periodOverride}
-            >
-              {periodBadgeLabel(periodOverride)}
-            </span>
-          )}
-        </h2>
-        <Link to={`/rankings/albums?${context(params)}`}>View all albums</Link>
-      </div>
-      {loading ? (
-        <RankingsSkeleton count={5} label="Loading top albums…" />
-      ) : items && items.length > 0 ? (
-        <RankingRows bars items={items} kind="albums" params={params} />
-      ) : (
-        <p className="empty">No listens recorded in this period.</p>
-      )}
-    </article>
+    <div className="overview-rankings">
+      <article className="panel padded widget-top-albums overview-ranking-panel">
+        <div className="panel-title">
+          <h2>
+            Top albums
+            {periodOverride && (
+              <span
+                className="pill widget-period-badge"
+                data-period={periodOverride}
+              >
+                {periodBadgeLabel(periodOverride)}
+              </span>
+            )}
+          </h2>
+          <Link to={`/rankings/albums?${context(params)}`}>
+            View all albums
+          </Link>
+        </div>
+        {loading ? (
+          <RankingsSkeleton count={5} label="Loading top albums…" />
+        ) : items && items.length > 0 ? (
+          <RankingRows bars items={items} kind="albums" params={params} />
+        ) : (
+          <p className="empty">No listens recorded in this period.</p>
+        )}
+      </article>
+    </div>
   );
 }
 
@@ -1196,29 +1203,33 @@ export function TopTracksWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded widget-top-tracks overview-ranking-panel">
-      <div className="panel-title">
-        <h2>
-          Top tracks
-          {periodOverride && (
-            <span
-              className="pill widget-period-badge"
-              data-period={periodOverride}
-            >
-              {periodBadgeLabel(periodOverride)}
-            </span>
-          )}
-        </h2>
-        <Link to={`/rankings/tracks?${context(params)}`}>View all tracks</Link>
-      </div>
-      {loading ? (
-        <RankingsSkeleton count={5} label="Loading top tracks…" />
-      ) : items && items.length > 0 ? (
-        <RankingRows bars items={items} kind="tracks" params={params} />
-      ) : (
-        <p className="empty">No listens recorded in this period.</p>
-      )}
-    </article>
+    <div className="overview-rankings">
+      <article className="panel padded widget-top-tracks overview-ranking-panel">
+        <div className="panel-title">
+          <h2>
+            Top tracks
+            {periodOverride && (
+              <span
+                className="pill widget-period-badge"
+                data-period={periodOverride}
+              >
+                {periodBadgeLabel(periodOverride)}
+              </span>
+            )}
+          </h2>
+          <Link to={`/rankings/tracks?${context(params)}`}>
+            View all tracks
+          </Link>
+        </div>
+        {loading ? (
+          <RankingsSkeleton count={5} label="Loading top tracks…" />
+        ) : items && items.length > 0 ? (
+          <RankingRows bars items={items} kind="tracks" params={params} />
+        ) : (
+          <p className="empty">No listens recorded in this period.</p>
+        )}
+      </article>
+    </div>
   );
 }
 
@@ -1837,6 +1848,39 @@ export function Overview({
   };
 
   if (!visible) return null;
+
+  if (result.loading && !result.data && !result.error) {
+    return (
+      <>
+        <div className="overview-heading">
+          <Heading title="Your listening, at a glance">
+            The songs, the repeats, the moments. All yours.
+          </Heading>
+          <div className="overview-heading-actions">
+            <PeriodFilters selection={selection} />
+          </div>
+        </div>
+        <OverviewSkeleton label="Loading your archive…" />
+      </>
+    );
+  }
+
+  if (result.error && !result.data) {
+    return (
+      <>
+        <div className="overview-heading">
+          <Heading title="Your listening, at a glance">
+            The songs, the repeats, the moments. All yours.
+          </Heading>
+          <div className="overview-heading-actions">
+            <PeriodFilters selection={selection} />
+          </div>
+        </div>
+        <ErrorText>{result.error}</ErrorText>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="overview-heading">
