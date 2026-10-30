@@ -6,6 +6,7 @@ import { useLoad } from "./load";
 import { Select } from "./select";
 import { ErrorText, number } from "./ui";
 import { SkeletonPatterns } from "./skeleton";
+import { periodBadgeLabel } from "./preferences";
 
 const views = [
   ["hours", "Time of day"],
@@ -180,9 +181,11 @@ const widgetViews = [
 export function ListeningPatternsWidget({
   params,
   version,
+  periodOverride,
 }: {
   params: URLSearchParams;
   version: number;
+  periodOverride?: string | null;
 }) {
   const [view, setView] = useState<"hours" | "weekdays">("hours");
   const [inspected, setInspected] = useState<string | null>(null);
@@ -208,7 +211,17 @@ export function ListeningPatternsWidget({
       aria-label="Pattern di ascolto"
     >
       <div className="panel-title">
-        <h2>Pattern di ascolto</h2>
+        <h2>
+          Pattern di ascolto
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
         <div className="panel-actions">
           <Select
             aria-label="Pattern temporale"
