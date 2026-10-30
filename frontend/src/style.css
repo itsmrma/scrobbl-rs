@@ -5243,6 +5243,13 @@ dialog {
   border-color: var(--error);
   color: var(--error);
 }
+dialog.widget-catalog-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  z-index: 100;
+  overflow-y: auto;
+}
 .widget-catalog-dialog .dialog-header {
   display: flex;
   align-items: center;
@@ -5542,6 +5549,154 @@ dialog {
   .widget-now-playing .now-playing-progress-wrap {
     grid-row: 1;
     grid-column: 3;
+  }
+}
+
+.overview-ranking-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.overview-ranking-panel .panel-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.overview-ranking-panel .panel-title h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+.overview-ranking-panel .panel-title a {
+  font-size: 11px;
+  color: var(--muted);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.overview-ranking-panel .panel-title a:hover {
+  text-decoration: underline;
+  color: var(--text);
+}
+.overview-ranking-panel .ranking-list {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.overview-ranking-panel .ranking-row {
+  grid-template-columns: 2ch 38px minmax(0, 1fr);
+  grid-template-rows: auto auto 3px;
+  gap: 2px 10px;
+  padding: 6px 4px;
+  border-radius: 6px;
+}
+.overview-ranking-panel .rank-number,
+.overview-ranking-panel .cover {
+  grid-row: 1 / 3;
+}
+.overview-ranking-panel .rank-number {
+  grid-column: 1;
+  font-size: 13px;
+  min-width: 2ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  align-self: center;
+}
+.overview-ranking-panel .cover {
+  grid-column: 2;
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  align-self: center;
+}
+.top-artists-panel .cover,
+.top-artists-panel .skeleton-ranking-row .cover {
+  border-radius: 50% !important;
+}
+.overview-ranking-panel .rank-name {
+  grid-column: 3;
+  grid-row: 1;
+  min-width: 0;
+  line-height: 16px;
+}
+.overview-ranking-panel .rank-name a {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.overview-ranking-panel .rank-name small {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+.overview-ranking-panel .rank-value {
+  grid-column: 3;
+  grid-row: 2;
+  gap: 0 8px;
+  line-height: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.overview-ranking-panel .ranking-meter {
+  grid-column: 2 / -1;
+  grid-row: 3;
+  margin: 2px 0 0;
+  height: 3px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.overview-ranking-panel .ranking-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+}
+.overview-ranking-panel .empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+@container (min-width: 420px) {
+  .dashboard-widget .overview-ranking-panel .ranking-row {
+    grid-template-columns: 2ch 48px minmax(0, 1fr);
+    gap: 3px 12px;
+    padding: 8px 6px;
+  }
+  .dashboard-widget .overview-ranking-panel .cover {
+    width: 48px;
+    height: 48px;
+  }
+  .dashboard-widget .overview-ranking-panel .rank-name a {
+    font-size: 14px;
+  }
+  .dashboard-widget .overview-ranking-panel .rank-value {
+    font-size: 12px;
+  }
+}
+@container (min-width: 680px) {
+  .dashboard-widget .overview-ranking-panel .ranking-row {
+    grid-template-columns: 2ch 56px minmax(0, 1fr);
+    gap: 4px 14px;
+    padding: 10px 8px;
+  }
+  .dashboard-widget .overview-ranking-panel .cover {
+    width: 56px;
+    height: 56px;
+  }
+  .dashboard-widget .overview-ranking-panel .rank-name a {
+    font-size: 15px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

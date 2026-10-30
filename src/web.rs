@@ -416,55 +416,160 @@ pub async fn dashboard(
     } else {
         None
     };
-    let order = match filters.sort.as_deref().unwrap_or("plays") {
-        "plays" => "plays DESC, listened_ms DESC, name COLLATE NOCASE, id",
-        "time" => "listened_ms DESC, plays DESC, name COLLATE NOCASE, id",
-        _ => return Err(AppError::BadRequest("Unknown ranking order.".into())),
-    };
-    let now = auth::now_ms();
-    let mut query = selection_at(&mut view.transaction, &filters, false, now).await?;
-    query.push(
-        format!(
-            "{}{}",
-            include_str!("ranking-aggregates.sql"),
-            include_str!("dashboard.sql")
-        )
-        .replace("/*ORDER*/", order)
-        .replace(
-            "/*PRIMARY*/",
-            if filters.sort.as_deref() == Some("time") {
-                "listened_ms"
+    let (need_totals, need_artists, need_albums, need_tracks, need_recent) =
+        match filters.widgets.as_deref() {
+            Some(w) => {
+                let set: std::collections::HashSet<&str> =
+                    w.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                (
+                    set.contains("totals"),
+                    set.contains("top_artists") || set.contains("unified_rankings"),
+                    set.contains("top_albums") || set.contains("unified_rankings"),
+                    set.contains("top_tracks") || set.contains("unified_rankings"),
+                    set.contains("recent_listens"),
+                )
+            }
+            None => (true, true, true, true, true),
+        };
+    let need_aggregates = need_totals || need_artists || need_albums || need_tracks;
+    let (totals, rankings) = if need_aggregates {
+        let order = match filters.sort.as_deref().unwrap_or("plays") {
+            "plays" => "plays DESC, listened_ms DESC, name COLLATE NOCASE, id",
+            "time" => "listened_ms DESC, plays DESC, name COLLATE NOCASE, id",
+            _ => return Err(AppError::BadRequest("Unknown ranking order.".into())),
+        };
+        let now = auth::now_ms();
+        let mut query = selection_at(&mut view.transaction, &filters, false, now).await?;
+        let mut sql = String::from(
+            r#", by_track AS MATERIALIZED (
+                SELECT track_id, COUNT(*) AS records, SUM(counted) AS plays,
+                       COALESCE(SUM(CASE WHEN counted=1 THEN listened_ms ELSE 0 END),0) AS listened_ms,
+                       COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms ELSE 0 END),0) AS actual_ms,
+                       COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms ELSE 0 END),0) AS estimated_ms,
+                       SUM(CASE WHEN counted=1 AND duration_kind='unknown' THEN 1 ELSE 0 END) AS unknown_durations
+                FROM selected GROUP BY track_id
+            )"#,
+        );
+        if need_artists {
+            sql.push_str(
+                r#", artist_ranks AS (
+                    SELECT ar.id, ar.name, CASE WHEN COUNT(*)=1 THEN MIN(t.title) ELSE CAST(COUNT(*) AS TEXT) || ' tracks' END AS subtitle, '/api/v1/artwork/artists/'||ar.id AS cover_url,
+                           SUM(b.plays) AS plays, SUM(b.listened_ms) AS listened_ms, SUM(b.actual_ms) AS actual_ms, SUM(b.estimated_ms) AS estimated_ms, SUM(b.unknown_durations) AS unknown_durations
+                    FROM by_track b JOIN track_artists ta ON ta.track_id=b.track_id
+                    JOIN artists ar ON ar.id=ta.artist_id JOIN tracks t ON t.id=b.track_id
+                    WHERE b.plays>0 GROUP BY ar.id
+                )"#,
+            );
+        }
+        if need_albums {
+            sql.push_str(
+                r#", album_ranks AS (
+                    SELECT a.id, a.name, NULL AS subtitle, a.cover_url,
+                           SUM(b.plays) AS plays, SUM(b.listened_ms) AS listened_ms, SUM(b.actual_ms) AS actual_ms, SUM(b.estimated_ms) AS estimated_ms, SUM(b.unknown_durations) AS unknown_durations
+                    FROM by_track b JOIN tracks t ON t.id=b.track_id JOIN albums a ON a.id=t.album_id
+                    WHERE b.plays>0 GROUP BY a.id
+                )"#,
+            );
+        }
+        if need_tracks {
+            sql.push_str(
+                r#", track_ranks AS (
+                    SELECT t.id, t.title AS name, a.name AS subtitle, a.cover_url, b.plays, b.listened_ms, b.actual_ms, b.estimated_ms, b.unknown_durations
+                    FROM by_track b JOIN tracks t ON t.id=b.track_id LEFT JOIN albums a ON a.id=t.album_id
+                    WHERE b.plays>0
+                )"#,
+            );
+        }
+        sql.push_str(" SELECT json_object(");
+        if need_totals {
+            sql.push_str(
+                r#"'totals', (SELECT json_object(
+                    'records',COALESCE(SUM(records),0), 'listens',COALESCE(SUM(plays),0),
+                    'tracks',COALESCE(SUM(plays>0),0), 'actual_ms',COALESCE(SUM(actual_ms),0),
+                    'estimated_ms',COALESCE(SUM(estimated_ms),0), 'unknown_durations',COALESCE(SUM(unknown_durations),0)
+                ) FROM by_track),"#,
+            );
+        } else {
+            sql.push_str("'totals', NULL,");
+        }
+        if need_artists || need_albums || need_tracks {
+            let artists_expr = if need_artists {
+                "(SELECT json_group_array(json_object('id',id,'name',name,'subtitle',subtitle,'cover_url',cover_url,'plays',plays,'listened_ms',listened_ms,'actual_ms',actual_ms,'estimated_ms',estimated_ms,'unknown_durations',unknown_durations,'position',position)) FROM (SELECT *, RANK() OVER (ORDER BY /*PRIMARY*/ DESC) AS position FROM artist_ranks ORDER BY /*ORDER*/ LIMIT 5))"
             } else {
-                "plays"
-            },
-        ),
-    );
-    let aggregates: String = query
-        .build_query_scalar()
-        .fetch_one(&mut *view.transaction)
-        .await?;
-    let aggregates: Value = serde_json::from_str(&aggregates).map_err(|_| AppError::Internal)?;
-    let totals = &aggregates["totals"];
-    let rankings = &aggregates["rankings"];
-    let mut recent_filters = filters.clone();
-    if recent_filters.status.is_none() {
-        recent_filters.status = Some("counted".into());
-    }
-    let mut recent = selection_at(&mut view.transaction, &recent_filters, true, now).await?;
-    recent
-        .push(LISTEN_COLUMNS)
-        .push(" ORDER BY s.played_at_ms DESC, s.id DESC LIMIT 8");
-    let recent: Vec<_> = recent
-        .build()
-        .fetch_all(&mut *view.transaction)
-        .await?
-        .into_iter()
-        .map(listen_json)
-        .collect();
-    let value = json!({"totals":totals,"rankings":rankings,"recent":recent,"timezone":preferences.timezone});
-    let response = serde_json::from_value(value.clone()).map_err(|_| AppError::Internal)?;
+                "json_array()"
+            };
+            let albums_expr = if need_albums {
+                "(SELECT json_group_array(json_object('id',id,'name',name,'subtitle',subtitle,'cover_url',cover_url,'plays',plays,'listened_ms',listened_ms,'actual_ms',actual_ms,'estimated_ms',estimated_ms,'unknown_durations',unknown_durations,'position',position)) FROM (SELECT *, RANK() OVER (ORDER BY /*PRIMARY*/ DESC) AS position FROM album_ranks ORDER BY /*ORDER*/ LIMIT 5))"
+            } else {
+                "json_array()"
+            };
+            let tracks_expr = if need_tracks {
+                "(SELECT json_group_array(json_object('id',id,'name',name,'subtitle',subtitle,'cover_url',cover_url,'plays',plays,'listened_ms',listened_ms,'actual_ms',actual_ms,'estimated_ms',estimated_ms,'unknown_durations',unknown_durations,'position',position)) FROM (SELECT *, RANK() OVER (ORDER BY /*PRIMARY*/ DESC) AS position FROM track_ranks ORDER BY /*ORDER*/ LIMIT 5))"
+            } else {
+                "json_array()"
+            };
+            sql.push_str(&format!(
+                "'rankings', json_object('artists', {artists_expr}, 'albums', {albums_expr}, 'tracks', {tracks_expr})"
+            ));
+        } else {
+            sql.push_str("'rankings', NULL");
+        }
+        sql.push(')');
+        let primary = if filters.sort.as_deref() == Some("time") {
+            "listened_ms"
+        } else {
+            "plays"
+        };
+        let sql_str = sql.replace("/*ORDER*/", order).replace("/*PRIMARY*/", primary);
+        query.push(sql_str);
+        let aggregates: String = query
+            .build_query_scalar()
+            .fetch_one(&mut *view.transaction)
+            .await?;
+        let aggregates: Value = serde_json::from_str(&aggregates).map_err(|_| AppError::Internal)?;
+        let totals: Option<crate::dto::Totals> = if need_totals {
+            serde_json::from_value(aggregates["totals"].clone()).ok()
+        } else {
+            None
+        };
+        let rankings: Option<crate::dto::Rankings> = if need_artists || need_albums || need_tracks {
+            serde_json::from_value(aggregates["rankings"].clone()).ok()
+        } else {
+            None
+        };
+        (totals, rankings)
+    } else {
+        (None, None)
+    };
+    let recent: Option<Vec<crate::dto::Listen>> = if need_recent {
+        let mut recent_filters = filters.clone();
+        if recent_filters.status.is_none() {
+            recent_filters.status = Some("counted".into());
+        }
+        let now = auth::now_ms();
+        let mut recent = selection_at(&mut view.transaction, &recent_filters, true, now).await?;
+        recent
+            .push(LISTEN_COLUMNS)
+            .push(" ORDER BY s.played_at_ms DESC, s.id DESC LIMIT 8");
+        let recent: Vec<_> = recent
+            .build()
+            .fetch_all(&mut *view.transaction)
+            .await?
+            .into_iter()
+            .map(listen_json)
+            .collect();
+        Some(serde_json::from_value(Value::Array(recent)).map_err(|_| AppError::Internal)?)
+    } else {
+        None
+    };
+    let response = crate::dto::Dashboard {
+        totals,
+        rankings,
+        recent,
+        timezone: preferences.timezone,
+    };
     if let Some(key) = key {
-        // At most sixteen small response projections; no originals or complete history.
+        let value = serde_json::to_value(&response).map_err(|_| AppError::Internal)?;
         let mut cache = state.dashboard_cache.lock().await;
         if !cache.iter().any(|(stored, _)| stored == &key) {
             if cache.len() == 16 {

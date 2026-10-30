@@ -323,9 +323,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
 
     // Test adding now_playing widget from catalog
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
-    const catalogDialog = page.getByRole("dialog", {
-      name: "Aggiungi widget",
-    });
+    const catalogDialog = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog).toBeVisible();
     const nowPlayingCard = catalogDialog
       .locator(".catalog-item-card")
@@ -431,13 +429,40 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await page.unroute("**/api/spotify/now-playing");
     await page.unroute("**/api/spotify/status");
 
+    // Open catalog and add Top Artists widget
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await expect(catalogDialog).toBeVisible();
+    const topArtistsCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Top Artisti" });
+    await expect(topArtistsCard).toBeVisible();
+    await topArtistsCard.getByRole("button", { name: "Aggiungi" }).click();
+    await expect(catalogDialog).toBeHidden();
+
+    const topArtistsWidget = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(topArtistsWidget).toBeVisible();
+    await expect(topArtistsWidget).toHaveClass(/span-2/);
+
+    // Save changes with added widget and verify persistence
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await page.reload();
+    const topArtistsReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(topArtistsReloaded).toBeVisible();
+    await expect(topArtistsReloaded.locator("h2")).toHaveText("Top artists");
+
     // Test adding listening_patterns widget from catalog (#120)
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
-    const patternCatalogDialog = page.locator(".widget-catalog-dialog");
-    await expect(patternCatalogDialog).toBeVisible();
-    const patternCard = patternCatalogDialog
+    await expect(catalogDialog).toBeVisible();
+    const patternCard = catalogDialog
       .locator(".catalog-item-card")
       .filter({ hasText: "Pattern di ascolto" });
     await expect(patternCard).toBeVisible();
