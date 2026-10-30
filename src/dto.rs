@@ -87,9 +87,15 @@ pub struct Rankings {
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct Dashboard {
-    pub totals: Totals,
-    pub rankings: Rankings,
-    pub recent: Vec<Listen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub totals: Option<Totals>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rankings: Option<Rankings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recent: Option<Vec<Listen>>,
     pub timezone: String,
 }
 #[derive(Serialize, Deserialize, sqlx::FromRow, TS)]

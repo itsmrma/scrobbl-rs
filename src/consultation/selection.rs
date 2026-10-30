@@ -23,6 +23,7 @@ pub struct Filters {
     pub grain: Option<String>,
     pub bucket: Option<String>,
     pub bucket_start: Option<String>,
+    pub widgets: Option<String>,
 }
 pub async fn selection(
     conn: &mut sqlx::SqliteConnection,

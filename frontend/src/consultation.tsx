@@ -950,6 +950,24 @@ const CATALOG_ITEMS = [
     defaultSpan: 6 as const,
   },
   {
+    type: "top_artists",
+    name: "Top Artisti",
+    description: "Gli artisti più ascoltati nel periodo con avatar e volumi.",
+    defaultSpan: 2 as const,
+  },
+  {
+    type: "top_albums",
+    name: "Top Album",
+    description: "Gli album con il maggior numero di ascolti nel periodo.",
+    defaultSpan: 2 as const,
+  },
+  {
+    type: "top_tracks",
+    name: "Top Brani",
+    description: "I brani più riprodotti nel periodo selezionato.",
+    defaultSpan: 2 as const,
+  },
+  {
     type: "activity_chart",
     name: "Grafico Attività",
     description:
@@ -969,9 +987,10 @@ export function TotalsWidget({
   totals,
   ids = true,
 }: {
-  totals: Totals;
+  totals?: Totals;
   ids?: boolean;
 }) {
+  if (!totals) return null;
   return <Stats totals={totals} ids={ids} />;
 }
 
@@ -979,9 +998,10 @@ export function UnifiedRankingsWidget({
   rankings,
   params,
 }: {
-  rankings: Dashboard["rankings"];
+  rankings?: Dashboard["rankings"];
   params: URLSearchParams;
 }) {
+  if (!rankings) return null;
   return (
     <div className="rankings-grid overview-rankings">
       {kinds.map((kind) => (
@@ -994,13 +1014,93 @@ export function UnifiedRankingsWidget({
           </div>
           <RankingRows
             bars
-            items={rankings[kind]}
+            items={rankings[kind] || []}
             kind={kind}
             params={params}
           />
         </article>
       ))}
     </div>
+  );
+}
+
+export function TopArtistsWidget({
+  items,
+  params,
+  loading = false,
+}: {
+  items?: Ranking[];
+  params: URLSearchParams;
+  loading?: boolean;
+}) {
+  return (
+    <article className="panel padded overview-ranking-panel overview-rankings top-artists-panel">
+      <div className="panel-title">
+        <h2>Top artists</h2>
+        <Link to={`/rankings/artists?${context(params)}`}>
+          View all artists
+        </Link>
+      </div>
+      {loading ? (
+        <RankingsSkeleton count={5} label="Loading top artists…" />
+      ) : items && items.length > 0 ? (
+        <RankingRows bars items={items} kind="artists" params={params} />
+      ) : (
+        <p className="empty">No listens recorded in this period.</p>
+      )}
+    </article>
+  );
+}
+
+export function TopAlbumsWidget({
+  items,
+  params,
+  loading = false,
+}: {
+  items?: Ranking[];
+  params: URLSearchParams;
+  loading?: boolean;
+}) {
+  return (
+    <article className="panel padded overview-ranking-panel overview-rankings top-albums-panel">
+      <div className="panel-title">
+        <h2>Top albums</h2>
+        <Link to={`/rankings/albums?${context(params)}`}>View all albums</Link>
+      </div>
+      {loading ? (
+        <RankingsSkeleton count={5} label="Loading top albums…" />
+      ) : items && items.length > 0 ? (
+        <RankingRows bars items={items} kind="albums" params={params} />
+      ) : (
+        <p className="empty">No listens recorded in this period.</p>
+      )}
+    </article>
+  );
+}
+
+export function TopTracksWidget({
+  items,
+  params,
+  loading = false,
+}: {
+  items?: Ranking[];
+  params: URLSearchParams;
+  loading?: boolean;
+}) {
+  return (
+    <article className="panel padded overview-ranking-panel overview-rankings top-tracks-panel">
+      <div className="panel-title">
+        <h2>Top tracks</h2>
+        <Link to={`/rankings/tracks?${context(params)}`}>View all tracks</Link>
+      </div>
+      {loading ? (
+        <RankingsSkeleton count={5} label="Loading top tracks…" />
+      ) : items && items.length > 0 ? (
+        <RankingRows bars items={items} kind="tracks" params={params} />
+      ) : (
+        <p className="empty">No listens recorded in this period.</p>
+      )}
+    </article>
   );
 }
 
@@ -1021,10 +1121,11 @@ export function RecentListensWidget({
   preferences,
   params,
 }: {
-  recent: Dashboard["recent"];
+  recent?: Dashboard["recent"];
   preferences: Preferences;
   params: URLSearchParams;
 }) {
+  if (!recent) return null;
   return (
     <article className="panel">
       <div className="panel-title padded">
@@ -1055,13 +1156,6 @@ export function Overview({
 }) {
   const selection = useSelection(visible, preferences.initial_period),
     { params } = selection;
-  const result = useLoad<Dashboard>(
-    () => api.dashboard(params),
-    `${params}:${preferences.version}`,
-    visible,
-    (status?.sync_seconds || 120) * 1000,
-  );
-
   const layoutResult = useLoad<DashboardLayout>(
     () => api.dashboardLayout(),
     "dashboard-layout",
@@ -1081,6 +1175,25 @@ export function Overview({
       setSavedLayout(layoutResult.data);
     }
   }, [layoutResult.data, editing]);
+
+  const requestedWidgets = useMemo(() => {
+    return Array.from(new Set(layout.widgets.map((w) => w.type))).join(",");
+  }, [layout.widgets]);
+
+  const dashboardParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (requestedWidgets) {
+      p.set("widgets", requestedWidgets);
+    }
+    return p;
+  }, [params, requestedWidgets]);
+
+  const result = useLoad<Dashboard>(
+    () => api.dashboard(dashboardParams),
+    `${dashboardParams}:${preferences.version}`,
+    visible,
+    (status?.sync_seconds || 120) * 1000,
+  );
 
   const handleStartEditing = () => {
     setEditing(true);
@@ -1159,15 +1272,41 @@ export function Overview({
   };
 
   const renderWidgetContent = (widget: WidgetConfig) => {
-    if (!result.data) return null;
+    const loading = !result.data && !result.error;
     switch (widget.type) {
       case "totals":
-        return <TotalsWidget totals={result.data.totals} ids />;
+        return result.data?.totals ? (
+          <TotalsWidget totals={result.data.totals} ids />
+        ) : null;
       case "unified_rankings":
-        return (
+        return result.data?.rankings ? (
           <UnifiedRankingsWidget
             rankings={result.data.rankings}
             params={params}
+          />
+        ) : null;
+      case "top_artists":
+        return (
+          <TopArtistsWidget
+            items={result.data?.rankings?.artists}
+            params={params}
+            loading={loading}
+          />
+        );
+      case "top_albums":
+        return (
+          <TopAlbumsWidget
+            items={result.data?.rankings?.albums}
+            params={params}
+            loading={loading}
+          />
+        );
+      case "top_tracks":
+        return (
+          <TopTracksWidget
+            items={result.data?.rankings?.tracks}
+            params={params}
+            loading={loading}
           />
         );
       case "activity_chart":
@@ -1179,13 +1318,13 @@ export function Overview({
           />
         );
       case "recent_listens":
-        return (
+        return result.data?.recent ? (
           <RecentListensWidget
             recent={result.data.recent}
             preferences={preferences}
             params={params}
           />
-        );
+        ) : null;
       default:
         return null;
     }

@@ -1192,3 +1192,53 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
 }
+
+#[tokio::test]
+async fn dashboard_parametric_widget_filtering_calculates_only_requested_components() {
+    let (_dir, state, token) = setup().await;
+    let event1 = event(
+        1,
+        at("2025-06-01T12:00:00Z"),
+        Some(180000),
+        DurationKind::Actual,
+        &[("ar1", "Artist One")],
+    );
+    let event2 = event(
+        2,
+        at("2025-06-01T13:00:00Z"),
+        Some(200000),
+        DurationKind::Actual,
+        &[("ar2", "Artist Two")],
+    );
+    save(&state.storage, &[event1, event2]).await;
+
+    // 1. GET /api/dashboard?widgets=totals
+    let totals_only = json_get(&state, &token, "/api/dashboard?widgets=totals").await;
+    assert_eq!(totals_only["totals"]["listens"], 2);
+    assert_eq!(totals_only["totals"]["actual_ms"], 380000);
+    assert!(totals_only.get("rankings").is_none() || totals_only["rankings"].is_null());
+    assert!(totals_only.get("recent").is_none() || totals_only["recent"].is_null());
+
+    // 2. GET /api/dashboard?widgets=top_artists
+    let artists_only = json_get(&state, &token, "/api/dashboard?widgets=top_artists").await;
+    assert!(artists_only.get("totals").is_none() || artists_only["totals"].is_null());
+    assert!(artists_only.get("recent").is_none() || artists_only["recent"].is_null());
+    let rankings = &artists_only["rankings"];
+    assert!(!rankings.is_null());
+    let artists = rankings["artists"].as_array().expect("artists array");
+    assert_eq!(artists.len(), 2);
+    assert_eq!(artists[0]["name"], "Artist Two");
+    assert_eq!(artists[1]["name"], "Artist One");
+    assert!(rankings["albums"].as_array().map_or(true, |a| a.is_empty()));
+    assert!(rankings["tracks"].as_array().map_or(true, |a| a.is_empty()));
+
+    // 3. GET /api/dashboard (full / default)
+    let full = json_get(&state, &token, "/api/dashboard").await;
+    assert_eq!(full["totals"]["listens"], 2);
+    assert_eq!(full["rankings"]["artists"].as_array().unwrap().len(), 2);
+    assert_eq!(full["rankings"]["albums"].as_array().unwrap().len(), 2);
+    assert_eq!(full["rankings"]["tracks"].as_array().unwrap().len(), 2);
+    assert_eq!(full["recent"].as_array().unwrap().len(), 2);
+
+    state.storage.close().await;
+}
