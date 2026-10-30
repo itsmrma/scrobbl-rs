@@ -308,11 +308,41 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       editToolbar.getByRole("button", { name: "Salva modifiche" }),
     ).toBeVisible();
 
-    // Verify widgets show dashed border and edit controls
+    // Verify 8-widget V1 default layout
+    const initialNowPlaying = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(initialNowPlaying).toHaveClass(/span-6/);
     const totalsWidget = page.locator(
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsWidget).toHaveClass(/span-6/);
+    const initialTopArtists = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(initialTopArtists).toHaveClass(/span-2/);
+    const initialTopAlbums = page.locator(
+      ".dashboard-widget[data-widget-type='top_albums']",
+    );
+    await expect(initialTopAlbums).toHaveClass(/span-2/);
+    const initialTopTracks = page.locator(
+      ".dashboard-widget[data-widget-type='top_tracks']",
+    );
+    await expect(initialTopTracks).toHaveClass(/span-2/);
+    const initialActivityChart = page.locator(
+      ".dashboard-widget[data-widget-type='activity_chart']",
+    );
+    await expect(initialActivityChart).toHaveClass(/span-6/);
+    const initialPatterns = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await expect(initialPatterns).toHaveClass(/span-3/);
+    const initialRecent = page.locator(
+      ".dashboard-widget[data-widget-type='recent_listens']",
+    );
+    await expect(initialRecent).toHaveClass(/span-3/);
+
+    // Verify widgets show dashed border and edit controls
     await expect(totalsWidget).toHaveClass(/editing/);
     const spanButton = totalsWidget.locator(".widget-span-button");
     await expect(spanButton).toBeVisible();
@@ -320,6 +350,10 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     // Cycle span (6 -> 2)
     await spanButton.click();
     await expect(totalsWidget).toHaveClass(/span-2/);
+
+    // Remove now_playing and re-add from catalog
+    await initialNowPlaying.locator(".widget-remove-button").click();
+    await expect(initialNowPlaying).toHaveCount(0);
 
     // Test adding now_playing widget from catalog
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
@@ -432,6 +466,12 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     // Open catalog and add Top Artists widget
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
+    const existingTopArtists = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await existingTopArtists.locator(".widget-remove-button").click();
+    await expect(existingTopArtists).toHaveCount(0);
+
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
     await expect(catalogDialog).toBeVisible();
     const topArtistsCard = catalogDialog
@@ -460,6 +500,12 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     // Test adding listening_patterns widget from catalog (#120)
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
+    const existingPatterns = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await existingPatterns.locator(".widget-remove-button").click();
+    await expect(existingPatterns).toHaveCount(0);
+
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
     await expect(catalogDialog).toBeVisible();
     const patternCard = catalogDialog
@@ -580,7 +626,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
 
     // For 30d (empty in test data), discovery_ratio shows empty state
     await expect(
-      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+      discoveryWidget121.getByText("No listening data in this period."),
     ).toBeVisible();
 
     // 3. Changing the global dashboard period filter does NOT alter the locked widget
@@ -590,14 +636,14 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     // Verify locked widget maintains its empty state and badge
     await expect(discoveryBadge).toBeVisible();
     await expect(
-      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+      discoveryWidget121.getByText("No listening data in this period."),
     ).toBeVisible();
 
     // Change global filter back to "all"
     await chooseOption(globalPeriod, "all");
     await expect(discoveryBadge).toBeVisible();
     await expect(
-      discoveryWidget121.getByText("Nessun ascolto nel periodo selezionato."),
+      discoveryWidget121.getByText("No listening data in this period."),
     ).toBeVisible();
 
     // 4. Persistence across page reload
@@ -611,7 +657,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(badgeAfterReload).toBeVisible();
     await expect(badgeAfterReload).toHaveText("Last 30 days");
     await expect(
-      discoveryAfterReload.getByText("Nessun ascolto nel periodo selezionato."),
+      discoveryAfterReload.getByText("No listening data in this period."),
     ).toBeVisible();
 
     // 5. Test periodOverride on a dashboard-slice widget (e.g. totals)
@@ -655,10 +701,28 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     );
     await expect(totalsAfterReset).toHaveClass(/span-6/);
     await expect(
-      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
-    ).toHaveCount(0);
-    await expect(
       page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_artists']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_albums']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='activity_chart']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='recent_listens']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
     ).toHaveCount(0);
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
     await expect(editToolbar).toBeHidden();
@@ -668,10 +732,28 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       page.locator(".dashboard-widget[data-widget-type='totals']"),
     ).toHaveClass(/span-6/);
     await expect(
-      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
-    ).toHaveCount(0);
-    await expect(
       page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_artists']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_albums']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='activity_chart']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='recent_listens']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
     ).toHaveCount(0);
 
     if (browserName !== "firefox") {
@@ -729,6 +811,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
             width: 390,
             height: height === 600 ? 844 : 600,
           });
+          await info.scrollIntoViewIfNeeded();
           await expectHelpAccessible(info);
           await touchPage.evaluate(() => window.scrollBy(0, 80));
           await expectHelpAccessible(info);

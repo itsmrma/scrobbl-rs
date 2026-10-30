@@ -48,15 +48,33 @@ impl Default for DashboardLayout {
             version: 0,
             widgets: vec![
                 WidgetConfig {
+                    id: "now_playing".into(),
+                    widget_type: "now_playing".into(),
+                    col_span: 6,
+                    period_override: None,
+                },
+                WidgetConfig {
                     id: "totals".into(),
                     widget_type: "totals".into(),
                     col_span: 6,
                     period_override: None,
                 },
                 WidgetConfig {
-                    id: "unified_rankings".into(),
-                    widget_type: "unified_rankings".into(),
-                    col_span: 6,
+                    id: "top_artists".into(),
+                    widget_type: "top_artists".into(),
+                    col_span: 2,
+                    period_override: None,
+                },
+                WidgetConfig {
+                    id: "top_albums".into(),
+                    widget_type: "top_albums".into(),
+                    col_span: 2,
+                    period_override: None,
+                },
+                WidgetConfig {
+                    id: "top_tracks".into(),
+                    widget_type: "top_tracks".into(),
+                    col_span: 2,
                     period_override: None,
                 },
                 WidgetConfig {
@@ -66,9 +84,15 @@ impl Default for DashboardLayout {
                     period_override: None,
                 },
                 WidgetConfig {
+                    id: "listening_patterns".into(),
+                    widget_type: "listening_patterns".into(),
+                    col_span: 3,
+                    period_override: None,
+                },
+                WidgetConfig {
                     id: "recent_listens".into(),
                     widget_type: "recent_listens".into(),
-                    col_span: 6,
+                    col_span: 3,
                     period_override: None,
                 },
             ],

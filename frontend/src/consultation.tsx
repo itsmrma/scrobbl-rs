@@ -37,7 +37,6 @@ import {
   ChartSkeleton,
   ListenListSkeleton,
   MusicPageSkeleton,
-  OverviewSkeleton,
   RankingsSkeleton,
   SkeletonBlock,
   SkeletonList,
@@ -967,10 +966,14 @@ function Chart({
 export const DEFAULT_V1_LAYOUT: DashboardLayout = {
   version: 0,
   widgets: [
+    { id: "now_playing", type: "now_playing", colSpan: 6 },
     { id: "totals", type: "totals", colSpan: 6 },
-    { id: "unified_rankings", type: "unified_rankings", colSpan: 6 },
+    { id: "top_artists", type: "top_artists", colSpan: 2 },
+    { id: "top_albums", type: "top_albums", colSpan: 2 },
+    { id: "top_tracks", type: "top_tracks", colSpan: 2 },
     { id: "activity_chart", type: "activity_chart", colSpan: 6 },
-    { id: "recent_listens", type: "recent_listens", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 3 },
+    { id: "recent_listens", type: "recent_listens", colSpan: 3 },
   ],
 };
 
@@ -1052,7 +1055,11 @@ export function TotalsWidget({
   periodOverride?: string | null;
 }) {
   if (!totals) return null;
-  return <Stats totals={totals} ids={ids} periodOverride={periodOverride} />;
+  return (
+    <article className="panel padded widget-totals">
+      <Stats totals={totals} ids={ids} periodOverride={periodOverride} />
+    </article>
+  );
 }
 
 export function UnifiedRankingsWidget({
@@ -1066,34 +1073,36 @@ export function UnifiedRankingsWidget({
 }) {
   if (!rankings) return null;
   return (
-    <div className="rankings-grid overview-rankings">
-      {kinds.map((kind) => (
-        <article className="panel padded" key={kind}>
-          <div className="panel-title">
-            <h2>
-              Top {kind}
-              {periodOverride && (
-                <span
-                  className="pill widget-period-badge"
-                  data-period={periodOverride}
-                >
-                  {periodBadgeLabel(periodOverride)}
-                </span>
-              )}
-            </h2>
-            <Link to={`/rankings/${kind}?${context(params)}`}>
-              View all {kind}
-            </Link>
-          </div>
-          <RankingRows
-            bars
-            items={rankings[kind] || []}
-            kind={kind}
-            params={params}
-          />
-        </article>
-      ))}
-    </div>
+    <article className="panel padded widget-unified-rankings">
+      <div className="rankings-grid overview-rankings">
+        {kinds.map((kind) => (
+          <article className="panel padded" key={kind}>
+            <div className="panel-title">
+              <h2>
+                Top {kind}
+                {periodOverride && (
+                  <span
+                    className="pill widget-period-badge"
+                    data-period={periodOverride}
+                  >
+                    {periodBadgeLabel(periodOverride)}
+                  </span>
+                )}
+              </h2>
+              <Link to={`/rankings/${kind}?${context(params)}`}>
+                View all {kind}
+              </Link>
+            </div>
+            <RankingRows
+              bars
+              items={rankings[kind] || []}
+              kind={kind}
+              params={params}
+            />
+          </article>
+        ))}
+      </div>
+    </article>
   );
 }
 
@@ -1109,7 +1118,7 @@ export function TopArtistsWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded overview-ranking-panel overview-rankings top-artists-panel">
+    <article className="panel padded widget-top-artists overview-ranking-panel">
       <div className="panel-title">
         <h2>
           Top artists
@@ -1149,7 +1158,7 @@ export function TopAlbumsWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded overview-ranking-panel overview-rankings top-albums-panel">
+    <article className="panel padded widget-top-albums overview-ranking-panel">
       <div className="panel-title">
         <h2>
           Top albums
@@ -1187,7 +1196,7 @@ export function TopTracksWidget({
   periodOverride?: string | null;
 }) {
   return (
-    <article className="panel padded overview-ranking-panel overview-rankings top-tracks-panel">
+    <article className="panel padded widget-top-tracks overview-ranking-panel">
       <div className="panel-title">
         <h2>
           Top tracks
@@ -1247,8 +1256,8 @@ export function RecentListensWidget({
 }) {
   if (!recent) return null;
   return (
-    <article className="panel">
-      <div className="panel-title padded">
+    <article className="panel padded widget-recent-listens">
+      <div className="panel-title">
         <h2>
           Recent listening
           {periodOverride && (
@@ -1286,7 +1295,7 @@ export function DiscoveryRatioWidget({
 
   return (
     <article
-      className="panel padded discovery-ratio-widget"
+      className="panel padded widget-discovery-ratio"
       aria-label="Nuove scoperte vs Riascolti"
     >
       <div className="panel-title">
@@ -1330,8 +1339,8 @@ export function DiscoveryRatioWidget({
         </div>
       )}
       {result.data && result.data.total === 0 && (
-        <div className="empty-state" role="status">
-          <p>Nessun ascolto nel periodo selezionato.</p>
+        <div className="empty" role="status">
+          <p>No listening data in this period.</p>
         </div>
       )}
       {result.data && result.data.total > 0 && (
@@ -1404,20 +1413,22 @@ export function DiscoveryRatioWidget({
 
 function TotalsSkeleton() {
   return (
-    <div className="stats-grid">
-      {[1, 2, 3].map((i) => (
-        <div className="stat skeleton-stat" key={i}>
-          <SkeletonBlock width="45%" height={13} borderRadius={4} />
-          <SkeletonBlock
-            width="60%"
-            height={32}
-            borderRadius={6}
-            style={{ margin: "6px 0" }}
-          />
-          <SkeletonBlock width="35%" height={11} borderRadius={4} />
-        </div>
-      ))}
-    </div>
+    <article className="panel padded widget-totals">
+      <div className="stats-grid">
+        {[1, 2, 3].map((i) => (
+          <div className="stat skeleton-stat" key={i}>
+            <SkeletonBlock width="45%" height={13} borderRadius={4} />
+            <SkeletonBlock
+              width="60%"
+              height={32}
+              borderRadius={6}
+              style={{ margin: "6px 0" }}
+            />
+            <SkeletonBlock width="35%" height={11} borderRadius={4} />
+          </div>
+        ))}
+      </div>
+    </article>
   );
 }
 
@@ -1468,7 +1479,9 @@ function OverriddenDashboardWidget({
           periodOverride={widget.periodOverride}
         />
       ) : (
-        <RankingsSkeleton count={5} label="Loading rankings…" />
+        <article className="panel padded widget-unified-rankings">
+          <RankingsSkeleton count={5} label="Loading rankings…" />
+        </article>
       );
     case "top_artists":
       return (
@@ -1506,7 +1519,10 @@ function OverriddenDashboardWidget({
           periodOverride={widget.periodOverride}
         />
       ) : (
-        <article className="panel">
+        <article className="panel padded widget-recent-listens">
+          <div className="panel-title">
+            <h2>Recent listening</h2>
+          </div>
           <ListenListSkeleton count={5} />
         </article>
       );
@@ -1517,14 +1533,7 @@ function OverriddenDashboardWidget({
 
 const OVERRIDE_PERIOD_OPTIONS: [string, string][] = [
   ["", "Eredita globale"],
-  ["today", "Today"],
-  ["week", "This week"],
-  ["month", "This month"],
-  ["year", "This year"],
-  ["7d", "Last 7 days"],
-  ["30d", "Last 30 days"],
-  ["365d", "Last 365 days"],
-  ["all", "All time"],
+  ...(periods as [string, string][]),
 ];
 
 function isTimeSensitiveWidget(type: string): boolean {
@@ -1577,6 +1586,21 @@ export function Overview({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const catalogDialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = catalogDialogRef.current;
+    if (!dialog) return;
+    if (catalogOpen) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    } else {
+      if (dialog.open) {
+        dialog.close();
+      }
+    }
+  }, [catalogOpen]);
 
   useEffect(() => {
     if (layoutResult.data) {
@@ -1733,14 +1757,20 @@ export function Overview({
       case "totals":
         return result.data?.totals ? (
           <TotalsWidget totals={result.data.totals} ids />
-        ) : null;
+        ) : (
+          <TotalsSkeleton />
+        );
       case "unified_rankings":
         return result.data?.rankings ? (
           <UnifiedRankingsWidget
             rankings={result.data.rankings}
             params={params}
           />
-        ) : null;
+        ) : (
+          <article className="panel padded widget-unified-rankings">
+            <RankingsSkeleton count={5} label="Loading rankings…" />
+          </article>
+        );
       case "top_artists":
         return (
           <TopArtistsWidget
@@ -1780,7 +1810,14 @@ export function Overview({
             preferences={preferences}
             params={params}
           />
-        ) : null;
+        ) : (
+          <article className="panel padded widget-recent-listens">
+            <div className="panel-title">
+              <h2>Recent listening</h2>
+            </div>
+            <ListenListSkeleton count={5} />
+          </article>
+        );
       case "listening_patterns":
         return (
           <ListeningPatternsWidget
@@ -1861,174 +1898,169 @@ export function Overview({
         </div>
       )}
 
-      {catalogOpen && (
-        <dialog
-          className="modal widget-catalog-dialog"
-          open
-          aria-label="Aggiungi widget"
-        >
-          <div className="dialog-header">
-            <h2>Aggiungi widget</h2>
-            <button
-              type="button"
-              className="icon-button"
-              aria-label="Chiudi catalogo"
-              onClick={() => setCatalogOpen(false)}
-            >
-              <Icon>close</Icon>
-            </button>
-          </div>
-          {CATALOG_ITEMS.filter(
-            (item) => !layout.widgets.some((w) => w.type === item.type),
-          ).length === 0 ? (
-            <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
-          ) : (
-            <div className="catalog-items-grid">
-              {CATALOG_ITEMS.filter(
-                (item) => !layout.widgets.some((w) => w.type === item.type),
-              ).map((item) => (
-                <div key={item.type} className="panel padded catalog-item-card">
-                  <div className="catalog-item-info">
-                    <h3>{item.name}</h3>
-                    <p>{item.description}</p>
-                    <small>Dimensione: {item.defaultSpan} colonne</small>
-                  </div>
-                  <button
-                    type="button"
-                    className="button secondary"
-                    onClick={() => addWidget(item)}
-                  >
-                    <Icon>add</Icon> Aggiungi
-                  </button>
+      <dialog
+        ref={catalogDialogRef}
+        className="modal widget-catalog-dialog"
+        aria-label="Aggiungi widget"
+        onClose={() => setCatalogOpen(false)}
+      >
+        <div className="dialog-header">
+          <h2>Aggiungi widget</h2>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Chiudi catalogo"
+            onClick={() => setCatalogOpen(false)}
+          >
+            <Icon>close</Icon>
+          </button>
+        </div>
+        {CATALOG_ITEMS.filter(
+          (item) => !layout.widgets.some((w) => w.type === item.type),
+        ).length === 0 ? (
+          <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
+        ) : (
+          <div className="catalog-items-grid">
+            {CATALOG_ITEMS.filter(
+              (item) => !layout.widgets.some((w) => w.type === item.type),
+            ).map((item) => (
+              <div key={item.type} className="panel padded catalog-item-card">
+                <div className="catalog-item-info">
+                  <h3>{item.name}</h3>
+                  <p>{item.description}</p>
+                  <small>Dimensione: {item.defaultSpan} colonne</small>
                 </div>
-              ))}
-            </div>
-          )}
-        </dialog>
-      )}
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => addWidget(item)}
+                >
+                  <Icon>add</Icon> Aggiungi
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </dialog>
 
       <ErrorText>{result.error}</ErrorText>
-      {result.data || requestedWidgets.length === 0 ? (
-        <div className={`dashboard-grid${editing ? " editing" : ""}`}>
-          {layout.widgets.map((w, index) => (
-            <div
-              key={w.id}
-              className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
-              data-widget-id={w.id}
-              data-widget-type={w.type}
-              draggable={editing}
-              onDragStart={(e) => {
-                if (!editing) return;
-                e.dataTransfer.setData("text/plain", String(index));
-                e.dataTransfer.effectAllowed = "move";
-              }}
-              onDragOver={(e) => {
-                if (!editing) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-              }}
-              onDrop={(e) => {
-                if (!editing) return;
-                e.preventDefault();
-                const sourceIndex = parseInt(
-                  e.dataTransfer.getData("text/plain"),
-                  10,
-                );
-                if (!isNaN(sourceIndex) && sourceIndex !== index) {
-                  setLayout((prev) => ({
-                    ...prev,
-                    widgets: reorderWidgets(prev.widgets, sourceIndex, index),
-                  }));
-                }
-              }}
-            >
-              {editing && (
-                <div className="widget-edit-controls">
-                  <button
-                    type="button"
-                    className="widget-control widget-drag-handle"
-                    title="Trascina per riordinare"
-                    aria-label="Sposta widget"
-                    draggable={editing}
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", String(index));
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                  >
-                    <Icon>drag_indicator</Icon>
-                  </button>
-                  <button
-                    type="button"
-                    className="widget-control widget-move-up"
-                    title="Sposta prima"
-                    aria-label="Sposta widget prima"
-                    disabled={index === 0}
-                    onClick={() => moveWidget(index, -1)}
-                  >
-                    <Icon>arrow_upward</Icon>
-                  </button>
-                  <button
-                    type="button"
-                    className="widget-control widget-move-down"
-                    title="Sposta dopo"
-                    aria-label="Sposta widget dopo"
-                    disabled={index === layout.widgets.length - 1}
-                    onClick={() => moveWidget(index, 1)}
-                  >
-                    <Icon>arrow_downward</Icon>
-                  </button>
-                  <button
-                    type="button"
-                    className="widget-control widget-span-button"
-                    title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
-                    aria-label={`Larghezza: ${w.colSpan} colonne`}
-                    onClick={() => cycleSpan(w.id)}
-                  >
-                    <Icon>view_column</Icon>
-                    <span>{w.colSpan}/6</span>
-                  </button>
-                  {isTimeSensitiveWidget(w.type) && (
-                    <div className="widget-period-override-control">
-                      <Select
-                        aria-label="Periodo widget"
-                        value={w.periodOverride || ""}
-                        onChange={(val) => {
-                          setLayout((prev) => ({
-                            ...prev,
-                            widgets: prev.widgets.map((item) =>
-                              item.id === w.id
-                                ? { ...item, periodOverride: val || undefined }
-                                : item,
-                            ),
-                          }));
-                        }}
-                      >
-                        {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
-                          <option key={val} value={val}>
-                            {label}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    className="widget-control widget-remove-button"
-                    title="Rimuovi widget"
-                    aria-label="Rimuovi widget"
-                    onClick={() => removeWidget(w.id)}
-                  >
-                    <Icon>close</Icon>
-                  </button>
-                </div>
-              )}
-              {renderWidgetContent(w)}
-            </div>
-          ))}
-        </div>
-      ) : (
-        !result.error && <OverviewSkeleton />
-      )}
+      <div className={`dashboard-grid${editing ? " editing" : ""}`}>
+        {layout.widgets.map((w, index) => (
+          <div
+            key={w.id}
+            className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
+            data-widget-id={w.id}
+            data-widget-type={w.type}
+            draggable={editing}
+            onDragStart={(e) => {
+              if (!editing) return;
+              e.dataTransfer.setData("text/plain", String(index));
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragOver={(e) => {
+              if (!editing) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+            }}
+            onDrop={(e) => {
+              if (!editing) return;
+              e.preventDefault();
+              const sourceIndex = parseInt(
+                e.dataTransfer.getData("text/plain"),
+                10,
+              );
+              if (!isNaN(sourceIndex) && sourceIndex !== index) {
+                setLayout((prev) => ({
+                  ...prev,
+                  widgets: reorderWidgets(prev.widgets, sourceIndex, index),
+                }));
+              }
+            }}
+          >
+            {editing && (
+              <div className="widget-edit-controls">
+                <button
+                  type="button"
+                  className="widget-control widget-drag-handle"
+                  title="Trascina per riordinare"
+                  aria-label="Sposta widget"
+                  draggable={editing}
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData("text/plain", String(index));
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                >
+                  <Icon>drag_indicator</Icon>
+                </button>
+                <button
+                  type="button"
+                  className="widget-control widget-move-up"
+                  title="Sposta prima"
+                  aria-label="Sposta widget prima"
+                  disabled={index === 0}
+                  onClick={() => moveWidget(index, -1)}
+                >
+                  <Icon>arrow_upward</Icon>
+                </button>
+                <button
+                  type="button"
+                  className="widget-control widget-move-down"
+                  title="Sposta dopo"
+                  aria-label="Sposta widget dopo"
+                  disabled={index === layout.widgets.length - 1}
+                  onClick={() => moveWidget(index, 1)}
+                >
+                  <Icon>arrow_downward</Icon>
+                </button>
+                <button
+                  type="button"
+                  className="widget-control widget-span-button"
+                  title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
+                  aria-label={`Larghezza: ${w.colSpan} colonne`}
+                  onClick={() => cycleSpan(w.id)}
+                >
+                  <Icon>view_column</Icon>
+                  <span>{w.colSpan}/6</span>
+                </button>
+                {isTimeSensitiveWidget(w.type) && (
+                  <div className="widget-period-override-control">
+                    <Select
+                      aria-label="Periodo widget"
+                      value={w.periodOverride || ""}
+                      onChange={(val) => {
+                        setLayout((prev) => ({
+                          ...prev,
+                          widgets: prev.widgets.map((item) =>
+                            item.id === w.id
+                              ? { ...item, periodOverride: val || undefined }
+                              : item,
+                          ),
+                        }));
+                      }}
+                    >
+                      {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
+                        <option key={val} value={val}>
+                          {label}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="widget-control widget-remove-button"
+                  title="Rimuovi widget"
+                  aria-label="Rimuovi widget"
+                  onClick={() => removeWidget(w.id)}
+                >
+                  <Icon>close</Icon>
+                </button>
+              </div>
+            )}
+            {renderWidgetContent(w)}
+          </div>
+        ))}
+      </div>
     </>
   );
 }

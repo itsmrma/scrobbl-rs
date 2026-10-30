@@ -1099,15 +1099,23 @@ async fn dashboard_layout_persistence_schema_validation_and_concurrency() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(default_layout["version"], 0);
     let widgets = default_layout["widgets"].as_array().expect("widgets array");
-    assert_eq!(widgets.len(), 4);
-    assert_eq!(widgets[0]["type"], "totals");
+    assert_eq!(widgets.len(), 8);
+    assert_eq!(widgets[0]["type"], "now_playing");
     assert_eq!(widgets[0]["colSpan"], 6);
-    assert_eq!(widgets[1]["type"], "unified_rankings");
+    assert_eq!(widgets[1]["type"], "totals");
     assert_eq!(widgets[1]["colSpan"], 6);
-    assert_eq!(widgets[2]["type"], "activity_chart");
-    assert_eq!(widgets[2]["colSpan"], 6);
-    assert_eq!(widgets[3]["type"], "recent_listens");
-    assert_eq!(widgets[3]["colSpan"], 6);
+    assert_eq!(widgets[2]["type"], "top_artists");
+    assert_eq!(widgets[2]["colSpan"], 2);
+    assert_eq!(widgets[3]["type"], "top_albums");
+    assert_eq!(widgets[3]["colSpan"], 2);
+    assert_eq!(widgets[4]["type"], "top_tracks");
+    assert_eq!(widgets[4]["colSpan"], 2);
+    assert_eq!(widgets[5]["type"], "activity_chart");
+    assert_eq!(widgets[5]["colSpan"], 6);
+    assert_eq!(widgets[6]["type"], "listening_patterns");
+    assert_eq!(widgets[6]["colSpan"], 3);
+    assert_eq!(widgets[7]["type"], "recent_listens");
+    assert_eq!(widgets[7]["colSpan"], 3);
 
     // 3. POST without CSRF is rejected
     let (status, _) = post(
