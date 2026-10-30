@@ -221,9 +221,21 @@ pub async fn music(
     } else {
         Vec::new()
     };
-    let mut query = consultation::selection_at(conn, &filters, false, auth::now_ms()).await?;
-    query.push("SELECT json_object('records',COUNT(*),'listens',COALESCE(SUM(counted),0),'tracks',COUNT(DISTINCT CASE WHEN counted=1 THEN track_id END),'actual_ms',COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms END),0),'estimated_ms',COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms END),0),'unknown_durations',COALESCE(SUM(counted=1 AND duration_kind='unknown'),0)) FROM selected");
-    let totals: String = query.build_query_scalar().fetch_one(&mut *conn).await?;
+    let totals: Totals = if filters.include_totals == Some(false) {
+        Totals {
+            records: 0,
+            listens: 0,
+            tracks: 0,
+            actual_ms: 0,
+            estimated_ms: 0,
+            unknown_durations: 0,
+        }
+    } else {
+        let mut query = consultation::selection_at(conn, &filters, false, auth::now_ms()).await?;
+        query.push("SELECT json_object('records',COUNT(*),'listens',COALESCE(SUM(counted),0),'tracks',COUNT(DISTINCT CASE WHEN counted=1 THEN track_id END),'actual_ms',COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='actual' THEN listened_ms END),0),'estimated_ms',COALESCE(SUM(CASE WHEN counted=1 AND duration_kind='estimated' THEN listened_ms END),0),'unknown_durations',COALESCE(SUM(counted=1 AND duration_kind='unknown'),0)) FROM selected");
+        let totals: String = query.build_query_scalar().fetch_one(&mut *conn).await?;
+        serde_json::from_str(&totals).map_err(|_| AppError::Internal)?
+    };
     Ok(Json(MusicPage {
         id,
         name: row.get("name"),
@@ -232,7 +244,7 @@ pub async fn music(
         album_id: row.get("album_id"),
         album: row.get("album"),
         artists,
-        totals: serde_json::from_str(&totals).map_err(|_| AppError::Internal)?,
+        totals,
     }))
 }
 
@@ -318,32 +330,24 @@ pub async fn milestones(
     ))
 }
 
+fn all_time_filters(filters: &Filters) -> Filters {
+    let mut f = filters.clone();
+    f.period = Some("all".into());
+    f.from = None;
+    f.to = None;
+    f.bucket = None;
+    f.bucket_start = None;
+    f.year = None;
+    f.include_totals = None;
+    f
+}
+
 pub async fn listening_calendar(
     conn: &mut SqliteConnection,
     filters: &Filters,
     now: i64,
 ) -> Result<ListeningCalendar> {
-    let mut query = consultation::selection_at(conn, filters, false, now).await?;
-    query.push(
-        "SELECT local_date, COUNT(*) AS listens FROM selected WHERE counted = 1 GROUP BY local_date ORDER BY local_date ASC",
-    );
-    let rows = query.build().fetch_all(&mut *conn).await?;
-    let mut counts = BTreeMap::new();
-    let mut total_listens = 0i64;
-    for r in rows {
-        let d: String = r.try_get("local_date")?;
-        let c: i64 = r.try_get("listens")?;
-        total_listens += c;
-        counts.insert(d, c);
-    }
-
-    let mut all_time_filters = filters.clone();
-    all_time_filters.period = Some("all".into());
-    all_time_filters.from = None;
-    all_time_filters.to = None;
-    all_time_filters.bucket = None;
-    all_time_filters.bucket_start = None;
-    all_time_filters.year = None;
+    let all_time_filters = all_time_filters(filters);
     let mut all_time_query =
         consultation::selection_at(conn, &all_time_filters, false, now).await?;
     all_time_query.push(
@@ -361,10 +365,36 @@ pub async fn listening_calendar(
     let period = filters.period.as_deref().unwrap_or("all");
     let custom = period == "custom"
         || filters.from.as_deref().is_some_and(|s| !s.is_empty())
-        || filters.to.as_deref().is_some_and(|s| !s.is_empty())
-        || filters.year.is_some();
+        || filters.to.as_deref().is_some_and(|s| !s.is_empty());
 
-    let (from, through) = if let Some(y) = filters.year {
+    let target_year = filters.year.or_else(|| {
+        if period == "all" && !custom {
+            years.first().copied()
+        } else {
+            None
+        }
+    });
+
+    let mut effective_filters = filters.clone();
+    if let Some(y) = target_year {
+        effective_filters.year = Some(y);
+    }
+
+    let mut query = consultation::selection_at(conn, &effective_filters, false, now).await?;
+    query.push(
+        "SELECT local_date, COUNT(*) AS listens FROM selected WHERE counted = 1 GROUP BY local_date ORDER BY local_date ASC",
+    );
+    let rows = query.build().fetch_all(&mut *conn).await?;
+    let mut counts = BTreeMap::new();
+    let mut total_listens = 0i64;
+    for r in rows {
+        let d: String = r.try_get("local_date")?;
+        let c: i64 = r.try_get("listens")?;
+        total_listens += c;
+        counts.insert(d, c);
+    }
+
+    let (from, through) = if let Some(y) = target_year {
         let year_start = NaiveDate::from_ymd_opt(y, 1, 1)
             .ok_or_else(|| AppError::BadRequest("Invalid year.".into()))?;
         let year_end = if y < today.year() {
@@ -465,13 +495,7 @@ pub async fn listening_milestones(
     filters: &Filters,
     now: i64,
 ) -> Result<ListeningMilestones> {
-    let mut all_time_filters = filters.clone();
-    all_time_filters.period = Some("all".into());
-    all_time_filters.from = None;
-    all_time_filters.to = None;
-    all_time_filters.bucket = None;
-    all_time_filters.bucket_start = None;
-    all_time_filters.year = None;
+    let all_time_filters = all_time_filters(filters);
 
     let mut total_query = consultation::selection_at(conn, &all_time_filters, false, now).await?;
     total_query.push("SELECT COUNT(*) FROM selected WHERE counted = 1");

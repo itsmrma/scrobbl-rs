@@ -473,14 +473,7 @@ export function MusicTemplatesSettings() {
                 ))}
               </Select>
             ) : (
-              <span
-                className="empty-preview-notice"
-                style={{
-                  display: "block",
-                  marginTop: "8px",
-                  color: "var(--muted)",
-                }}
-              >
+              <span className="empty-preview-notice field-hint">
                 {loadingArtists
                   ? "Caricamento artisti…"
                   : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
@@ -504,14 +497,7 @@ export function MusicTemplatesSettings() {
                 ))}
               </Select>
             ) : (
-              <span
-                className="empty-preview-notice"
-                style={{
-                  display: "block",
-                  marginTop: "8px",
-                  color: "var(--muted)",
-                }}
-              >
+              <span className="empty-preview-notice field-hint">
                 {loadingAlbums
                   ? "Caricamento album…"
                   : "Nessun album presente nell'archivio. Verrà usata un'anteprima vuota."}
@@ -535,14 +521,7 @@ export function MusicTemplatesSettings() {
                 ))}
               </Select>
             ) : (
-              <span
-                className="empty-preview-notice"
-                style={{
-                  display: "block",
-                  marginTop: "8px",
-                  color: "var(--muted)",
-                }}
-              >
+              <span className="empty-preview-notice field-hint">
                 {loadingTracks
                   ? "Caricamento brani…"
                   : "Nessun brano presente nell'archivio. Verrà usata un'anteprima vuota."}

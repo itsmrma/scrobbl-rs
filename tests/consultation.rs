@@ -2798,3 +2798,162 @@ async fn listening_milestones_thresholds_streaks_and_all_time() {
     assert_eq!(ms_empty["longest_streak"]["days"], 0);
     assert_eq!(ms_empty["current_streak"]["days"], 0);
 }
+
+#[tokio::test]
+async fn dashboard_layout_rejects_duplicate_widget_ids_and_duplicate_widget_types() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Duplicate widget ID
+    let layout_dup_id = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "dup-id", "type": "totals", "colSpan": 6 },
+            { "id": "dup-id", "type": "activity_chart", "colSpan": 6 }
+        ]
+    });
+    let (status, err) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        layout_dup_id,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Duplicate widget ID 'dup-id'")
+    );
+
+    // 2. Duplicate widget type
+    let layout_dup_type = json!({
+        "version": 0,
+        "widgets": [
+            { "id": "totals-1", "type": "totals", "colSpan": 6 },
+            { "id": "totals-2", "type": "totals", "colSpan": 6 }
+        ]
+    });
+    let (status, err) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=home",
+        layout_dup_type,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Duplicate widget type 'totals'")
+    );
+}
+
+#[tokio::test]
+async fn music_page_selective_totals_skips_heavy_query_when_disabled() {
+    let (_dir, state, token) = setup().await;
+    save(
+        &state.storage,
+        &[event(
+            1,
+            at("2024-06-10T12:00:00Z"),
+            Some(180_000),
+            DurationKind::Actual,
+            &[("art-select-totals", "Selective Artist")],
+        )],
+    )
+    .await;
+    let art_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Selective Artist'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Default request includes totals
+    let (status, with_totals) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/artists/{art_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(with_totals["totals"]["records"], 1);
+    assert_eq!(with_totals["totals"]["listens"], 1);
+
+    // include_totals=false skips query and returns zeroed Totals
+    let (status, without_totals) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/music/artists/{art_id}?include_totals=false"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(without_totals["totals"]["records"], 0);
+    assert_eq!(without_totals["totals"]["listens"], 0);
+    assert_eq!(without_totals["totals"]["tracks"], 0);
+    assert_eq!(without_totals["totals"]["actual_ms"], 0);
+}
+
+#[tokio::test]
+async fn calendar_long_history_defaults_to_most_recent_active_year_without_failing() {
+    let (_dir, state, token) = setup().await;
+    // 2012 and 2025 are ~13 years apart (>4700 days!)
+    save(
+        &state.storage,
+        &[
+            event(
+                1,
+                at("2012-01-15T12:00:00Z"),
+                Some(180_000),
+                DurationKind::Actual,
+                &[("art-long-history", "Archive Legend")],
+            ),
+            event(
+                2,
+                at("2025-05-20T14:00:00Z"),
+                Some(200_000),
+                DurationKind::Actual,
+                &[("art-long-history", "Archive Legend")],
+            ),
+        ],
+    )
+    .await;
+    let art_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Archive Legend'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // Initial load with default "all" and no year param must succeed, defaulting to 2025
+    let (status, cal) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let years = cal["years"].as_array().expect("years array");
+    assert_eq!(years.len(), 2);
+    assert_eq!(years[0], 2025);
+    assert_eq!(years[1], 2012);
+
+    // Days are returned for the most recent year (2025)
+    let days = cal["days"].as_array().expect("days array");
+    assert!(!days.is_empty());
+    assert!(days[0]["date"].as_str().unwrap().starts_with("2025"));
+    assert_eq!(cal["total_listens"], 1);
+
+    // Year navigation to 2012 works as expected
+    let (status, cal_2012) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_id}&year=2012"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let days_2012 = cal_2012["days"].as_array().expect("days array");
+    assert!(!days_2012.is_empty());
+    assert!(days_2012[0]["date"].as_str().unwrap().starts_with("2012"));
+    assert_eq!(cal_2012["total_listens"], 1);
+}

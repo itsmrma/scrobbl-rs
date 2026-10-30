@@ -338,7 +338,23 @@ impl DashboardLayout {
             ));
         }
 
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut seen_types = std::collections::HashSet::new();
+
         for w in &self.widgets {
+            if !seen_ids.insert(&w.id) {
+                return Err(AppError::BadRequest(format!(
+                    "Duplicate widget ID '{}'.",
+                    w.id
+                )));
+            }
+            if !seen_types.insert(&w.widget_type) {
+                return Err(AppError::BadRequest(format!(
+                    "Duplicate widget type '{}'.",
+                    w.widget_type
+                )));
+            }
+
             if w.id.is_empty()
                 || w.id.len() > 64
                 || !w

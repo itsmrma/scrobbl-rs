@@ -2028,16 +2028,22 @@ export function useLayoutEditor({
   template,
   defaultLayout,
   initialEditing = false,
+  visible = true,
   onSaved,
+  onCancel,
 }: {
   template: TemplateKind;
   defaultLayout: DashboardLayout;
   initialEditing?: boolean;
+  visible?: boolean;
   onSaved?: (saved: DashboardLayout) => void;
+  onCancel?: () => void;
 }) {
   const layoutResult = useLoad<DashboardLayout>(
     () => api.dashboardLayout(template === "home" ? undefined : template),
     `dashboard-layout:${template}`,
+    visible,
+    undefined,
     true,
   );
 
@@ -2048,17 +2054,35 @@ export function useLayoutEditor({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
 
-  useEffect(() => {
-    if (layoutResult.data) {
-      setLayout(layoutResult.data);
-      setSavedLayout(layoutResult.data);
-    }
-  }, [layoutResult.data]);
-
   const isDirty = useMemo(() => {
     if (!savedLayout) return false;
     return JSON.stringify(layout) !== JSON.stringify(savedLayout);
   }, [layout, savedLayout]);
+
+  const hasLoadedInitialRef = useRef(false);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
+
+  useEffect(() => {
+    if (!layoutResult.data) return;
+    const remote = layoutResult.data;
+    setSavedLayout((prev) => {
+      if (!prev || remote.version > prev.version) {
+        if (!hasLoadedInitialRef.current) {
+          hasLoadedInitialRef.current = true;
+          if (!isDirtyRef.current) {
+            setLayout(remote);
+          }
+        } else if (!isDirtyRef.current && !editingRef.current) {
+          setLayout(remote);
+        }
+        return remote;
+      }
+      return prev;
+    });
+  }, [layoutResult.data]);
 
   useEffect(() => {
     if (!editing || !isDirty) return;
@@ -2088,6 +2112,7 @@ export function useLayoutEditor({
     setEditing(false);
     setLayout(savedLayout || defaultLayout);
     setSaveError(null);
+    onCancel?.();
   };
 
   const handleReset = () => {
@@ -2364,7 +2389,9 @@ export function WidgetCatalogDialog({
               <button
                 type="button"
                 className="button secondary"
-                aria-label={`Aggiungi ${item.name}`}
+                aria-label={
+                  template === "home" ? undefined : `Aggiungi ${item.name}`
+                }
                 onClick={() => onAdd(item)}
               >
                 <Icon>add</Icon> Aggiungi
@@ -2534,49 +2561,25 @@ export function Overview({
 }) {
   const selection = useSelection(visible, preferences.initial_period),
     { params } = selection;
-  const layoutResult = useLoad<DashboardLayout>(
-    () => api.dashboardLayout(),
-    "dashboard-layout",
-    visible,
-  );
-
-  const [editing, setEditing] = useState(false);
-  const [layout, setLayout] = useState<DashboardLayout>(DEFAULT_V1_LAYOUT);
-  const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [catalogOpen, setCatalogOpen] = useState(false);
   const editButtonRef = useRef<HTMLButtonElement>(null);
-  const catalogDialogRef = useRef<HTMLDialogElement>(null);
 
-  useEffect(() => {
-    const dialog = catalogDialogRef.current;
-    if (!dialog) return;
-    if (catalogOpen) {
-      if (!dialog.open) {
-        dialog.showModal();
-      }
-    } else {
-      if (dialog.open) {
-        dialog.close();
-      }
-    }
-  }, [catalogOpen]);
-
-  useEffect(() => {
-    if (layoutResult.data) {
-      setLayout(layoutResult.data);
-      setSavedLayout(layoutResult.data);
-    }
-  }, [layoutResult.data]);
+  const layoutEditor = useLayoutEditor({
+    template: "home",
+    defaultLayout: DEFAULT_V1_LAYOUT,
+    visible,
+    onCancel: () => editButtonRef.current?.focus(),
+    onSaved: () => editButtonRef.current?.focus(),
+  });
 
   const requestedWidgets = useMemo(() => {
     return Array.from(
       new Set(
-        layout.widgets.filter((w) => !w.periodOverride).map((w) => w.type),
+        layoutEditor.layout.widgets
+          .filter((w) => !w.periodOverride)
+          .map((w) => w.type),
       ),
     ).join(",");
-  }, [layout.widgets]);
+  }, [layoutEditor.layout.widgets]);
 
   const dashboardParams = useMemo(() => {
     const p = new URLSearchParams(params);
@@ -2592,84 +2595,6 @@ export function Overview({
     visible && requestedWidgets.length > 0,
     (status?.sync_seconds || 120) * 1000,
   );
-
-  const handleStartEditing = () => {
-    setEditing(true);
-    setSaveError(null);
-  };
-
-  const handleCancel = () => {
-    setEditing(false);
-    editButtonRef.current?.focus();
-    setLayout(savedLayout || DEFAULT_V1_LAYOUT);
-    setSaveError(null);
-  };
-
-  const handleReset = () => {
-    setLayout({
-      version: layout.version,
-      widgets: JSON.parse(JSON.stringify(DEFAULT_V1_LAYOUT.widgets)),
-    });
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const saved = await api.saveDashboardLayout(layout);
-      setLayout(saved);
-      setSavedLayout(saved);
-      setEditing(false);
-      editButtonRef.current?.focus();
-    } catch (e: any) {
-      setSaveError(e.message || "Failed to save dashboard layout.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const cycleSpan = (id: string) => {
-    setLayout((prev) => {
-      const spans: (2 | 3 | 4 | 6)[] = [2, 3, 4, 6];
-      return {
-        ...prev,
-        widgets: prev.widgets.map((w) => {
-          if (w.id !== id) return w;
-          const next = spans[(spans.indexOf(w.colSpan) + 1) % spans.length];
-          return { ...w, colSpan: next };
-        }),
-      };
-    });
-  };
-
-  const removeWidget = (id: string) => {
-    setLayout((prev) => ({
-      ...prev,
-      widgets: prev.widgets.filter((w) => w.id !== id),
-    }));
-  };
-
-  const moveWidget = (index: number, delta: number) => {
-    setLayout((prev) => ({
-      ...prev,
-      widgets: reorderWidgets(prev.widgets, index, index + delta),
-    }));
-  };
-
-  const addWidget = (item: (typeof CATALOG_ITEMS)[number]) => {
-    setLayout((prev) => ({
-      ...prev,
-      widgets: [
-        ...prev.widgets,
-        {
-          id: item.type,
-          type: item.type,
-          colSpan: item.defaultSpan,
-        },
-      ],
-    }));
-    setCatalogOpen(false);
-  };
 
   const renderWidgetContent = (widget: WidgetConfig) => {
     const widgetParams = getWidgetParams(params, widget.periodOverride);
@@ -2818,12 +2743,12 @@ export function Overview({
         <div className="overview-heading-actions">
           <button
             ref={editButtonRef}
-            aria-pressed={editing}
+            aria-pressed={layoutEditor.editing}
             aria-controls="dashboard-grid"
             type="button"
             className="button secondary"
-            disabled={saving}
-            onClick={handleStartEditing}
+            disabled={layoutEditor.saving}
+            onClick={layoutEditor.handleStartEditing}
           >
             <Icon>tune</Icon> Personalizza
           </button>
@@ -2831,108 +2756,30 @@ export function Overview({
         </div>
       </div>
 
-      {editing && (
-        <div
-          className="dashboard-edit-toolbar panel padded"
-          role="toolbar"
-          aria-label="Personalizza dashboard"
-        >
-          <div className="dashboard-edit-actions">
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={() => setCatalogOpen(true)}
-            >
-              <Icon>add</Icon> Aggiungi widget
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={handleReset}
-            >
-              <Icon>restart_alt</Icon> Ripristina predefinito
-            </button>
-            <button
-              type="button"
-              className="button secondary"
-              disabled={saving}
-              onClick={handleCancel}
-            >
-              Annulla
-            </button>
-            <button
-              type="button"
-              className="button primary"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              <Icon>check</Icon> Salva modifiche
-            </button>
-          </div>
-          {saving && (
-            <span className="visually-hidden" role="status">
-              Salvataggio…
-            </span>
-          )}
-          {saveError && <ErrorText>{saveError}</ErrorText>}
-        </div>
+      {layoutEditor.editing && (
+        <DashboardEditToolbar
+          template="home"
+          saving={layoutEditor.saving}
+          saveError={layoutEditor.saveError}
+          onAddWidget={() => layoutEditor.setCatalogOpen(true)}
+          onReset={layoutEditor.handleReset}
+          onCancel={layoutEditor.handleCancel}
+          onSave={layoutEditor.handleSave}
+        />
       )}
 
-      <dialog
-        ref={catalogDialogRef}
-        className="modal widget-catalog-dialog"
-        aria-label="Aggiungi widget"
-        onClose={() => setCatalogOpen(false)}
-      >
-        <div className="dialog-header">
-          <h2>Aggiungi widget</h2>
-          <button
-            type="button"
-            className="icon-button"
-            aria-label="Chiudi catalogo"
-            onClick={() => setCatalogOpen(false)}
-          >
-            <Icon>close</Icon>
-          </button>
-        </div>
-        {CATALOG_ITEMS.filter(
-          (item) =>
-            isWidgetAllowedForTemplate(item.type, "home") &&
-            !layout.widgets.some((w) => w.type === item.type),
-        ).length === 0 ? (
-          <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
-        ) : (
-          <div className="catalog-items-grid">
-            {CATALOG_ITEMS.filter(
-              (item) =>
-                isWidgetAllowedForTemplate(item.type, "home") &&
-                !layout.widgets.some((w) => w.type === item.type),
-            ).map((item) => (
-              <div key={item.type} className="panel padded catalog-item-card">
-                <div className="catalog-item-info">
-                  <h3>{item.name}</h3>
-                  <p>{item.description}</p>
-                  <small>Dimensione: {item.defaultSpan} colonne</small>
-                </div>
-                <button
-                  type="button"
-                  className="button secondary"
-                  onClick={() => addWidget(item)}
-                >
-                  <Icon>add</Icon> Aggiungi
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </dialog>
+      <WidgetCatalogDialog
+        open={layoutEditor.catalogOpen}
+        onClose={() => layoutEditor.setCatalogOpen(false)}
+        template="home"
+        widgets={layoutEditor.layout.widgets}
+        onAdd={layoutEditor.addWidget}
+      />
 
-      <ErrorText>{result.error || layoutResult.error}</ErrorText>
+      <ErrorText>{result.error || layoutEditor.layoutResult.error}</ErrorText>
       <div
         id="dashboard-grid"
-        className={`dashboard-grid${editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
+        className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
         aria-busy={result.loading && !result.data}
       >
         {result.loading && !result.data && (
@@ -2940,121 +2787,58 @@ export function Overview({
             Loading your archive…
           </span>
         )}
-        {layout.widgets.map((w, index) => (
+        {layoutEditor.layout.widgets.map((w, index) => (
           <div
             key={w.id}
-            className={`dashboard-widget span-${w.colSpan}${editing ? " editing" : ""}`}
+            className={`dashboard-widget span-${w.colSpan}${layoutEditor.editing ? " editing" : ""}`}
             data-widget-id={w.id}
             data-widget-type={w.type}
-            draggable={editing && !saving}
+            draggable={layoutEditor.editing && !layoutEditor.saving}
             onDragStart={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.dataTransfer.setData("text/plain", String(index));
               e.dataTransfer.effectAllowed = "move";
             }}
             onDragOver={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.preventDefault();
               e.dataTransfer.dropEffect = "move";
             }}
             onDrop={(e) => {
-              if (!editing || saving) return;
+              if (!layoutEditor.editing || layoutEditor.saving) return;
               e.preventDefault();
               const sourceIndex = parseInt(
                 e.dataTransfer.getData("text/plain"),
                 10,
               );
               if (!isNaN(sourceIndex) && sourceIndex !== index) {
-                setLayout((prev) => ({
+                layoutEditor.setLayout((prev) => ({
                   ...prev,
                   widgets: reorderWidgets(prev.widgets, sourceIndex, index),
                 }));
               }
             }}
           >
-            {editing && (
-              <div className="widget-edit-controls">
-                <button
-                  type="button"
-                  className="widget-control widget-drag-handle"
-                  disabled={saving}
-                  title="Trascina per riordinare"
-                  aria-label="Sposta widget"
-                  draggable={editing && !saving}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("text/plain", String(index));
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                >
-                  <Icon>drag_indicator</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-move-up"
-                  title="Sposta prima"
-                  aria-label="Sposta widget prima"
-                  disabled={saving || index === 0}
-                  onClick={() => moveWidget(index, -1)}
-                >
-                  <Icon>arrow_upward</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-move-down"
-                  title="Sposta dopo"
-                  aria-label="Sposta widget dopo"
-                  disabled={saving || index === layout.widgets.length - 1}
-                  onClick={() => moveWidget(index, 1)}
-                >
-                  <Icon>arrow_downward</Icon>
-                </button>
-                <button
-                  type="button"
-                  className="widget-control widget-span-button"
-                  title={`Larghezza: ${w.colSpan} colonne. Clicca per modificare.`}
-                  aria-label={`Larghezza: ${w.colSpan} colonne`}
-                  disabled={saving}
-                  onClick={() => cycleSpan(w.id)}
-                >
-                  <Icon>view_column</Icon>
-                  <span>{w.colSpan}/6</span>
-                </button>
-                {isTimeSensitiveWidget(w.type) && (
-                  <div className="widget-period-override-control">
-                    <Select
-                      aria-label="Periodo widget"
-                      disabled={saving}
-                      value={w.periodOverride || ""}
-                      onChange={(val) => {
-                        setLayout((prev) => ({
-                          ...prev,
-                          widgets: prev.widgets.map((item) =>
-                            item.id === w.id
-                              ? { ...item, periodOverride: val || undefined }
-                              : item,
-                          ),
-                        }));
-                      }}
-                    >
-                      {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
-                        <option key={val} value={val}>
-                          {label}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  className="widget-control widget-remove-button"
-                  title="Rimuovi widget"
-                  aria-label="Rimuovi widget"
-                  disabled={saving}
-                  onClick={() => removeWidget(w.id)}
-                >
-                  <Icon>close</Icon>
-                </button>
-              </div>
+            {layoutEditor.editing && (
+              <WidgetEditControls
+                widget={w}
+                index={index}
+                totalWidgets={layoutEditor.layout.widgets.length}
+                saving={layoutEditor.saving}
+                onMove={layoutEditor.moveWidget}
+                onCycleSpan={layoutEditor.cycleSpan}
+                onRemove={layoutEditor.removeWidget}
+                onChangePeriod={(val) => {
+                  layoutEditor.setLayout((prev) => ({
+                    ...prev,
+                    widgets: prev.widgets.map((item) =>
+                      item.id === w.id
+                        ? { ...item, periodOverride: val }
+                        : item,
+                    ),
+                  }));
+                }}
+              />
             )}
             {renderWidgetContent(w)}
           </div>
@@ -3686,9 +3470,24 @@ export function MusicPage({
     totals: dummyTotals,
   };
 
+  const needsTotals = useMemo(() => {
+    if (!isMusicTemplate) return true;
+    return layoutEditor.layout.widgets.some(
+      (w) => w.type === "totals" && !w.periodOverride,
+    );
+  }, [isMusicTemplate, layoutEditor.layout.widgets]);
+
+  const musicParams = useMemo(() => {
+    const p = new URLSearchParams(params);
+    if (!needsTotals) {
+      p.set("include_totals", "false");
+    }
+    return p;
+  }, [params, needsTotals]);
+
   const apiResult = useLoad(
-    () => api.music(kind, id, params),
-    `music:${kind}:${id}:${params}:${preferences.version}`,
+    () => api.music(kind, id, musicParams),
+    `music:${kind}:${id}:${musicParams}:${preferences.version}`,
     !isPreview,
     undefined,
     true,
@@ -3868,8 +3667,13 @@ export function MusicPage({
         );
       case "history":
         return (
-          <div className="music-history-widget-container">
-            <h2>Listening history</h2>
+          <article
+            className="panel padded widget-history"
+            aria-label="Listening history"
+          >
+            <div className="panel-title">
+              <h2 className="panel-title">Listening history</h2>
+            </div>
             <HistoryPage
               preferences={preferences}
               visible
@@ -3877,7 +3681,7 @@ export function MusicPage({
               embedded
               musicKind={kind}
             />
-          </div>
+          </article>
         );
       case "recent_listens":
         return (
