@@ -1864,8 +1864,7 @@ async fn track_template_layout_persistence_matrix_validation_and_concurrency() {
     assert_eq!(saved_empty["version"], 2);
     assert_eq!(saved_empty["widgets"].as_array().unwrap().len(), 0);
 
-    let (status, read_empty) =
-        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    let (status, read_empty) = get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read_empty["version"], 2);
     assert_eq!(read_empty["widgets"].as_array().unwrap().len(), 0);
@@ -2029,4 +2028,773 @@ async fn album_scoped_consultation_aggregations_and_cache_isolation() {
     assert_eq!(album_a_cached["totals"]["listens"], 3);
     assert_eq!(album_a_cached["totals"]["tracks"], 2);
     assert_eq!(album_a_cached["totals"]["actual_ms"], 580000);
+}
+
+#[tokio::test]
+async fn calendar_milestones_and_discovery_ratio_layout_matrix_validation() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Home template rejects listening_calendar and listening_milestones
+    let (status, home_layout) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+
+    for widget_type in &["listening_calendar", "listening_milestones"] {
+        let mut invalid_home = home_layout.clone();
+        invalid_home["widgets"][0]["type"] = json!(widget_type);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            "/api/v1/dashboard/layout",
+            invalid_home,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected {widget_type} to be rejected on home template"
+        );
+    }
+
+    // 2. Artist template allows listening_calendar, listening_milestones, discovery_ratio
+    let (status, artist_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut valid_artist = artist_layout.clone();
+    valid_artist["widgets"] = json!([
+        { "id": "cal-1", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-1", "type": "listening_milestones", "colSpan": 6 },
+        { "id": "dr-1", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, saved_artist) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        valid_artist,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_artist["widgets"].as_array().unwrap().len(), 3);
+
+    // 3. Album template allows listening_calendar, listening_milestones, discovery_ratio
+    let (status, album_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut valid_album = album_layout.clone();
+    valid_album["widgets"] = json!([
+        { "id": "cal-alb", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-alb", "type": "listening_milestones", "colSpan": 6 },
+        { "id": "dr-alb", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, saved_album) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=album",
+        valid_album,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_album["widgets"].as_array().unwrap().len(), 3);
+
+    // 4. Track template allows listening_calendar and listening_milestones, but REJECTS discovery_ratio
+    let (status, track_layout) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // discovery_ratio rejected on track template
+    let mut invalid_track = track_layout.clone();
+    invalid_track["widgets"] = json!([
+        { "id": "dr-trk", "type": "discovery_ratio", "colSpan": 3 }
+    ]);
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        invalid_track,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery_ratio to be rejected on track template"
+    );
+
+    // listening_calendar and listening_milestones accepted on track template
+    let mut valid_track = track_layout.clone();
+    valid_track["widgets"] = json!([
+        { "id": "cal-trk", "type": "listening_calendar", "colSpan": 6 },
+        { "id": "ms-trk", "type": "listening_milestones", "colSpan": 6 }
+    ]);
+    let (status, saved_track) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=track",
+        valid_track,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved_track["widgets"].as_array().unwrap().len(), 2);
+
+    // 5. listening_milestones MUST NOT accept period_override (reject with 400 Bad Request)
+    for template_name in &["artist", "album", "track"] {
+        let (status, base_layout) = get(
+            &state,
+            &token,
+            &format!("/api/v1/dashboard/layout?template={template_name}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let mut invalid_override = base_layout.clone();
+        invalid_override["widgets"] = json!([
+            {
+                "id": "ms-override",
+                "type": "listening_milestones",
+                "colSpan": 6,
+                "periodOverride": "30d"
+            }
+        ]);
+        let (status, _) = post(
+            &state,
+            Some(&token),
+            Some("test-csrf"),
+            &format!("/api/v1/dashboard/layout?template={template_name}"),
+            invalid_override,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "Expected listening_milestones with period_override to be rejected on {template_name} template"
+        );
+    }
+}
+
+#[tokio::test]
+async fn discovery_ratio_scoped_and_rejected_for_track() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed events:
+    // Artist 1 / Album 1:
+    // - Track 1: historical play in Jan 2025
+    // - Track 1: repeated play in Feb 2025
+    // - Track 2: discovery play in Feb 2025
+    // Artist 2 / Album 2:
+    // - Track 3: historical play in Jan 2025
+    // - Track 3: repeat in Feb 2025
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "t1:1".into(),
+        source_timestamp_ms: at("2025-01-10T10:00:00Z"),
+        played_at_ms: at("2025-01-10T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "t1:2".into(),
+        source_timestamp_ms: at("2025-02-10T10:00:00Z"),
+        played_at_ms: at("2025-02-10T10:00:00Z"),
+        listened_ms: Some(200000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000001",
+            "type": "track",
+            "name": "Track One",
+            "duration_ms": 200000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "t2:1".into(),
+        source_timestamp_ms: at("2025-02-15T12:00:00Z"),
+        played_at_ms: at("2025-02-15T12:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000002",
+            "type": "track",
+            "name": "Track Two",
+            "duration_ms": 180000,
+            "album": { "id": "alb-1", "name": "Album One", "images": [] },
+            "artists": [{ "id": "art-1", "name": "Artist One" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "t3:1".into(),
+        source_timestamp_ms: at("2025-01-05T10:00:00Z"),
+        played_at_ms: at("2025-01-05T10:00:00Z"),
+        listened_ms: Some(220000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 220000,
+            "album": { "id": "alb-2", "name": "Album Two", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist Two" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e5 = Event {
+        source: "spotify_api",
+        source_key: "t3:2".into(),
+        source_timestamp_ms: at("2025-02-20T10:00:00Z"),
+        played_at_ms: at("2025-02-20T10:00:00Z"),
+        listened_ms: Some(220000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000003",
+            "type": "track",
+            "name": "Track Three",
+            "duration_ms": 220000,
+            "album": { "id": "alb-2", "name": "Album Two", "images": [] },
+            "artists": [{ "id": "art-2", "name": "Artist Two" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4, e5]).await;
+
+    let art1_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let art2_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist Two'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let alb1_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let trk1_id: String = sqlx::query_scalar("SELECT id FROM tracks WHERE title='Track One'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Scoped to Artist One in Feb 2025: 1 discovery (Track 2), 1 repeat (Track 1)
+    let (status, dr_art1) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=artists&id={art1_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_art1["discoveries"], 1);
+    assert_eq!(dr_art1["repeats"], 1);
+    assert_eq!(dr_art1["total"], 2);
+    assert_eq!(dr_art1["discovery_percent"], 50.0);
+
+    // 2. Scoped to Artist Two in Feb 2025: 0 discoveries, 1 repeat (Track 3)
+    let (status, dr_art2) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=artists&id={art2_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_art2["discoveries"], 0);
+    assert_eq!(dr_art2["repeats"], 1);
+    assert_eq!(dr_art2["total"], 1);
+    assert_eq!(dr_art2["discovery_percent"], 0.0);
+
+    // 3. Scoped to Album One in Feb 2025
+    let (status, dr_alb1) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=albums&id={alb1_id}&from=2025-02-01&to=2025-02-28"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(dr_alb1["discoveries"], 1);
+    assert_eq!(dr_alb1["repeats"], 1);
+
+    // 4. Discovery ratio REJECTED for track scope (400 Bad Request)
+    let (status, _) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?kind=tracks&id={trk1_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery ratio with kind=tracks to return 400"
+    );
+
+    let (status, _) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/discovery-ratio?track={trk1_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "Expected discovery ratio with track param to return 400"
+    );
+
+    // 5. Invalid kind rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?kind=invalid&id=123",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 6. Kind without id rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?kind=artists",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 7. Id without kind rejected (400)
+    let (status, _) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/discovery-ratio?id=123",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn listening_calendar_scoping_zeros_dst_and_years() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed listens for Artist A across June 2024:
+    // - 2024-06-10: 2 counted listens
+    // - 2024-06-11: 1 counted listen
+    // - 2024-06-12: 0 listens (empty day)
+    // - 2024-06-13: 1 counted listen
+    // - 2024-06-14: 1 uncounted short listen (15s) -> count must be 0!
+    // - 2024-06-15: 1 listen for Artist B (must NOT be counted for Artist A)
+    // - 2025-01-15: 1 counted listen in 2025 (multi-year interval)
+    let e1 = Event {
+        source: "spotify_api",
+        source_key: "cal:1".into(),
+        source_timestamp_ms: at("2024-06-10T08:00:00Z"),
+        played_at_ms: at("2024-06-10T08:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e2 = Event {
+        source: "spotify_api",
+        source_key: "cal:2".into(),
+        source_timestamp_ms: at("2024-06-10T20:00:00Z"),
+        played_at_ms: at("2024-06-10T20:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e3 = Event {
+        source: "spotify_api",
+        source_key: "cal:3".into(),
+        source_timestamp_ms: at("2024-06-11T12:00:00Z"),
+        played_at_ms: at("2024-06-11T12:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    let e4 = Event {
+        source: "spotify_api",
+        source_key: "cal:4".into(),
+        source_timestamp_ms: at("2024-06-13T14:00:00Z"),
+        played_at_ms: at("2024-06-13T14:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // Uncounted short play (<30s)
+    let e5 = Event {
+        source: "spotify_api",
+        source_key: "cal:5".into(),
+        source_timestamp_ms: at("2024-06-14T10:00:00Z"),
+        played_at_ms: at("2024-06-14T10:00:00Z"),
+        listened_ms: Some(15000),
+        duration_kind: DurationKind::Actual,
+        counted: false,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // Play for Artist B
+    let e6 = Event {
+        source: "spotify_api",
+        source_key: "cal:6".into(),
+        source_timestamp_ms: at("2024-06-15T10:00:00Z"),
+        played_at_ms: at("2024-06-15T10:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000020",
+            "type": "track",
+            "name": "Track B1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-b", "name": "Album Cal B", "images": [] },
+            "artists": [{ "id": "cal-art-b", "name": "Artist Cal B" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+    // 2025 play for Artist A
+    let e7 = Event {
+        source: "spotify_api",
+        source_key: "cal:7".into(),
+        source_timestamp_ms: at("2025-01-15T10:00:00Z"),
+        played_at_ms: at("2025-01-15T10:00:00Z"),
+        listened_ms: Some(180000),
+        duration_kind: DurationKind::Actual,
+        counted: true,
+        track: parse_track(&json!({
+            "uri": "spotify:track:0000000000000000000010",
+            "type": "track",
+            "name": "Track A1",
+            "duration_ms": 180000,
+            "album": { "id": "cal-alb-a", "name": "Album Cal A", "images": [] },
+            "artists": [{ "id": "cal-art-a", "name": "Artist Cal A" }]
+        }))
+        .unwrap(),
+        raw: json!({}),
+    };
+
+    save(&state.storage, &[e1, e2, e3, e4, e5, e6, e7]).await;
+
+    let art_a_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist Cal A'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let alb_a_id: String = sqlx::query_scalar("SELECT id FROM albums WHERE name='Album Cal A'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+    let trk_a_id: String = sqlx::query_scalar("SELECT id FROM tracks WHERE title='Track A1'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Missing entity scope rejected (400 Bad Request)
+    let (status, _) = get(&state, &token, "/api/v1/consultation/calendar").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 2. Query June 10 - June 14, 2024 for Artist A
+    let (status, cal) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=artists&id={art_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal["total_listens"], 4);
+    let days = cal["days"].as_array().expect("days array");
+    assert_eq!(days.len(), 5);
+
+    // Day 0: 2024-06-10 (2 counted listens)
+    assert_eq!(days[0]["date"], "2024-06-10");
+    assert_eq!(days[0]["count"], 2);
+
+    // Day 1: 2024-06-11 (1 counted listen)
+    assert_eq!(days[1]["date"], "2024-06-11");
+    assert_eq!(days[1]["count"], 1);
+
+    // Day 2: 2024-06-12 (0 listens - included explicitly!)
+    assert_eq!(days[2]["date"], "2024-06-12");
+    assert_eq!(days[2]["count"], 0);
+
+    // Day 3: 2024-06-13 (1 counted listen)
+    assert_eq!(days[3]["date"], "2024-06-13");
+    assert_eq!(days[3]["count"], 1);
+
+    // Day 4: 2024-06-14 (1 uncounted listen -> count is 0)
+    assert_eq!(days[4]["date"], "2024-06-14");
+    assert_eq!(days[4]["count"], 0);
+
+    // 3. Years list contains all active years for Artist A
+    let years = cal["years"].as_array().expect("years array");
+    assert_eq!(years.len(), 2);
+    assert_eq!(years[0], 2025);
+    assert_eq!(years[1], 2024);
+
+    // 4. Year navigation: query year=2024
+    let (status, cal_2024) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/calendar?kind=artists&id={art_a_id}&year=2024"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // 2024 is a leap year (366 days)
+    assert_eq!(cal_2024["days"].as_array().unwrap().len(), 366);
+    assert_eq!(cal_2024["total_listens"], 4);
+
+    // 5. Scoped to album
+    let (status, cal_alb) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=albums&id={alb_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal_alb["total_listens"], 4);
+
+    // 6. Scoped to track
+    let (status, cal_trk) = get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/calendar?kind=tracks&id={trk_a_id}&from=2024-06-10&to=2024-06-14"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cal_trk["total_listens"], 4);
+
+    // 7. Empty entity returns totalListens = 0 and valid structure
+    let (status, empty_cal) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/calendar?kind=artists&id=non-existent-artist",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(empty_cal["total_listens"], 0);
+    assert_eq!(empty_cal["days"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn listening_milestones_thresholds_streaks_and_all_time() {
+    let (_dir, state, token) = setup().await;
+
+    // Seed 12 events for Artist MS:
+    // First listen on 2024-01-01 10:00:00: "First Song"
+    // Streaks:
+    // - 2024-01-01: 1 listen
+    // - 2024-01-02: 2 listens (same day - does not lengthen streak!)
+    // - 2024-01-03: 1 listen -> streak is 3 days (Jan 1, Jan 2, Jan 3)
+    // - Gap: Jan 4 no listens (breaks streak!)
+    // - 2024-01-05: 1 listen
+    // - 2024-01-06: 1 listen -> streak is 2 days
+    // - Jan 7 to Jan 12: 1 listen each day to reach 12 listens total
+    //   Threshold 10 reached on Jan 10!
+    // Last listen on 2024-01-12: "Last Song"
+    let mut events = Vec::new();
+
+    let titles = [
+        "First Song",
+        "Second Song",
+        "Third Song",
+        "Fourth Song",
+        "Fifth Song",
+        "Sixth Song",
+        "Seventh Song",
+        "Eighth Song",
+        "Ninth Song",
+        "Tenth Song",
+        "Eleventh Song",
+        "Last Song",
+    ];
+
+    let timestamps = [
+        "2024-01-01T10:00:00Z",
+        "2024-01-02T09:00:00Z",
+        "2024-01-02T20:00:00Z", // multiple listens on Jan 2
+        "2024-01-03T10:00:00Z", // streak end (3 days)
+        // gap Jan 4
+        "2024-01-05T10:00:00Z",
+        "2024-01-06T10:00:00Z",
+        "2024-01-07T10:00:00Z",
+        "2024-01-08T10:00:00Z",
+        "2024-01-09T10:00:00Z",
+        "2024-01-10T10:00:00Z", // 10th listen!
+        "2024-01-11T10:00:00Z",
+        "2024-01-12T10:00:00Z", // 12th listen!
+    ];
+
+    for i in 0..12 {
+        let ts = at(timestamps[i]);
+        events.push(Event {
+            source: "spotify_api",
+            source_key: format!("ms:{i}"),
+            source_timestamp_ms: ts,
+            played_at_ms: ts,
+            listened_ms: Some(200000),
+            duration_kind: DurationKind::Actual,
+            counted: true,
+            track: parse_track(&json!({
+                "uri": format!("spotify:track:{:022}", i + 100),
+                "type": "track",
+                "name": titles[i],
+                "duration_ms": 200000,
+                "album": { "id": "ms-alb", "name": "Milestone Album", "images": [] },
+                "artists": [{ "id": "ms-art", "name": "Artist MS" }]
+            }))
+            .unwrap(),
+            raw: json!({}),
+        });
+    }
+
+    save(&state.storage, &events).await;
+
+    let art_ms_id: String = sqlx::query_scalar("SELECT id FROM artists WHERE name='Artist MS'")
+        .fetch_one(&state.read_db)
+        .await
+        .unwrap();
+
+    // 1. Missing scope rejected (400)
+    let (status, _) = get(&state, &token, "/api/v1/consultation/milestones").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 2. Query milestones
+    let (status, ms) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/milestones?kind=artists&id={art_ms_id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms["total_listens"], 12);
+
+    // First listen
+    assert_eq!(ms["first_listen"]["track_title"], "First Song");
+    assert_eq!(
+        ms["first_listen"]["played_at_ms"],
+        at("2024-01-01T10:00:00Z")
+    );
+
+    // Last listen
+    assert_eq!(ms["last_listen"]["track_title"], "Last Song");
+    assert_eq!(
+        ms["last_listen"]["played_at_ms"],
+        at("2024-01-12T10:00:00Z")
+    );
+
+    // Threshold 10
+    let thresholds = ms["thresholds"].as_array().expect("thresholds array");
+    assert_eq!(thresholds.len(), 1);
+    assert_eq!(thresholds[0]["count"], 10);
+    assert_eq!(thresholds[0]["reached_at_ms"], at("2024-01-10T10:00:00Z"));
+
+    // Longest streak: Jan 5 - Jan 12 is 8 consecutive calendar days!
+    // (Jan 1, 2, 3 was 3 days. Jan 5, 6, 7, 8, 9, 10, 11, 12 is 8 days!)
+    assert_eq!(ms["longest_streak"]["days"], 8);
+    assert_eq!(ms["longest_streak"]["start_date"], "2024-01-05");
+    assert_eq!(ms["longest_streak"]["end_date"], "2024-01-12");
+
+    // Current streak: ended in Jan 2024 (well before today/yesterday) -> 0 days
+    assert_eq!(ms["current_streak"]["days"], 0);
+
+    // 3. All-time behavior: passing ?period=today or custom dates still evaluates whole history!
+    let (status, ms_filtered) = get(
+        &state,
+        &token,
+        &format!("/api/v1/consultation/milestones?kind=artists&id={art_ms_id}&period=today"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms_filtered["total_listens"], 12);
+    assert_eq!(ms_filtered["first_listen"]["track_title"], "First Song");
+    assert_eq!(ms_filtered["last_listen"]["track_title"], "Last Song");
+
+    // 4. Empty entity returns zero/None state without error
+    let (status, ms_empty) = get(
+        &state,
+        &token,
+        "/api/v1/consultation/milestones?kind=artists&id=non-existent-artist",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ms_empty["total_listens"], 0);
+    assert!(ms_empty["first_listen"].is_null());
+    assert!(ms_empty["last_listen"].is_null());
+    assert_eq!(ms_empty["thresholds"].as_array().unwrap().len(), 0);
+    assert_eq!(ms_empty["longest_streak"]["days"], 0);
+    assert_eq!(ms_empty["current_streak"]["days"], 0);
 }

@@ -1055,3 +1055,212 @@ dialog.widget-catalog-dialog {
   display: flex;
   flex-direction: column;
 }
+
+/* Listening Calendar Widget */
+.widget-listening-calendar {
+  display: flex;
+  flex-direction: column;
+}
+.widget-calendar-content {
+  margin-top: 12px;
+}
+.calendar-year-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.calendar-year-nav button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.calendar-year-nav button:hover {
+  background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
+}
+.calendar-year-nav button.active {
+  background: var(--chart-accent, #6366f1);
+  color: #fff;
+  border-color: var(--chart-accent, #6366f1);
+  font-weight: 600;
+}
+.calendar-heatmap-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.calendar-heatmap-container {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+  padding-bottom: 8px;
+  max-width: 100%;
+}
+.calendar-heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 13px);
+  gap: 3px;
+  width: max-content;
+}
+.calendar-cell {
+  width: 13px;
+  height: 13px;
+  border-radius: 2px;
+  transition: transform 0.1s ease;
+}
+.calendar-cell:hover {
+  outline: 1px solid var(--text);
+  outline-offset: 1px;
+}
+.calendar-cell.level-0 {
+  background: var(--surface-secondary, rgba(255, 255, 255, 0.05));
+  border: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
+}
+.calendar-cell.level-1 {
+  background: color-mix(
+    in oklab,
+    var(--chart-accent, #6366f1) 35%,
+    transparent
+  );
+}
+.calendar-cell.level-2 {
+  background: color-mix(
+    in oklab,
+    var(--chart-accent, #6366f1) 60%,
+    transparent
+  );
+}
+.calendar-cell.level-3 {
+  background: color-mix(
+    in oklab,
+    var(--chart-accent, #6366f1) 85%,
+    transparent
+  );
+}
+.calendar-cell.level-4 {
+  background: var(--chart-accent, #6366f1);
+}
+.calendar-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  align-self: flex-end;
+  color: var(--muted);
+}
+.calendar-legend .calendar-cell {
+  width: 11px;
+  height: 11px;
+}
+.calendar-skeleton {
+  padding: 12px 0;
+}
+
+/* Listening Milestones Widget */
+.widget-listening-milestones {
+  display: flex;
+  flex-direction: column;
+}
+.widget-period-badge.all-time {
+  background: color-mix(
+    in oklab,
+    var(--chart-accent, #6366f1) 20%,
+    transparent
+  );
+  color: var(--text);
+  font-weight: 500;
+}
+.widget-milestones-content {
+  margin-top: 12px;
+}
+.milestones-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.milestones-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.milestones-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.milestone-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface-secondary, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: 44px;
+}
+.milestone-label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+.milestone-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.milestone-time {
+  font-size: 12px;
+}
+.pill.streak-active {
+  display: inline-block;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in oklab, #22c55e 20%, transparent);
+  color: #22c55e;
+  border: 1px solid color-mix(in oklab, #22c55e 40%, transparent);
+}
+.thresholds-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.threshold-chip {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--surface-secondary, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-height: 44px;
+  min-width: 100px;
+}
+.threshold-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.threshold-date {
+  font-size: 11px;
+}
+.milestones-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0;
+}
