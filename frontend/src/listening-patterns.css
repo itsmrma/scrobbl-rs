@@ -1,3 +1,6 @@
+.listening-patterns {
+  container-type: inline-size;
+}
 .listening-patterns .panel-title {
   align-items: center;
   flex-wrap: wrap;
@@ -13,6 +16,7 @@
 .pattern-readout {
   color: var(--muted);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .pattern-bars {
   max-height: 280px;
@@ -46,6 +50,7 @@
 .pattern-row strong {
   text-align: right;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .pattern-row strong small {
   display: block;
@@ -73,20 +78,42 @@
   height: 132px;
   width: 100%;
   order: 0;
-  background: transparent;
+  background: var(--surface-raised);
+  border-radius: 3px;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
 }
 .pattern-temporal .pattern-track > span {
   width: 100%;
+  background: var(--accent);
+  border-radius: 3px;
 }
 .pattern-temporal .pattern-label {
   order: 1;
   font-size: 11px;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 .pattern-row:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+@container (max-width: 600px) {
+  .listening-patterns .select-control {
+    width: 100%;
+  }
+  .pattern-hours {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px 4px;
+    max-height: none;
+  }
+  .pattern-hours .pattern-track {
+    height: 96px;
+  }
+  .pattern-bars:not(.pattern-temporal) .pattern-row {
+    grid-template-columns: minmax(0, 1fr) minmax(32px, 1fr) 60px;
+    gap: 8px;
+  }
 }
 @media (max-width: 600px) {
   .listening-patterns .select-control {
