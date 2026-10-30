@@ -35,8 +35,8 @@ impl Config {
             "SCROBBL_SYNC_SECONDS must be at least 60"
         );
         anyhow::ensure!(
-            now_playing_seconds >= 15,
-            "SCROBBL_NOW_PLAYING_SECONDS must be at least 15"
+            now_playing_seconds == 0 || now_playing_seconds >= 15,
+            "SCROBBL_NOW_PLAYING_SECONDS must be 0 (disabled) or at least 15"
         );
         let env_client_id = env::var("SPOTIFY_CLIENT_ID")
             .ok()

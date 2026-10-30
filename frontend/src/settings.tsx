@@ -534,7 +534,7 @@ function RefreshIntervals({
           Now playing interval (seconds)
           <input
             type="number"
-            min="15"
+            min="0"
             max="86400"
             step="1"
             required
@@ -547,7 +547,8 @@ function RefreshIntervals({
         </label>
       </div>
       <p className="subtle">
-        Collection: at least 60 seconds. Now playing: at least 15 seconds, while
+        Collection: at least 60 seconds. Now playing: 0 to disable live tracking
+        (saving API quota like Stats.fm and Maloja), or 15–86400 seconds while
         the page is visible. Spotify availability and request limits can add
         delay.
       </p>
