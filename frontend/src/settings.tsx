@@ -352,37 +352,77 @@ export function Appearance({
 }
 
 export function MusicTemplatesSettings() {
-  const [template, setTemplate] = useState<"artist">("artist");
+  const [template, setTemplate] = useState<"artist" | "album">("artist");
   const [artists, setArtists] = useState<{ id: string; name: string }[]>([]);
   const [selectedArtist, setSelectedArtist] = useState<string>("");
+  const [albums, setAlbums] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAlbum, setSelectedAlbum] = useState<string>("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const params = new URLSearchParams();
     params.set("page", "1");
     params.set("page_size", "20");
-    api
-      .rankings("artists", params)
-      .then((data) => {
-        const items = data.items.map((a: any) => ({ id: a.id, name: a.name }));
-        setArtists(items);
-        if (items.length > 0) {
-          setSelectedArtist(items[0].id);
+    Promise.all([
+      api.rankings("artists", params).catch(() => ({ items: [] })),
+      api.rankings("albums", params).catch(() => ({ items: [] })),
+    ])
+      .then(([artistsData, albumsData]) => {
+        const artistItems = (artistsData?.items || []).map((a: any) => ({
+          id: a.id,
+          name: a.name,
+        }));
+        setArtists(artistItems);
+        if (artistItems.length > 0) {
+          setSelectedArtist(artistItems[0].id);
+        }
+        const albumItems = (albumsData?.items || []).map((a: any) => ({
+          id: a.id,
+          name: a.name,
+        }));
+        setAlbums(albumItems);
+        if (albumItems.length > 0) {
+          setSelectedAlbum(albumItems[0].id);
         }
       })
-      .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
   const handleCustomize = () => {
-    if (selectedArtist) {
-      navigate(
-        `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
-      );
+    if (template === "album") {
+      if (selectedAlbum) {
+        navigate(
+          `/music/albums/${encodeURIComponent(selectedAlbum)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/albums/preview?edit=template`);
+      }
     } else {
-      navigate(`/music/artists/preview?edit=template`);
+      if (selectedArtist) {
+        navigate(
+          `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
+        );
+      } else {
+        navigate(`/music/artists/preview?edit=template`);
+      }
     }
   };
+
+  const isAlbum = template === "album";
+  const entityList = isAlbum ? albums : artists;
+  const selectedEntity = isAlbum ? selectedAlbum : selectedArtist;
+  const setSelectedEntity = isAlbum ? setSelectedAlbum : setSelectedArtist;
+  const entityLabel = isAlbum ? "Album di anteprima" : "Artista di anteprima";
+  const emptyNotice = isAlbum
+    ? loading
+      ? "Caricamento album…"
+      : "Nessun album presente nell'archivio. Verrà usata un'anteprima vuota."
+    : loading
+      ? "Caricamento artisti…"
+      : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota.";
+  const customizeLabel = isAlbum
+    ? "Personalizza template album"
+    : "Personalizza template artista";
 
   return (
     <article className="panel padded settings-form">
@@ -401,19 +441,20 @@ export function MusicTemplatesSettings() {
             onChange={(val) => setTemplate(val as any)}
           >
             <option value="artist">Pagina Artista</option>
+            <option value="album">Pagina Album</option>
           </Select>
         </label>
         <label>
-          Artista di anteprima
-          {artists.length > 0 ? (
+          {entityLabel}
+          {entityList.length > 0 ? (
             <Select
-              aria-label="Artista di anteprima"
-              value={selectedArtist}
-              onChange={(val) => setSelectedArtist(val)}
+              aria-label={entityLabel}
+              value={selectedEntity}
+              onChange={(val) => setSelectedEntity(val)}
             >
-              {artists.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
+              {entityList.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
             </Select>
@@ -426,9 +467,7 @@ export function MusicTemplatesSettings() {
                 color: "var(--muted)",
               }}
             >
-              {loading
-                ? "Caricamento artisti…"
-                : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
+              {emptyNotice}
             </span>
           )}
         </label>
@@ -439,7 +478,7 @@ export function MusicTemplatesSettings() {
           className="button secondary"
           onClick={handleCustomize}
         >
-          <Icon>tune</Icon> Personalizza template artista
+          <Icon>tune</Icon> {customizeLabel}
         </button>
       </div>
     </article>
