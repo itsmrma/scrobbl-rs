@@ -1085,12 +1085,12 @@ dialog.widget-catalog-dialog {
     border-color 0.15s ease;
 }
 .calendar-year-nav button:hover {
-  background: var(--surface-secondary, rgba(255, 255, 255, 0.06));
+  background: var(--surface-raised);
 }
 .calendar-year-nav button.active {
-  background: var(--chart-accent, #6366f1);
-  color: #fff;
-  border-color: var(--chart-accent, #6366f1);
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
   font-weight: 600;
 }
 .calendar-heatmap-wrapper {
@@ -1122,32 +1122,32 @@ dialog.widget-catalog-dialog {
   outline-offset: 1px;
 }
 .calendar-cell.level-0 {
-  background: var(--surface-secondary, rgba(255, 255, 255, 0.05));
+  background: var(--surface-raised);
   border: 1px solid color-mix(in oklab, var(--border) 40%, transparent);
 }
 .calendar-cell.level-1 {
   background: color-mix(
     in oklab,
-    var(--chart-accent, #6366f1) 35%,
+    var(--chart-accent) 35%,
     transparent
   );
 }
 .calendar-cell.level-2 {
   background: color-mix(
     in oklab,
-    var(--chart-accent, #6366f1) 60%,
+    var(--chart-accent) 60%,
     transparent
   );
 }
 .calendar-cell.level-3 {
   background: color-mix(
     in oklab,
-    var(--chart-accent, #6366f1) 85%,
+    var(--chart-accent) 85%,
     transparent
   );
 }
 .calendar-cell.level-4 {
-  background: var(--chart-accent, #6366f1);
+  background: var(--chart-accent);
 }
 .calendar-legend {
   display: flex;
@@ -1173,7 +1173,7 @@ dialog.widget-catalog-dialog {
 .widget-period-badge.all-time {
   background: color-mix(
     in oklab,
-    var(--chart-accent, #6366f1) 20%,
+    var(--chart-accent) 20%,
     transparent
   );
   color: var(--text);
@@ -1202,7 +1202,7 @@ dialog.widget-catalog-dialog {
   flex-direction: column;
   gap: 4px;
   padding: 12px 14px;
-  background: var(--surface-secondary, rgba(255, 255, 255, 0.03));
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
   min-height: 44px;
@@ -1230,9 +1230,9 @@ dialog.widget-catalog-dialog {
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 10px;
-  background: color-mix(in oklab, #22c55e 20%, transparent);
-  color: #22c55e;
-  border: 1px solid color-mix(in oklab, #22c55e 40%, transparent);
+  background: color-mix(in oklab, var(--success) 20%, transparent);
+  color: var(--success);
+  border: 1px solid color-mix(in oklab, var(--success) 40%, transparent);
 }
 .thresholds-chips {
   display: flex;
@@ -1244,7 +1244,7 @@ dialog.widget-catalog-dialog {
   flex-direction: column;
   gap: 2px;
   padding: 8px 12px;
-  background: var(--surface-secondary, rgba(255, 255, 255, 0.03));
+  background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
   min-height: 44px;

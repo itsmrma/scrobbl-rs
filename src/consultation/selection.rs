@@ -29,6 +29,7 @@ pub struct Filters {
     pub entity_type: Option<String>,
     pub entity_id: Option<String>,
     pub year: Option<i32>,
+    pub include_totals: Option<bool>,
 }
 
 impl Filters {
