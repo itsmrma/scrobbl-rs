@@ -17,6 +17,7 @@ import type {
   SpotifyStatus,
   Totals,
   WidgetConfig,
+  MusicPage as MusicPageData,
 } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
@@ -1610,6 +1611,527 @@ function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
   return copy;
 }
 
+export type TemplateKind = "home" | "artist" | "album" | "track";
+
+export const DEFAULT_ARTIST_LAYOUT: DashboardLayout = {
+  version: 0,
+  widgets: [
+    { id: "totals", type: "totals", colSpan: 6 },
+    { id: "activity_chart", type: "activity_chart", colSpan: 6 },
+    { id: "listening_patterns", type: "listening_patterns", colSpan: 6 },
+    { id: "top_albums", type: "top_albums", colSpan: 3 },
+    { id: "top_tracks", type: "top_tracks", colSpan: 3 },
+    { id: "history", type: "history", colSpan: 6 },
+  ],
+};
+
+export function isWidgetAllowedForTemplate(
+  type: string,
+  template: TemplateKind,
+): boolean {
+  switch (template) {
+    case "home":
+      return [
+        "totals",
+        "unified_rankings",
+        "top_artists",
+        "top_albums",
+        "top_tracks",
+        "activity_chart",
+        "recent_listens",
+        "listening_patterns",
+        "now_playing",
+        "discovery_ratio",
+      ].includes(type);
+    case "artist":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "top_albums",
+        "top_tracks",
+        "history",
+        "recent_listens",
+        "discovery_ratio",
+      ].includes(type);
+    case "album":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "top_tracks",
+        "history",
+        "recent_listens",
+        "discovery_ratio",
+      ].includes(type);
+    case "track":
+      return [
+        "totals",
+        "activity_chart",
+        "listening_patterns",
+        "history",
+        "recent_listens",
+      ].includes(type);
+  }
+}
+
+export function useLayoutEditor({
+  template,
+  defaultLayout,
+  initialEditing = false,
+  onSaved,
+}: {
+  template: TemplateKind;
+  defaultLayout: DashboardLayout;
+  initialEditing?: boolean;
+  onSaved?: (saved: DashboardLayout) => void;
+}) {
+  const layoutResult = useLoad<DashboardLayout>(
+    () => api.dashboardLayout(template === "home" ? undefined : template),
+    `dashboard-layout:${template}`,
+    true,
+  );
+
+  const [editing, setEditing] = useState(initialEditing);
+  const [layout, setLayout] = useState<DashboardLayout>(defaultLayout);
+  const [savedLayout, setSavedLayout] = useState<DashboardLayout | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+
+  useEffect(() => {
+    if (layoutResult.data) {
+      setLayout(layoutResult.data);
+      setSavedLayout(layoutResult.data);
+    }
+  }, [layoutResult.data]);
+
+  const isDirty = useMemo(() => {
+    if (!savedLayout) return false;
+    return JSON.stringify(layout) !== JSON.stringify(savedLayout);
+  }, [layout, savedLayout]);
+
+  useEffect(() => {
+    if (!editing || !isDirty) return;
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [editing, isDirty]);
+
+  const handleStartEditing = () => {
+    setEditing(true);
+    setSaveError(null);
+  };
+
+  const handleCancel = () => {
+    if (isDirty) {
+      if (
+        !window.confirm(
+          "Ci sono modifiche non salvate al template. Vuoi davvero annullare?",
+        )
+      ) {
+        return;
+      }
+    }
+    setEditing(false);
+    setLayout(savedLayout || defaultLayout);
+    setSaveError(null);
+  };
+
+  const handleReset = () => {
+    setLayout({
+      version: layout.version,
+      widgets: JSON.parse(JSON.stringify(defaultLayout.widgets)),
+    });
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const saved = await api.saveDashboardLayout(
+        layout,
+        template === "home" ? undefined : template,
+      );
+      setLayout(saved);
+      setSavedLayout(saved);
+      setEditing(false);
+      onSaved?.(saved);
+    } catch (e: any) {
+      setSaveError(e.message || "Failed to save dashboard layout.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cycleSpan = (id: string) => {
+    setLayout((prev) => {
+      const spans: (2 | 3 | 4 | 6)[] = [2, 3, 4, 6];
+      return {
+        ...prev,
+        widgets: prev.widgets.map((w) => {
+          if (w.id !== id) return w;
+          const next = spans[(spans.indexOf(w.colSpan) + 1) % spans.length];
+          return { ...w, colSpan: next };
+        }),
+      };
+    });
+  };
+
+  const removeWidget = (id: string) => {
+    setLayout((prev) => ({
+      ...prev,
+      widgets: prev.widgets.filter((w) => w.id !== id),
+    }));
+  };
+
+  const moveWidget = (index: number, delta: number) => {
+    setLayout((prev) => ({
+      ...prev,
+      widgets: reorderWidgets(prev.widgets, index, index + delta),
+    }));
+  };
+
+  const addWidget = (item: (typeof CATALOG_ITEMS)[number]) => {
+    let span: 2 | 3 | 4 | 6 = item.defaultSpan;
+    if (
+      template === "artist" &&
+      (item.type === "top_albums" || item.type === "top_tracks")
+    ) {
+      span = 3;
+    }
+    setLayout((prev) => ({
+      ...prev,
+      widgets: [
+        ...prev.widgets,
+        {
+          id: item.type,
+          type: item.type,
+          colSpan: span,
+        },
+      ],
+    }));
+    setCatalogOpen(false);
+  };
+
+  return {
+    editing,
+    setEditing,
+    layout,
+    setLayout,
+    savedLayout,
+    saving,
+    saveError,
+    catalogOpen,
+    setCatalogOpen,
+    isDirty,
+    handleStartEditing,
+    handleCancel,
+    handleReset,
+    handleSave,
+    cycleSpan,
+    removeWidget,
+    moveWidget,
+    addWidget,
+    layoutResult,
+  };
+}
+
+export function DashboardEditToolbar({
+  template,
+  saving,
+  saveError,
+  onAddWidget,
+  onReset,
+  onCancel,
+  onSave,
+}: {
+  template: TemplateKind;
+  saving: boolean;
+  saveError: string | null;
+  onAddWidget: () => void;
+  onReset: () => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const ariaLabel =
+    template === "home"
+      ? "Personalizza dashboard"
+      : "Personalizza template artista";
+  return (
+    <div
+      className="dashboard-edit-toolbar panel padded"
+      role="toolbar"
+      aria-label={ariaLabel}
+    >
+      <div className="dashboard-edit-actions">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={saving}
+          onClick={onAddWidget}
+        >
+          <Icon>add</Icon> Aggiungi widget
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={saving}
+          onClick={onReset}
+        >
+          <Icon>restart_alt</Icon> Ripristina predefinito
+        </button>
+        <button
+          type="button"
+          className="button secondary"
+          disabled={saving}
+          onClick={onCancel}
+        >
+          Annulla
+        </button>
+        <button
+          type="button"
+          className="button primary"
+          onClick={onSave}
+          disabled={saving}
+        >
+          <Icon>check</Icon> Salva modifiche
+        </button>
+      </div>
+      {template === "artist" && (
+        <p className="dashboard-edit-notice">
+          <Icon>info</Icon> Modifica del template artista: le modifiche verranno
+          applicate a tutte le pagine artista dell'archivio.
+        </p>
+      )}
+      {saving && (
+        <span className="visually-hidden" role="status">
+          Salvataggio…
+        </span>
+      )}
+      {saveError && <ErrorText>{saveError}</ErrorText>}
+    </div>
+  );
+}
+
+export function WidgetCatalogDialog({
+  open,
+  onClose,
+  template,
+  widgets,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  template: TemplateKind;
+  widgets: WidgetConfig[];
+  onAdd: (item: (typeof CATALOG_ITEMS)[number]) => void;
+}) {
+  const catalogDialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = catalogDialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      if (!dialog.open) {
+        dialog.showModal();
+      }
+    } else {
+      if (dialog.open) {
+        dialog.close();
+      }
+    }
+  }, [open]);
+
+  const availableItems = CATALOG_ITEMS.filter(
+    (item) =>
+      isWidgetAllowedForTemplate(item.type, template) &&
+      !widgets.some((w) => w.type === item.type),
+  );
+
+  return (
+    <dialog
+      ref={catalogDialogRef}
+      className="modal widget-catalog-dialog"
+      aria-label="Aggiungi widget"
+      onClose={onClose}
+    >
+      <div className="dialog-header">
+        <h2>Aggiungi widget</h2>
+        <button
+          type="button"
+          className="icon-button"
+          aria-label="Chiudi catalogo"
+          onClick={onClose}
+        >
+          <Icon>close</Icon>
+        </button>
+      </div>
+      {availableItems.length === 0 ? (
+        <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
+      ) : (
+        <div className="catalog-items-grid">
+          {availableItems.map((item) => (
+            <div key={item.type} className="panel padded catalog-item-card">
+              <div className="catalog-item-info">
+                <h3>{item.name}</h3>
+                <p>{item.description}</p>
+                <small>
+                  Dimensione:{" "}
+                  {template === "artist" &&
+                  (item.type === "top_albums" || item.type === "top_tracks")
+                    ? 3
+                    : item.defaultSpan}{" "}
+                  colonne
+                </small>
+              </div>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => onAdd(item)}
+              >
+                <Icon>add</Icon> Aggiungi
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </dialog>
+  );
+}
+
+export function WidgetEditControls({
+  widget,
+  index,
+  totalWidgets,
+  saving,
+  onMove,
+  onCycleSpan,
+  onRemove,
+  onChangePeriod,
+}: {
+  widget: WidgetConfig;
+  index: number;
+  totalWidgets: number;
+  saving: boolean;
+  onMove: (index: number, delta: number) => void;
+  onCycleSpan: (id: string) => void;
+  onRemove: (id: string) => void;
+  onChangePeriod?: (period: string | undefined) => void;
+}) {
+  return (
+    <div className="widget-edit-controls">
+      <button
+        type="button"
+        className="widget-control widget-drag-handle"
+        disabled={saving}
+        title="Trascina per riordinare"
+        aria-label="Sposta widget"
+        draggable={!saving}
+        onDragStart={(e) => {
+          e.dataTransfer.setData("text/plain", String(index));
+          e.dataTransfer.effectAllowed = "move";
+        }}
+      >
+        <Icon>drag_indicator</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-move-up"
+        title="Sposta prima"
+        aria-label="Sposta widget prima"
+        disabled={saving || index === 0}
+        onClick={() => onMove(index, -1)}
+      >
+        <Icon>arrow_upward</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-move-down"
+        title="Sposta dopo"
+        aria-label="Sposta widget dopo"
+        disabled={saving || index === totalWidgets - 1}
+        onClick={() => onMove(index, 1)}
+      >
+        <Icon>arrow_downward</Icon>
+      </button>
+      <button
+        type="button"
+        className="widget-control widget-span-button"
+        title={`Larghezza: ${widget.colSpan} colonne. Clicca per modificare.`}
+        aria-label={`Larghezza: ${widget.colSpan} colonne`}
+        disabled={saving}
+        onClick={() => onCycleSpan(widget.id)}
+      >
+        <Icon>view_column</Icon>
+        <span>{widget.colSpan}/6</span>
+      </button>
+      {isTimeSensitiveWidget(widget.type) && onChangePeriod && (
+        <div className="widget-period-override-control">
+          <Select
+            aria-label="Periodo widget"
+            disabled={saving}
+            value={widget.periodOverride || ""}
+            onChange={(val) => onChangePeriod(val || undefined)}
+          >
+            {OVERRIDE_PERIOD_OPTIONS.map(([val, label]) => (
+              <option key={val} value={val}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+      <button
+        type="button"
+        className="widget-control widget-remove-button"
+        title="Rimuovi widget"
+        aria-label="Rimuovi widget"
+        disabled={saving}
+        onClick={() => onRemove(widget.id)}
+      >
+        <Icon>close</Icon>
+      </button>
+    </div>
+  );
+}
+
+function OverriddenArtistTotalsWidget({
+  kind,
+  id,
+  widgetParams,
+  periodOverride,
+}: {
+  kind: Kind;
+  id: string;
+  widgetParams: URLSearchParams;
+  periodOverride?: string;
+}) {
+  const result = useLoad(
+    () => api.music(kind, id, widgetParams),
+    `music-totals-override:${kind}:${id}:${widgetParams.toString()}`,
+    true,
+  );
+  if (result.error && !result.data) {
+    return (
+      <article className="panel padded widget-read-error">
+        <ErrorText>{result.error}</ErrorText>
+      </article>
+    );
+  }
+  if (!result.data) return <TotalsSkeleton />;
+  return (
+    <TotalsWidget
+      totals={result.data.totals}
+      ids
+      periodOverride={periodOverride}
+    />
+  );
+}
+
 export function Overview({
   preferences,
   visible,
@@ -2717,15 +3239,51 @@ export function MusicPage({
   kind: Kind;
   id: string;
 }) {
+  const isPreview = id === "preview";
+  const searchParams = new URLSearchParams(location.search);
+  const isInitialEdit =
+    searchParams.get("edit") === "template" || searchParams.get("edit") === "1";
+
   const selection = useSelection(true),
     params = scoped(selection.params, kind, id);
-  const result = useLoad(
+
+  const artistEditor = useLayoutEditor({
+    template: "artist",
+    defaultLayout: DEFAULT_ARTIST_LAYOUT,
+    initialEditing: isInitialEdit,
+  });
+
+  const dummyTotals: Totals = {
+    records: 0,
+    listens: 0,
+    tracks: 0,
+    actual_ms: 0,
+    estimated_ms: 0,
+    unknown_durations: 0,
+  };
+  const dummyPreviewPage: MusicPageData = {
+    id: "preview",
+    name: "Artista di anteprima",
+    kind: "artists",
+    cover_url: null,
+    album_id: null,
+    album: null,
+    artists: [],
+    totals: dummyTotals,
+  };
+
+  const apiResult = useLoad(
     () => api.music(kind, id, params),
     `music:${kind}:${id}:${params}:${preferences.version}`,
-    true,
+    !isPreview,
     undefined,
     true,
   );
+
+  const result = isPreview
+    ? { data: dummyPreviewPage, error: null, loading: false }
+    : apiResult;
+
   const introduction = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const content = introduction.current;
@@ -2740,8 +3298,6 @@ export function MusicPage({
       if (header.style.getPropertyValue("--music-artwork-size") !== value)
         header.style.setProperty("--music-artwork-size", value);
     };
-    // Apply measurements outside ResizeObserver delivery: changing the column
-    // can reflow a wrapped title, especially in WebKit.
     let frame = 0;
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
@@ -2755,70 +3311,65 @@ export function MusicPage({
       cancelAnimationFrame(frame);
     };
   }, [result.data?.id]);
-  return (
-    <>
-      <ErrorText>{result.error}</ErrorText>
-      {result.data ? (
-        <>
-          <div className="music-heading">
-            <Cover url={result.data.cover_url} large>
-              <ArtworkCredits url={result.data.cover_url} />
-            </Cover>
-            <div className="music-header-content" ref={introduction}>
-              <div className="music-title-row">
-                <Heading title={result.data.name}>
-                  {kind === "albums"
-                    ? "Album by "
-                    : kind === "tracks"
-                      ? "Track by "
-                      : ""}
-                  {result.data.artists.map((a, i) => (
-                    <span key={a.id}>
-                      {i > 0 && ", "}
-                      <Link to={musicLink("artists", a.id, params)}>
-                        {a.name}
-                      </Link>
-                    </span>
-                  ))}
-                  {result.data.album_id && (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <Link
-                        to={musicLink("albums", result.data.album_id, params)}
-                      >
-                        {result.data.album}
-                      </Link>
-                    </>
-                  )}
-                </Heading>
-                <BackButton
-                  fallback={`/rankings/${kind}?${context(selection.params)}`}
-                />
-              </div>
-              <MusicActions kind={kind} id={id} />
-              <div className="music-period">
-                <PeriodFilters selection={selection} />
+
+  if (kind !== "artists") {
+    return (
+      <>
+        <ErrorText>{result.error}</ErrorText>
+        {result.data ? (
+          <>
+            <div className="music-heading">
+              <Cover url={result.data.cover_url} large>
+                <ArtworkCredits url={result.data.cover_url} />
+              </Cover>
+              <div className="music-header-content" ref={introduction}>
+                <div className="music-title-row">
+                  <Heading title={result.data.name}>
+                    {kind === "albums"
+                      ? "Album by "
+                      : kind === "tracks"
+                        ? "Track by "
+                        : ""}
+                    {result.data.artists.map(
+                      (a: { id: string; name: string }, i: number) => (
+                        <span key={a.id}>
+                          {i > 0 && ", "}
+                          <Link to={musicLink("artists", a.id, params)}>
+                            {a.name}
+                          </Link>
+                        </span>
+                      ),
+                    )}
+                    {result.data.album_id && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <Link
+                          to={musicLink("albums", result.data.album_id, params)}
+                        >
+                          {result.data.album}
+                        </Link>
+                      </>
+                    )}
+                  </Heading>
+                  <BackButton
+                    fallback={`/rankings/${kind}?${context(selection.params)}`}
+                  />
+                </div>
+                <MusicActions kind={kind} id={id} />
+                <div className="music-period">
+                  <PeriodFilters selection={selection} />
+                </div>
               </div>
             </div>
-          </div>
-          <Stats totals={result.data.totals} />
-        </>
-      ) : (
-        !result.error && <MusicPageSkeleton />
-      )}
-      <Chart params={params} version={preferences.version} />
-      <ListeningPatterns params={params} version={preferences.version} />
-      {kind !== "tracks" && (
-        <div className={kind === "artists" ? "music-collections" : undefined}>
-          {kind === "artists" && (
-            <RankingsPanel
-              kind="albums"
-              params={params}
-              version={preferences.version}
-              title="Albums in this period"
-            />
-          )}
+            <Stats totals={result.data.totals} />
+          </>
+        ) : (
+          !result.error && <MusicPageSkeleton />
+        )}
+        <Chart params={params} version={preferences.version} />
+        <ListeningPatterns params={params} version={preferences.version} />
+        <div>
           <RankingsPanel
             kind="tracks"
             params={params}
@@ -2827,15 +3378,237 @@ export function MusicPage({
             scrolling={kind === "albums"}
           />
         </div>
+        <h2>Listening history</h2>
+        <HistoryPage
+          preferences={preferences}
+          visible
+          params={params}
+          embedded
+          musicKind={kind}
+        />
+      </>
+    );
+  }
+
+  // --- Artist Consultation with Shared Grid Engine ---
+  const renderArtistWidgetContent = (widget: WidgetConfig) => {
+    const widgetParams = getWidgetParams(params, widget.periodOverride);
+    switch (widget.type) {
+      case "totals":
+        if (widget.periodOverride) {
+          return (
+            <OverriddenArtistTotalsWidget
+              kind={kind}
+              id={id}
+              widgetParams={widgetParams}
+              periodOverride={widget.periodOverride}
+            />
+          );
+        }
+        return result.data?.totals ? (
+          <TotalsWidget totals={result.data.totals} ids />
+        ) : (
+          <TotalsSkeleton />
+        );
+      case "activity_chart":
+        return <Chart params={widgetParams} version={preferences.version} />;
+      case "listening_patterns":
+        return (
+          <ListeningPatterns
+            params={widgetParams}
+            version={preferences.version}
+          />
+        );
+      case "top_albums":
+        return (
+          <RankingsPanel
+            kind="albums"
+            params={widgetParams}
+            version={preferences.version}
+            title="Albums in this period"
+          />
+        );
+      case "top_tracks":
+        return (
+          <RankingsPanel
+            kind="tracks"
+            params={widgetParams}
+            title="Tracks in this period"
+            version={preferences.version}
+          />
+        );
+      case "history":
+        return (
+          <div className="music-history-widget-container">
+            <h2>Listening history</h2>
+            <HistoryPage
+              preferences={preferences}
+              visible
+              params={widgetParams}
+              embedded
+              musicKind={kind}
+            />
+          </div>
+        );
+      case "recent_listens":
+        return (
+          <RecentListensWidget
+            recent={undefined}
+            loading={false}
+            preferences={preferences}
+            params={widgetParams}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      case "discovery_ratio":
+        return (
+          <DiscoveryRatioWidget
+            params={widgetParams}
+            version={preferences.version}
+            periodOverride={widget.periodOverride}
+          />
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <>
+      <ErrorText>{result.error}</ErrorText>
+      {result.data ? (
+        <div className="music-heading">
+          <Cover url={result.data.cover_url} large>
+            <ArtworkCredits url={result.data.cover_url} />
+          </Cover>
+          <div className="music-header-content" ref={introduction}>
+            <div className="music-title-row">
+              <Heading title={result.data.name}>
+                {result.data.artists.map(
+                  (a: { id: string; name: string }, i: number) => (
+                    <span key={a.id}>
+                      {i > 0 && ", "}
+                      <Link to={musicLink("artists", a.id, params)}>
+                        {a.name}
+                      </Link>
+                    </span>
+                  ),
+                )}
+              </Heading>
+              <BackButton
+                fallback={`/rankings/${kind}?${context(selection.params)}`}
+              />
+            </div>
+            {!isPreview && <MusicActions kind={kind} id={id} />}
+            <div className="music-period">
+              {!artistEditor.editing && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  aria-label="Personalizza template artista"
+                  onClick={() => artistEditor.handleStartEditing()}
+                >
+                  <Icon>tune</Icon> Personalizza template artista
+                </button>
+              )}
+              <PeriodFilters selection={selection} />
+            </div>
+          </div>
+        </div>
+      ) : (
+        !result.error && <MusicPageSkeleton />
       )}
-      <h2>Listening history</h2>
-      <HistoryPage
-        preferences={preferences}
-        visible
-        params={params}
-        embedded
-        musicKind={kind}
+
+      {artistEditor.editing && (
+        <DashboardEditToolbar
+          template="artist"
+          saving={artistEditor.saving}
+          saveError={artistEditor.saveError}
+          onAddWidget={() => artistEditor.setCatalogOpen(true)}
+          onReset={artistEditor.handleReset}
+          onCancel={artistEditor.handleCancel}
+          onSave={artistEditor.handleSave}
+        />
+      )}
+
+      <WidgetCatalogDialog
+        open={artistEditor.catalogOpen}
+        onClose={() => artistEditor.setCatalogOpen(false)}
+        template="artist"
+        widgets={artistEditor.layout.widgets}
+        onAdd={artistEditor.addWidget}
       />
+
+      <div
+        id="dashboard-grid"
+        className={`dashboard-grid${artistEditor.editing ? " editing" : ""}`}
+      >
+        {artistEditor.layout.widgets.length === 0 ? (
+          <div className="dashboard-empty-notice panel padded">
+            <p>
+              Nessun widget configurato per questo template. Clicca su
+              &quot;Aggiungi widget&quot; per personalizzare la pagina.
+            </p>
+          </div>
+        ) : (
+          artistEditor.layout.widgets.map((w, index) => (
+            <div
+              key={w.id}
+              className={`dashboard-widget span-${w.colSpan}${artistEditor.editing ? " editing" : ""}`}
+              data-widget-id={w.id}
+              data-widget-type={w.type}
+              draggable={artistEditor.editing && !artistEditor.saving}
+              onDragStart={(e) => {
+                if (!artistEditor.editing || artistEditor.saving) return;
+                e.dataTransfer.setData("text/plain", String(index));
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (!artistEditor.editing || artistEditor.saving) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(e) => {
+                if (!artistEditor.editing || artistEditor.saving) return;
+                e.preventDefault();
+                const sourceIndex = parseInt(
+                  e.dataTransfer.getData("text/plain"),
+                  10,
+                );
+                if (!isNaN(sourceIndex) && sourceIndex !== index) {
+                  artistEditor.setLayout((prev) => ({
+                    ...prev,
+                    widgets: reorderWidgets(prev.widgets, sourceIndex, index),
+                  }));
+                }
+              }}
+            >
+              {artistEditor.editing && (
+                <WidgetEditControls
+                  widget={w}
+                  index={index}
+                  totalWidgets={artistEditor.layout.widgets.length}
+                  saving={artistEditor.saving}
+                  onMove={artistEditor.moveWidget}
+                  onCycleSpan={artistEditor.cycleSpan}
+                  onRemove={artistEditor.removeWidget}
+                  onChangePeriod={(val) => {
+                    artistEditor.setLayout((prev) => ({
+                      ...prev,
+                      widgets: prev.widgets.map((item) =>
+                        item.id === w.id
+                          ? { ...item, periodOverride: val }
+                          : item,
+                      ),
+                    }));
+                  }}
+                />
+              )}
+              {renderArtistWidgetContent(w)}
+            </div>
+          ))
+        )}
+      </div>
     </>
   );
 }

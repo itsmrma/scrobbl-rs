@@ -276,9 +276,19 @@ export const api = {
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>
     post<SavedPreferences>("/api/v1/preferences", form),
-  dashboardLayout: () => request<DashboardLayout>("/api/v1/dashboard/layout"),
-  saveDashboardLayout: (layout: DashboardLayout) =>
-    post<DashboardLayout>("/api/v1/dashboard/layout", layout),
+  dashboardLayout: (template?: string) =>
+    request<DashboardLayout>(
+      template
+        ? `/api/v1/dashboard/layout?template=${encodeURIComponent(template)}`
+        : "/api/v1/dashboard/layout",
+    ),
+  saveDashboardLayout: (layout: DashboardLayout, template?: string) =>
+    post<DashboardLayout>(
+      template
+        ? `/api/v1/dashboard/layout?template=${encodeURIComponent(template)}`
+        : "/api/v1/dashboard/layout",
+      layout,
+    ),
   dashboard: (params: URLSearchParams) =>
     request<Dashboard>(`/api/dashboard?${params}`),
   history: (params: URLSearchParams) =>

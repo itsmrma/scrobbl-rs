@@ -263,83 +263,184 @@ export function Appearance({
     "#64d9c3",
   ];
   return (
-    <article className="panel padded settings-form">
-      <h2>Appearance</h2>
-      <p>
-        Saved immediately in this browser. Other browsers keep their own
-        appearance.
-      </p>
-      <label>
-        Theme
-        <Select
-          aria-label="Theme"
-          id="theme"
-          value={theme}
-          onChange={(value) => setTheme(value)}
-        >
-          <option value="auto">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </Select>
-      </label>
-      <fieldset>
-        <legend>Accent colour</legend>
-        <div className="palette">
-          {palette.map((color) => (
-            <button
-              key={color}
-              className="swatch"
-              style={{ background: color, color: ink(color) }}
-              aria-label={`Use ${color}`}
-              aria-pressed={accent === color}
-              onClick={() => setAccent(color)}
-            >
-              {accent === color && <Icon>check</Icon>}
-            </button>
+    <>
+      <article className="panel padded settings-form">
+        <h2>Appearance</h2>
+        <p>
+          Saved immediately in this browser. Other browsers keep their own
+          appearance.
+        </p>
+        <label>
+          Theme
+          <Select
+            aria-label="Theme"
+            id="theme"
+            value={theme}
+            onChange={(value) => setTheme(value)}
+          >
+            <option value="auto">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </Select>
+        </label>
+        <fieldset>
+          <legend>Accent colour</legend>
+          <div className="palette">
+            {palette.map((color) => (
+              <button
+                key={color}
+                className="swatch"
+                style={{ background: color, color: ink(color) }}
+                aria-label={`Use ${color}`}
+                aria-pressed={accent === color}
+                onClick={() => setAccent(color)}
+              >
+                {accent === color && <Icon>check</Icon>}
+              </button>
+            ))}
+          </div>
+          <div className="connection-actions">
+            <label>
+              Pick a colour
+              <input
+                type="color"
+                value={accent}
+                onChange={(e) => setAccent(e.target.value)}
+              />
+            </label>
+            <label>
+              HEX colour
+              <input
+                value={hex}
+                maxLength={7}
+                aria-invalid={!isHex(hex)}
+                onChange={(e) => {
+                  setHex(e.target.value);
+                  if (isHex(e.target.value)) setAccent(e.target.value);
+                }}
+              />
+            </label>
+          </div>
+          {!isHex(hex) && (
+            <p className="form-error">
+              Enter a six-digit HEX colour, for example #c9ee8b.
+            </p>
+          )}
+          <button
+            className="secondary"
+            onClick={() => setAccent(defaultAccent)}
+          >
+            Reset accent
+          </button>
+        </fieldset>
+        <div className="previews">
+          {["light", "dark"].map((mode) => (
+            <div className={`preview ${mode}`} key={mode}>
+              <strong>{mode === "light" ? "Light" : "Dark"} preview</strong>
+              <p>Your listening archive</p>
+              <span style={{ background: accent, color: ink(accent) }}>
+                Selected action
+              </span>
+              <p className="preview-error">An error remains recognisable.</p>
+            </div>
           ))}
         </div>
-        <div className="connection-actions">
-          <label>
-            Pick a colour
-            <input
-              type="color"
-              value={accent}
-              onChange={(e) => setAccent(e.target.value)}
-            />
-          </label>
-          <label>
-            HEX colour
-            <input
-              value={hex}
-              maxLength={7}
-              aria-invalid={!isHex(hex)}
-              onChange={(e) => {
-                setHex(e.target.value);
-                if (isHex(e.target.value)) setAccent(e.target.value);
+      </article>
+      <MusicTemplatesSettings />
+    </>
+  );
+}
+
+export function MusicTemplatesSettings() {
+  const [template, setTemplate] = useState<"artist">("artist");
+  const [artists, setArtists] = useState<{ id: string; name: string }[]>([]);
+  const [selectedArtist, setSelectedArtist] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("page_size", "20");
+    api
+      .rankings("artists", params)
+      .then((data) => {
+        const items = data.items.map((a: any) => ({ id: a.id, name: a.name }));
+        setArtists(items);
+        if (items.length > 0) {
+          setSelectedArtist(items[0].id);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const handleCustomize = () => {
+    if (selectedArtist) {
+      navigate(
+        `/music/artists/${encodeURIComponent(selectedArtist)}?edit=template`,
+      );
+    } else {
+      navigate(`/music/artists/preview?edit=template`);
+    }
+  };
+
+  return (
+    <article className="panel padded settings-form">
+      <h2>Template pagine musicali</h2>
+      <p>
+        Personalizza la disposizione e i widget condivisi dalle pagine di
+        consultazione musicale. Le modifiche a un template vengono applicate a
+        tutte le pagine di quel tipo.
+      </p>
+      <div className="form-grid">
+        <label>
+          Tipo di pagina
+          <Select
+            aria-label="Tipo di pagina"
+            value={template}
+            onChange={(val) => setTemplate(val as any)}
+          >
+            <option value="artist">Pagina Artista</option>
+          </Select>
+        </label>
+        <label>
+          Artista di anteprima
+          {artists.length > 0 ? (
+            <Select
+              aria-label="Artista di anteprima"
+              value={selectedArtist}
+              onChange={(val) => setSelectedArtist(val)}
+            >
+              {artists.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <span
+              className="empty-preview-notice"
+              style={{
+                display: "block",
+                marginTop: "8px",
+                color: "var(--muted)",
               }}
-            />
-          </label>
-        </div>
-        {!isHex(hex) && (
-          <p className="form-error">
-            Enter a six-digit HEX colour, for example #c9ee8b.
-          </p>
-        )}
-        <button className="secondary" onClick={() => setAccent(defaultAccent)}>
-          Reset accent
-        </button>
-      </fieldset>
-      <div className="previews">
-        {["light", "dark"].map((mode) => (
-          <div className={`preview ${mode}`} key={mode}>
-            <strong>{mode === "light" ? "Light" : "Dark"} preview</strong>
-            <p>Your listening archive</p>
-            <span style={{ background: accent, color: ink(accent) }}>
-              Selected action
+            >
+              {loading
+                ? "Caricamento artisti…"
+                : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
             </span>
-            <p className="preview-error">An error remains recognisable.</p>
-          </div>
-        ))}
+          )}
+        </label>
+      </div>
+      <div className="connection-actions">
+        <button
+          type="button"
+          className="button secondary"
+          onClick={handleCustomize}
+        >
+          <Icon>tune</Icon> Personalizza template artista
+        </button>
       </div>
     </article>
   );
