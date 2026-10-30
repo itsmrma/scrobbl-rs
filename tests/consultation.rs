@@ -1254,8 +1254,8 @@ async fn dashboard_parametric_widget_filtering_calculates_only_requested_compone
     assert_eq!(artists.len(), 2);
     assert_eq!(artists[0]["name"], "Artist Two");
     assert_eq!(artists[1]["name"], "Artist One");
-    assert!(rankings["albums"].as_array().map_or(true, |a| a.is_empty()));
-    assert!(rankings["tracks"].as_array().map_or(true, |a| a.is_empty()));
+    assert!(rankings["albums"].as_array().is_none_or(|a| a.is_empty()));
+    assert!(rankings["tracks"].as_array().is_none_or(|a| a.is_empty()));
 
     // 3. GET /api/dashboard (full / default)
     let full = json_get(&state, &token, "/api/dashboard").await;
