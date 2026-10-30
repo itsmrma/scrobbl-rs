@@ -26,6 +26,7 @@ import { ArtworkCredits } from "./image-credit";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
 import { ListeningPatterns } from "./listening-patterns";
+import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
@@ -963,6 +964,12 @@ const CATALOG_ITEMS = [
       "Elenco cronologico degli ascolti recenti registrati nell'archivio.",
     defaultSpan: 6 as const,
   },
+  {
+    type: "now_playing",
+    name: "In riproduzione",
+    description: "Brano in ascolto live e avanzamento traccia",
+    defaultSpan: 3 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1186,6 +1193,8 @@ export function Overview({
             params={params}
           />
         );
+      case "now_playing":
+        return <NowPlayingWidget status={status} />;
       default:
         return null;
     }
