@@ -5226,7 +5226,7 @@ dialog {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -5257,7 +5257,7 @@ dialog {
   min-height: 44px;
   height: 44px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   color: var(--text);
@@ -5289,6 +5289,10 @@ dialog.widget-catalog-dialog {
   margin: auto;
   z-index: 100;
   overflow-y: auto;
+}
+dialog.widget-catalog-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
 }
 .widget-catalog-dialog .dialog-header {
   display: flex;
@@ -5350,6 +5354,19 @@ dialog.widget-catalog-dialog {
     grid-template-columns: 34px minmax(0, 1fr) 90px;
   }
 }
+.widget-totals .stats-grid {
+  margin-bottom: 0;
+}
+.widget-unified-rankings .rankings-grid {
+  margin-bottom: 0;
+}
+.widget-recent-listens.padded {
+  padding-bottom: 0;
+}
+.widget-recent-listens .panel-title {
+  margin-bottom: 16px;
+}
+
 /* NowPlayingWidget (Ticket #119) */
 .widget-now-playing {
   display: flex;
@@ -5739,14 +5756,8 @@ dialog.widget-catalog-dialog {
     font-size: 15px;
   }
 }
-.discovery-ratio-widget {
+.widget-discovery-ratio {
   min-height: 180px;
-}
-.discovery-ratio-widget .empty-state {
-  padding: 32px 16px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 14px;
 }
 .discovery-ratio-metrics {
   display: flex;
