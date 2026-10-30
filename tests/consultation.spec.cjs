@@ -19,7 +19,9 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
   await new Promise((resolve) => socket.close(resolve));
   const child = spawn(
     resolve(
-      "target/debug/scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
+      process.env.CARGO_TARGET_DIR || "target",
+      "debug",
+      "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
     ),
     [],
     {

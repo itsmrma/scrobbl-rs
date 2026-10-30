@@ -95,7 +95,7 @@ For a manual copy, stop the process cleanly and copy the whole data directory; i
 
 The backend is **Rust**; the frontend is **TypeScript and React**, with **CSS** and **HTML**. **SQL** defines the SQLite schema and queries. **Python** and **shell** support maintenance and packaging scripts. Node.js is used for the frontend build and browser checks.
 
-Pull requests use Linux/Windows backend, browser, and Docker checks. See [CI checks and publication](docs/ci.md) for required checks and local commands.
+Pull requests use Linux/Windows backend, browser, and Docker checks. See [CI checks and publication](docs/ci.md) for required checks and local commands, and [compilation cache management](docs/build-cache.md) for build profiles, incremental caching, and artifact management.
 
 ```sh
 cargo fmt --check

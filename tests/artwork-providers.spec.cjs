@@ -19,8 +19,9 @@ const test = base.extend({
     const baseURL = `http://127.0.0.1:${port}`;
     const child = spawn(
       resolve(
-        "target/debug/scrobbl-rs" +
-          (process.platform === "win32" ? ".exe" : ""),
+        process.env.CARGO_TARGET_DIR || "target",
+        "debug",
+        "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
       ),
       [],
       {

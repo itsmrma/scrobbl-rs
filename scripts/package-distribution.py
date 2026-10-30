@@ -46,7 +46,9 @@ def collect(directory, destination):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "target/distribution")
+    cargo_target = os.environ.get("CARGO_TARGET_DIR")
+    default_output = (Path(cargo_target) if cargo_target else ROOT / "target") / "distribution"
+    parser.add_argument("--output", type=Path, default=default_output)
     parser.add_argument("--target", default="x86_64-unknown-linux-gnu")
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()

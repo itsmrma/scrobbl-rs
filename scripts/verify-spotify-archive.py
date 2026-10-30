@@ -24,7 +24,9 @@ import urllib.request
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('zip', type=Path)
-    parser.add_argument('--binary', type=Path, default=Path('target/debug/scrobbl-rs.exe' if os.name == 'nt' else 'target/debug/scrobbl-rs'))
+    target_dir = Path(os.environ.get('CARGO_TARGET_DIR', 'target'))
+    default_binary = target_dir / ('debug/scrobbl-rs.exe' if os.name == 'nt' else 'debug/scrobbl-rs')
+    parser.add_argument('--binary', type=Path, default=default_binary)
     parser.add_argument('--benchmark', action='store_true', help='Uninterrupted import and Overview latency, retaining the isolated archive')
     parser.add_argument('--max-import-seconds', type=float, default=20)
     parser.add_argument('--max-dashboard-ms', type=float, default=100)

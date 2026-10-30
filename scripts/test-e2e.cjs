@@ -33,6 +33,7 @@ const isolatedFiles = [
   "tests/recovery-confirm.spec.cjs",
   "tests/spotify-import-total.spec.cjs",
   "tests/z-listenbrainz.spec.cjs",
+  "tests/e2e-server.spec.cjs",
 ];
 
 console.log("==> Running serial journey suite (workers: 1)...");
