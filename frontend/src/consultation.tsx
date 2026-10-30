@@ -29,6 +29,7 @@ import {
   ListeningPatterns,
   ListeningPatternsWidget,
 } from "./listening-patterns";
+import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
 import { Cover, duration, ErrorText, Heading, Icon, number } from "./ui";
 import type { Style } from "./ui";
@@ -973,6 +974,12 @@ const CATALOG_ITEMS = [
       "Distribuzione degli ascolti per ora del giorno e giorno della settimana.",
     defaultSpan: 3 as const,
   },
+  {
+    type: "now_playing",
+    name: "In riproduzione",
+    description: "Brano in ascolto live e avanzamento traccia",
+    defaultSpan: 3 as const,
+  },
 ];
 
 export function TotalsWidget({
@@ -1203,6 +1210,8 @@ export function Overview({
             version={preferences.version}
           />
         );
+      case "now_playing":
+        return <NowPlayingWidget status={status} />;
       default:
         return null;
     }

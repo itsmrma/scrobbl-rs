@@ -30,9 +30,14 @@ import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
 import { phaseLabel, Progress } from "./activities";
 import { isBool, useBrowserPreference } from "./preferences";
-import { MusicPageSkeleton, SkeletonList, SkeletonPlayback } from "./skeleton";
+import {
+  MusicPageSkeleton,
+  SkeletonBlock,
+  SkeletonList,
+  SkeletonPlayback,
+} from "./skeleton";
 
-const NowContext = createContext<{
+export const NowContext = createContext<{
   data: NowPlaying | null;
   error: string;
   loading: boolean;
@@ -41,6 +46,9 @@ const NowContext = createContext<{
   error: "",
   loading: true,
 });
+export function useNowPlaying() {
+  return useContext(NowContext);
+}
 export function NowPlayingProvider({
   status,
   statusError,
@@ -306,6 +314,193 @@ export function Now({
     </div>
   );
 }
+
+export type SyncStatus = "active" | "syncing" | "error" | "idle";
+
+export function getSyncStatus(
+  status: SpotifyStatus | null,
+  nowError: string,
+  isPlaying: boolean,
+): { status: SyncStatus; label: string; tooltip: string } {
+  if (
+    status?.last_error ||
+    status?.now_playing_error ||
+    (nowError && status?.connected) ||
+    status?.connection === "action_required"
+  ) {
+    return {
+      status: "error",
+      label: "Errore sync",
+      tooltip:
+        status?.last_error ||
+        status?.now_playing_error ||
+        nowError ||
+        "Azione richiesta per Spotify",
+    };
+  }
+  if (status?.retry_at_ms && status.retry_at_ms > Date.now()) {
+    return {
+      status: "syncing",
+      label: "In attesa",
+      tooltip: "Richieste temporaneamente sospese da Spotify",
+    };
+  }
+  if (status?.connected) {
+    if (isPlaying) {
+      return {
+        status: "active",
+        label: "Live",
+        tooltip: "Riproduzione attiva e tracciata su Spotify",
+      };
+    }
+    return {
+      status: "active",
+      label: "Pronto",
+      tooltip: "Connesso a Spotify — in attesa di riproduzione",
+    };
+  }
+  return {
+    status: "idle",
+    label: "Non connesso",
+    tooltip: "Spotify non connesso",
+  };
+}
+
+export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
+  const { data, error, loading } = useContext(NowContext);
+  const [clock, setClock] = useState(Date.now());
+
+  useEffect(() => {
+    if (!data) return;
+    setClock(Date.now());
+    const timer = setInterval(() => {
+      if (!document.hidden) setClock(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [data]);
+
+  const isPlaying = data != null;
+  const sync = getSyncStatus(status, error, isPlaying);
+
+  const progress =
+    data?.progress_ms == null
+      ? null
+      : Math.min(
+          data.duration_ms ?? Infinity,
+          data.progress_ms + Math.max(0, clock - data.response_received_at_ms),
+        );
+
+  return (
+    <article
+      className={`panel padded widget-now-playing ${isPlaying ? "is-playing" : "is-resting"}`}
+      aria-label="In riproduzione"
+    >
+      <div className="panel-title">
+        <h2>In riproduzione</h2>
+        <div className="panel-actions">
+          <div
+            className={`sync-status-badge status-${sync.status}`}
+            title={sync.tooltip}
+            aria-label={`Stato sincronizzazione: ${sync.label}`}
+          >
+            <span className="sync-status-dot" aria-hidden="true" />
+            <span className="sync-status-text">{sync.label}</span>
+          </div>
+          {data?.spotify_url && (
+            <a
+              href={data.spotify_url}
+              target="_blank"
+              rel="noreferrer"
+              className="icon-button now-external-link"
+              title="Apri su Spotify"
+              aria-label="Apri su Spotify"
+            >
+              <Icon>open_in_new</Icon>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {loading && !data && status?.connected ? (
+        <div className="now-playing-skeleton">
+          <SkeletonBlock width={72} height={72} borderRadius={6} />
+          <div className="now-playing-skeleton-meta">
+            <SkeletonBlock width="70%" height={16} borderRadius={4} />
+            <SkeletonBlock width="45%" height={14} borderRadius={4} />
+            <SkeletonBlock width="90%" height={8} borderRadius={4} />
+          </div>
+        </div>
+      ) : data ? (
+        <div className="now-playing-active">
+          <div className="now-playing-cover-wrap">
+            <Cover url={data.cover_url} large />
+          </div>
+          <div className="now-playing-meta">
+            <Link
+              className="now-playing-title"
+              to={
+                data.track_id
+                  ? musicLink("tracks", data.track_id)
+                  : "/music/now-playing"
+              }
+              aria-label={data.title}
+            >
+              <span title={data.title}>{data.title}</span>
+            </Link>
+            <div className="now-playing-artists">
+              {data.artists.map((artist, idx) => (
+                <span key={artist.id || artist.name}>
+                  {idx > 0 && ", "}
+                  {artist.id ? (
+                    <Link to={musicLink("artists", artist.id)}>
+                      {artist.name}
+                    </Link>
+                  ) : (
+                    artist.name
+                  )}
+                </span>
+              ))}
+            </div>
+            {data.album && (
+              <div className="now-playing-album" title={data.album}>
+                {data.album}
+              </div>
+            )}
+          </div>
+          <div className="now-playing-progress-wrap">
+            <progress
+              className="now-playing-progress-bar"
+              aria-label="Avanzamento riproduzione"
+              value={progress ?? 0}
+              max={data.duration_ms ?? 100}
+            />
+            <div className="now-playing-timestamps">
+              <span>{duration(progress)}</span>
+              <span>{duration(data.duration_ms)}</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="now-playing-resting">
+          <div className="now-playing-resting-icon" aria-hidden="true">
+            <Icon>music_note</Icon>
+          </div>
+          <div className="now-playing-resting-content">
+            <p className="now-playing-resting-title">
+              Nessuna riproduzione recente
+            </p>
+            <p className="now-playing-resting-subtitle">
+              {status?.connected
+                ? "Avvia un brano su Spotify per seguire l'ascolto in tempo reale."
+                : "Connetti Spotify per visualizzare la riproduzione in tempo reale."}
+            </p>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
 export function ImportPage({
   refresh,
   visible,

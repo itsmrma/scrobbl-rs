@@ -321,6 +321,37 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await spanButton.click();
     await expect(totalsWidget).toHaveClass(/span-2/);
 
+    // Test adding now_playing widget from catalog
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog = page.getByRole("dialog", {
+      name: "Aggiungi widget",
+    });
+    await expect(catalogDialog).toBeVisible();
+    const nowPlayingCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "In riproduzione" });
+    await expect(nowPlayingCard).toBeVisible();
+    await expect(
+      nowPlayingCard.getByText("Brano in ascolto live e avanzamento traccia"),
+    ).toBeVisible();
+    await nowPlayingCard.getByRole("button", { name: "Aggiungi" }).click();
+    await expect(catalogDialog).toBeHidden();
+
+    const nowPlayingWidget = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(nowPlayingWidget).toBeVisible();
+    await expect(nowPlayingWidget).toHaveClass(/span-3/);
+    await expect(nowPlayingWidget.getByText("In riproduzione")).toBeVisible();
+    await expect(
+      nowPlayingWidget.getByText("Nessuna riproduzione recente"),
+    ).toBeVisible();
+
+    // Cycle span (3 -> 4)
+    const npSpanBtn = nowPlayingWidget.locator(".widget-span-button");
+    await npSpanBtn.click();
+    await expect(nowPlayingWidget).toHaveClass(/span-4/);
+
     // Save changes
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
     await expect(editToolbar).toBeHidden();
@@ -331,14 +362,82 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsReloaded).toHaveClass(/span-2/);
+    const nowPlayingReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(nowPlayingReloaded).toBeVisible();
+    await expect(nowPlayingReloaded).toHaveClass(/span-4/);
+    await expect(
+      nowPlayingReloaded.getByText("Nessuna riproduzione recente"),
+    ).toBeVisible();
+
+    // Test active playback state in NowPlayingWidget
+    await page.route("**/api/spotify/status", async (route) => {
+      await route.fulfill({
+        json: {
+          configured: true,
+          connected: true,
+          credentials_from_env: false,
+          redirect_uri: "http://127.0.0.1/callback",
+          sync_seconds: 120,
+          now_playing_seconds: 30,
+          connection: "connected",
+          collection: "active",
+          last_attempt_ms: Date.now(),
+          last_sync_ms: Date.now(),
+          last_added: 0,
+          verified_at_ms: Date.now(),
+          last_error: null,
+          now_playing_error: null,
+          now_playing_timing: null,
+          coverage_warning: null,
+          retry_at_ms: null,
+          review_count: 0,
+        },
+      });
+    });
+    await page.route("**/api/spotify/now-playing", async (route) => {
+      await route.fulfill({
+        json: {
+          track_id: null,
+          title: "Live Active Song",
+          artists: [{ id: "artist_1", name: "Live Artist" }],
+          album: "Live Album Name",
+          cover_url: null,
+          spotify_url: "https://open.spotify.com/track/xyz",
+          duration_ms: 180000,
+          progress_ms: 45000,
+          observed_at_ms: Date.now(),
+          source_timestamp_ms: null,
+          requested_at_ms: Date.now(),
+          source_requested_at_ms: Date.now(),
+          response_received_at_ms: Date.now(),
+          served_at_ms: Date.now(),
+        },
+      });
+    });
+    await page.reload();
+    const activeWidget = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(activeWidget.getByText("Live Active Song")).toBeVisible();
+    await expect(activeWidget.getByText("Live Artist")).toBeVisible();
+    await expect(activeWidget.getByText("Live Album Name")).toBeVisible();
+    await expect(activeWidget.locator("progress")).toBeVisible();
+    await expect(
+      activeWidget.locator(".sync-status-badge.status-active"),
+    ).toBeVisible();
+    await expect(activeWidget.locator(".now-external-link")).toBeVisible();
+    await page.unroute("**/api/spotify/now-playing");
+    await page.unroute("**/api/spotify/status");
 
     // Test adding listening_patterns widget from catalog (#120)
     await page.getByRole("button", { name: "Personalizza" }).click();
     await expect(editToolbar).toBeVisible();
     await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
-    const catalogDialog = page.locator(".widget-catalog-dialog");
-    await expect(catalogDialog).toBeVisible();
-    const patternCard = catalogDialog
+    const patternCatalogDialog = page.locator(".widget-catalog-dialog");
+    await expect(patternCatalogDialog).toBeVisible();
+    const patternCard = patternCatalogDialog
       .locator(".catalog-item-card")
       .filter({ hasText: "Pattern di ascolto" });
     await expect(patternCard).toBeVisible();
@@ -402,6 +501,9 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
     ).toHaveCount(0);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveCount(0);
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
     await expect(editToolbar).toBeHidden();
 
@@ -409,6 +511,12 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.locator(".dashboard-widget[data-widget-type='totals']"),
     ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveCount(0);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveCount(0);
 
     if (browserName !== "firefox") {
       const touch = await browser.newContext({
