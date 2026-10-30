@@ -688,7 +688,9 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       totalsPeriodReloaded.locator(".pill.widget-period-badge"),
     ).toHaveText("Last 30 days");
-    await expect(totalsPeriodReloaded.locator("#total-listens")).toHaveText("0");
+    await expect(totalsPeriodReloaded.locator("#total-listens")).toHaveText(
+      "0",
+    );
 
     // Reset to default
     await page.getByRole("button", { name: "Personalizza" }).click();

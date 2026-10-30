@@ -423,8 +423,11 @@ pub async fn dashboard(
     let (need_totals, need_artists, need_albums, need_tracks, need_recent) =
         match filters.widgets.as_deref() {
             Some(w) => {
-                let set: std::collections::HashSet<&str> =
-                    w.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+                let set: std::collections::HashSet<&str> = w
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 (
                     set.contains("totals"),
                     set.contains("top_artists") || set.contains("unified_rankings"),
@@ -524,13 +527,16 @@ pub async fn dashboard(
         } else {
             "plays"
         };
-        let sql_str = sql.replace("/*ORDER*/", order).replace("/*PRIMARY*/", primary);
+        let sql_str = sql
+            .replace("/*ORDER*/", order)
+            .replace("/*PRIMARY*/", primary);
         query.push(sql_str);
         let aggregates: String = query
             .build_query_scalar()
             .fetch_one(&mut *view.transaction)
             .await?;
-        let aggregates: Value = serde_json::from_str(&aggregates).map_err(|_| AppError::Internal)?;
+        let aggregates: Value =
+            serde_json::from_str(&aggregates).map_err(|_| AppError::Internal)?;
         let totals: Option<crate::dto::Totals> = if need_totals {
             serde_json::from_value(aggregates["totals"].clone()).ok()
         } else {
