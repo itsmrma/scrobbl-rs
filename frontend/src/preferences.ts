@@ -19,6 +19,10 @@ export const periods = [
   ["30d", "Last 30 days"],
   ["365d", "Last 365 days"],
 ];
+export function periodBadgeLabel(period: string): string {
+  const found = periods.find(([p]) => p === period);
+  return found ? found[1] : period;
+}
 export function stored<T>(
   key: string,
   fallback: T,

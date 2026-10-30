@@ -1,5 +1,5 @@
 const { chooseOption, settleDisclosure } = require("./controls.cjs");
-const { test, expect } = require("@playwright/test");
+const { test: base, expect } = require("@playwright/test");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
 const { mkdtemp, rm } = require("node:fs/promises");
@@ -7,114 +7,130 @@ const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const net = require("node:net");
 
-test("consultation navigation, tied pages, persistent views, chart drilldown and accessible time help", async ({
-  browser,
-  browserName,
-}) => {
-  const directory = await mkdtemp(join(tmpdir(), "scrobbl-consultation-"));
-  const socket = net.createServer();
-  socket.listen(0, "127.0.0.1");
-  await once(socket, "listening");
-  const port = socket.address().port;
-  await new Promise((resolve) => socket.close(resolve));
-  const child = spawn(
-    resolve(
-      process.env.CARGO_TARGET_DIR || "target",
-      "debug",
-      "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
-    ),
-    [],
-    {
-      env: {
-        ...process.env,
-        SCROBBL_PORT: String(port),
-        SCROBBL_BIND: "127.0.0.1",
-        SCROBBL_DATA_DIR: directory,
-        SCROBBL_EXTERNAL_ORIGIN: `http://127.0.0.1:${port}`,
-        SPOTIFY_CLIENT_ID: "",
-        SPOTIFY_CLIENT_SECRET: "",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  let logs = "";
-  child.stdout.on("data", (data) => (logs += data));
-  child.stderr.on("data", (data) => (logs += data));
-  const context = await browser.newContext({
-    baseURL: `http://127.0.0.1:${port}`,
-  });
-  const page = await context.newPage();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(e.message));
-  try {
-    await expect
-      .poll(async () => {
-        if (child.exitCode !== null) throw new Error(logs);
-        try {
-          return (await context.request.get("/healthz")).status();
-        } catch {
-          return 0;
-        }
-      })
-      .toBe(200);
-    await page.goto("/");
-    await page.getByLabel("Username", { exact: true }).fill("owner");
-    await page
-      .getByLabel("Password", { exact: true })
-      .fill("consultation browser password 7!");
-    await page
-      .getByLabel("Confirm password")
-      .fill("consultation browser password 7!");
-    await page.getByRole("button", { name: "Create your archive" }).click();
-    await expect(page.locator("#total-listens")).toHaveText("0");
-    const rows = [];
-    for (let i = 0; i < 115; i++) {
-      for (let n = 0; n < (i < 9 ? 3 : i < 11 ? 2 : 1); n++)
-        rows.push({
-          ts: new Date(Date.UTC(2025, 5, 1, 12, i * 5 + n)).toISOString(),
-          ms_played: 60000 + i,
-          master_metadata_track_name: `Consultation track ${String(i).padStart(3, "0")}`,
-          master_metadata_album_artist_name: "Consultation artist",
-          master_metadata_album_album_name: `Consultation album ${String(i).padStart(3, "0")}`,
-          spotify_track_uri: `spotify:track:${String(i).padStart(22, "0")}`,
-        });
-    }
-    rows.push({
-      ts: "2025-06-02T12:00:00Z",
-      ms_played: 29000,
-      master_metadata_track_name: "Below threshold only",
-      master_metadata_album_artist_name: "Consultation artist",
-      master_metadata_album_album_name: "Hidden album",
-      spotify_track_uri: "spotify:track:9999999999999999999999",
-    });
-    const session = await (await page.request.get("/api/session")).json();
-    const upload = await page.request.post("/api/import/spotify", {
-      headers: {
-        "x-csrf-token": session.csrf,
-        origin: new URL(page.url()).origin,
-      },
-      multipart: {
-        files: {
-          name: "consultation.json",
-          mimeType: "application/json",
-          buffer: Buffer.from(JSON.stringify(rows)),
+const test = base.extend({
+  archive: async ({ browser }, use) => {
+    const directory = await mkdtemp(join(tmpdir(), "scrobbl-consultation-"));
+    const socket = net.createServer();
+    socket.listen(0, "127.0.0.1");
+    await once(socket, "listening");
+    const port = socket.address().port;
+    await new Promise((resolve) => socket.close(resolve));
+    const child = spawn(
+      resolve(
+        process.env.CARGO_TARGET_DIR || "target",
+        "debug",
+        "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
+      ),
+      [],
+      {
+        env: {
+          ...process.env,
+          SCROBBL_PORT: String(port),
+          SCROBBL_BIND: "127.0.0.1",
+          SCROBBL_DATA_DIR: directory,
+          SCROBBL_EXTERNAL_ORIGIN: `http://127.0.0.1:${port}`,
+          SPOTIFY_CLIENT_ID: "",
+          SPOTIFY_CLIENT_SECRET: "",
         },
+        stdio: ["ignore", "pipe", "pipe"],
       },
+    );
+    let logs = "";
+    child.stdout.on("data", (data) => (logs += data));
+    child.stderr.on("data", (data) => (logs += data));
+    const context = await browser.newContext({
+      baseURL: `http://127.0.0.1:${port}`,
     });
-    expect(upload.ok(), await upload.text()).toBeTruthy();
-    const { job_id } = await upload.json();
-    await expect
-      .poll(
-        async () =>
-          (
-            await (
-              await page.request.get(`/api/v1/activities/${job_id}`)
-            ).json()
-          ).activity.state,
-      )
-      .toBe("completed");
-    await page.goto("/dashboard");
-    await expect(page.locator("#total-listens")).toHaveText("135");
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    try {
+      await expect
+        .poll(async () => {
+          if (child.exitCode !== null) throw new Error(logs);
+          try {
+            return (await context.request.get("/healthz")).status();
+          } catch {
+            return 0;
+          }
+        })
+        .toBe(200);
+      await page.goto("/");
+      await page.getByLabel("Username", { exact: true }).fill("owner");
+      await page
+        .getByLabel("Password", { exact: true })
+        .fill("consultation browser password 7!");
+      await page
+        .getByLabel("Confirm password")
+        .fill("consultation browser password 7!");
+      await page.getByRole("button", { name: "Create your archive" }).click();
+      await expect(page.locator("#total-listens")).toHaveText("0");
+      const rows = [];
+      for (let i = 0; i < 115; i++) {
+        for (let n = 0; n < (i < 9 ? 3 : i < 11 ? 2 : 1); n++)
+          rows.push({
+            ts: new Date(Date.UTC(2025, 5, 1, 12, i * 5 + n)).toISOString(),
+            ms_played: 60000 + i,
+            master_metadata_track_name: `Consultation track ${String(i).padStart(3, "0")}`,
+            master_metadata_album_artist_name: "Consultation artist",
+            master_metadata_album_album_name: `Consultation album ${String(i).padStart(3, "0")}`,
+            spotify_track_uri: `spotify:track:${String(i).padStart(22, "0")}`,
+          });
+      }
+      rows.push({
+        ts: "2025-06-02T12:00:00Z",
+        ms_played: 29000,
+        master_metadata_track_name: "Below threshold only",
+        master_metadata_album_artist_name: "Consultation artist",
+        master_metadata_album_album_name: "Hidden album",
+        spotify_track_uri: "spotify:track:9999999999999999999999",
+      });
+      const session = await (await page.request.get("/api/session")).json();
+      const upload = await page.request.post("/api/import/spotify", {
+        headers: {
+          "x-csrf-token": session.csrf,
+          origin: new URL(page.url()).origin,
+        },
+        multipart: {
+          files: {
+            name: "consultation.json",
+            mimeType: "application/json",
+            buffer: Buffer.from(JSON.stringify(rows)),
+          },
+        },
+      });
+      expect(upload.ok(), await upload.text()).toBeTruthy();
+      const { job_id } = await upload.json();
+      await expect
+        .poll(
+          async () =>
+            (
+              await (
+                await page.request.get(`/api/v1/activities/${job_id}`)
+              ).json()
+            ).activity.state,
+        )
+        .toBe("completed");
+      await page.goto("/dashboard");
+      await expect(page.locator("#total-listens")).toHaveText("135");
+      await use({ page, context, port });
+      expect(errors).toEqual([]);
+    } finally {
+      await context.close().catch(() => {});
+      if (child.exitCode === null) {
+        const exited = once(child, "exit");
+        child.kill("SIGTERM");
+        await exited;
+      }
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+});
+
+test.describe("consultation", () => {
+  test("consultation navigation, tied pages, persistent views, chart drilldown and accessible time help", async ({
+    archive: { page },
+  }) => {
     const help = page.getByRole("button", {
       name: "How we calculate listening time",
       exact: true,
@@ -285,6 +301,11 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       path: "test-results/consultation-desktop.png",
       fullPage: true,
     });
+  });
+
+  test("dashboard customization persists layout, playback, rankings and listening patterns", async ({
+    archive: { page },
+  }) => {
     // Customization Edit Mode verification
     const customizeBtn = page.getByRole("button", { name: "Personalizza" });
     await expect(customizeBtn).toBeVisible();
@@ -308,11 +329,41 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       editToolbar.getByRole("button", { name: "Salva modifiche" }),
     ).toBeVisible();
 
-    // Verify widgets show dashed border and edit controls
+    // Verify 8-widget V1 default layout
+    const initialNowPlaying = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(initialNowPlaying).toHaveClass(/span-6/);
     const totalsWidget = page.locator(
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsWidget).toHaveClass(/span-6/);
+    const initialTopArtists = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(initialTopArtists).toHaveClass(/span-2/);
+    const initialTopAlbums = page.locator(
+      ".dashboard-widget[data-widget-type='top_albums']",
+    );
+    await expect(initialTopAlbums).toHaveClass(/span-2/);
+    const initialTopTracks = page.locator(
+      ".dashboard-widget[data-widget-type='top_tracks']",
+    );
+    await expect(initialTopTracks).toHaveClass(/span-2/);
+    const initialActivityChart = page.locator(
+      ".dashboard-widget[data-widget-type='activity_chart']",
+    );
+    await expect(initialActivityChart).toHaveClass(/span-6/);
+    const initialPatterns = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await expect(initialPatterns).toHaveClass(/span-3/);
+    const initialRecent = page.locator(
+      ".dashboard-widget[data-widget-type='recent_listens']",
+    );
+    await expect(initialRecent).toHaveClass(/span-3/);
+
+    // Verify widgets show dashed border and edit controls
     await expect(totalsWidget).toHaveClass(/editing/);
     const spanButton = totalsWidget.locator(".widget-span-button");
     await expect(spanButton).toBeVisible();
@@ -320,6 +371,39 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     // Cycle span (6 -> 2)
     await spanButton.click();
     await expect(totalsWidget).toHaveClass(/span-2/);
+
+    // Remove now_playing and re-add from catalog
+    await initialNowPlaying.locator(".widget-remove-button").click();
+    await expect(initialNowPlaying).toHaveCount(0);
+
+    // Test adding now_playing widget from catalog
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog = page.locator(".widget-catalog-dialog");
+    await expect(catalogDialog).toBeVisible();
+    const nowPlayingCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "In riproduzione" });
+    await expect(nowPlayingCard).toBeVisible();
+    await expect(
+      nowPlayingCard.getByText("Brano in ascolto live e avanzamento traccia"),
+    ).toBeVisible();
+    await nowPlayingCard.getByRole("button", { name: "Aggiungi" }).click();
+    await expect(catalogDialog).toBeHidden();
+
+    const nowPlayingWidget = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(nowPlayingWidget).toBeVisible();
+    await expect(nowPlayingWidget).toHaveClass(/span-3/);
+    await expect(nowPlayingWidget.getByText("In riproduzione")).toBeVisible();
+    await expect(
+      nowPlayingWidget.getByText("Nessuna riproduzione recente"),
+    ).toBeVisible();
+
+    // Cycle span (3 -> 4)
+    const npSpanBtn = nowPlayingWidget.locator(".widget-span-button");
+    await npSpanBtn.click();
+    await expect(nowPlayingWidget).toHaveClass(/span-4/);
 
     // Save changes
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
@@ -331,6 +415,310 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsReloaded).toHaveClass(/span-2/);
+    const nowPlayingReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(nowPlayingReloaded).toBeVisible();
+    await expect(nowPlayingReloaded).toHaveClass(/span-4/);
+    await expect(
+      nowPlayingReloaded.getByText("Nessuna riproduzione recente"),
+    ).toBeVisible();
+
+    // Test active playback state in NowPlayingWidget
+    await page.route("**/api/spotify/status", async (route) => {
+      await route.fulfill({
+        json: {
+          configured: true,
+          connected: true,
+          credentials_from_env: false,
+          redirect_uri: "http://127.0.0.1/callback",
+          sync_seconds: 120,
+          now_playing_seconds: 30,
+          connection: "connected",
+          collection: "active",
+          last_attempt_ms: Date.now(),
+          last_sync_ms: Date.now(),
+          last_added: 0,
+          verified_at_ms: Date.now(),
+          last_error: null,
+          now_playing_error: null,
+          now_playing_timing: null,
+          coverage_warning: null,
+          retry_at_ms: null,
+          review_count: 0,
+        },
+      });
+    });
+    await page.route("**/api/spotify/now-playing", async (route) => {
+      await route.fulfill({
+        json: {
+          track_id: null,
+          title: "Live Active Song",
+          artists: [{ id: "artist_1", name: "Live Artist" }],
+          album: "Live Album Name",
+          cover_url: null,
+          spotify_url: "https://open.spotify.com/track/xyz",
+          duration_ms: 180000,
+          progress_ms: 45000,
+          observed_at_ms: Date.now(),
+          source_timestamp_ms: null,
+          requested_at_ms: Date.now(),
+          source_requested_at_ms: Date.now(),
+          response_received_at_ms: Date.now(),
+          served_at_ms: Date.now(),
+        },
+      });
+    });
+    await page.reload();
+    const activeWidget = page.locator(
+      ".dashboard-widget[data-widget-type='now_playing']",
+    );
+    await expect(activeWidget.getByText("Live Active Song")).toBeVisible();
+    await expect(activeWidget.getByText("Live Artist")).toBeVisible();
+    await expect(activeWidget.getByText("Live Album Name")).toBeVisible();
+    await expect(activeWidget.locator("progress")).toBeVisible();
+    await expect(
+      activeWidget.locator(".sync-status-badge.status-active"),
+    ).toBeVisible();
+    await expect(activeWidget.locator(".now-external-link")).toBeVisible();
+    await page.unroute("**/api/spotify/now-playing");
+    await page.unroute("**/api/spotify/status");
+
+    // Open catalog and add Top Artists widget
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const existingTopArtists = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await existingTopArtists.locator(".widget-remove-button").click();
+    await expect(existingTopArtists).toHaveCount(0);
+
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await expect(catalogDialog).toBeVisible();
+    const topArtistsCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Top Artisti" });
+    await expect(topArtistsCard).toBeVisible();
+    await topArtistsCard.getByRole("button", { name: "Aggiungi" }).click();
+    await expect(catalogDialog).toBeHidden();
+
+    const topArtistsWidget = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(topArtistsWidget).toBeVisible();
+    await expect(topArtistsWidget).toHaveClass(/span-2/);
+
+    // Save changes with added widget and verify persistence
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await page.reload();
+    const topArtistsReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='top_artists']",
+    );
+    await expect(topArtistsReloaded).toBeVisible();
+    await expect(topArtistsReloaded.locator("h2")).toHaveText("Top artists");
+
+    // Test adding listening_patterns widget from catalog (#120)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const existingPatterns = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await existingPatterns.locator(".widget-remove-button").click();
+    await expect(existingPatterns).toHaveCount(0);
+
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await expect(catalogDialog).toBeVisible();
+    const patternCard = catalogDialog
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Pattern di ascolto" });
+    await expect(patternCard).toBeVisible();
+    await patternCard.getByRole("button", { name: "Aggiungi" }).click();
+
+    const patternsWidget = page.locator(
+      ".dashboard-widget[data-widget-type='listening_patterns']",
+    );
+    await expect(patternsWidget).toBeVisible();
+    await expect(patternsWidget).toHaveClass(/span-3/);
+
+    // Save and verify rendered listening_patterns widget
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await expect(
+      patternsWidget.getByRole("heading", { name: "Pattern di ascolto" }),
+    ).toBeVisible();
+    await expect(patternsWidget.locator(".pattern-bars")).toBeVisible();
+    await expect(
+      patternsWidget.locator(".pattern-hours .pattern-row"),
+    ).toHaveCount(24);
+
+    // Switch view to weekdays
+    await chooseOption(patternsWidget.getByRole("combobox"), "weekdays");
+    await expect(
+      patternsWidget.locator(".pattern-weekdays .pattern-row"),
+    ).toHaveCount(7);
+
+    // Switch view back to hours
+    await chooseOption(patternsWidget.getByRole("combobox"), "hours");
+    await expect(
+      patternsWidget.locator(".pattern-hours .pattern-row"),
+    ).toHaveCount(24);
+
+    // Cycle span (3 -> 4 -> 6) and verify persistence
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const patternSpanBtn = patternsWidget.locator(".widget-span-button");
+    await patternSpanBtn.click(); // 3 -> 4
+    await expect(patternsWidget).toHaveClass(/span-4/);
+    await patternSpanBtn.click(); // 4 -> 6
+    await expect(patternsWidget).toHaveClass(/span-6/);
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    await page.reload();
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-6/);
+  });
+
+  test("discovery widget and local period overrides persist independently of the global period", async ({
+    archive: { page },
+  }) => {
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Personalizza dashboard",
+    });
+    // Add DiscoveryRatioWidget from catalog (#122)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    const catalogDialog122 = page.locator(".widget-catalog-dialog");
+    await expect(catalogDialog122).toBeVisible();
+    const addDiscoveryBtn = catalogDialog122
+      .locator(".catalog-item-card")
+      .filter({ hasText: "Rapporto scoperte" })
+      .getByRole("button", { name: "Aggiungi" });
+    await expect(addDiscoveryBtn).toBeVisible();
+    await addDiscoveryBtn.click();
+    await expect(catalogDialog122).toBeHidden();
+
+    // Verify discovery_ratio widget appears in dashboard with default span 3
+    const discoveryWidget = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    await expect(discoveryWidget).toBeVisible();
+    await expect(discoveryWidget).toHaveClass(/span-3/);
+
+    // Save and verify rendering after save
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+    await expect(
+      discoveryWidget.getByRole("heading", {
+        name: "Nuove scoperte vs Riascolti",
+      }),
+    ).toBeVisible();
+    await expect(discoveryWidget.getByRole("progressbar")).toBeVisible();
+
+    // Verify persistence across reload
+    await page.reload();
+    const discoveryReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    await expect(discoveryReloaded).toBeVisible();
+    await expect(discoveryReloaded).toHaveClass(/span-3/);
+
+    // Ticket #121: Override Locale del Periodo per Singolo Widget
+    // 1. Enter edit mode and set periodOverride="30d" on discovery_ratio widget
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+
+    const discoveryWidget121 = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    const discoveryPeriodSelect = discoveryWidget121.getByRole("combobox", {
+      name: "Periodo widget",
+    });
+    await expect(discoveryPeriodSelect).toBeVisible();
+    await chooseOption(discoveryPeriodSelect, "30d");
+
+    // Save changes
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    // 2. Verify .pill badge appears indicating the locked period
+    const discoveryBadge = discoveryWidget121.locator(
+      ".pill.widget-period-badge",
+    );
+    await expect(discoveryBadge).toBeVisible();
+    await expect(discoveryBadge).toHaveText("Last 30 days");
+    await expect(discoveryBadge).toHaveAttribute("data-period", "30d");
+
+    // For 30d (empty in test data), discovery_ratio shows empty state
+    await expect(
+      discoveryWidget121.getByText("No listening data in this period."),
+    ).toBeVisible();
+
+    // 3. Changing the global dashboard period filter does NOT alter the locked widget
+    const globalPeriod = page.getByRole("combobox", { name: "Period" });
+    await chooseOption(globalPeriod, "week");
+
+    // Verify locked widget maintains its empty state and badge
+    await expect(discoveryBadge).toBeVisible();
+    await expect(
+      discoveryWidget121.getByText("No listening data in this period."),
+    ).toBeVisible();
+
+    // Change global filter back to "all"
+    await chooseOption(globalPeriod, "all");
+    await expect(discoveryBadge).toBeVisible();
+    await expect(
+      discoveryWidget121.getByText("No listening data in this period."),
+    ).toBeVisible();
+
+    // 4. Persistence across page reload
+    await page.reload();
+    const discoveryAfterReload = page.locator(
+      ".dashboard-widget[data-widget-type='discovery_ratio']",
+    );
+    const badgeAfterReload = discoveryAfterReload.locator(
+      ".pill.widget-period-badge",
+    );
+    await expect(badgeAfterReload).toBeVisible();
+    await expect(badgeAfterReload).toHaveText("Last 30 days");
+    await expect(
+      discoveryAfterReload.getByText("No listening data in this period."),
+    ).toBeVisible();
+
+    // 5. Test periodOverride on a dashboard-slice widget (e.g. totals)
+    await page.getByRole("button", { name: "Personalizza" }).click();
+    await expect(editToolbar).toBeVisible();
+    const totalsWidget121 = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    const totalsPeriodSelect = totalsWidget121.getByRole("combobox", {
+      name: "Periodo widget",
+    });
+    await expect(totalsPeriodSelect).toBeVisible();
+    await chooseOption(totalsPeriodSelect, "30d");
+    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    const totalsBadge = totalsWidget121.locator(".pill.widget-period-badge");
+    await expect(totalsBadge).toBeVisible();
+    await expect(totalsBadge).toHaveText("Last 30 days");
+    // Under 30d, total listens is 0
+    await expect(totalsWidget121.locator("#total-listens")).toHaveText("0");
+
+    // Reload and verify persistence of totals override
+    await page.reload();
+    const totalsPeriodReloaded = page.locator(
+      ".dashboard-widget[data-widget-type='totals']",
+    );
+    await expect(
+      totalsPeriodReloaded.locator(".pill.widget-period-badge"),
+    ).toHaveText("Last 30 days");
+    await expect(totalsPeriodReloaded.locator("#total-listens")).toHaveText(
+      "0",
+    );
 
     // Reset to default
     await page.getByRole("button", { name: "Personalizza" }).click();
@@ -342,6 +730,30 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsAfterReset).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_artists']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_albums']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='activity_chart']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='recent_listens']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
+    ).toHaveCount(0);
     await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
     await expect(editToolbar).toBeHidden();
 
@@ -349,7 +761,37 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
     await expect(
       page.locator(".dashboard-widget[data-widget-type='totals']"),
     ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='now_playing']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_artists']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_albums']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='top_tracks']"),
+    ).toHaveClass(/span-2/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='activity_chart']"),
+    ).toHaveClass(/span-6/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='listening_patterns']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='recent_listens']"),
+    ).toHaveClass(/span-3/);
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
+    ).toHaveCount(0);
+  });
 
+  test("listening time help remains accessible on touch screens and reports missing durations", async ({
+    archive: { page, context, port },
+    browser,
+    browserName,
+  }) => {
     if (browserName !== "firefox") {
       const touch = await browser.newContext({
         baseURL: `http://127.0.0.1:${port}`,
@@ -405,6 +847,7 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
             width: 390,
             height: height === 600 ? 844 : 600,
           });
+          await info.scrollIntoViewIfNeeded();
           await expectHelpAccessible(info);
           await touchPage.evaluate(() => window.scrollBy(0, 80));
           await expectHelpAccessible(info);
@@ -435,14 +878,5 @@ test("consultation navigation, tied pages, persistent views, chart drilldown and
         exact: false,
       }),
     ).toBeVisible();
-    expect(errors).toEqual([]);
-  } finally {
-    await context.close().catch(() => {});
-    if (child.exitCode === null) {
-      const exited = once(child, "exit");
-      child.kill("SIGTERM");
-      await exited;
-    }
-    await rm(directory, { recursive: true, force: true });
-  }
+  });
 });

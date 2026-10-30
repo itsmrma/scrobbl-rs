@@ -87,9 +87,15 @@ pub struct Rankings {
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct Dashboard {
-    pub totals: Totals,
-    pub rankings: Rankings,
-    pub recent: Vec<Listen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub totals: Option<Totals>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rankings: Option<Rankings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recent: Option<Vec<Listen>>,
     pub timezone: String,
 }
 #[derive(Serialize, Deserialize, sqlx::FromRow, TS)]
@@ -148,6 +154,13 @@ pub struct ActivityChart {
     pub buckets: Vec<ActivityBucket>,
     pub mixed_week_starts: bool,
     pub partial: bool,
+}
+#[derive(Serialize, Deserialize, TS, Debug, Clone, PartialEq)]
+pub struct DiscoveryRatio {
+    pub discoveries: i64,
+    pub repeats: i64,
+    pub total: i64,
+    pub discovery_percent: f64,
 }
 #[derive(Serialize, Deserialize, TS)]
 pub struct NowPlaying {
@@ -287,6 +300,7 @@ mod tests {
             MusicPage::decl(&config),
             ActivityBucket::decl(&config),
             ActivityChart::decl(&config),
+            DiscoveryRatio::decl(&config),
             NowPlaying::decl(&config),
             NowPlayingTiming::decl(&config),
             SpotifyIntervals::decl(&config),

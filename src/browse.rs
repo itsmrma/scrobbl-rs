@@ -264,6 +264,59 @@ pub async fn activity(
         activity_chart(&mut view.transaction, &filters, auth::now_ms()).await?,
     ))
 }
+pub async fn discovery_ratio(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(filters): Query<Filters>,
+) -> Result<Json<DiscoveryRatio>> {
+    auth::session(&state, &headers).await?;
+    let mut view = state.storage.read_view().await?;
+    Ok(Json(
+        discovery_ratio_calc(&mut view.transaction, &filters, auth::now_ms()).await?,
+    ))
+}
+pub async fn discovery_ratio_calc(
+    conn: &mut SqliteConnection,
+    filters: &Filters,
+    now: i64,
+) -> Result<DiscoveryRatio> {
+    let mut query = consultation::selection_at(conn, filters, false, now).await?;
+    query.push(
+        "SELECT \
+            COALESCE(SUM(CASE WHEN first_played_ms >= min_period_played_ms THEN 1 ELSE 0 END), 0) AS discoveries, \
+            COALESCE(SUM(CASE WHEN first_played_ms < min_period_played_ms THEN 1 ELSE 0 END), 0) AS repeats \
+        FROM ( \
+            SELECT \
+                s.track_id, \
+                MIN(s.played_at_ms) AS min_period_played_ms, \
+                ( \
+                    SELECT MIN(l.played_at_ms) \
+                    FROM listens l \
+                    WHERE l.track_id = s.track_id \
+                      AND l.counted = 1 \
+                      AND l.trashed_at_ms IS NULL \
+                ) AS first_played_ms \
+            FROM selected s \
+            WHERE s.counted = 1 \
+            GROUP BY s.track_id \
+        )",
+    );
+    let row = query.build().fetch_one(&mut *conn).await?;
+    let discoveries: i64 = row.try_get("discoveries")?;
+    let repeats: i64 = row.try_get("repeats")?;
+    let total = discoveries + repeats;
+    let discovery_percent = if total > 0 {
+        (discoveries as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+    Ok(DiscoveryRatio {
+        discoveries,
+        repeats,
+        total,
+        discovery_percent,
+    })
+}
 pub async fn activity_chart(
     conn: &mut SqliteConnection,
     filters: &Filters,

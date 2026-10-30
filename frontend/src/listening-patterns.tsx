@@ -6,6 +6,7 @@ import { useLoad } from "./load";
 import { Select } from "./select";
 import { ErrorText, number } from "./ui";
 import { SkeletonPatterns } from "./skeleton";
+import { periodBadgeLabel } from "./preferences";
 
 const views = [
   ["hours", "Time of day"],
@@ -165,6 +166,137 @@ export function ListeningPatterns({
                 );
               })}
             </div>
+          )}
+        </>
+      )}
+    </article>
+  );
+}
+
+const widgetViews = [
+  ["hours", "Ore del giorno"],
+  ["weekdays", "Giorni della settimana"],
+] as const;
+
+export function ListeningPatternsWidget({
+  params,
+  version,
+  periodOverride,
+}: {
+  params: URLSearchParams;
+  version: number;
+  periodOverride?: string | null;
+}) {
+  const [view, setView] = useState<"hours" | "weekdays">("hours");
+  const [inspected, setInspected] = useState<string | null>(null);
+  const result = useLoad(
+    () => api.listeningPatterns(params),
+    `patterns:${params}:${version}`,
+    true,
+    undefined,
+    true,
+  );
+  const bins = result.data?.series[view] || [];
+  const max = Math.max(1, ...bins.map((bin) => bin.count));
+  const selected =
+    bins.find((bin) => bin.label === inspected) ||
+    bins.reduce<(typeof bins)[number] | undefined>(
+      (best, bin) => (!best || bin.count > best.count ? bin : best),
+      undefined,
+    );
+
+  return (
+    <article
+      className="panel padded widget-listening-patterns listening-patterns"
+      aria-label="Pattern di ascolto"
+    >
+      <div className="panel-title">
+        <h2>
+          Pattern di ascolto
+          {periodOverride && (
+            <span
+              className="pill widget-period-badge"
+              data-period={periodOverride}
+            >
+              {periodBadgeLabel(periodOverride)}
+            </span>
+          )}
+        </h2>
+        <div className="panel-actions">
+          <Select
+            aria-label="Pattern temporale"
+            value={view}
+            onChange={(value) => {
+              setView(value as "hours" | "weekdays");
+              setInspected(null);
+            }}
+          >
+            {widgetViews.map(([key, label]) => (
+              <option value={key} key={key}>
+                {label}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+      <ErrorText>{result.error}</ErrorText>
+      {!result.data && !result.error && (
+        <SkeletonPatterns label="Loading listening patterns…" />
+      )}
+      {result.data && (
+        <>
+          {result.data.total === 0 ? (
+            <p className="empty">
+              Nessun dato di ascolto nel periodo selezionato.
+            </p>
+          ) : (
+            <>
+              {selected && (
+                <p className="pattern-readout" aria-live="polite">
+                  {view === "weekdays"
+                    ? selected.label.slice(2)
+                    : selected.label}{" "}
+                  · {number.format(selected.count)} ascolti ·{" "}
+                  {((selected.count / result.data.total) * 100).toFixed(1)}%
+                </p>
+              )}
+              <div
+                className={`pattern-bars pattern-temporal pattern-${view}`}
+                style={{ "--pattern-columns": bins.length } as CSSProperties}
+                role="list"
+                aria-label={
+                  view === "hours" ? "Ore del giorno" : "Giorni della settimana"
+                }
+              >
+                {bins.map((bin) => {
+                  const label =
+                    view === "weekdays" ? bin.label.slice(2) : bin.label;
+                  const shortLabel =
+                    view === "hours"
+                      ? bin.label.slice(0, 2)
+                      : label.slice(0, 3);
+                  return (
+                    <div
+                      className="pattern-row"
+                      role="listitem"
+                      tabIndex={0}
+                      onFocus={() => setInspected(bin.label)}
+                      onMouseEnter={() => setInspected(bin.label)}
+                      onClick={() => setInspected(bin.label)}
+                      key={bin.label}
+                      aria-label={`${label}: ${number.format(bin.count)} ascolti`}
+                    >
+                      <span className="pattern-label">{shortLabel}</span>
+                      <span className="pattern-track" aria-hidden="true">
+                        <span
+                          style={{ height: `${(bin.count / max) * 100}%` }}
+                        />
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </>
       )}
