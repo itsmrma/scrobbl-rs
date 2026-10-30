@@ -24,8 +24,9 @@ test("confirmed restore survives restart and requires new access and explicit re
   async function start() {
     child = spawn(
       resolve(
-        "target/debug/scrobbl-rs" +
-          (process.platform === "win32" ? ".exe" : ""),
+        process.env.CARGO_TARGET_DIR || "target",
+        "debug",
+        "scrobbl-rs" + (process.platform === "win32" ? ".exe" : ""),
       ),
       [],
       {

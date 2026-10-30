@@ -39,7 +39,8 @@ use the run's **Re-run failed jobs** action; download its diagnostics first.
 The workflows use Rust **1.99.1** (matching Docker) and Node **24**; the pinned
 Docker frontend stage uses Node **25**. Both builds must reproduce `static/dist`.
 npm caches use `package-lock.json`; Cargo caches use OS/toolchain/`Cargo.lock` and separate
-browser/load keys. Jobs have timeouts. Actions are pinned by commit; update the
+browser/load keys. See [compilation cache management](build-cache.md) for profile
+configuration, `CARGO_TARGET_DIR` usage, and artifact caching details. Jobs have timeouts. Actions are pinned by commit; update the
 pin and its version comment together. No separate frontend lint script exists;
 TypeScript and the production build are the project's frontend checks.
 

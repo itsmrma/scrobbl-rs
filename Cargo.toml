@@ -34,3 +34,8 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 http-body-util = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+[profile.dev]
+debug = 0
+incremental = true
+

@@ -2,7 +2,7 @@
 FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS frontend
 WORKDIR /work
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend ./frontend
 COPY vite.config.mts ./
 COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
@@ -17,9 +17,15 @@ COPY --from=frontend /work/static/dist ./static/dist
 COPY --from=frontend /work/node_modules ./node_modules
 ARG VCS_REF=unknown
 ENV SCROBBL_BUILD_REF=$VCS_REF
-RUN cargo build --locked --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/work/target \
+    cargo build --locked --release && \
+    mkdir -p /artifacts && \
+    cp /work/target/release/scrobbl-rs /artifacts/scrobbl-rs
 # Keep exact dependency source, native licenses and build inputs alongside every binary.
-RUN mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
@@ -28,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home scrobbl \
     && install -d -o 10001 -g 10001 -m 0700 /data
 WORKDIR /app
-COPY --from=build /work/target/release/scrobbl-rs /usr/local/bin/scrobbl-rs
+COPY --from=build /artifacts/scrobbl-rs /usr/local/bin/scrobbl-rs
 COPY --from=build /distribution /usr/share/scrobbl-rs
 # Debian preserves installed system-library copyright/license files here.
 RUN dpkg-query -W -f='${Package}\t${Version}\n' > /usr/share/scrobbl-rs/system-packages.tsv \
