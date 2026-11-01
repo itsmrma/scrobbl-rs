@@ -245,6 +245,54 @@ function ProviderForm({
     </form>
   );
 }
+
+function ArtworkBackfillSection() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  return (
+    <section className="panel padded artwork-backfill-panel">
+      <h2>Refresh missing artwork</h2>
+      <p>
+        Re-evaluate all library artists and albums that are currently missing
+        covers or artist portraits. This clears temporary lookup misses and
+        enqueues background downloads using your enabled providers without
+        blocking navigation.
+      </p>
+      <ErrorText>{error}</ErrorText>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              const res = await api.backfillArtwork();
+              window.dispatchEvent(new Event("artwork-cache-changed"));
+              toast(
+                res.queued > 0
+                  ? `Queued ${res.queued} items for artwork retrieval.`
+                  : "No missing artwork found to retrieve.",
+              );
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              setError(msg);
+              toast(msg, true);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Refreshing…" : "Refresh missing artwork"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function ArtworkProviderSettings() {
   const [revision, setRevision] = useState(0);
   const settings = useLoad(
@@ -255,11 +303,14 @@ export function ArtworkProviderSettings() {
     <>
       <ErrorText>{settings.error}</ErrorText>
       {settings.data ? (
-        <ProviderForm
-          key={`${settings.data.version}:${revision}`}
-          initial={settings.data}
-          reload={() => setRevision((v) => v + 1)}
-        />
+        <>
+          <ProviderForm
+            key={`${settings.data.version}:${revision}`}
+            initial={settings.data}
+            reload={() => setRevision((v) => v + 1)}
+          />
+          <ArtworkBackfillSection />
+        </>
       ) : (
         !settings.error && (
           <SkeletonCardList count={3} label="Loading image providers…" />

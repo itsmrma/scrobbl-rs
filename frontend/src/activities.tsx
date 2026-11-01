@@ -742,6 +742,37 @@ export function Activities({
                                 : "Retry import"}
                     </button>
                   ))}
+                  {job.kind === "artwork" && !isActive(job) && (
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        setActionError("");
+                        try {
+                          const res = await api.backfillArtwork();
+                          await refresh();
+                          window.dispatchEvent(
+                            new Event("artwork-cache-changed"),
+                          );
+                          toast(
+                            res.queued > 0
+                              ? `Queued ${res.queued} items for artwork retrieval.`
+                              : "No missing artwork found to retrieve.",
+                          );
+                        } catch (e) {
+                          const msg =
+                            e instanceof Error ? e.message : String(e);
+                          setActionError(msg);
+                          toast(msg, true);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Refresh missing artwork
+                    </button>
+                  )}
                 </div>
               )}
               {detail.data && detail.data.issues?.length > 0 && (
@@ -871,29 +902,55 @@ export function Activities({
           <ArtworkWork work={artworkWork} />
           <div className="activities-toolbar">
             <h2>Activity history</h2>
-            <label>
-              Activity type
-              <Select
-                aria-label="Activity type"
-                value={kind}
-                onChange={(value) => {
-                  setKind(value);
-                  setListPage(0);
+            <div className="activities-toolbar-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    const res = await api.backfillArtwork();
+                    await refresh();
+                    window.dispatchEvent(new Event("artwork-cache-changed"));
+                    toast(
+                      res.queued > 0
+                        ? `Queued ${res.queued} items for artwork retrieval.`
+                        : "No missing artwork found to retrieve.",
+                    );
+                  } catch (e) {
+                    toast(e instanceof Error ? e.message : String(e), true);
+                  } finally {
+                    setBusy(false);
+                  }
                 }}
               >
-                <option value="">All activities</option>
-                <option value="spotify_import">Spotify imports</option>
-                <option value="spotify_collection">Spotify collection</option>
-                <option value="listenbrainz_file">
-                  ListenBrainz file imports
-                </option>
-                <option value="listenbrainz_fetch">
-                  ListenBrainz public fetches
-                </option>
-                <option value="calendar">Calendar</option>
-                <option value="artwork">Artwork downloads</option>
-              </Select>
-            </label>
+                Refresh missing artwork
+              </button>
+              <label>
+                Activity type
+                <Select
+                  aria-label="Activity type"
+                  value={kind}
+                  onChange={(value) => {
+                    setKind(value);
+                    setListPage(0);
+                  }}
+                >
+                  <option value="">All activities</option>
+                  <option value="spotify_import">Spotify imports</option>
+                  <option value="spotify_collection">Spotify collection</option>
+                  <option value="listenbrainz_file">
+                    ListenBrainz file imports
+                  </option>
+                  <option value="listenbrainz_fetch">
+                    ListenBrainz public fetches
+                  </option>
+                  <option value="calendar">Calendar</option>
+                  <option value="artwork">Artwork downloads</option>
+                </Select>
+              </label>
+            </div>
           </div>
           <ErrorText>{history.error}</ErrorText>
           {listLoading ? (
