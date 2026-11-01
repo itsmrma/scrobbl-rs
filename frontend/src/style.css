@@ -1013,7 +1013,7 @@ footer {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
-  .sidebar-now .now-expand-toggle {
+  .sidebar .sidebar-now .now-expand-toggle {
     width: 44px;
     min-width: 44px;
     height: 44px;
@@ -3948,33 +3948,6 @@ dialog {
     grid-column: 1 / -1;
   }
 }
-@media (max-width: 600px) {
-  .stats-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 10px;
-  }
-  .stats-grid .stat {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    text-align: left;
-    gap: 8px;
-  }
-  .stats-grid .stat:last-child {
-    grid-column: auto;
-  }
-  .stats-grid .stat > strong {
-    grid-column: auto;
-    grid-row: auto;
-    font-size: 28px;
-    text-align: left;
-  }
-  .stats-grid .stat > small {
-    grid-column: auto;
-    text-align: left;
-  }
-}
 .music-collections {
   min-width: 0;
 }
@@ -5253,45 +5226,6 @@ dialog {
   }
 }
 @media (max-width: 600px) {
-  .overview-heading {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 16px;
-  }
-  .overview-heading-actions {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-  .overview-heading-actions > .button,
-  .overview-heading-actions > button {
-    width: 100%;
-    min-width: 44px;
-    min-height: 44px;
-    justify-content: center;
-  }
-  .overview-heading .filters {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-  }
-  .overview-heading .filters label {
-    width: 100%;
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .overview-heading .filters .select-control {
-    width: 100%;
-    min-width: 0;
-  }
-  .overview-heading .filters .select-trigger {
-    width: 100%;
-    min-width: 44px;
-    min-height: 44px;
-  }
   .listen-row.listen-context-albums {
     grid-template-columns: minmax(0, 1fr) 70px;
   }
@@ -6644,13 +6578,6 @@ dialog {
   .sidebar-now .now-expand-toggle {
     top: 56px;
     right: 4px;
-    width: 44px;
-    min-width: 44px;
-    height: 44px;
-    min-height: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
   .sidebar-now:not(.artwork-expanded) .now-artwork-expansion {
     display: none;
@@ -6992,9 +6919,6 @@ dialog {
 }
 
 /* On pointer devices with hover capability, keep the credit trigger concealed until the cover is hovered or focused */
-.mobile-open .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
-  opacity: 1;
-}
 @media (hover: hover) and (pointer: fine) {
   .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
     opacity: 0;
