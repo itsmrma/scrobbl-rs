@@ -86,3 +86,10 @@ Un evento significativo nello storico degli ascolti conteggiati di un artista, a
 **Serie di giorni di ascolto**:
 Una successione di giorni consecutivi, secondo il calendario assegnato, con almeno un ascolto conteggiato dello stesso artista, album o brano per giorno. La serie in corso termina oggi o ieri; la serie più lunga può appartenere a qualsiasi periodo dello storico.
 _Avoid_: Streak senza indicazione dell'entità ascoltata.
+
+
+**Baseline mobile**:
+Il livello minimo garantito di fruibilità dell'interfaccia su schermi stretti (≤ 600px), caratterizzato da flusso a colonna singola, assenza di scroll orizzontale, allineamento naturale a sinistra dei valori e target touch minimi di 44px.
+
+**Isolamento a container del widget**:
+L'adattamento responsive autonomo del widget alla larghezza assegnata dal layout tramite container queries (`@container`), disaccoppiato dalle media queries globali della finestra.
