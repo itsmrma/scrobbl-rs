@@ -88,6 +88,7 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
               cover_art_archive: "Cover Art Archive",
               musicbrainz_image: "MusicBrainz · Wikimedia Commons",
               wikidata: "Wikidata · Wikimedia Commons",
+              itunes: "Apple iTunes / Deezer",
             }[credit.provider] || credit.provider}
           </span>
         </span>

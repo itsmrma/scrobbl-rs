@@ -13,6 +13,7 @@ pub enum ImageProvider {
     CoverArtArchive,
     MusicbrainzImage,
     Wikidata,
+    Itunes,
 }
 impl ImageProvider {
     pub fn key(self) -> &'static str {
@@ -20,12 +21,14 @@ impl ImageProvider {
             Self::CoverArtArchive => "cover_art_archive",
             Self::MusicbrainzImage => "musicbrainz_image",
             Self::Wikidata => "wikidata",
+            Self::Itunes => "itunes",
         }
     }
     pub fn supports(self, kind: &str) -> bool {
         match self {
             Self::CoverArtArchive => kind == "albums",
             Self::MusicbrainzImage | Self::Wikidata => kind == "artists",
+            Self::Itunes => kind == "albums" || kind == "artists",
         }
     }
 }
@@ -49,6 +52,7 @@ impl Default for ArtworkSettings {
                 ImageProvider::CoverArtArchive,
                 ImageProvider::MusicbrainzImage,
                 ImageProvider::Wikidata,
+                ImageProvider::Itunes,
             ]
             .into_iter()
             .map(|provider| ProviderPreference {
@@ -90,7 +94,17 @@ pub async fn read(conn: &mut SqliteConnection) -> Result<ArtworkSettings> {
             .fetch_optional(conn)
             .await?;
     let settings = match value {
-        Some(value) => serde_json::from_str(&value).map_err(|_| AppError::Internal)?,
+        Some(value) => {
+            let mut s: ArtworkSettings =
+                serde_json::from_str(&value).map_err(|_| AppError::Internal)?;
+            let defaults = ArtworkSettings::default();
+            for default_pref in defaults.providers {
+                if !s.providers.iter().any(|p| p.provider == default_pref.provider) {
+                    s.providers.push(default_pref);
+                }
+            }
+            s
+        }
         None => ArtworkSettings::default(),
     };
     settings.validate()?;
@@ -136,4 +150,99 @@ pub async fn save(
     sqlx::query("UPDATE jobs SET retry_at_ms=0 WHERE kind='artwork' AND state='waiting' AND error_code='artwork_provider_wait'").execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Json(form))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn itunes_provider_properties() {
+        let provider = ImageProvider::Itunes;
+        assert_eq!(provider.key(), "itunes");
+        assert!(provider.supports("albums"));
+        assert!(provider.supports("artists"));
+        assert!(!provider.supports("tracks"));
+    }
+
+    #[test]
+    fn default_artwork_settings_includes_itunes_fourth() {
+        let settings = ArtworkSettings::default();
+        assert_eq!(settings.providers.len(), 4);
+        assert_eq!(
+            settings.providers,
+            vec![
+                ProviderPreference {
+                    provider: ImageProvider::CoverArtArchive,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::MusicbrainzImage,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::Wikidata,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::Itunes,
+                    enabled: true,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn read_appends_missing_itunes_provider_for_backward_compatibility() {
+        use sqlx::Connection;
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").execute(&mut conn).await.unwrap();
+
+        // Old settings JSON with only 3 providers (CAA disabled, MB enabled, Wikidata disabled)
+        let legacy_json = r#"{"version":2,"providers":[{"provider":"cover_art_archive","enabled":false},{"provider":"musicbrainz_image","enabled":true},{"provider":"wikidata","enabled":false}]}"#;
+        sqlx::query("INSERT INTO settings (key, value) VALUES ('artwork_providers', ?)")
+            .bind(legacy_json)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+
+        let loaded = read(&mut conn).await.unwrap();
+        assert_eq!(loaded.version, 2);
+        assert_eq!(loaded.providers.len(), 4);
+        assert_eq!(loaded.providers[0].provider, ImageProvider::CoverArtArchive);
+        assert!(!loaded.providers[0].enabled);
+        assert_eq!(loaded.providers[1].provider, ImageProvider::MusicbrainzImage);
+        assert!(loaded.providers[1].enabled);
+        assert_eq!(loaded.providers[2].provider, ImageProvider::Wikidata);
+        assert!(!loaded.providers[2].enabled);
+        // Itunes appended at the end with enabled: true
+        assert_eq!(loaded.providers[3].provider, ImageProvider::Itunes);
+        assert!(loaded.providers[3].enabled);
+    }
+
+    #[test]
+    fn validate_accepts_all_four_providers_and_rejects_duplicates_or_missing() {
+        let valid = ArtworkSettings::default();
+        assert!(valid.validate().is_ok());
+
+        let missing = ArtworkSettings {
+            version: 0,
+            providers: vec![
+                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: true },
+                ProviderPreference { provider: ImageProvider::MusicbrainzImage, enabled: true },
+            ],
+        };
+        assert!(missing.validate().is_err());
+
+        let duplicate = ArtworkSettings {
+            version: 0,
+            providers: vec![
+                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: true },
+                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: false },
+                ProviderPreference { provider: ImageProvider::MusicbrainzImage, enabled: true },
+                ProviderPreference { provider: ImageProvider::Wikidata, enabled: true },
+            ],
+        };
+        assert!(duplicate.validate().is_err());
+    }
 }

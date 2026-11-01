@@ -79,6 +79,23 @@ const providers: Record<
       ],
     ],
   },
+  itunes: {
+    name: "Apple iTunes / Deezer fallback",
+    coverage:
+      "Public fallback provider for missing album covers (via Apple iTunes Search API) and artist portraits (via Deezer public API). Covers Japanese/romaji releases and digital singles.",
+    access: "No account or API key required.",
+    limits:
+      "Direct HTTPS requests with standard rate limiting. Unavailable images are skipped rather than failing lookups.",
+    rights:
+      "Cover and artist artwork may be copyrighted by original rights holders; images are used for personal library indexing and display.",
+    sources: [
+      [
+        "iTunes Search API",
+        "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/",
+      ],
+      ["Deezer API", "https://developers.deezer.com/api"],
+    ],
+  },
 };
 
 function ProviderForm({

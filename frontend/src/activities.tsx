@@ -84,6 +84,7 @@ function ArtworkProviderStatus({ params }: { params: unknown }) {
     cover_art_archive: "MusicBrainz → Cover Art Archive",
     musicbrainz_image: "MusicBrainz → Commons image",
     wikidata: "MusicBrainz → Wikidata → Commons",
+    itunes: "Apple iTunes / Deezer fallback",
   };
   return <p>Currently using: {names[provider] || provider}</p>;
 }

@@ -376,7 +376,7 @@ mod tests {
             ),
             ("completed", 2, 1, 1)
         );
-        assert_eq!(sources.calls.lock().unwrap().len(), 2);
+        assert_eq!(sources.calls.lock().unwrap().len(), 3);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
                 .fetch_one(&state.db)
@@ -460,7 +460,8 @@ mod tests {
             vec![
                 ("wikidata", false),
                 ("cover_art_archive", true),
-                ("musicbrainz_image", false)
+                ("musicbrainz_image", false),
+                ("itunes", true),
             ]
         );
         assert_eq!(

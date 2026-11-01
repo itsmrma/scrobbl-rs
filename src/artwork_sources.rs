@@ -284,6 +284,43 @@ fn unique_match<'a>(
         .map(Some)
         .ok_or(())
 }
+async fn entity_name_and_artists(
+    state: &AppState,
+    kind: &str,
+    id: &str,
+) -> Result<std::result::Result<(String, Vec<String>), ()>> {
+    let table = if kind == "artists" {
+        "artists"
+    } else {
+        "albums"
+    };
+    // A group deliberately separated from an identically named entity is still ambiguous externally.
+    let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT DISTINCT e.name FROM main.{table} e JOIN name_group_members gm ON gm.entity_id=e.id WHERE gm.group_id=?"
+    )))
+    .bind(id)
+    .fetch_all(&state.read_db)
+    .await?;
+    if names.len() != 1 {
+        return Ok(Err(()));
+    }
+    let name = names.into_iter().next().unwrap();
+    let artists: Vec<String> = if kind == "albums" {
+        sqlx::query_scalar(
+            "SELECT DISTINCT a.name FROM main.artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks t ON t.id=ta.track_id JOIN name_group_members gm ON gm.entity_id=t.album_id WHERE gm.group_id=?"
+        )
+        .bind(id)
+        .fetch_all(&state.read_db)
+        .await?
+    } else {
+        vec![]
+    };
+    if kind == "albums" && artists.len() != 1 {
+        return Ok(Err(()));
+    }
+    Ok(Ok((name, artists)))
+}
+
 async fn identity(
     state: &AppState,
     kind: &str,
@@ -297,29 +334,14 @@ async fn identity(
     if !known.is_empty() {
         return Ok(Err(()));
     }
-    let table = if kind == "artists" {
-        "artists"
-    } else {
-        "albums"
+    let (name, artists) = match entity_name_and_artists(state, kind, id).await? {
+        Ok(res) => res,
+        Err(()) => return Ok(Err(())),
     };
-    // A group deliberately separated from an identically named entity is still ambiguous externally.
-    let names: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT DISTINCT e.name FROM main.{table} e JOIN name_group_members gm ON gm.entity_id=e.id WHERE gm.group_id=?"))).bind(id).fetch_all(&state.read_db).await?;
-    if names.len() != 1 {
-        return Ok(Err(()));
-    }
-    let name = &names[0];
-    let artists: Vec<String> = if kind == "albums" {
-        sqlx::query_scalar("SELECT DISTINCT a.name FROM main.artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks t ON t.id=ta.track_id JOIN name_group_members gm ON gm.entity_id=t.album_id WHERE gm.group_id=?").bind(id).fetch_all(&state.read_db).await?
-    } else {
-        vec![]
-    };
-    if kind == "albums" && artists.len() != 1 {
-        return Ok(Err(()));
-    }
     let query = if kind == "artists" {
-        format!("artist:{}", quoted(name))
+        format!("artist:{}", quoted(&name))
     } else {
-        let clean_title = normalize_album_title(name);
+        let clean_title = normalize_album_title(&name);
         format!(
             "releasegroup:{} AND artist:{}",
             quoted(&clean_title),
@@ -349,7 +371,7 @@ async fn identity(
         ));
     }
     Ok(
-        unique_match(&data, kind, name, artists.first().map(String::as_str))
+        unique_match(&data, kind, &name, artists.first().map(String::as_str))
             .map(|v| v.map(str::to_owned)),
     )
 }
@@ -452,9 +474,181 @@ async fn commons(state: &AppState, file: &str, provider: ImageProvider) -> Resul
         credit,
     }))
 }
+pub(crate) fn album_title_matches(candidate_title: &str, target_title: &str) -> bool {
+    let c = normalized(candidate_title);
+    let t = normalized(target_title);
+    c == t
+        || normalized(&normalize_album_title(candidate_title))
+            == normalized(&normalize_album_title(target_title))
+}
+
+pub(crate) fn artist_matches(candidate_artist: &str, target_artist: &str) -> bool {
+    let c = normalized(candidate_artist);
+    let t = normalized(target_artist);
+    c == t
+        || (c.contains(" & ") && c.split(" & ").any(|part| part.trim() == t))
+        || (c.contains(", ") && c.split(", ").any(|part| part.trim() == t))
+        || (t.contains(" & ") && t.split(" & ").any(|part| part.trim() == c))
+        || (t.contains(", ") && t.split(", ").any(|part| part.trim() == c))
+}
+
+pub(crate) fn upgrade_itunes_artwork_url(url: &str) -> String {
+    if url.contains("/100x100bb.") {
+        url.replace("/100x100bb.", "/600x600bb.")
+    } else if url.contains("/100x100.") {
+        url.replace("/100x100.", "/600x600.")
+    } else {
+        url.to_string()
+    }
+}
+
+pub(crate) struct ItunesAlbumMatch<'a> {
+    pub artwork_url: &'a str,
+    pub view_url: Option<&'a str>,
+}
+
+pub(crate) struct DeezerArtistMatch<'a> {
+    pub picture_url: &'a str,
+    pub link_url: Option<&'a str>,
+}
+
+pub(crate) fn find_itunes_album_candidate<'a>(
+    data: &'a Value,
+    target_title: &str,
+    target_artist: &str,
+) -> Option<ItunesAlbumMatch<'a>> {
+    let results = data["results"].as_array()?;
+    for item in results {
+        let Some(c_title) = item["collectionName"].as_str() else {
+            continue;
+        };
+        let Some(c_artist) = item["artistName"].as_str() else {
+            continue;
+        };
+        if album_title_matches(c_title, target_title) && artist_matches(c_artist, target_artist) {
+            let Some(artwork_url) = item["artworkUrl100"].as_str() else {
+                continue;
+            };
+            let view_url = item["collectionViewUrl"]
+                .as_str()
+                .or_else(|| item["trackViewUrl"].as_str());
+            return Some(ItunesAlbumMatch {
+                artwork_url,
+                view_url,
+            });
+        }
+    }
+    None
+}
+
+pub(crate) fn find_deezer_artist_candidate<'a>(
+    data: &'a Value,
+    target_artist: &str,
+) -> Option<DeezerArtistMatch<'a>> {
+    let results = data["data"].as_array()?;
+    for item in results {
+        let Some(c_name) = item["name"].as_str() else {
+            continue;
+        };
+        if normalized(c_name) == normalized(target_artist) {
+            let Some(picture_url) = item["picture_xl"]
+                .as_str()
+                .or_else(|| item["picture_big"].as_str())
+                .or_else(|| item["picture_medium"].as_str())
+                .or_else(|| item["picture"].as_str())
+            else {
+                continue;
+            };
+            let link_url = item["link"].as_str();
+            return Some(DeezerArtistMatch {
+                picture_url,
+                link_url,
+            });
+        }
+    }
+    None
+}
+
 impl ImageLookup for PublicSources<'_> {
     async fn lookup(&self, provider: ImageProvider, kind: &str, id: &str) -> Result<Lookup> {
         let state = self.0;
+        if provider == ImageProvider::Itunes {
+            if kind == "albums" {
+                let (name, artists) = match entity_name_and_artists(state, kind, id).await? {
+                    Ok(res) => res,
+                    Err(()) => return Ok(Lookup::Ambiguous),
+                };
+                if artists.is_empty() {
+                    return Ok(Lookup::Ambiguous);
+                }
+                let artist = &artists[0];
+                let clean_title = normalize_album_title(&name);
+                let term = format!("{clean_title} {artist}");
+                let target = url(
+                    "https://itunes.apple.com/search",
+                    &[("term", &term), ("entity", "album"), ("limit", "25")],
+                );
+                let Some(data) = json(state, &target).await? else {
+                    return Ok(Lookup::Missing);
+                };
+                let Some(candidate) = find_itunes_album_candidate(&data, &name, artist) else {
+                    return Ok(Lookup::Missing);
+                };
+                let upgraded = upgrade_itunes_artwork_url(candidate.artwork_url);
+                let Some(image_url) = secure_url(&upgraded) else {
+                    return Ok(Lookup::Missing);
+                };
+                let source_url = candidate
+                    .view_url
+                    .and_then(secure_url)
+                    .unwrap_or_else(|| image_url.clone());
+                return Ok(Lookup::Found(FoundImage {
+                    bytes: library::download(&image_url, Some(state)).await?,
+                    credit: ImageCredit {
+                        provider: provider.key().into(),
+                        source_url,
+                        image_url,
+                        author: None,
+                        license: Some("Cover artwork may be copyrighted.".into()),
+                        license_url: None,
+                        credit: Some("Apple iTunes".into()),
+                    },
+                }));
+            } else if kind == "artists" {
+                let (name, _) = match entity_name_and_artists(state, kind, id).await? {
+                    Ok(res) => res,
+                    Err(()) => return Ok(Lookup::Ambiguous),
+                };
+                let target = url("https://api.deezer.com/search/artist", &[("q", &name)]);
+                let Some(data) = json(state, &target).await? else {
+                    return Ok(Lookup::Missing);
+                };
+                let Some(candidate) = find_deezer_artist_candidate(&data, &name) else {
+                    return Ok(Lookup::Missing);
+                };
+                let Some(image_url) = secure_url(candidate.picture_url) else {
+                    return Ok(Lookup::Missing);
+                };
+                let source_url = candidate
+                    .link_url
+                    .and_then(secure_url)
+                    .unwrap_or_else(|| image_url.clone());
+                return Ok(Lookup::Found(FoundImage {
+                    bytes: library::download(&image_url, Some(state)).await?,
+                    credit: ImageCredit {
+                        provider: provider.key().into(),
+                        source_url,
+                        image_url,
+                        author: None,
+                        license: Some("Artist image may be copyrighted.".into()),
+                        license_url: None,
+                        credit: Some("Deezer".into()),
+                    },
+                }));
+            } else {
+                return Ok(Lookup::Missing);
+            }
+        }
         let identity = identity(state, kind, id).await?;
         let mbid = match identity {
             Ok(Some(id)) => id,
@@ -713,6 +907,9 @@ mod tests {
             if self.mode == "fallback" && provider != ImageProvider::Wikidata {
                 return Ok(Lookup::Missing);
             }
+            if self.mode == "fallback_itunes" && provider != ImageProvider::Itunes {
+                return Ok(Lookup::Missing);
+            }
             if self.mode == "custom" {
                 sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms) VALUES(?,?,'custom',?,'image/png',0)").bind(kind).bind(id).bind(b"\x89PNG\r\n\x1a\nowner".as_slice()).execute(&self.state.db).await?;
             }
@@ -728,6 +925,15 @@ mod tests {
                 )
                 .await?;
             }
+            let credit_text = if provider == ImageProvider::Itunes {
+                if kind == "artists" {
+                    Some("Deezer".into())
+                } else {
+                    Some("Apple iTunes".into())
+                }
+            } else {
+                None
+            };
             Ok(Lookup::Found(FoundImage {
                 bytes: b"\x89PNG\r\n\x1a\nautomatic".to_vec(),
                 credit: ImageCredit {
@@ -737,7 +943,7 @@ mod tests {
                     author: Some("Author".into()),
                     license: Some("CC BY 4.0".into()),
                     license_url: Some("https://creativecommons.org/licenses/by/4.0/".into()),
-                    credit: None,
+                    credit: credit_text,
                 },
             }))
         }
@@ -996,5 +1202,265 @@ mod tests {
         assert_eq!(normalize_album_title("Single"), "Single");
         assert_eq!(normalize_album_title("EP"), "EP");
         assert_eq!(normalize_album_title("(Deluxe Edition)"), "(Deluxe Edition)");
+    }
+
+    #[test]
+    fn itunes_artwork_url_upgrades_resolution_to_600x600() {
+        assert_eq!(
+            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/24/e9/c2/24e9c269-bee0-62e0-6de6-257db163ee5a/21UM1IM54074.rgb.jpg/100x100bb.jpg"),
+            "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/24/e9/c2/24e9c269-bee0-62e0-6de6-257db163ee5a/21UM1IM54074.rgb.jpg/600x600bb.jpg"
+        );
+        assert_eq!(
+            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music/100x100bb.png"),
+            "https://is1-ssl.mzstatic.com/image/thumb/Music/600x600bb.png"
+        );
+        assert_eq!(
+            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music/100x100.jpg"),
+            "https://is1-ssl.mzstatic.com/image/thumb/Music/600x600.jpg"
+        );
+        assert_eq!(
+            upgrade_itunes_artwork_url("https://example.com/custom/500x500.jpg"),
+            "https://example.com/custom/500x500.jpg"
+        );
+    }
+
+    #[test]
+    fn itunes_album_candidate_matching_romaji_and_editions() {
+        // 1. Romaji album "Kyougen" by "Ado"
+        let data = json!({
+            "resultCount": 2,
+            "results": [
+                {
+                    "collectionName": "Ado Kyougen Piano Collections",
+                    "artistName": "daigoro789",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/piano/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/piano"
+                },
+                {
+                    "collectionName": "Kyougen",
+                    "artistName": "ADO",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/ado/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/ado-kyougen"
+                }
+            ]
+        });
+        let matched = find_itunes_album_candidate(&data, "Kyougen", "Ado").expect("matched Kyougen");
+        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/ado/100x100bb.jpg");
+        assert_eq!(matched.view_url, Some("https://music.apple.com/ado-kyougen"));
+
+        // 2. Romaji album "Zanmu" by "Ado"
+        let data = json!({
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": "Zanmu",
+                    "artistName": "ADO",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/zanmu/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/ado-zanmu"
+                }
+            ]
+        });
+        let matched = find_itunes_album_candidate(&data, "Zanmu", "Ado").expect("matched Zanmu");
+        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/zanmu/100x100bb.jpg");
+
+        // 3. Album with edition suffix: target "ALL OUT", candidate "ALL OUT - EP" by "K/DA"
+        let data = json!({
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": "ALL OUT - EP",
+                    "artistName": "K/DA",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/kda/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/kda-all-out"
+                }
+            ]
+        });
+        let matched = find_itunes_album_candidate(&data, "ALL OUT", "K/DA").expect("matched ALL OUT");
+        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/kda/100x100bb.jpg");
+
+        // 4. Target with edition suffix: target "Abbey Road (Deluxe Edition)", candidate "Abbey Road"
+        let data = json!({
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": "Abbey Road",
+                    "artistName": "The Beatles",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/beatles/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/beatles-abbey-road"
+                }
+            ]
+        });
+        let matched = find_itunes_album_candidate(&data, "Abbey Road (Deluxe Edition)", "The Beatles").expect("matched Abbey Road");
+        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/beatles/100x100bb.jpg");
+
+        // 5. Artist mismatch is rejected
+        assert!(find_itunes_album_candidate(&data, "Abbey Road", "Coldplay").is_none());
+
+        // 6. Title mismatch is rejected
+        assert!(find_itunes_album_candidate(&data, "Let It Be", "The Beatles").is_none());
+    }
+
+    #[test]
+    fn deezer_artist_candidate_matching_and_resolution() {
+        let data = json!({
+            "data": [
+                {
+                    "id": 1,
+                    "name": "Ado (Col)",
+                    "link": "https://www.deezer.com/artist/1",
+                    "picture_big": "https://cdn-images.dzcdn.net/col/500.jpg",
+                    "picture_xl": "https://cdn-images.dzcdn.net/col/1000.jpg"
+                },
+                {
+                    "id": 2,
+                    "name": "Ado & Montorsi",
+                    "link": "https://www.deezer.com/artist/2",
+                    "picture_big": "https://cdn-images.dzcdn.net/duo/500.jpg",
+                    "picture_xl": "https://cdn-images.dzcdn.net/duo/1000.jpg"
+                },
+                {
+                    "id": 3,
+                    "name": "Ado",
+                    "link": "https://www.deezer.com/artist/3",
+                    "picture_big": "https://cdn-images.dzcdn.net/ado/500.jpg",
+                    "picture_xl": "https://cdn-images.dzcdn.net/ado/1000.jpg"
+                }
+            ],
+            "total": 3
+        });
+        let matched = find_deezer_artist_candidate(&data, "Ado").expect("matched Ado");
+        assert_eq!(matched.picture_url, "https://cdn-images.dzcdn.net/ado/1000.jpg");
+        assert_eq!(matched.link_url, Some("https://www.deezer.com/artist/3"));
+
+        // Fallback to picture_big if picture_xl is missing
+        let data_big_only = json!({
+            "data": [
+                {
+                    "id": 4,
+                    "name": "Daft Punk",
+                    "link": "https://www.deezer.com/artist/4",
+                    "picture_big": "https://cdn-images.dzcdn.net/daftpunk/500.jpg"
+                }
+            ]
+        });
+        let matched = find_deezer_artist_candidate(&data_big_only, "Daft Punk").expect("matched Daft Punk");
+        assert_eq!(matched.picture_url, "https://cdn-images.dzcdn.net/daftpunk/500.jpg");
+
+        // Non-matching artist
+        assert!(find_deezer_artist_candidate(&data, "Taylor Swift").is_none());
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_albums_caa_to_itunes() {
+        let (_dir, state) = setup().await;
+        let settings = ArtworkSettings::default();
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "fallback_itunes",
+        };
+        let result = fetch_with(&state, &settings, "albums", "album-1", &fake)
+            .await
+            .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        // Fallback chain for albums: CAA (first) -> iTunes (second)
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            vec![ImageProvider::CoverArtArchive, ImageProvider::Itunes]
+        );
+        let cr = credit(&state, "albums", "album-1").await.unwrap().unwrap();
+        assert_eq!(cr.provider, "itunes");
+        assert_eq!(cr.credit.as_deref(), Some("Apple iTunes"));
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn fallback_chain_artists_mb_wikidata_to_itunes() {
+        let (_dir, state) = setup().await;
+        let settings = ArtworkSettings::default();
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "fallback_itunes",
+        };
+        let result = fetch_with(&state, &settings, "artists", "artist-1", &fake)
+            .await
+            .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        // Fallback chain for artists: MB (first) -> Wikidata (second) -> iTunes (third)
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            vec![
+                ImageProvider::MusicbrainzImage,
+                ImageProvider::Wikidata,
+                ImageProvider::Itunes
+            ]
+        );
+        let cr = credit(&state, "artists", "artist-1").await.unwrap().unwrap();
+        assert_eq!(cr.provider, "itunes");
+        assert_eq!(cr.credit.as_deref(), Some("Deezer"));
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn disabled_provider_skipped_in_fallback_chain() {
+        let (_dir, state) = setup().await;
+        let mut settings = ArtworkSettings::default();
+        // Disable CAA
+        settings.providers[0].enabled = false;
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "fallback_itunes",
+        };
+        let result = fetch_with(&state, &settings, "albums", "album-disabled", &fake)
+            .await
+            .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        // Only iTunes should be called since CAA was disabled
+        assert_eq!(*fake.calls.lock().unwrap(), vec![ImageProvider::Itunes]);
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn provider_reordering_is_respected_in_lookup() {
+        let (_dir, state) = setup().await;
+        let mut settings = ArtworkSettings::default();
+        // Move iTunes (index 3) to the very first position
+        let itunes_pref = settings.providers.remove(3);
+        settings.providers.insert(0, itunes_pref);
+
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "found",
+        };
+        // For albums: iTunes is now 1st, so it should be called first and succeed immediately
+        let result = fetch_with(&state, &settings, "albums", "album-reordered", &fake)
+            .await
+            .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        assert_eq!(*fake.calls.lock().unwrap(), vec![ImageProvider::Itunes]);
+        state.storage.close().await;
+    }
+
+    #[test]
+    fn credit_serialization_and_roundtrip() {
+        let credit = ImageCredit {
+            provider: "itunes".into(),
+            source_url: "https://music.apple.com/album/123".into(),
+            image_url: "https://is1-ssl.mzstatic.com/image/600x600bb.jpg".into(),
+            author: None,
+            license: Some("Promotional artwork; may be copyrighted.".into()),
+            license_url: None,
+            credit: Some("Apple iTunes".into()),
+        };
+        let json_str = serde_json::to_string(&credit).unwrap();
+        let restored: ImageCredit = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(restored.provider, "itunes");
+        assert_eq!(restored.source_url, "https://music.apple.com/album/123");
+        assert_eq!(restored.image_url, "https://is1-ssl.mzstatic.com/image/600x600bb.jpg");
+        assert_eq!(restored.credit.as_deref(), Some("Apple iTunes"));
+        assert_eq!(restored.license.as_deref(), Some("Promotional artwork; may be copyrighted."));
     }
 }
