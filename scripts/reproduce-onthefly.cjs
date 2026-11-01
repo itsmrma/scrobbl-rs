@@ -8,24 +8,53 @@ class ArtworkRetry extends Error {
   }
 }
 
-// Simulated backend semaphore with capacity 1 and download duration
+// Simulated backend semaphore with capacity 1 and wait timeout
 class MockServer {
-  constructor(downloadDurationMs = 3500) {
+  constructor(downloadDurationMs = 300) {
     this.inFlight = false;
     this.downloadDurationMs = downloadDurationMs;
+    this.waiters = [];
+  }
+
+  async acquire(timeoutMs = 1500) {
+    if (!this.inFlight) {
+      this.inFlight = true;
+      return true;
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const idx = this.waiters.indexOf(done);
+        if (idx !== -1) this.waiters.splice(idx, 1);
+        resolve(false);
+      }, timeoutMs);
+      const done = () => {
+        clearTimeout(timer);
+        this.inFlight = true;
+        resolve(true);
+      };
+      this.waiters.push(done);
+    });
+  }
+
+  release() {
+    this.inFlight = false;
+    if (this.waiters.length > 0) {
+      const next = this.waiters.shift();
+      next();
+    }
   }
 
   async fetchArtwork(id) {
-    if (this.inFlight) {
+    const ok = await this.acquire(1500);
+    if (!ok) {
       // 503 Service Unavailable, Retry-After: 1
       throw new ArtworkRetry(1000);
     }
-    this.inFlight = true;
     try {
       await new Promise((r) => setTimeout(r, this.downloadDurationMs));
       return { id, data: Buffer.from("image_data") };
     } finally {
-      this.inFlight = false;
+      this.release();
     }
   }
 }
@@ -63,7 +92,7 @@ class ClientQueue {
           this.stats.loaded++;
           resolve(res);
         } catch (error) {
-          if (error instanceof ArtworkRetry && attempts++ < 3) {
+          if (error instanceof ArtworkRetry && attempts++ < 60) {
             retry = true;
             setTimeout(() => {
               this.queue.push(run);
@@ -88,28 +117,47 @@ async function runSimulation() {
   const client = new ClientQueue(server);
 
   // User opens a page with 6 images (e.g. top albums grid)
-  const imageIds = ["album-1", "album-2", "album-3", "album-4", "album-5", "album-6"];
-  console.log(`Caricamento pagina con ${imageIds.length} immagini contemporanee...`);
+  const imageIds = [
+    "album-1",
+    "album-2",
+    "album-3",
+    "album-4",
+    "album-5",
+    "album-6",
+  ];
+  console.log(
+    `Caricamento pagina con ${imageIds.length} immagini contemporanee...`,
+  );
 
-  const results = await Promise.allSettled(imageIds.map((id) => client.queueArtwork(id)));
+  const results = await Promise.allSettled(
+    imageIds.map((id) => client.queueArtwork(id)),
+  );
 
   console.log("\nEsiti download per singola immagine:");
   results.forEach((r, idx) => {
     if (r.status === "fulfilled") {
       console.log(`  - [OK] ${imageIds[idx]}: Caricata con successo`);
     } else {
-      console.log(`  - [FALLITA] ${imageIds[idx]}: ${r.reason.message} (superati tentativi di retry)`);
+      console.log(
+        `  - [FALLITA] ${imageIds[idx]}: ${r.reason.message} (superati tentativi di retry)`,
+      );
     }
   });
 
   console.log("\nStatistiche finali:");
   console.log(`  Totale richieste: ${client.stats.total}`);
-  console.log(`  Caricate: ${client.stats.loaded} (${Math.round((client.stats.loaded / client.stats.total) * 100)}%)`);
-  console.log(`  Fallite: ${client.stats.failed} (${Math.round((client.stats.failed / client.stats.total) * 100)}%)`);
+  console.log(
+    `  Caricate: ${client.stats.loaded} (${Math.round((client.stats.loaded / client.stats.total) * 100)}%)`,
+  );
+  console.log(
+    `  Fallite: ${client.stats.failed} (${Math.round((client.stats.failed / client.stats.total) * 100)}%)`,
+  );
 
   // Red-capable assertion
   if (client.stats.failed > 0) {
-    console.error(`\n[ROSSO]: ${client.stats.failed} immagini su ${client.stats.total} sono fallite durante la navigazione!`);
+    console.error(
+      `\n[ROSSO]: ${client.stats.failed} immagini su ${client.stats.total} sono fallite durante la navigazione!`,
+    );
     process.exit(1);
   }
 }

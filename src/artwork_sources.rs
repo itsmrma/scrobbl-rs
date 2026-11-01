@@ -771,6 +771,8 @@ pub(crate) async fn fetch_with_activity(
     sources: &impl ImageLookup,
     activity: Option<(&str, &str)>,
 ) -> Result<library::ArtworkFetch> {
+    let mut earliest_wait: Option<i64> = None;
+    let mut last_error: Option<AppError> = None;
     for provider in settings.enabled(kind) {
         // Configuration changes fence in-flight lookups as well as later queue entries.
         if artwork_settings::read(&mut *state.read_db.acquire().await?)
@@ -788,7 +790,7 @@ pub(crate) async fn fetch_with_activity(
                 .execute(&state.db)
                 .await?;
         }
-        let lookup = sources.lookup(provider, kind, id).await;
+        let lookup_res = sources.lookup(provider, kind, id).await;
         if let Some((activity_id, member)) = activity {
             sqlx::query("UPDATE job_members SET current_provider=NULL WHERE job_id=? AND member=? AND current_provider=?")
                 .bind(activity_id)
@@ -797,7 +799,19 @@ pub(crate) async fn fetch_with_activity(
                 .execute(&state.db)
                 .await?;
         }
-        match lookup? {
+        let lookup = match lookup_res {
+            Ok(lookup) => lookup,
+            Err(AppError::ArtworkWait { retry_at_ms }) => {
+                earliest_wait =
+                    Some(earliest_wait.map_or(retry_at_ms, |prev| prev.min(retry_at_ms)));
+                continue;
+            }
+            Err(e) => {
+                last_error = Some(e);
+                continue;
+            }
+        };
+        match lookup {
             Lookup::Missing => continue,
             Lookup::Ambiguous => break,
             Lookup::Found(image) => {
@@ -823,6 +837,12 @@ pub(crate) async fn fetch_with_activity(
                 return Ok(library::ArtworkFetch::Saved);
             }
         }
+    }
+    if let Some(retry_at_ms) = earliest_wait {
+        return Err(AppError::ArtworkWait { retry_at_ms });
+    }
+    if let Some(err) = last_error {
+        return Err(err);
     }
     let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
@@ -899,7 +919,24 @@ mod tests {
                 return Err(AppError::Internal);
             }
             if self.mode == "artwork_wait" {
-                return Err(AppError::ArtworkWait { retry_at_ms: 99999999 });
+                return Err(AppError::ArtworkWait {
+                    retry_at_ms: 99999999,
+                });
+            }
+            if self.mode == "wait_then_itunes" {
+                if provider != ImageProvider::Itunes {
+                    return Err(AppError::ArtworkWait {
+                        retry_at_ms: 100000,
+                    });
+                }
+            }
+            if self.mode == "multiple_waits" {
+                let wait = if provider == ImageProvider::CoverArtArchive {
+                    100000
+                } else {
+                    50000
+                };
+                return Err(AppError::ArtworkWait { retry_at_ms: wait });
             }
             if self.mode == "ambiguous" {
                 return Ok(Lookup::Ambiguous);
@@ -1010,7 +1047,11 @@ mod tests {
             };
             let result =
                 fetch_with(&state, &ArtworkSettings::default(), "artists", mode, &fake).await;
-            assert_eq!(fake.calls.lock().unwrap().len(), 1);
+            if mode == "ambiguous" {
+                assert_eq!(fake.calls.lock().unwrap().len(), 1);
+            } else {
+                assert_eq!(fake.calls.lock().unwrap().len(), 3);
+            }
             if mode == "error" || mode == "artwork_wait" {
                 assert!(result.is_err());
             } else {
@@ -1022,6 +1063,64 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(misses, vec!["ambiguous"]);
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn provider_artwork_wait_falls_through_to_next_provider_and_saves() {
+        let (_dir, state) = setup().await;
+        // Albums default providers: CoverArtArchive, then Itunes
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "wait_then_itunes",
+        };
+        let result = fetch_with(
+            &state,
+            &ArtworkSettings::default(),
+            "albums",
+            "album1",
+            &fake,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            vec![ImageProvider::CoverArtArchive, ImageProvider::Itunes]
+        );
+        let saved_source: String =
+            sqlx::query_scalar("SELECT source FROM artwork WHERE entity_id='album1'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(saved_source, "itunes");
+
+        let fake_wait = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "multiple_waits",
+        };
+        let err = fetch_with(
+            &state,
+            &ArtworkSettings::default(),
+            "albums",
+            "album2",
+            &fake_wait,
+        )
+        .await
+        .unwrap_err();
+        match err {
+            AppError::ArtworkWait { retry_at_ms } => {
+                assert_eq!(retry_at_ms, 50000);
+            }
+            other => panic!("expected ArtworkWait, got {:?}", other),
+        }
+        let misses: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM artwork_misses")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+        assert!(!misses.contains(&"album1".to_string()));
+        assert!(!misses.contains(&"album2".to_string()));
         state.storage.close().await;
     }
     #[tokio::test]
@@ -1066,7 +1165,10 @@ mod tests {
                 "disambiguation": "UK alternative metal band"
             }]
         });
-        assert_eq!(unique_match(&data, "artists", "Architects", None), Ok(Some(id)));
+        assert_eq!(
+            unique_match(&data, "artists", "Architects", None),
+            Ok(Some(id))
+        );
 
         // 2. Count > 100 or count > items.len() is accepted if unique exact match exists
         let data = json!({
@@ -1076,7 +1178,10 @@ mod tests {
                 { "name": "Coldplay Tribute", "id": "other-id-0000-0000-0000-000000000000", "score": 90 }
             ]
         });
-        assert_eq!(unique_match(&data, "artists", "Coldplay", None), Ok(Some(id)));
+        assert_eq!(
+            unique_match(&data, "artists", "Coldplay", None),
+            Ok(Some(id))
+        );
 
         // 3. Homonyms with same name are rejected as ambiguous
         let data = json!({
@@ -1101,9 +1206,18 @@ mod tests {
                 ]
             }]
         });
-        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("Queen")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("David Bowie")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("Different Artist")), Ok(None));
+        assert_eq!(
+            unique_match(&data, "albums", "Under Pressure", Some("Queen")),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(&data, "albums", "Under Pressure", Some("David Bowie")),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(&data, "albums", "Under Pressure", Some("Different Artist")),
+            Ok(None)
+        );
 
         // 5. Album titles with edition suffixes match release groups
         let data = json!({
@@ -1115,11 +1229,41 @@ mod tests {
                 "artist-credit": [{ "artist": { "name": "The Beatles" } }]
             }]
         });
-        assert_eq!(unique_match(&data, "albums", "Abbey Road (Deluxe Edition)", Some("The Beatles")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Abbey Road [Remastered]", Some("The Beatles")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Abbey Road - Single", Some("The Beatles")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Abbey Road - EP", Some("The Beatles")), Ok(Some(id)));
-        assert_eq!(unique_match(&data, "albums", "Abbey Road (Expanded Edition)", Some("The Beatles")), Ok(Some(id)));
+        assert_eq!(
+            unique_match(
+                &data,
+                "albums",
+                "Abbey Road (Deluxe Edition)",
+                Some("The Beatles")
+            ),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(
+                &data,
+                "albums",
+                "Abbey Road [Remastered]",
+                Some("The Beatles")
+            ),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(&data, "albums", "Abbey Road - Single", Some("The Beatles")),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(&data, "albums", "Abbey Road - EP", Some("The Beatles")),
+            Ok(Some(id))
+        );
+        assert_eq!(
+            unique_match(
+                &data,
+                "albums",
+                "Abbey Road (Expanded Edition)",
+                Some("The Beatles")
+            ),
+            Ok(Some(id))
+        );
 
         // 6. Utility checks
         assert_eq!(
@@ -1185,37 +1329,70 @@ mod tests {
     }
     #[test]
     fn normalize_album_title_handles_common_edition_suffixes() {
-        assert_eq!(normalize_album_title("Abbey Road (Deluxe Edition)"), "Abbey Road");
+        assert_eq!(
+            normalize_album_title("Abbey Road (Deluxe Edition)"),
+            "Abbey Road"
+        );
         assert_eq!(normalize_album_title("Nevermind [Remastered]"), "Nevermind");
-        assert_eq!(normalize_album_title("Blinding Lights - Single"), "Blinding Lights");
+        assert_eq!(
+            normalize_album_title("Blinding Lights - Single"),
+            "Blinding Lights"
+        );
         assert_eq!(normalize_album_title("Boyfriend - EP"), "Boyfriend");
-        assert_eq!(normalize_album_title("Thriller (Expanded Edition)"), "Thriller");
-        assert_eq!(normalize_album_title("The Dark Side of the Moon (50th Anniversary Remaster)"), "The Dark Side of the Moon");
-        assert_eq!(normalize_album_title("OK Computer (Collector's Edition)"), "OK Computer");
-        assert_eq!(normalize_album_title("Random Access Memories (10th Anniversary Edition)"), "Random Access Memories");
+        assert_eq!(
+            normalize_album_title("Thriller (Expanded Edition)"),
+            "Thriller"
+        );
+        assert_eq!(
+            normalize_album_title("The Dark Side of the Moon (50th Anniversary Remaster)"),
+            "The Dark Side of the Moon"
+        );
+        assert_eq!(
+            normalize_album_title("OK Computer (Collector's Edition)"),
+            "OK Computer"
+        );
+        assert_eq!(
+            normalize_album_title("Random Access Memories (10th Anniversary Edition)"),
+            "Random Access Memories"
+        );
         assert_eq!(normalize_album_title("Song (Single Version)"), "Song");
-        assert_eq!(normalize_album_title("Album (Bonus Track Edition)"), "Album");
+        assert_eq!(
+            normalize_album_title("Album (Bonus Track Edition)"),
+            "Album"
+        );
         assert_eq!(normalize_album_title("Album [Deluxe]"), "Album");
         assert_eq!(normalize_album_title("Album - Deluxe Edition"), "Album");
         assert_eq!(normalize_album_title("Album - Remastered"), "Album");
-        assert_eq!(normalize_album_title("Title (Deluxe Edition) [Remastered]"), "Title");
+        assert_eq!(
+            normalize_album_title("Title (Deluxe Edition) [Remastered]"),
+            "Title"
+        );
         assert_eq!(normalize_album_title("Single"), "Single");
         assert_eq!(normalize_album_title("EP"), "EP");
-        assert_eq!(normalize_album_title("(Deluxe Edition)"), "(Deluxe Edition)");
+        assert_eq!(
+            normalize_album_title("(Deluxe Edition)"),
+            "(Deluxe Edition)"
+        );
     }
 
     #[test]
     fn itunes_artwork_url_upgrades_resolution_to_600x600() {
         assert_eq!(
-            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/24/e9/c2/24e9c269-bee0-62e0-6de6-257db163ee5a/21UM1IM54074.rgb.jpg/100x100bb.jpg"),
+            upgrade_itunes_artwork_url(
+                "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/24/e9/c2/24e9c269-bee0-62e0-6de6-257db163ee5a/21UM1IM54074.rgb.jpg/100x100bb.jpg"
+            ),
             "https://is1-ssl.mzstatic.com/image/thumb/Music126/v4/24/e9/c2/24e9c269-bee0-62e0-6de6-257db163ee5a/21UM1IM54074.rgb.jpg/600x600bb.jpg"
         );
         assert_eq!(
-            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music/100x100bb.png"),
+            upgrade_itunes_artwork_url(
+                "https://is1-ssl.mzstatic.com/image/thumb/Music/100x100bb.png"
+            ),
             "https://is1-ssl.mzstatic.com/image/thumb/Music/600x600bb.png"
         );
         assert_eq!(
-            upgrade_itunes_artwork_url("https://is1-ssl.mzstatic.com/image/thumb/Music/100x100.jpg"),
+            upgrade_itunes_artwork_url(
+                "https://is1-ssl.mzstatic.com/image/thumb/Music/100x100.jpg"
+            ),
             "https://is1-ssl.mzstatic.com/image/thumb/Music/600x600.jpg"
         );
         assert_eq!(
@@ -1244,9 +1421,16 @@ mod tests {
                 }
             ]
         });
-        let matched = find_itunes_album_candidate(&data, "Kyougen", "Ado").expect("matched Kyougen");
-        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/ado/100x100bb.jpg");
-        assert_eq!(matched.view_url, Some("https://music.apple.com/ado-kyougen"));
+        let matched =
+            find_itunes_album_candidate(&data, "Kyougen", "Ado").expect("matched Kyougen");
+        assert_eq!(
+            matched.artwork_url,
+            "https://is1-ssl.mzstatic.com/ado/100x100bb.jpg"
+        );
+        assert_eq!(
+            matched.view_url,
+            Some("https://music.apple.com/ado-kyougen")
+        );
 
         // 2. Romaji album "Zanmu" by "Ado"
         let data = json!({
@@ -1261,7 +1445,10 @@ mod tests {
             ]
         });
         let matched = find_itunes_album_candidate(&data, "Zanmu", "Ado").expect("matched Zanmu");
-        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/zanmu/100x100bb.jpg");
+        assert_eq!(
+            matched.artwork_url,
+            "https://is1-ssl.mzstatic.com/zanmu/100x100bb.jpg"
+        );
 
         // 3. Album with edition suffix: target "ALL OUT", candidate "ALL OUT - EP" by "K/DA"
         let data = json!({
@@ -1275,8 +1462,12 @@ mod tests {
                 }
             ]
         });
-        let matched = find_itunes_album_candidate(&data, "ALL OUT", "K/DA").expect("matched ALL OUT");
-        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/kda/100x100bb.jpg");
+        let matched =
+            find_itunes_album_candidate(&data, "ALL OUT", "K/DA").expect("matched ALL OUT");
+        assert_eq!(
+            matched.artwork_url,
+            "https://is1-ssl.mzstatic.com/kda/100x100bb.jpg"
+        );
 
         // 4. Target with edition suffix: target "Abbey Road (Deluxe Edition)", candidate "Abbey Road"
         let data = json!({
@@ -1290,8 +1481,13 @@ mod tests {
                 }
             ]
         });
-        let matched = find_itunes_album_candidate(&data, "Abbey Road (Deluxe Edition)", "The Beatles").expect("matched Abbey Road");
-        assert_eq!(matched.artwork_url, "https://is1-ssl.mzstatic.com/beatles/100x100bb.jpg");
+        let matched =
+            find_itunes_album_candidate(&data, "Abbey Road (Deluxe Edition)", "The Beatles")
+                .expect("matched Abbey Road");
+        assert_eq!(
+            matched.artwork_url,
+            "https://is1-ssl.mzstatic.com/beatles/100x100bb.jpg"
+        );
 
         // 5. Artist mismatch is rejected
         assert!(find_itunes_album_candidate(&data, "Abbey Road", "Coldplay").is_none());
@@ -1329,7 +1525,10 @@ mod tests {
             "total": 3
         });
         let matched = find_deezer_artist_candidate(&data, "Ado").expect("matched Ado");
-        assert_eq!(matched.picture_url, "https://cdn-images.dzcdn.net/ado/1000.jpg");
+        assert_eq!(
+            matched.picture_url,
+            "https://cdn-images.dzcdn.net/ado/1000.jpg"
+        );
         assert_eq!(matched.link_url, Some("https://www.deezer.com/artist/3"));
 
         // Fallback to picture_big if picture_xl is missing
@@ -1343,8 +1542,12 @@ mod tests {
                 }
             ]
         });
-        let matched = find_deezer_artist_candidate(&data_big_only, "Daft Punk").expect("matched Daft Punk");
-        assert_eq!(matched.picture_url, "https://cdn-images.dzcdn.net/daftpunk/500.jpg");
+        let matched =
+            find_deezer_artist_candidate(&data_big_only, "Daft Punk").expect("matched Daft Punk");
+        assert_eq!(
+            matched.picture_url,
+            "https://cdn-images.dzcdn.net/daftpunk/500.jpg"
+        );
 
         // Non-matching artist
         assert!(find_deezer_artist_candidate(&data, "Taylor Swift").is_none());
@@ -1396,7 +1599,10 @@ mod tests {
                 ImageProvider::Itunes
             ]
         );
-        let cr = credit(&state, "artists", "artist-1").await.unwrap().unwrap();
+        let cr = credit(&state, "artists", "artist-1")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(cr.provider, "itunes");
         assert_eq!(cr.credit.as_deref(), Some("Deezer"));
         state.storage.close().await;
@@ -1459,8 +1665,14 @@ mod tests {
         let restored: ImageCredit = serde_json::from_str(&json_str).unwrap();
         assert_eq!(restored.provider, "itunes");
         assert_eq!(restored.source_url, "https://music.apple.com/album/123");
-        assert_eq!(restored.image_url, "https://is1-ssl.mzstatic.com/image/600x600bb.jpg");
+        assert_eq!(
+            restored.image_url,
+            "https://is1-ssl.mzstatic.com/image/600x600bb.jpg"
+        );
         assert_eq!(restored.credit.as_deref(), Some("Apple iTunes"));
-        assert_eq!(restored.license.as_deref(), Some("Promotional artwork; may be copyrighted."));
+        assert_eq!(
+            restored.license.as_deref(),
+            Some("Promotional artwork; may be copyrighted.")
+        );
     }
 }

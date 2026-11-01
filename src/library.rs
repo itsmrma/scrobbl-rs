@@ -689,7 +689,12 @@ async fn ensure_artwork_inner(
     if missing {
         return Ok(ArtworkFetch::Missing);
     }
-    let Ok(_capacity) = state.artwork_fetches.try_acquire() else {
+    let Ok(Ok(_capacity)) = tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        state.artwork_fetches.acquire(),
+    )
+    .await
+    else {
         return Ok(ArtworkFetch::Busy);
     };
     crate::artwork_sources::fetch_with_activity(state, &settings, kind, id, sources, activity).await
@@ -746,7 +751,7 @@ mod tests {
         // Simulate a slow download occupying the single optional catalogue slot.
         let _download = state.artwork_fetches.acquire().await.unwrap();
         let result = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
+            std::time::Duration::from_millis(2500),
             artwork(
                 State(state.clone()),
                 headers.clone(),
@@ -786,6 +791,65 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(cached.status(), axum::http::StatusCode::OK);
+    }
+    #[tokio::test]
+    async fn concurrent_requests_wait_briefly_for_capacity_rather_than_failing_immediately() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = crate::storage::open(directory.path()).await.unwrap();
+        let config = crate::config::Config {
+            port: 3210,
+            bind_ip: "127.0.0.1".parse().unwrap(),
+            external_origin: None,
+            data_dir: directory.path().into(),
+            sync_seconds: 120,
+            now_playing_seconds: 30,
+            import_limits: Default::default(),
+            api_snapshot_limits: Default::default(),
+            env_client_id: None,
+            env_client_secret: None,
+        };
+        let state = AppState::new(storage, config);
+        let token = auth::random_secret();
+        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
+            .bind(auth::digest(&token))
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artists(id,name,metadata_rank) VALUES('art1','Artist One',1)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO name_groups VALUES('g1','artists','artist','art1')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO name_group_members VALUES('artists','art1','g1','g1')")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        // Hold the single artwork capacity permit, but release it after 200ms.
+        let permit = state.artwork_fetches.clone().acquire_owned().await.unwrap();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            drop(permit);
+        });
+
+        struct EmptyLookup;
+        impl crate::artwork_sources::ImageLookup for EmptyLookup {
+            async fn lookup(
+                &self,
+                _provider: crate::artwork_settings::ImageProvider,
+                _kind: &str,
+                _id: &str,
+            ) -> Result<crate::artwork_sources::Lookup> {
+                Ok(crate::artwork_sources::Lookup::Missing)
+            }
+        }
+        let res = ensure_artwork_inner(&state, "artists", "g1", &EmptyLookup, None, false)
+            .await
+            .unwrap();
+        assert_eq!(res, ArtworkFetch::Missing);
     }
     #[tokio::test]
     async fn artwork_wait_or_503_does_not_poison_artwork_misses() {

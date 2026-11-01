@@ -99,7 +99,11 @@ pub async fn read(conn: &mut SqliteConnection) -> Result<ArtworkSettings> {
                 serde_json::from_str(&value).map_err(|_| AppError::Internal)?;
             let defaults = ArtworkSettings::default();
             for default_pref in defaults.providers {
-                if !s.providers.iter().any(|p| p.provider == default_pref.provider) {
+                if !s
+                    .providers
+                    .iter()
+                    .any(|p| p.provider == default_pref.provider)
+                {
                     s.providers.push(default_pref);
                 }
             }
@@ -195,8 +199,13 @@ mod tests {
     #[tokio::test]
     async fn read_appends_missing_itunes_provider_for_backward_compatibility() {
         use sqlx::Connection;
-        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:").await.unwrap();
-        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").execute(&mut conn).await.unwrap();
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .execute(&mut conn)
+            .await
+            .unwrap();
 
         // Old settings JSON with only 3 providers (CAA disabled, MB enabled, Wikidata disabled)
         let legacy_json = r#"{"version":2,"providers":[{"provider":"cover_art_archive","enabled":false},{"provider":"musicbrainz_image","enabled":true},{"provider":"wikidata","enabled":false}]}"#;
@@ -211,7 +220,10 @@ mod tests {
         assert_eq!(loaded.providers.len(), 4);
         assert_eq!(loaded.providers[0].provider, ImageProvider::CoverArtArchive);
         assert!(!loaded.providers[0].enabled);
-        assert_eq!(loaded.providers[1].provider, ImageProvider::MusicbrainzImage);
+        assert_eq!(
+            loaded.providers[1].provider,
+            ImageProvider::MusicbrainzImage
+        );
         assert!(loaded.providers[1].enabled);
         assert_eq!(loaded.providers[2].provider, ImageProvider::Wikidata);
         assert!(!loaded.providers[2].enabled);
@@ -228,8 +240,14 @@ mod tests {
         let missing = ArtworkSettings {
             version: 0,
             providers: vec![
-                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: true },
-                ProviderPreference { provider: ImageProvider::MusicbrainzImage, enabled: true },
+                ProviderPreference {
+                    provider: ImageProvider::CoverArtArchive,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::MusicbrainzImage,
+                    enabled: true,
+                },
             ],
         };
         assert!(missing.validate().is_err());
@@ -237,10 +255,22 @@ mod tests {
         let duplicate = ArtworkSettings {
             version: 0,
             providers: vec![
-                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: true },
-                ProviderPreference { provider: ImageProvider::CoverArtArchive, enabled: false },
-                ProviderPreference { provider: ImageProvider::MusicbrainzImage, enabled: true },
-                ProviderPreference { provider: ImageProvider::Wikidata, enabled: true },
+                ProviderPreference {
+                    provider: ImageProvider::CoverArtArchive,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::CoverArtArchive,
+                    enabled: false,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::MusicbrainzImage,
+                    enabled: true,
+                },
+                ProviderPreference {
+                    provider: ImageProvider::Wikidata,
+                    enabled: true,
+                },
             ],
         };
         assert!(duplicate.validate().is_err());
