@@ -229,7 +229,7 @@ The typography is native, neutral, and crisp. Headings feature tight negative le
 ### Spatial Model & Responsive Rhythm
 The application uses a responsive shell with an adjustable left sidebar and a flexible content canvas.
 - **Sidebar Width:** Variable between `216px` and `360px` (stored in preferences, default `248px`), or collapsed to a `64px` icon dock.
-- **Mobile Drawer:** Below `900px`, the sidebar turns into a sliding overlay drawer with an animated backdrop (`.sidebar-backdrop`).
+- **Mobile Drawer:** Below `900px`, the sidebar turns into a sliding overlay modal drawer with an animated backdrop (`.sidebar-backdrop`). The drawer enforces continuous vertical scrollability (`overflow-y: auto; -webkit-overflow-scrolling: touch;`) with non-shrinking navigation and footer sections (`flex-shrink: 0;`), preventing content truncation on short viewports. It preserves full touch accessibility (minimum 44px target, `opacity: 1`) and expanding capability for Now Playing artwork (`.now-expand-toggle`, `.now-artwork-expansion`).
 - **Main Canvas:** `padding-top: 36px; min-height: 75vh;` with bottom breathing room.
 
 ### Spacing Scale
@@ -244,8 +244,8 @@ The spacing scale is strictly arithmetic and predictable:
 - `36px`: Major section / page-level separation
 
 ### Breakpoints
-- **Mobile (`max-width: 600px`):** Single-column forms, 2-column music card grids, stacked music header, reduced chart bar spacing.
-- **Tablet / Responsive Drawer (`max-width: 900px`):** Sidebar transitions from fixed column to modal drawer with hamburger toggle.
+- **Mobile / Baseline Mobile (`max-width: 600px`):** Single-column flow (`grid-template-columns: 1fr;`), absolute prevention of horizontal scrolling (`overflow-x: hidden; min-width: 0;`), left-aligned stat values and numbers stacked directly below labels (`.stat > strong` directly below `.stat > span`), and vertical stacking of action toolbars, filters, and forms with 100% width and minimum 44px touch targets.
+- **Tablet / Responsive Drawer (`max-width: 900px`):** Sidebar transitions from fixed column to modal drawer with hamburger toggle and continuous vertical scrolling.
 - **Wide Desktop (`min-width: 1100px`):** Expanded multi-column listening history and side-by-side rankings.
 
 ### Grid Systems
@@ -391,18 +391,22 @@ YouTube-style animated placeholders for zero-layout-shift loading:
 
 To ensure that the future customizable dashboard grid and new widgets look 100% native:
 
-1. **Widget Container Contract:**
+1. **Widget Container Contract & Container Reflow (Isolamento a container del widget):**
    - Every widget must be an `<article className="panel padded widget-[name]">`.
    - Grid cells should use CSS Grid or Subgrid with consistent `gap: 18px;`.
-   - If a widget supports resizing (1x1, 2x1, 2x2, full-width), internal layouts should adapt using CSS Container Queries (`container-type: inline-size;`).
+   - All internal widget responsiveness **must** be achieved via CSS Container Queries (`@container`) with `container-type: inline-size;`. Internal typographies, stat layouts, metrics, and secondary grids adapt strictly to the widget's allocated width, never relying on global viewport media queries (`@media`).
+   - At narrow container widths (`@container (max-width: 600px)`), multi-column widget internals collapse to a single-column layout with natural left-aligned stat metrics and fluid heights (`min-height: auto;`).
 2. **Widget Header Uniformity:**
    - Standard header: `<div className="panel-title"><h2>Widget Title</h2> ... </div>`.
-   - Action controls in headers should use `<Icon>more_vert</Icon>` or `<Icon>drag_indicator</Icon>` styled as `.icon-button`.
+   - Action controls in headers should use `<Icon>more_vert</Icon>` or `<Icon>drag_indicator</Icon>` styled as `.icon-button` with at least 44px touch targets.
 3. **Empty & Error States:**
    - Empty state: `<div className="empty"><p>No listening data in this period.</p></div>`.
    - Error state: `<ErrorText>{errorMessage}</ErrorText>`.
 4. **Loading States:**
    - Never show generic spinning loaders. Provide a bespoke skeleton loader composed of `<SkeletonBlock>` matching the widget's final geometry.
+5. **Mobile Dashboard Edit Mode:**
+   - When editing the dashboard layout on mobile screens (`max-width: 600px`), multi-column span selectors (`.widget-span-button`, `.span-control`) are strictly hidden (`display: none !important;`) because the underlying grid is already restricted to a single column.
+   - Edit toolbar actions and widget period override controls must expand to 100% width with compliant 44px touch targets (`min-width: 44px; min-height: 44px;`), while individual widget remove buttons align to the right edge.
 
 ---
 
@@ -411,7 +415,10 @@ To ensure that the future customizable dashboard grid and new widgets look 100% 
 ### Do:
 - **Do** use `var(--surface)`, `var(--surface-raised)`, `var(--border)`, and `var(--bg)` exclusively for containers and borders.
 - **Do** wrap primary page headings with the signature accent dot: `<h1>Title<span className="accent">.</span></h1>`.
-- **Do** ensure interactive controls have at least `min-height: 44px;` and `min-width: 44px;` for comfortable touch ergonomics.
+- **Do** isolate widget responsiveness using CSS Container Queries (`@container`) on `container-type: inline-size;` instead of relying on global viewport media queries.
+- **Do** ensure interactive controls have at least `min-height: 44px;` and `min-width: 44px;` for comfortable touch ergonomics across mobile and desktop.
+- **Do** maintain a strict single-column flow with left-aligned values directly below labels on viewports ≤ 600px (Baseline mobile).
+- **Do** ensure the mobile navigation drawer has continuous vertical scroll (`overflow-y: auto; -webkit-overflow-scrolling: touch;`) and accessible touch toggles for Now Playing expansion.
 - **Do** use `color-mix(in srgb, var(--accent) 9%, var(--surface))` for subtle interactive hover states on neutral items.
 - **Do** use `tabular-nums` for numeric counters, timestamps, durations, and rankings.
 - **Do** build skeleton loaders (`<SkeletonBlock>`) that mirror the exact height and layout of widget content.
@@ -420,7 +427,11 @@ To ensure that the future customizable dashboard grid and new widgets look 100% 
 ### Don't:
 - **Don't** add raw gray hex codes (`#111`, `#222`, `#eee`, `#888`) or CSS frameworks (Tailwind, Bootstrap); scrobbl.rs uses a cohesive pure CSS custom property architecture.
 - **Don't** use ambient shadows on resting cards or panels. Reserve shadows strictly for overlays, dropdowns, and dialogs.
+- **Don't** use global viewport media queries to alter internal widget layouts; use `@container` queries instead.
+- **Don't** allow horizontal page overflow or scrolling on mobile viewports.
+- **Don't** display multi-column span selectors in dashboard edit mode on mobile screens (≤ 600px).
+- **Don't** place numeric stat values on the right or horizontal opposite of labels on mobile; keep them left-aligned and stacked below labels.
+- **Don't** create buttons, select triggers, or actionable controls smaller than 44px in either dimension (`min-height: 44px; min-width: 44px;`).
 - **Don't** introduce external font links or remote CDN scripts. All icons must use the local `Material Icons Outlined` font.
 - **Don't** use spinning circle loaders for content panels; always use shimmer skeletons.
-- **Don't** create buttons or actionable controls smaller than 44px in either dimension.
 - **Don't** let long music titles break the layout; always use `overflow-wrap: anywhere` or ellipsis with `min-width: 0`.
