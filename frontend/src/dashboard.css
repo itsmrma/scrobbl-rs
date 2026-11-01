@@ -982,8 +982,15 @@ dialog.widget-catalog-dialog {
 .dashboard-widget .widget-totals .stats-grid .stat {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   min-height: 112px;
+}
+.dashboard-widget .widget-totals .stats-grid .stat > span,
+.dashboard-widget .widget-totals .stats-grid .stat > strong,
+.dashboard-widget .widget-totals .stats-grid .stat > small {
+  text-align: left;
 }
 .dashboard-widget .widget-totals .time-composition {
   height: 36px;
@@ -1017,8 +1024,31 @@ dialog.widget-catalog-dialog {
   }
 }
 @container (max-width: 600px) {
+  .widget-totals .stats-grid {
+    grid-template-columns: 1fr;
+  }
   .dashboard-widget .widget-totals .stats-grid .stat {
-    min-height: 96px;
+    min-height: auto;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .dashboard-widget .widget-totals .time-composition {
+    height: auto;
+  }
+  .widget-totals-note {
+    height: auto;
+  }
+  .discovery-ratio-metrics {
+    justify-content: flex-start;
+    align-items: flex-start;
+    text-align: left;
+    gap: 8px 16px;
+  }
+  .dashboard-widget .discovery-ratio-metrics .stat {
+    align-items: baseline;
+    justify-content: flex-start;
+    text-align: left;
   }
 }
 
