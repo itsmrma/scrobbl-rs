@@ -5240,15 +5240,44 @@ dialog {
   }
 }
 @media (max-width: 600px) {
+  .overview-heading {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+  .overview-heading-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .overview-heading-actions > .button,
+  .overview-heading-actions > button {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
   .overview-heading .filters {
     width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
   }
   .overview-heading .filters label {
-    flex: 1;
-    min-width: 100px;
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
   }
   .overview-heading .filters .select-control {
+    width: 100%;
     min-width: 0;
+  }
+  .overview-heading .filters .select-trigger {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
   }
   .listen-row.listen-context-albums {
     grid-template-columns: minmax(0, 1fr) 70px;
