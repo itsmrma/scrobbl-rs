@@ -84,6 +84,7 @@ function ArtworkProviderStatus({ params }: { params: unknown }) {
     cover_art_archive: "MusicBrainz → Cover Art Archive",
     musicbrainz_image: "MusicBrainz → Commons image",
     wikidata: "MusicBrainz → Wikidata → Commons",
+    itunes: "Apple iTunes / Deezer fallback",
   };
   return <p>Currently using: {names[provider] || provider}</p>;
 }
@@ -467,6 +468,26 @@ export function Activities({
   const toast = useToast();
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const handleBackfill = async () => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const res = await api.backfillArtwork();
+      await refresh();
+      window.dispatchEvent(new Event("artwork-cache-changed"));
+      toast(
+        res.queued > 0
+          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
+          : "No missing artwork found to retrieve.",
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setActionError(msg);
+      toast(msg, true);
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     setActionError("");
     setIssuesPage(0);
@@ -741,6 +762,15 @@ export function Activities({
                                 : "Retry import"}
                     </button>
                   ))}
+                  {job.kind === "artwork" && !isActive(job) && (
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={handleBackfill}
+                    >
+                      Refresh missing artwork
+                    </button>
+                  )}
                 </div>
               )}
               {detail.data && detail.data.issues?.length > 0 && (
@@ -870,29 +900,39 @@ export function Activities({
           <ArtworkWork work={artworkWork} />
           <div className="activities-toolbar">
             <h2>Activity history</h2>
-            <label>
-              Activity type
-              <Select
-                aria-label="Activity type"
-                value={kind}
-                onChange={(value) => {
-                  setKind(value);
-                  setListPage(0);
-                }}
+            <div className="activities-toolbar-actions">
+              <button
+                type="button"
+                className="button secondary"
+                disabled={busy}
+                onClick={handleBackfill}
               >
-                <option value="">All activities</option>
-                <option value="spotify_import">Spotify imports</option>
-                <option value="spotify_collection">Spotify collection</option>
-                <option value="listenbrainz_file">
-                  ListenBrainz file imports
-                </option>
-                <option value="listenbrainz_fetch">
-                  ListenBrainz public fetches
-                </option>
-                <option value="calendar">Calendar</option>
-                <option value="artwork">Artwork downloads</option>
-              </Select>
-            </label>
+                Refresh missing artwork
+              </button>
+              <label>
+                Activity type
+                <Select
+                  aria-label="Activity type"
+                  value={kind}
+                  onChange={(value) => {
+                    setKind(value);
+                    setListPage(0);
+                  }}
+                >
+                  <option value="">All activities</option>
+                  <option value="spotify_import">Spotify imports</option>
+                  <option value="spotify_collection">Spotify collection</option>
+                  <option value="listenbrainz_file">
+                    ListenBrainz file imports
+                  </option>
+                  <option value="listenbrainz_fetch">
+                    ListenBrainz public fetches
+                  </option>
+                  <option value="calendar">Calendar</option>
+                  <option value="artwork">Artwork downloads</option>
+                </Select>
+              </label>
+            </div>
           </div>
           <ErrorText>{history.error}</ErrorText>
           {listLoading ? (

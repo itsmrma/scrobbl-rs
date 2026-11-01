@@ -25,6 +25,7 @@ async function pump() {
     busy = false;
   }
 }
+const MAX_RETRIES = 60;
 // A visible image hands the download to the session. Unmounting a card,
 // scrolling away or opening Activities must not discard queued work.
 export function queueArtwork(url: string, priority = false): Promise<Blob> {
@@ -47,6 +48,7 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
         }
       : { total: 1, loaded: 0, failed: 0, pending: 1 },
   );
+  let attempts = 0;
   const run = async () => {
     let loaded = false;
     let retry = false;
@@ -58,12 +60,16 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
       );
       resolve(blob);
     } catch (error) {
-      if (error instanceof ArtworkRetry && attempts++ < 3) {
+      if (error instanceof ArtworkRetry && attempts++ < MAX_RETRIES) {
         retry = true;
+        const delay =
+          typeof error.delayMs === "number" && error.delayMs > 0
+            ? error.delayMs
+            : 1000;
         setTimeout(() => {
           queue.push(run);
           void pump();
-        }, error.delayMs);
+        }, delay);
       } else reject(error);
     } finally {
       if (!retry) {
@@ -77,7 +83,6 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
       }
     }
   };
-  let attempts = 0;
   if (priority) queue.unshift(run);
   else queue.push(run);
   void pump();

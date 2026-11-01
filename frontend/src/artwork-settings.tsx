@@ -79,6 +79,23 @@ const providers: Record<
       ],
     ],
   },
+  itunes: {
+    name: "Apple iTunes / Deezer fallback",
+    coverage:
+      "Public fallback provider for missing album covers (via Apple iTunes Search API) and artist portraits (via Deezer public API). Covers Japanese/romaji releases and digital singles.",
+    access: "No account or API key required.",
+    limits:
+      "Direct HTTPS requests with standard rate limiting. Unavailable images are skipped rather than failing lookups.",
+    rights:
+      "Cover and artist artwork may be copyrighted by original rights holders; images are used for personal library indexing and display.",
+    sources: [
+      [
+        "iTunes Search API",
+        "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/",
+      ],
+      ["Deezer API", "https://developers.deezer.com/api"],
+    ],
+  },
 };
 
 function ProviderForm({
@@ -228,6 +245,54 @@ function ProviderForm({
     </form>
   );
 }
+
+function ArtworkBackfillSection() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const toast = useToast();
+
+  return (
+    <section className="panel padded artwork-backfill-panel">
+      <h2>Refresh missing artwork</h2>
+      <p>
+        Re-evaluate all library artists and albums that are currently missing
+        covers or artist portraits. This clears temporary lookup misses and
+        enqueues background downloads using your enabled providers without
+        blocking navigation.
+      </p>
+      <ErrorText>{error}</ErrorText>
+      <div className="form-actions">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              const res = await api.backfillArtwork();
+              window.dispatchEvent(new Event("artwork-cache-changed"));
+              toast(
+                res.queued > 0
+                  ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
+                  : "No missing artwork found to retrieve.",
+              );
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              setError(msg);
+              toast(msg, true);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {busy ? "Refreshing…" : "Refresh missing artwork"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function ArtworkProviderSettings() {
   const [revision, setRevision] = useState(0);
   const settings = useLoad(
@@ -238,11 +303,14 @@ export function ArtworkProviderSettings() {
     <>
       <ErrorText>{settings.error}</ErrorText>
       {settings.data ? (
-        <ProviderForm
-          key={`${settings.data.version}:${revision}`}
-          initial={settings.data}
-          reload={() => setRevision((v) => v + 1)}
-        />
+        <>
+          <ProviderForm
+            key={`${settings.data.version}:${revision}`}
+            initial={settings.data}
+            reload={() => setRevision((v) => v + 1)}
+          />
+          <ArtworkBackfillSection />
+        </>
       ) : (
         !settings.error && (
           <SkeletonCardList count={3} label="Loading image providers…" />

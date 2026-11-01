@@ -5,6 +5,8 @@ use crate::{
     jobs::{self, Job},
     library::{self, ArtworkFetch},
 };
+use axum::{Json, extract::State, http::HeaderMap};
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::time::Duration;
 
@@ -72,6 +74,73 @@ pub(crate) async fn enqueue_missing(conn: &mut sqlx::SqliteConnection) -> Result
         .await?;
     }
     Ok(())
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BackfillResult {
+    pub ok: bool,
+    pub queued: i64,
+    pub queued_albums: i64,
+    pub queued_artists: i64,
+}
+
+pub async fn backfill(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<BackfillResult>> {
+    auth::require_write(&state, &headers).await?;
+    crate::library::writable(&state).await?;
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision")
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
+
+    // Selectively clear negative cache for entities lacking artwork
+    sqlx::query(
+        "DELETE FROM artwork_misses WHERE entity_id NOT IN (SELECT entity_id FROM artwork WHERE bytes IS NOT NULL)",
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // Reset pending and failed members on existing artwork jobs, as well as skipped members
+    sqlx::query(
+        "UPDATE job_members SET state='pending', artwork_retry_at_ms=0, artwork_attempts=0, error_code=NULL, processed=0, skipped=0 \
+         WHERE job_id IN (SELECT id FROM jobs WHERE kind='artwork' AND state IN ('queued','running','waiting')) \
+           AND (state='pending' OR state='failed' OR (state='completed' AND skipped=1))"
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    // Enqueue all missing artwork entities
+    enqueue_missing(&mut tx).await?;
+
+    // Unpause / wake the background artwork job
+    sqlx::query(
+        "UPDATE jobs SET retry_at_ms=0, error_code=CASE WHEN error_code='artwork_paused' THEN 'artwork_pacing' ELSE error_code END \
+         WHERE kind='artwork' AND state='waiting'"
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let (queued, queued_albums, queued_artists): (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            COUNT(*), \
+            COALESCE(SUM(CASE WHEN jm.kind='albums' THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN jm.kind='artists' THEN 1 ELSE 0 END), 0) \
+         FROM job_members jm JOIN jobs j ON j.id=jm.job_id \
+         WHERE j.kind='artwork' AND jm.state='pending' AND j.state IN ('queued','running','waiting')"
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(Json(BackfillResult {
+        ok: true,
+        queued,
+        queued_albums,
+        queued_artists,
+    }))
 }
 
 async fn wait(state: &AppState, lease: &Job, code: &str, delay: i64) -> Result<()> {
@@ -376,7 +445,7 @@ mod tests {
             ),
             ("completed", 2, 1, 1)
         );
-        assert_eq!(sources.calls.lock().unwrap().len(), 2);
+        assert_eq!(sources.calls.lock().unwrap().len(), 3);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
                 .fetch_one(&state.db)
@@ -460,7 +529,8 @@ mod tests {
             vec![
                 ("wikidata", false),
                 ("cover_art_archive", true),
-                ("musicbrainz_image", false)
+                ("musicbrainz_image", false),
+                ("itunes", true),
             ]
         );
         assert_eq!(
@@ -797,5 +867,122 @@ mod tests {
         let complete = state.storage.job(&id).await.unwrap();
         assert_eq!(complete.processed, 2);
         assert_eq!(complete.duplicates, 2);
+    }
+
+    async fn owner_headers(state: &AppState) -> axum::http::HeaderMap {
+        let cookie = auth::random_secret();
+        sqlx::query("INSERT INTO sessions(digest,csrf,expires_at_ms) VALUES (?,'csrf',?)")
+            .bind(auth::digest(&cookie))
+            .bind(auth::now_ms() + 60000)
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "cookie",
+            axum::http::HeaderValue::from_str(&format!("scrobbl_session={cookie}")).unwrap(),
+        );
+        headers
+    }
+
+    #[tokio::test]
+    async fn backfill_clears_misses_resets_jobs_and_enqueues_missing_artwork() {
+        let (_dir, state) = setup().await;
+        let mut headers = owner_headers(&state).await;
+        headers.insert("x-csrf-token", axum::http::HeaderValue::from_static("csrf"));
+
+        let now = auth::now_ms();
+        // Insert an entity that has artwork and one that lacks artwork
+        sqlx::query("INSERT INTO artwork(kind, entity_id, source, bytes, mime, checked_at_ms) VALUES ('artists', 'has-art', 'custom', X'89504E47', 'image/png', ?)")
+            .bind(now)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artwork_misses VALUES ('artists', 'has-art', 0, ?)")
+            .bind(now + 86400000)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artwork_misses VALUES ('artists', 'some-artist', 0, ?)")
+            .bind(now + 86400000)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            2
+        );
+
+        sqlx::query("INSERT INTO jobs(id, kind, filename, state, created_at_ms, updated_at_ms, inventory_complete, phase, error_code, retry_at_ms) VALUES ('job-1', 'artwork', 'Download library artwork', 'waiting', ?, ?, 1, 'artwork', 'artwork_paused', ?)")
+            .bind(now)
+            .bind(now)
+            .bind(now + 60000)
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        let res = backfill(axum::extract::State(state.clone()), headers)
+            .await
+            .unwrap()
+            .0;
+        assert!(res.ok);
+        assert!(res.queued > 0);
+        assert_eq!(res.queued, res.queued_albums + res.queued_artists);
+
+        // 'some-artist' lacked artwork, so it was deleted; 'has-art' had artwork, so it remained
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            1
+        );
+        let remaining_miss: String = sqlx::query_scalar("SELECT entity_id FROM artwork_misses")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(remaining_miss, "has-art");
+
+        let (retry_at, err_code): (Option<i64>, Option<String>) =
+            sqlx::query_as("SELECT retry_at_ms, error_code FROM jobs WHERE id='job-1'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(retry_at, Some(0));
+        assert_ne!(err_code.as_deref(), Some("artwork_paused"));
+
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn backfill_requires_write_and_rejects_maintenance() {
+        let (_dir, state) = setup().await;
+        let empty_headers = axum::http::HeaderMap::new();
+
+        assert!(
+            backfill(axum::extract::State(state.clone()), empty_headers)
+                .await
+                .is_err()
+        );
+
+        let mut headers = owner_headers(&state).await;
+        headers.insert("x-csrf-token", axum::http::HeaderValue::from_static("csrf"));
+        sqlx::query("UPDATE archive_state SET maintenance=1 WHERE singleton=1")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
+        let err = backfill(axum::extract::State(state.clone()), headers)
+            .await
+            .unwrap_err();
+        match err {
+            AppError::Conflict(_) => {}
+            other => panic!("expected AppError::Conflict, got {other:?}"),
+        }
+
+        state.storage.close().await;
     }
 }
