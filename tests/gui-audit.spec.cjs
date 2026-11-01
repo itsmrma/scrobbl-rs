@@ -587,80 +587,86 @@ test.describe("now playing disclosure", () => {
       }),
     );
 
-    // Test on mobile viewport (< 600px)
-    await page.setViewportSize({ width: 390, height: 667 });
     await login(page);
 
-    // Open navigation drawer
-    const openMenuBtn = page.getByRole("button", {
-      name: "Open navigation",
-      exact: true,
-    });
-    await openMenuBtn.click();
+    // Test on both mobile (< 600px) and tablet/drawer (< 900px) viewports
+    for (const width of [390, 768]) {
+      await page.setViewportSize({ width, height: 667 });
+      await page.evaluate(() => document.fonts.ready);
 
-    const sidebar = page.locator(".sidebar");
-    await expect(sidebar).toBeVisible();
+      // Open navigation drawer
+      const openMenuBtn = page.getByRole("button", {
+        name: "Open navigation",
+        exact: true,
+      });
+      await openMenuBtn.click();
 
-    const widget = sidebar.locator(".sidebar-now");
-    await expect(
-      widget.getByRole("link", { name: "Track with artwork" }),
-    ).toBeVisible();
+      const sidebar = page.locator(".sidebar");
+      await expect(sidebar).toBeVisible();
 
-    // The artwork expansion toggle should be visible and have touch target >= 44x44
-    const artworkToggle = widget.getByRole("button", {
-      name: "Expand now playing artwork",
-      exact: true,
-    });
-    await expect(artworkToggle).toBeVisible();
-    const toggleBox = await artworkToggle.boundingBox();
-    expect(toggleBox.width).toBeGreaterThanOrEqual(44);
-    expect(toggleBox.height).toBeGreaterThanOrEqual(44);
+      const widget = sidebar.locator(".sidebar-now");
+      await expect(
+        widget.getByRole("link", { name: "Track with artwork" }),
+      ).toBeVisible();
 
-    // Expand the artwork
-    await artworkToggle.click();
+      // The artwork expansion toggle should be visible and have touch target >= 44x44
+      const artworkToggle = widget.getByRole("button", {
+        name: "Expand now playing artwork",
+        exact: true,
+      });
+      await expect(artworkToggle).toBeVisible();
+      const toggleBox = await artworkToggle.boundingBox();
+      expect(Math.round(toggleBox.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(toggleBox.height)).toBeGreaterThanOrEqual(44);
 
-    // Check expanded artwork is visible and large cover is shown
-    await expect(
-      widget.getByRole("button", {
+      // Expand the artwork
+      await artworkToggle.click();
+
+      // Check expanded artwork is visible and large cover is shown
+      await expect(
+        widget.getByRole("button", {
+          name: "Collapse now playing artwork",
+          exact: true,
+        }),
+      ).toBeVisible();
+      const expandedCover = widget.locator(
+        ".now-artwork-expansion .cover.large",
+      );
+      await expect(expandedCover).toBeVisible();
+      const coverBox = await expandedCover.boundingBox();
+      expect(coverBox.width).toBeGreaterThan(150);
+
+      // Verify sidebar has vertical scroll (scrollHeight > clientHeight) and scrolls
+      const canScroll = await sidebar.evaluate((el) => {
+        return el.scrollHeight > el.clientHeight;
+      });
+      expect(canScroll).toBe(true);
+
+      // Scroll down inside the sidebar
+      await sidebar.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      const scrolledTop = await sidebar.evaluate((el) => el.scrollTop);
+      expect(scrolledTop).toBeGreaterThan(0);
+
+      // Ensure navigation links remain reachable
+      const settingsLink = sidebar.getByRole("link", { name: "Settings" });
+      await expect(settingsLink).toBeAttached();
+
+      // Collapse artwork back
+      const collapseToggle = widget.getByRole("button", {
         name: "Collapse now playing artwork",
         exact: true,
-      }),
-    ).toBeVisible();
-    const expandedCover = widget.locator(".now-artwork-expansion .cover.large");
-    await expect(expandedCover).toBeVisible();
-    const coverBox = await expandedCover.boundingBox();
-    expect(coverBox.width).toBeGreaterThan(150);
+      });
+      await collapseToggle.click();
+      await expect(expandedCover).toBeHidden();
 
-    // Verify sidebar has vertical scroll (scrollHeight > clientHeight) and scrolls
-    const canScroll = await sidebar.evaluate((el) => {
-      return el.scrollHeight > el.clientHeight;
-    });
-    expect(canScroll).toBe(true);
-
-    // Scroll down inside the sidebar
-    await sidebar.evaluate((el) => {
-      el.scrollTop = el.scrollHeight;
-    });
-    const scrolledTop = await sidebar.evaluate((el) => el.scrollTop);
-    expect(scrolledTop).toBeGreaterThan(0);
-
-    // Ensure navigation links remain reachable
-    const settingsLink = sidebar.getByRole("link", { name: "Settings" });
-    await expect(settingsLink).toBeAttached();
-
-    // Collapse artwork back
-    const collapseToggle = widget.getByRole("button", {
-      name: "Collapse now playing artwork",
-      exact: true,
-    });
-    await collapseToggle.click();
-    await expect(expandedCover).toBeHidden();
-
-    // Close the drawer
-    await sidebar
-      .getByRole("button", { name: "Close navigation", exact: true })
-      .click();
-    await expect(sidebar).toBeHidden();
+      // Close the drawer
+      await sidebar
+        .getByRole("button", { name: "Close navigation", exact: true })
+        .click();
+      await expect(sidebar).toBeHidden();
+    }
   });
 });
 
@@ -5072,7 +5078,7 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
   await page.emulateMedia({ reducedMotion: "reduce" });
   await login(page);
 
-  for (const width of [320, 375, 390]) {
+  for (const width of [320, 375, 390, 430]) {
     await page.setViewportSize({ width, height: 900 });
     await page.evaluate(() => document.fonts.ready);
 
@@ -5241,4 +5247,219 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
   await cancelBtn.click();
   await expect(editToolbar).toBeHidden();
   await expect(page.locator(".dashboard-widget.editing")).toHaveCount(0);
+});
+
+test("mobile baseline: ranking rows and recent listen entries preserve clear spacing without overlap on 320px (#133)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.evaluate(() => document.fonts.ready);
+
+  // 1. Check absence of horizontal overflow
+  const hasHorizontalOverflow = await page.evaluate(() => {
+    return document.documentElement.scrollWidth > window.innerWidth + 1;
+  });
+  expect(hasHorizontalOverflow).toBeFalsy();
+
+  // Helper to check 2D AABB geometric collision between two bounding rects
+  const checkNoOverlap = (boxA, boxB, descA, descB) => {
+    expect(boxA).not.toBeNull();
+    expect(boxB).not.toBeNull();
+    const overlaps =
+      boxA.left < boxB.right - 0.5 &&
+      boxA.right > boxB.left + 0.5 &&
+      boxA.top < boxB.bottom - 0.5 &&
+      boxA.bottom > boxB.top + 0.5;
+    expect(
+      overlaps,
+      `${descA} must not collide or overlap with ${descB}`,
+    ).toBeFalsy();
+  };
+
+  // Check ranking rows in overview rankings (.overview-rankings .ranking-row)
+  const rankingRows = page.locator(".overview-rankings .ranking-row");
+  await expect(rankingRows.first()).toBeVisible();
+  const rankRowCount = await rankingRows.count();
+  expect(rankRowCount).toBeGreaterThan(0);
+
+  for (let i = 0; i < rankRowCount; i++) {
+    const row = rankingRows.nth(i);
+    await expect(row).toBeVisible();
+
+    const rowData = await row.evaluate((el) => {
+      const rankNum = el.querySelector(".rank-number");
+      const cover = el.querySelector(".cover");
+      const rankName = el.querySelector(".rank-name");
+      const nameLink = rankName?.querySelector(".music-item-link, a");
+      const subtitle = rankName?.querySelector("small");
+      const rankVal = el.querySelector(".rank-value");
+      const plays = rankVal?.querySelector(".rank-plays");
+      const time = rankVal?.querySelector(".rank-time");
+
+      const toBox = (node) => {
+        if (!node) return null;
+        const r = node.getBoundingClientRect();
+        return {
+          top: r.top,
+          bottom: r.bottom,
+          left: r.left,
+          right: r.right,
+          width: r.width,
+          height: r.height,
+        };
+      };
+
+      return {
+        rankNumBox: toBox(rankNum),
+        coverBox: toBox(cover),
+        rankNameBox: toBox(rankName),
+        nameLinkBox: toBox(nameLink),
+        subtitleBox: toBox(subtitle),
+        rankValBox: toBox(rankVal),
+        playsBox: toBox(plays),
+        timeBox: toBox(time),
+      };
+    });
+
+    const {
+      rankNumBox,
+      coverBox,
+      rankNameBox,
+      nameLinkBox,
+      subtitleBox,
+      rankValBox,
+      playsBox,
+      timeBox,
+    } = rowData;
+
+    expect(rankNumBox).not.toBeNull();
+    expect(rankNameBox).not.toBeNull();
+    expect(rankValBox).not.toBeNull();
+
+    // Rank number is to the left of rank name / value
+    expect(rankNumBox.right).toBeLessThanOrEqual(rankNameBox.left + 1);
+    checkNoOverlap(
+      rankNumBox,
+      rankNameBox,
+      `Rank number in row ${i}`,
+      `Rank name in row ${i}`,
+    );
+    checkNoOverlap(
+      rankNumBox,
+      rankValBox,
+      `Rank number in row ${i}`,
+      `Rank value in row ${i}`,
+    );
+
+    if (coverBox && coverBox.width > 0) {
+      // Cover is between rank number and rank name
+      expect(rankNumBox.right).toBeLessThanOrEqual(coverBox.left + 1);
+      expect(coverBox.right).toBeLessThanOrEqual(rankNameBox.left + 1);
+      checkNoOverlap(
+        coverBox,
+        rankNameBox,
+        `Cover in row ${i}`,
+        `Rank name in row ${i}`,
+      );
+      checkNoOverlap(
+        coverBox,
+        rankValBox,
+        `Cover in row ${i}`,
+        `Rank value in row ${i}`,
+      );
+    }
+
+    // Rank name is vertically stacked above rank value
+    expect(rankNameBox.bottom).toBeLessThanOrEqual(rankValBox.top + 1);
+    checkNoOverlap(
+      rankNameBox,
+      rankValBox,
+      `Rank name in row ${i}`,
+      `Rank value in row ${i}`,
+    );
+
+    // Inside rank name: name link and subtitle
+    if (nameLinkBox && subtitleBox && subtitleBox.height > 0) {
+      checkNoOverlap(
+        nameLinkBox,
+        subtitleBox,
+        `Name link in row ${i}`,
+        `Subtitle in row ${i}`,
+      );
+    }
+
+    // Inside rank value: plays and duration
+    if (playsBox && timeBox && timeBox.height > 0) {
+      checkNoOverlap(
+        playsBox,
+        timeBox,
+        `Play count in row ${i}`,
+        `Duration in row ${i}`,
+      );
+    }
+  }
+
+  // Check recent listen entries (.widget-recent-listens .listen-row)
+  const recentListens = page.locator(".widget-recent-listens .listen-row");
+  const listenCount = await recentListens.count();
+  if (listenCount > 0) {
+    for (let i = 0; i < listenCount; i++) {
+      const row = recentListens.nth(i);
+      await expect(row).toBeVisible();
+
+      const listenData = await row.evaluate((el) => {
+        const cover = el.querySelector(".cover");
+        const heading = el.querySelector(".listen-heading");
+        const headingLink = heading?.querySelector("a");
+        const artists = el.querySelector(".listen-artists");
+
+        const toBox = (node) => {
+          if (!node) return null;
+          const r = node.getBoundingClientRect();
+          return {
+            top: r.top,
+            bottom: r.bottom,
+            left: r.left,
+            right: r.right,
+            width: r.width,
+            height: r.height,
+          };
+        };
+
+        return {
+          coverBox: toBox(cover),
+          headingBox: toBox(heading),
+          headingLinkBox: toBox(headingLink),
+          artistsBox: toBox(artists),
+        };
+      });
+
+      const { coverBox, headingBox, headingLinkBox, artistsBox } = listenData;
+
+      if (coverBox && headingBox) {
+        // Cover is to the left of track heading
+        expect(coverBox.right).toBeLessThanOrEqual(headingBox.left + 1);
+        checkNoOverlap(
+          coverBox,
+          headingBox,
+          `Listen cover in entry ${i}`,
+          `Track heading in entry ${i}`,
+        );
+      }
+
+      if (headingBox && artistsBox && artistsBox.height > 0) {
+        // Track heading is above artist name with clear vertical stacking
+        expect(headingBox.bottom).toBeLessThanOrEqual(artistsBox.top + 1);
+        checkNoOverlap(
+          headingBox,
+          artistsBox,
+          `Track heading in entry ${i}`,
+          `Artist name in entry ${i}`,
+        );
+      }
+    }
+  }
 });

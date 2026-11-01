@@ -77,30 +77,6 @@
     min-height: 44px;
     justify-content: center;
   }
-  .widget-span-button,
-  .span-control {
-    display: none !important;
-  }
-  .widget-edit-controls {
-    align-items: center;
-    gap: 6px;
-  }
-  .widget-remove-button {
-    margin-left: auto;
-    order: 1;
-  }
-  .widget-period-override-control {
-    flex: 1 1 100%;
-    width: 100%;
-    order: 2;
-    margin-top: 2px;
-  }
-  .widget-period-override-control .select-control,
-  .widget-period-override-control .select-trigger {
-    width: 100%;
-    min-width: 44px;
-    min-height: 44px;
-  }
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
@@ -763,9 +739,9 @@ dialog.widget-catalog-dialog {
 .dashboard-widget .overview-rankings .ranking-row {
   display: grid;
   grid-template-columns: 2ch 38px minmax(0, 1fr);
-  grid-template-rows: 32px 28px 3px;
+  grid-template-rows: auto auto 3px;
   column-gap: 8px;
-  row-gap: 0;
+  row-gap: 4px;
   min-height: 80px;
   padding: 8px 0;
   border: 0;
@@ -1104,6 +1080,30 @@ dialog.widget-catalog-dialog {
   }
 }
 @container (max-width: 600px) {
+  .widget-span-button,
+  .span-control {
+    display: none !important;
+  }
+  .widget-edit-controls {
+    align-items: center;
+    gap: 6px;
+  }
+  .widget-remove-button {
+    margin-left: auto;
+    order: 1;
+  }
+  .widget-period-override-control {
+    flex: 1 1 100%;
+    width: 100%;
+    order: 2;
+    margin-top: 2px;
+  }
+  .widget-period-override-control .select-control,
+  .widget-period-override-control .select-trigger {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
   .widget-totals .stats-grid {
     grid-template-columns: 1fr;
   }
@@ -1184,7 +1184,8 @@ dialog.widget-catalog-dialog {
     height: 496px;
   }
   .dashboard-widget .overview-rankings .ranking-row {
-    grid-template-rows: 32px 44px 3px;
+    grid-template-rows: auto auto 3px;
+    row-gap: 4px;
     min-height: 96px;
   }
   .dashboard-widget .overview-rankings .rank-metrics {
