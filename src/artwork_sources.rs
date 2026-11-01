@@ -198,27 +198,27 @@ fn is_edition_keyword(content: &str) -> bool {
 }
 fn strip_edition_suffix(s: &str) -> &str {
     let trimmed = s.trim();
-    if trimmed.ends_with(')') {
-        if let Some(open) = trimmed.rfind('(') {
-            let inner = &trimmed[open + 1..trimmed.len() - 1];
-            if is_edition_keyword(inner) {
-                return trimmed[..open].trim_end();
-            }
+    if trimmed.ends_with(')')
+        && let Some(open) = trimmed.rfind('(')
+    {
+        let inner = &trimmed[open + 1..trimmed.len() - 1];
+        if is_edition_keyword(inner) {
+            return trimmed[..open].trim_end();
         }
     }
-    if trimmed.ends_with(']') {
-        if let Some(open) = trimmed.rfind('[') {
-            let inner = &trimmed[open + 1..trimmed.len() - 1];
-            if is_edition_keyword(inner) {
-                return trimmed[..open].trim_end();
-            }
+    if trimmed.ends_with(']')
+        && let Some(open) = trimmed.rfind('[')
+    {
+        let inner = &trimmed[open + 1..trimmed.len() - 1];
+        if is_edition_keyword(inner) {
+            return trimmed[..open].trim_end();
         }
     }
     for sep in [" - ", " – ", " — "] {
-        if let Some((base, suffix)) = trimmed.rsplit_once(sep) {
-            if is_edition_keyword(suffix) {
-                return base.trim_end();
-            }
+        if let Some((base, suffix)) = trimmed.rsplit_once(sep)
+            && is_edition_keyword(suffix)
+        {
+            return base.trim_end();
         }
     }
     trimmed
@@ -591,8 +591,6 @@ impl ImageLookup for PublicSources<'_> {
                 let clean_title = normalize_album_title(&name);
                 let (term, target_artist) = if artists.len() == 1 {
                     (format!("{clean_title} {}", artists[0]), artists[0].as_str())
-                } else if !artists.is_empty() {
-                    (clean_title.clone(), "")
                 } else {
                     (clean_title.clone(), "")
                 };
@@ -603,7 +601,8 @@ impl ImageLookup for PublicSources<'_> {
                 let Some(data) = json(state, &target).await? else {
                     return Ok(Lookup::Missing);
                 };
-                let Some(candidate) = find_itunes_album_candidate(&data, &name, target_artist) else {
+                let Some(candidate) = find_itunes_album_candidate(&data, &name, target_artist)
+                else {
                     return Ok(Lookup::Missing);
                 };
                 let upgraded = upgrade_itunes_artwork_url(candidate.artwork_url);
@@ -940,12 +939,10 @@ mod tests {
                     retry_at_ms: 99999999,
                 });
             }
-            if self.mode == "wait_then_itunes" {
-                if provider != ImageProvider::Itunes {
-                    return Err(AppError::ArtworkWait {
-                        retry_at_ms: 100000,
-                    });
-                }
+            if self.mode == "wait_then_itunes" && provider != ImageProvider::Itunes {
+                return Err(AppError::ArtworkWait {
+                    retry_at_ms: 100000,
+                });
             }
             if self.mode == "multiple_waits" {
                 let wait = if provider == ImageProvider::CoverArtArchive {
@@ -1089,10 +1086,15 @@ mod tests {
             calls: Mutex::new(vec![]),
             mode: "ambiguous_then_itunes",
         };
-        let result =
-            fetch_with(&state, &ArtworkSettings::default(), "artists", "artist-1", &fake)
-                .await
-                .unwrap();
+        let result = fetch_with(
+            &state,
+            &ArtworkSettings::default(),
+            "artists",
+            "artist-1",
+            &fake,
+        )
+        .await
+        .unwrap();
         assert_eq!(result, library::ArtworkFetch::Saved);
         assert_eq!(
             *fake.calls.lock().unwrap(),
@@ -1742,12 +1744,9 @@ mod tests {
         );
 
         // 2. With track artist "Imagine Dragons" matching because collection artistName is "Various Artists"
-        let candidate2 = find_itunes_album_candidate(
-            &json_data,
-            "Arcane League of Legends",
-            "Imagine Dragons",
-        )
-        .expect("matched Various Artists collection with track artist");
+        let candidate2 =
+            find_itunes_album_candidate(&json_data, "Arcane League of Legends", "Imagine Dragons")
+                .expect("matched Various Artists collection with track artist");
         assert_eq!(
             candidate2.artwork_url,
             "https://is1-ssl.mzstatic.com/image/thumb/100x100bb.jpg"
