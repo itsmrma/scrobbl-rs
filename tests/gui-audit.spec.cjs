@@ -4905,3 +4905,163 @@ test("long original metadata wraps inside music credits and source-entry control
     }
   }
 });
+
+test("totals widget lays out in a single column with left-aligned labels above values and no overlap on narrow viewports", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  for (const width of [320, 375, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+
+    const totalsWidget = page.locator(".widget-totals");
+    await expect(totalsWidget).toBeVisible();
+
+    const stats = totalsWidget.locator(".stats-grid .stat");
+    await expect(stats).toHaveCount(3);
+
+    // 1. Check absence of horizontal overflow
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    expect(hasHorizontalOverflow).toBeFalsy();
+
+    // 2. Check layout of each stat block
+    const statsData = await stats.evaluateAll((nodes) => {
+      return nodes.map((stat) => {
+        const statBox = stat.getBoundingClientRect();
+        const statStyle = window.getComputedStyle(stat);
+        const label = stat.querySelector(":scope > span");
+        const value = stat.querySelector(":scope > strong");
+        const small = stat.querySelector(":scope > small");
+
+        const labelBox = label ? label.getBoundingClientRect() : null;
+        const valueBox = value ? value.getBoundingClientRect() : null;
+        const smallBox = small ? small.getBoundingClientRect() : null;
+
+        const labelStyle = label ? window.getComputedStyle(label) : null;
+        const valueStyle = value ? window.getComputedStyle(value) : null;
+
+        return {
+          statBox: {
+            top: statBox.top,
+            bottom: statBox.bottom,
+            left: statBox.left,
+            right: statBox.right,
+            width: statBox.width,
+          },
+          statStyle: {
+            display: statStyle.display,
+            flexDirection: statStyle.flexDirection,
+            alignItems: statStyle.alignItems,
+            textAlign: statStyle.textAlign,
+            justifyContent: statStyle.justifyContent,
+          },
+          labelBox: labelBox
+            ? {
+                top: labelBox.top,
+                bottom: labelBox.bottom,
+                left: labelBox.left,
+                right: labelBox.right,
+                width: labelBox.width,
+              }
+            : null,
+          valueBox: valueBox
+            ? {
+                top: valueBox.top,
+                bottom: valueBox.bottom,
+                left: valueBox.left,
+                right: valueBox.right,
+                width: valueBox.width,
+              }
+            : null,
+          smallBox: smallBox
+            ? {
+                top: smallBox.top,
+                bottom: smallBox.bottom,
+                left: smallBox.left,
+                right: smallBox.right,
+              }
+            : null,
+          labelStyle: labelStyle
+            ? {
+                textAlign: labelStyle.textAlign,
+              }
+            : null,
+          valueStyle: valueStyle
+            ? {
+                textAlign: valueStyle.textAlign,
+              }
+            : null,
+        };
+      });
+    });
+
+    // Verify single-column layout: stats are stacked vertically
+    for (let i = 0; i < statsData.length - 1; i++) {
+      expect(
+        statsData[i + 1].statBox.top,
+        `Stat ${i + 1} should be below Stat ${i} at ${width}px`,
+      ).toBeGreaterThanOrEqual(statsData[i].statBox.bottom - 1);
+    }
+
+    // Verify label on top, value below, left-aligned, and no overlap
+    for (let i = 0; i < statsData.length; i++) {
+      const { statBox, statStyle, labelBox, valueBox, smallBox } = statsData[i];
+      expect(labelBox).not.toBeNull();
+      expect(valueBox).not.toBeNull();
+
+      // Label is on top of value (vertical stacking)
+      expect(
+        valueBox.top,
+        `Value should be below label in stat ${i} at ${width}px`,
+      ).toBeGreaterThanOrEqual(labelBox.bottom - 1);
+
+      // No geometric overlap between label and value
+      const overlapsLabelValue =
+        labelBox.left < valueBox.right &&
+        labelBox.right > valueBox.left &&
+        labelBox.top < valueBox.bottom &&
+        labelBox.bottom > valueBox.top;
+      expect(
+        overlapsLabelValue,
+        `Label and value must not overlap geometrically in stat ${i} at ${width}px`,
+      ).toBeFalsy();
+
+      // If small/composition is present, it is below value and does not overlap
+      if (smallBox) {
+        expect(
+          smallBox.top,
+          `Composition should be below value in stat ${i} at ${width}px`,
+        ).toBeGreaterThanOrEqual(valueBox.bottom - 1);
+        const overlapsValueSmall =
+          valueBox.left < smallBox.right &&
+          valueBox.right > smallBox.left &&
+          valueBox.top < smallBox.bottom &&
+          valueBox.bottom > smallBox.top;
+        expect(
+          overlapsValueSmall,
+          `Value and small must not overlap in stat ${i} at ${width}px`,
+        ).toBeFalsy();
+      }
+
+      // Left alignment: both label and value start at or near the left edge of the stat box
+      // (within padding / rounding tolerance, and definitely not pushed to the right)
+      expect(
+        Math.abs(labelBox.left - statBox.left),
+        `Label left offset in stat ${i} at ${width}px`,
+      ).toBeLessThan(16);
+      expect(
+        Math.abs(valueBox.left - statBox.left),
+        `Value left offset in stat ${i} at ${width}px`,
+      ).toBeLessThan(16);
+
+      // Align items and text align checks
+      expect(statStyle.alignItems).toBe("flex-start");
+      expect(statStyle.justifyContent).toBe("flex-start");
+      expect(statStyle.textAlign).toBe("left");
+    }
+  }
+});

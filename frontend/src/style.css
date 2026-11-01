@@ -3954,21 +3954,25 @@ dialog {
     gap: 10px;
   }
   .stats-grid .stat {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 4px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
+    gap: 8px;
   }
   .stats-grid .stat:last-child {
     grid-column: auto;
   }
   .stats-grid .stat > strong {
-    grid-column: 2;
-    grid-row: 1;
+    grid-column: auto;
+    grid-row: auto;
     font-size: 28px;
+    text-align: left;
   }
   .stats-grid .stat > small {
-    grid-column: 1 / -1;
+    grid-column: auto;
+    text-align: left;
   }
 }
 .music-collections {
