@@ -5065,3 +5065,180 @@ test("totals widget lays out in a single column with left-aligned labels above v
     }
   }
 });
+
+test("mobile baseline: overview header stacks at full width and edit mode hides span controls (< 600px)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  for (const width of [320, 375, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+
+    // 1. Check absence of horizontal overflow
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    expect(hasHorizontalOverflow).toBeFalsy();
+
+    const overviewHeading = page.locator(".overview-heading");
+    await expect(overviewHeading).toBeVisible();
+
+    const headingActions = page.locator(".overview-heading-actions");
+    await expect(headingActions).toBeVisible();
+
+    const customizeBtn = headingActions.getByRole("button", {
+      name: "Personalizza",
+    });
+    await expect(customizeBtn).toBeVisible();
+
+    const periodFilters = page.locator(".overview-heading .filters");
+    await expect(periodFilters).toBeVisible();
+
+    // Check touch target of customize button
+    const custBox = await customizeBtn.boundingBox();
+    expect(custBox).not.toBeNull();
+    expect(custBox.width).toBeGreaterThanOrEqual(44);
+    expect(custBox.height).toBeGreaterThanOrEqual(44);
+
+    // Check full-width stacking of overview heading items:
+    // Heading actions and customize button take full width of container
+    const actionsBox = await headingActions.boundingBox();
+    expect(actionsBox).not.toBeNull();
+    expect(Math.abs(custBox.width - actionsBox.width)).toBeLessThanOrEqual(4);
+
+    // Period filter comboboxes (Period and Sort)
+    const filterComboboxes = periodFilters.locator("[role=combobox]");
+    const comboCount = await filterComboboxes.count();
+    expect(comboCount).toBeGreaterThanOrEqual(1);
+
+    for (let i = 0; i < comboCount; i++) {
+      const combo = filterComboboxes.nth(i);
+      const box = await combo.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+
+      // Comboboxes take full width of filters container
+      const filtersBox = await periodFilters.boundingBox();
+      expect(Math.abs(box.width - filtersBox.width)).toBeLessThanOrEqual(4);
+    }
+
+    // Verify vertical stacking: customize button is above filters
+    const filtersBox = await periodFilters.boundingBox();
+    expect(custBox.y + custBox.height).toBeLessThanOrEqual(filtersBox.y + 1);
+
+    // Each filter combobox is stacked vertically
+    for (let i = 0; i < comboCount - 1; i++) {
+      const boxA = await filterComboboxes.nth(i).boundingBox();
+      const boxB = await filterComboboxes.nth(i + 1).boundingBox();
+      expect(boxA.y + boxA.height).toBeLessThanOrEqual(boxB.y + 1);
+    }
+  }
+
+  // Interacting with period filter on mobile
+  await page.setViewportSize({ width: 390, height: 900 });
+  const periodCombo = page
+    .locator(".overview-heading .filters [role=combobox]")
+    .first();
+  await chooseOption(periodCombo, "month");
+
+  // Enter Edit Mode on mobile (390px)
+  const customizeBtn = page
+    .locator(".overview-heading-actions")
+    .getByRole("button", { name: "Personalizza" });
+  await customizeBtn.click();
+
+  const editToolbar = page.getByRole("toolbar", {
+    name: "Personalizza dashboard",
+  });
+  await expect(editToolbar).toBeVisible();
+
+  // In edit mode on mobile (< 600px), check widget edit controls
+  const widgets = page.locator(".dashboard-widget.editing");
+  const widgetCount = await widgets.count();
+  expect(widgetCount).toBeGreaterThan(0);
+
+  for (let i = 0; i < widgetCount; i++) {
+    const widget = widgets.nth(i);
+
+    // Span button must be hidden on mobile (< 600px)
+    const spanBtn = widget.locator(".widget-span-button");
+    await expect(spanBtn).toBeHidden();
+
+    // Reorder buttons (move up/down) must be visible and >= 44px
+    const moveUp = widget.locator(".widget-move-up");
+    const moveDown = widget.locator(".widget-move-down");
+    await expect(moveUp).toBeVisible();
+    await expect(moveDown).toBeVisible();
+    const upBox = await moveUp.boundingBox();
+    const downBox = await moveDown.boundingBox();
+    expect(upBox.width).toBeGreaterThanOrEqual(44);
+    expect(upBox.height).toBeGreaterThanOrEqual(44);
+    expect(downBox.width).toBeGreaterThanOrEqual(44);
+    expect(downBox.height).toBeGreaterThanOrEqual(44);
+
+    // Remove button must be visible and >= 44px
+    const removeBtn = widget.locator(".widget-remove-button");
+    await expect(removeBtn).toBeVisible();
+    const removeBox = await removeBtn.boundingBox();
+    expect(removeBox.width).toBeGreaterThanOrEqual(44);
+    expect(removeBox.height).toBeGreaterThanOrEqual(44);
+
+    // Period override if present
+    const overrideControl = widget.locator(".widget-period-override-control");
+    if (await overrideControl.isVisible()) {
+      const trigger = overrideControl.locator(".select-trigger");
+      await expect(trigger).toBeVisible();
+      const triggerBox = await trigger.boundingBox();
+      expect(triggerBox.width).toBeGreaterThanOrEqual(44);
+      expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+    }
+  }
+
+  // Test period override interaction in edit mode
+  const overrideCombobox = page
+    .locator(
+      ".dashboard-widget.editing .widget-period-override-control [role=combobox]",
+    )
+    .first();
+  if (await overrideCombobox.isVisible()) {
+    await chooseOption(overrideCombobox, "week");
+  }
+
+  // Test reordering: move second widget up
+  const firstIdBefore = await widgets.nth(0).getAttribute("data-widget-id");
+  const secondIdBefore = await widgets.nth(1).getAttribute("data-widget-id");
+  expect(firstIdBefore).not.toEqual(secondIdBefore);
+
+  await widgets.nth(1).locator(".widget-move-up").click();
+
+  const firstIdAfter = await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .getAttribute("data-widget-id");
+  expect(firstIdAfter).toBe(secondIdBefore);
+
+  // Restore order by moving it back down
+  await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .locator(".widget-move-down")
+    .click();
+  const firstIdRestored = await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .getAttribute("data-widget-id");
+  expect(firstIdRestored).toBe(firstIdBefore);
+
+  // Exit edit mode (Annulla with confirmation when dirty)
+  const cancelBtn = editToolbar.getByRole("button", { name: "Annulla" });
+  await expect(cancelBtn).toBeVisible();
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await cancelBtn.click();
+  await expect(editToolbar).toBeHidden();
+  await expect(page.locator(".dashboard-widget.editing")).toHaveCount(0);
+});
