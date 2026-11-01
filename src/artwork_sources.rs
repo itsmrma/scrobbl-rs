@@ -164,6 +164,62 @@ fn quoted(value: &str) -> String {
 fn normalized(s: &str) -> String {
     s.trim().to_lowercase()
 }
+pub(crate) fn normalize_album_title(title: &str) -> String {
+    let mut current = title.trim();
+    loop {
+        let prev = current;
+        current = strip_edition_suffix(current).trim();
+        if current == prev || current.is_empty() {
+            break;
+        }
+    }
+    if current.is_empty() {
+        title.trim().to_string()
+    } else {
+        current.to_string()
+    }
+}
+fn is_edition_keyword(content: &str) -> bool {
+    let lower = content.trim().to_lowercase();
+    if lower == "single" || lower == "ep" {
+        return true;
+    }
+    lower.contains("deluxe")
+        || lower.contains("remaster")
+        || lower.contains("expanded")
+        || lower.contains("edition")
+        || lower.contains("anniversary")
+        || lower.contains("bonus")
+        || lower.contains("version")
+        || lower.contains("special")
+}
+fn strip_edition_suffix(s: &str) -> &str {
+    let trimmed = s.trim();
+    if trimmed.ends_with(')') {
+        if let Some(open) = trimmed.rfind('(') {
+            let inner = &trimmed[open + 1..trimmed.len() - 1];
+            if is_edition_keyword(inner) {
+                return trimmed[..open].trim_end();
+            }
+        }
+    }
+    if trimmed.ends_with(']') {
+        if let Some(open) = trimmed.rfind('[') {
+            let inner = &trimmed[open + 1..trimmed.len() - 1];
+            if is_edition_keyword(inner) {
+                return trimmed[..open].trim_end();
+            }
+        }
+    }
+    for sep in [" - ", " – ", " — "] {
+        if let Some((base, suffix)) = trimmed.rsplit_once(sep) {
+            if is_edition_keyword(suffix) {
+                return base.trim_end();
+            }
+        }
+    }
+    trimmed
+}
 fn mbid(s: &str) -> bool {
     s.len() == 36
         && s.chars().enumerate().all(|(i, c)| {
@@ -186,23 +242,32 @@ fn unique_match<'a>(
         "release-groups"
     };
     let items = data[key].as_array().ok_or(())?;
-    let count = data["count"].as_u64().ok_or(())?;
-    // Search scores do not prove identity. Only one exact candidate in a complete result set.
-    if count > items.len() as u64 {
-        return Err(());
-    }
+    let _count = data["count"].as_u64().ok_or(())?;
     let matching: Vec<_> = items
         .iter()
         .filter(|item| {
-            item[if kind == "artists" { "name" } else { "title" }]
-                .as_str()
-                .is_some_and(|v| normalized(v) == normalized(name))
+            let title_match = if kind == "artists" {
+                item["name"]
+                    .as_str()
+                    .is_some_and(|v| normalized(v) == normalized(name))
+            } else {
+                item["title"].as_str().is_some_and(|v| {
+                    normalized(v) == normalized(name)
+                        || normalized(&normalize_album_title(v))
+                            == normalized(&normalize_album_title(name))
+                })
+            };
+            title_match
                 && artist.is_none_or(|artist| {
                     item["artist-credit"].as_array().is_some_and(|credits| {
-                        credits.len() == 1
-                            && credits[0]["artist"]["name"]
+                        credits.iter().any(|c| {
+                            c["artist"]["name"]
                                 .as_str()
                                 .is_some_and(|v| normalized(v) == normalized(artist))
+                                || c["name"]
+                                    .as_str()
+                                    .is_some_and(|v| normalized(v) == normalized(artist))
+                        })
                     })
                 })
         })
@@ -210,12 +275,7 @@ fn unique_match<'a>(
     if matching.is_empty() {
         return Ok(None);
     }
-    if matching.len() != 1
-        || matching[0]["score"].as_u64() != Some(100)
-        || matching[0]["disambiguation"]
-            .as_str()
-            .is_some_and(|v| !v.is_empty())
-    {
+    if matching.len() != 1 || matching[0]["score"].as_u64() != Some(100) {
         return Err(());
     }
     matching[0]["id"]
@@ -259,9 +319,10 @@ async fn identity(
     let query = if kind == "artists" {
         format!("artist:{}", quoted(name))
     } else {
+        let clean_title = normalize_album_title(name);
         format!(
             "releasegroup:{} AND artist:{}",
-            quoted(name),
+            quoted(&clean_title),
             quoted(&artists[0])
         )
     };
@@ -291,6 +352,24 @@ async fn identity(
         unique_match(&data, kind, name, artists.first().map(String::as_str))
             .map(|v| v.map(str::to_owned)),
     )
+}
+pub(crate) fn caa_front_image_url(data: &Value) -> Result<Option<String>> {
+    let images = data["images"].as_array().ok_or(AppError::Internal)?;
+    let front: Vec<_> = images
+        .iter()
+        .filter(|v| v["front"] == true && v["approved"] == true)
+        .collect();
+    let Some(first_front) = front.first() else {
+        return Ok(None);
+    };
+    let Some(image_url) = first_front["thumbnails"]["500"]
+        .as_str()
+        .or_else(|| first_front["image"].as_str())
+        .and_then(secure_url)
+    else {
+        return Ok(None);
+    };
+    Ok(Some(image_url))
 }
 fn secure_url(value: &str) -> Option<String> {
     let url = library::archive_https(url::Url::parse(value).ok()?);
@@ -391,26 +470,26 @@ impl ImageLookup for PublicSources<'_> {
             else {
                 return Ok(Lookup::Missing);
             };
-            let images = data["images"].as_array().ok_or(AppError::Internal)?;
-            let front: Vec<_> = images
-                .iter()
-                .filter(|v| v["front"] == true && v["approved"] == true)
-                .collect();
-            if front.len() != 1 {
-                return Ok(if front.is_empty() {
-                    Lookup::Missing
-                } else {
-                    Lookup::Ambiguous
-                });
-            }
-            let Some(image_url) = front[0]["thumbnails"]["500"]
-                .as_str()
-                .or_else(|| front[0]["image"].as_str())
-                .and_then(secure_url)
-            else {
+            let Some(image_url) = caa_front_image_url(&data)? else {
                 return Ok(Lookup::Missing);
             };
-            return Ok(Lookup::Found(FoundImage { bytes: library::download(&image_url, Some(state)).await?, credit: ImageCredit { provider: provider.key().into(), source_url: format!("https://musicbrainz.org/release-group/{mbid}"), image_url, author: None, license: Some("Cover artwork may be copyrighted; metadata licensing does not license the image.".into()), license_url: Some("https://musicbrainz.org/doc/Copyright_and_DMCA_Compliance".into()), credit: Some("Cover Art Archive / MusicBrainz".into()) } }));
+            return Ok(Lookup::Found(FoundImage {
+                bytes: library::download(&image_url, Some(state)).await?,
+                credit: ImageCredit {
+                    provider: provider.key().into(),
+                    source_url: format!("https://musicbrainz.org/release-group/{mbid}"),
+                    image_url,
+                    author: None,
+                    license: Some(
+                        "Cover artwork may be copyrighted; metadata licensing does not license the image."
+                            .into(),
+                    ),
+                    license_url: Some(
+                        "https://musicbrainz.org/doc/Copyright_and_DMCA_Compliance".into(),
+                    ),
+                    credit: Some("Cover Art Archive / MusicBrainz".into()),
+                },
+            }));
         }
         let target = url(
             &format!("https://musicbrainz.org/ws/2/artist/{mbid}"),
@@ -625,6 +704,9 @@ mod tests {
             if self.mode == "error" {
                 return Err(AppError::Internal);
             }
+            if self.mode == "artwork_wait" {
+                return Err(AppError::ArtworkWait { retry_at_ms: 99999999 });
+            }
             if self.mode == "ambiguous" {
                 return Ok(Lookup::Ambiguous);
             }
@@ -714,7 +796,7 @@ mod tests {
     #[tokio::test]
     async fn ambiguous_or_failed_lookup_never_falls_through_and_failure_does_not_poison_cache() {
         let (_dir, state) = setup().await;
-        for mode in ["ambiguous", "error"] {
+        for mode in ["ambiguous", "error", "artwork_wait"] {
             let fake = Fake {
                 state: &state,
                 calls: Mutex::new(vec![]),
@@ -723,7 +805,7 @@ mod tests {
             let result =
                 fetch_with(&state, &ArtworkSettings::default(), "artists", mode, &fake).await;
             assert_eq!(fake.calls.lock().unwrap().len(), 1);
-            if mode == "error" {
+            if mode == "error" || mode == "artwork_wait" {
                 assert!(result.is_err());
             } else {
                 assert_eq!(result.unwrap(), library::ArtworkFetch::Missing);
@@ -766,23 +848,74 @@ mod tests {
         state.storage.close().await;
     }
     #[test]
-    fn matching_rejects_homonyms_incomplete_results_disambiguation_and_different_album_artists() {
+    fn matching_relaxes_disambiguation_count_and_credits_while_rejecting_homonyms() {
         let id = "b10bbbfc-cf9e-42e0-be17-e2c3e1d2600d";
-        let mut data = json!({"count":1,"artists":[{"name":"The Beatles","id":id,"score":100}]});
-        assert_eq!(
-            unique_match(&data, "artists", "The Beatles", None),
-            Ok(Some(id))
-        );
-        data["count"] = json!(2);
-        assert_eq!(unique_match(&data, "artists", "The Beatles", None), Err(()));
-        let duplicate = data["artists"][0].clone();
-        data["artists"].as_array_mut().unwrap().push(duplicate);
-        assert_eq!(unique_match(&data, "artists", "The Beatles", None), Err(()));
-        let data = json!({"count":1,"release-groups":[{"title":"Album","id":id,"score":100,"artist-credit":[{"artist":{"name":"Someone else"}}]}]});
-        assert_eq!(
-            unique_match(&data, "albums", "Album", Some("Artist")),
-            Ok(None)
-        );
+        // 1. Disambiguation comment with score 100 and exact name is accepted
+        let data = json!({
+            "count": 1,
+            "artists": [{
+                "name": "Architects",
+                "id": id,
+                "score": 100,
+                "disambiguation": "UK alternative metal band"
+            }]
+        });
+        assert_eq!(unique_match(&data, "artists", "Architects", None), Ok(Some(id)));
+
+        // 2. Count > 100 or count > items.len() is accepted if unique exact match exists
+        let data = json!({
+            "count": 350,
+            "artists": [
+                { "name": "Coldplay", "id": id, "score": 100 },
+                { "name": "Coldplay Tribute", "id": "other-id-0000-0000-0000-000000000000", "score": 90 }
+            ]
+        });
+        assert_eq!(unique_match(&data, "artists", "Coldplay", None), Ok(Some(id)));
+
+        // 3. Homonyms with same name are rejected as ambiguous
+        let data = json!({
+            "count": 2,
+            "artists": [
+                { "name": "John Smith", "id": id, "score": 100 },
+                { "name": "John Smith", "id": "other-id-0000-0000-0000-000000000000", "score": 100 }
+            ]
+        });
+        assert_eq!(unique_match(&data, "artists", "John Smith", None), Err(()));
+
+        // 4. Multi-artist / collaboration credits are accepted if searched artist is present
+        let data = json!({
+            "count": 1,
+            "release-groups": [{
+                "title": "Under Pressure",
+                "id": id,
+                "score": 100,
+                "artist-credit": [
+                    { "artist": { "name": "Queen" }, "joinphrase": " & " },
+                    { "artist": { "name": "David Bowie" } }
+                ]
+            }]
+        });
+        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("Queen")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("David Bowie")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Under Pressure", Some("Different Artist")), Ok(None));
+
+        // 5. Album titles with edition suffixes match release groups
+        let data = json!({
+            "count": 1,
+            "release-groups": [{
+                "title": "Abbey Road",
+                "id": id,
+                "score": 100,
+                "artist-credit": [{ "artist": { "name": "The Beatles" } }]
+            }]
+        });
+        assert_eq!(unique_match(&data, "albums", "Abbey Road (Deluxe Edition)", Some("The Beatles")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Abbey Road [Remastered]", Some("The Beatles")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Abbey Road - Single", Some("The Beatles")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Abbey Road - EP", Some("The Beatles")), Ok(Some(id)));
+        assert_eq!(unique_match(&data, "albums", "Abbey Road (Expanded Edition)", Some("The Beatles")), Ok(Some(id)));
+
+        // 6. Utility checks
         assert_eq!(
             commons_file("https://commons.wikimedia.org/wiki/File:A%26B.jpg"),
             Some("File:A&B.jpg".into())
@@ -794,5 +927,74 @@ mod tests {
         );
         assert!(secure_url("http://example.com/cover.jpg").is_none());
         assert_eq!(quoted("a\"b:c"), "\"a\\\"b\\:c\"");
+    }
+    #[test]
+    fn caa_front_image_url_selects_first_approved_image() {
+        let empty = json!({ "images": [] });
+        assert_eq!(caa_front_image_url(&empty).unwrap(), None);
+
+        let unapproved = json!({
+            "images": [
+                { "front": true, "approved": false, "image": "http://archive.org/front.jpg" },
+                { "front": false, "approved": true, "image": "http://archive.org/back.jpg" }
+            ]
+        });
+        assert_eq!(caa_front_image_url(&unapproved).unwrap(), None);
+
+        let single = json!({
+            "images": [
+                {
+                    "front": true,
+                    "approved": true,
+                    "thumbnails": { "500": "http://ia8000.us.archive.org/thumb1.jpg" },
+                    "image": "http://ia8000.us.archive.org/front1.jpg"
+                }
+            ]
+        });
+        assert_eq!(
+            caa_front_image_url(&single).unwrap(),
+            Some("https://ia8000.us.archive.org/thumb1.jpg".into())
+        );
+
+        let multiple = json!({
+            "images": [
+                {
+                    "front": true,
+                    "approved": true,
+                    "thumbnails": { "500": "http://ia8000.us.archive.org/thumb1.jpg" },
+                    "image": "http://ia8000.us.archive.org/front1.jpg"
+                },
+                {
+                    "front": true,
+                    "approved": true,
+                    "thumbnails": { "500": "http://ia8000.us.archive.org/thumb2.jpg" },
+                    "image": "http://ia8000.us.archive.org/front2.jpg"
+                }
+            ]
+        });
+        assert_eq!(
+            caa_front_image_url(&multiple).unwrap(),
+            Some("https://ia8000.us.archive.org/thumb1.jpg".into())
+        );
+    }
+    #[test]
+    fn normalize_album_title_handles_common_edition_suffixes() {
+        assert_eq!(normalize_album_title("Abbey Road (Deluxe Edition)"), "Abbey Road");
+        assert_eq!(normalize_album_title("Nevermind [Remastered]"), "Nevermind");
+        assert_eq!(normalize_album_title("Blinding Lights - Single"), "Blinding Lights");
+        assert_eq!(normalize_album_title("Boyfriend - EP"), "Boyfriend");
+        assert_eq!(normalize_album_title("Thriller (Expanded Edition)"), "Thriller");
+        assert_eq!(normalize_album_title("The Dark Side of the Moon (50th Anniversary Remaster)"), "The Dark Side of the Moon");
+        assert_eq!(normalize_album_title("OK Computer (Collector's Edition)"), "OK Computer");
+        assert_eq!(normalize_album_title("Random Access Memories (10th Anniversary Edition)"), "Random Access Memories");
+        assert_eq!(normalize_album_title("Song (Single Version)"), "Song");
+        assert_eq!(normalize_album_title("Album (Bonus Track Edition)"), "Album");
+        assert_eq!(normalize_album_title("Album [Deluxe]"), "Album");
+        assert_eq!(normalize_album_title("Album - Deluxe Edition"), "Album");
+        assert_eq!(normalize_album_title("Album - Remastered"), "Album");
+        assert_eq!(normalize_album_title("Title (Deluxe Edition) [Remastered]"), "Title");
+        assert_eq!(normalize_album_title("Single"), "Single");
+        assert_eq!(normalize_album_title("EP"), "EP");
+        assert_eq!(normalize_album_title("(Deluxe Edition)"), "(Deluxe Edition)");
     }
 }

@@ -787,6 +787,56 @@ mod tests {
         .unwrap();
         assert_eq!(cached.status(), axum::http::StatusCode::OK);
     }
+    #[tokio::test]
+    async fn artwork_wait_or_503_does_not_poison_artwork_misses() {
+        let directory = tempfile::tempdir().unwrap();
+        let storage = crate::storage::open(directory.path()).await.unwrap();
+        let config = crate::config::Config {
+            port: 3210,
+            bind_ip: "127.0.0.1".parse().unwrap(),
+            external_origin: None,
+            data_dir: directory.path().into(),
+            sync_seconds: 120,
+            now_playing_seconds: 30,
+            import_limits: Default::default(),
+            api_snapshot_limits: Default::default(),
+            env_client_id: None,
+            env_client_secret: None,
+        };
+        let state = AppState::new(storage, config);
+        struct FailingSources;
+        impl crate::artwork_sources::ImageLookup for FailingSources {
+            async fn lookup(
+                &self,
+                _provider: crate::artwork_settings::ImageProvider,
+                _kind: &str,
+                _id: &str,
+            ) -> Result<crate::artwork_sources::Lookup> {
+                Err(AppError::ArtworkWait {
+                    retry_at_ms: auth::now_ms() + 30_000,
+                })
+            }
+        }
+        let settings = crate::artwork_settings::ArtworkSettings::default();
+        let result = crate::artwork_sources::fetch_with(
+            &state,
+            &settings,
+            "artists",
+            "artist-1",
+            &FailingSources,
+        )
+        .await;
+        assert!(matches!(result, Err(AppError::ArtworkWait { .. })));
+
+        let misses: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork_misses")
+            .fetch_one(&state.read_db)
+            .await
+            .unwrap();
+        assert_eq!(
+            misses, 0,
+            "HTTP 503 / ArtworkWait must never record into artwork_misses"
+        );
+    }
     #[test]
     fn image_retry_after_accepts_seconds_dates_and_a_conservative_fallback() {
         let now = 1_000_000;
