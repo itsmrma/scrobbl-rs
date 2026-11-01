@@ -295,6 +295,7 @@ small,
 .sidebar nav {
   display: grid;
   gap: 6px;
+  flex-shrink: 0;
 }
 .sidebar nav a,
 .activity-link {
@@ -341,6 +342,7 @@ small,
 .sidebar-bottom {
   margin-top: auto;
   padding-top: 28px;
+  flex-shrink: 0;
 }
 .sidebar-bottom p {
   margin: 20px 0 0;
@@ -1008,6 +1010,17 @@ footer {
     padding: 24px 16px;
     transform: translateX(-100%);
     visibility: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sidebar-now .now-expand-toggle {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .mobile-open .sidebar {
     transform: none;
@@ -6564,6 +6577,16 @@ dialog {
 .collapsed .now-expand-toggle {
   display: none;
 }
+.mobile-open .now-expand-toggle {
+  display: inline-flex;
+}
+.mobile-open .artwork-expanded .now-artwork-expansion {
+  display: grid;
+}
+.mobile-open.collapsed .artwork-expanded .now-details > .cover,
+.mobile-open .collapsed .artwork-expanded .now-details > .cover {
+  display: none;
+}
 @media (prefers-reduced-motion: reduce) {
   .now-artwork-expansion {
     transition: none;
@@ -6587,9 +6610,6 @@ dialog {
 }
 
 @media (max-width: 600px) {
-  .sidebar-now .now-expand-toggle {
-    display: none;
-  }
   .sidebar-now .now-section-toggle {
     position: absolute;
     z-index: 2;
@@ -6614,7 +6634,8 @@ dialog {
     padding-right: 0;
   }
   .sidebar-now.mobile-minimized .playback-copy > :is(small, span),
-  .sidebar-now.mobile-minimized .sidebar-playback {
+  .sidebar-now.mobile-minimized .sidebar-playback,
+  .sidebar-now.mobile-minimized .now-expand-toggle {
     display: none;
   }
   .sidebar-now .now-artwork-expansion {
@@ -6623,8 +6644,13 @@ dialog {
   .sidebar-now .now-expand-toggle {
     top: 56px;
     right: 4px;
+    width: 44px;
     min-width: 44px;
+    height: 44px;
     min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .sidebar-now:not(.artwork-expanded) .now-artwork-expansion {
     display: none;
@@ -6966,9 +6992,15 @@ dialog {
 }
 
 /* On pointer devices with hover capability, keep the credit trigger concealed until the cover is hovered or focused */
+.mobile-open .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
+  opacity: 1;
+}
 @media (hover: hover) and (pointer: fine) {
   .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
     opacity: 0;
+  }
+  .mobile-open .sidebar-now :is(.now-expand-toggle, .now-section-toggle) {
+    opacity: 1;
   }
   .sidebar-now:hover :is(.now-expand-toggle, .now-section-toggle),
   .sidebar-now:focus-within :is(.now-expand-toggle, .now-section-toggle) {

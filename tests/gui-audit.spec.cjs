@@ -550,6 +550,118 @@ test.describe("now playing disclosure", () => {
       .press("Enter");
     await expect(expand).toHaveAttribute("aria-expanded", "false");
   });
+
+  test("mobile drawer allows expanding now playing artwork and scrolls smoothly (#136)", async ({
+    page,
+    browserName,
+  }) => {
+    await page.route("**/api/spotify/status", async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        json: {
+          ...(await response.json()),
+          connected: true,
+          now_playing_seconds: 1,
+        },
+      });
+    });
+    await page.route("**/api/v1/artwork/albums/sidebar*", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#7c9bac"/></svg>',
+      }),
+    );
+    await page.route("**/api/spotify/now-playing", (route) =>
+      route.fulfill({
+        json: {
+          title: "Track with artwork",
+          artists: [{ id: "artist-1", name: "Featured Artist" }],
+          album: "Featured Album",
+          cover_url: "/api/v1/artwork/albums/sidebar",
+          spotify_url: "https://open.spotify.com/track/123",
+          duration_ms: 210000,
+          progress_ms: 60000,
+          response_received_at_ms: Date.now(),
+          observed_at_ms: Date.now(),
+        },
+      }),
+    );
+
+    // Test on mobile viewport (< 600px)
+    await page.setViewportSize({ width: 390, height: 667 });
+    await login(page);
+
+    // Open navigation drawer
+    const openMenuBtn = page.getByRole("button", {
+      name: "Open navigation",
+      exact: true,
+    });
+    await openMenuBtn.click();
+
+    const sidebar = page.locator(".sidebar");
+    await expect(sidebar).toBeVisible();
+
+    const widget = sidebar.locator(".sidebar-now");
+    await expect(
+      widget.getByRole("link", { name: "Track with artwork" }),
+    ).toBeVisible();
+
+    // The artwork expansion toggle should be visible and have touch target >= 44x44
+    const artworkToggle = widget.getByRole("button", {
+      name: "Expand now playing artwork",
+      exact: true,
+    });
+    await expect(artworkToggle).toBeVisible();
+    const toggleBox = await artworkToggle.boundingBox();
+    expect(toggleBox.width).toBeGreaterThanOrEqual(44);
+    expect(toggleBox.height).toBeGreaterThanOrEqual(44);
+
+    // Expand the artwork
+    await artworkToggle.click();
+
+    // Check expanded artwork is visible and large cover is shown
+    await expect(
+      widget.getByRole("button", {
+        name: "Collapse now playing artwork",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const expandedCover = widget.locator(".now-artwork-expansion .cover.large");
+    await expect(expandedCover).toBeVisible();
+    const coverBox = await expandedCover.boundingBox();
+    expect(coverBox.width).toBeGreaterThan(150);
+
+    // Verify sidebar has vertical scroll (scrollHeight > clientHeight) and scrolls
+    const canScroll = await sidebar.evaluate((el) => {
+      return el.scrollHeight > el.clientHeight;
+    });
+    expect(canScroll).toBe(true);
+
+    // Scroll down inside the sidebar
+    await sidebar.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    const scrolledTop = await sidebar.evaluate((el) => el.scrollTop);
+    expect(scrolledTop).toBeGreaterThan(0);
+
+    // Ensure navigation links remain reachable
+    const settingsLink = sidebar.getByRole("link", { name: "Settings" });
+    await expect(settingsLink).toBeAttached();
+
+    // Collapse artwork back
+    const collapseToggle = widget.getByRole("button", {
+      name: "Collapse now playing artwork",
+      exact: true,
+    });
+    await collapseToggle.click();
+    await expect(expandedCover).toBeHidden();
+
+    // Close the drawer
+    await sidebar
+      .getByRole("button", { name: "Close navigation", exact: true })
+      .click();
+    await expect(sidebar).toBeHidden();
+  });
 });
 
 test("music listening patterns switch within one compact chart and header filters match action widths", async ({
