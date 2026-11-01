@@ -125,10 +125,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/artwork-providers",
             get(crate::artwork_settings::get).post(crate::artwork_settings::save),
         )
-        .route(
-            "/api/v1/artwork-providers/refresh",
-            post(crate::artwork::backfill),
-        )
         .route("/api/v1/artwork/backfill", post(crate::artwork::backfill))
         .route(
             "/api/v1/preferences",

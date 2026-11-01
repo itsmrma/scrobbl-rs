@@ -192,6 +192,9 @@ fn is_edition_keyword(content: &str) -> bool {
         || lower.contains("bonus")
         || lower.contains("version")
         || lower.contains("special")
+        || lower.contains("soundtrack")
+        || lower.contains("ost")
+        || lower.contains("score")
 }
 fn strip_edition_suffix(s: &str) -> &str {
     let trimmed = s.trim();
@@ -315,9 +318,6 @@ async fn entity_name_and_artists(
     } else {
         vec![]
     };
-    if kind == "albums" && artists.len() != 1 {
-        return Ok(Err(()));
-    }
     Ok(Ok((name, artists)))
 }
 
@@ -342,11 +342,15 @@ async fn identity(
         format!("artist:{}", quoted(&name))
     } else {
         let clean_title = normalize_album_title(&name);
-        format!(
-            "releasegroup:{} AND artist:{}",
-            quoted(&clean_title),
-            quoted(&artists[0])
-        )
+        if artists.len() == 1 {
+            format!(
+                "releasegroup:{} AND artist:{}",
+                quoted(&clean_title),
+                quoted(&artists[0])
+            )
+        } else {
+            format!("releasegroup:{}", quoted(&clean_title))
+        }
     };
     let endpoint = if kind == "artists" {
         "artist"
@@ -370,10 +374,12 @@ async fn identity(
             "MusicBrainz returned an invalid search response.".into(),
         ));
     }
-    Ok(
-        unique_match(&data, kind, &name, artists.first().map(String::as_str))
-            .map(|v| v.map(str::to_owned)),
-    )
+    let artist_filter = if kind == "albums" && artists.len() == 1 {
+        Some(artists[0].as_str())
+    } else {
+        None
+    };
+    Ok(unique_match(&data, kind, &name, artist_filter).map(|v| v.map(str::to_owned)))
 }
 pub(crate) fn caa_front_image_url(data: &Value) -> Result<Option<String>> {
     let images = data["images"].as_array().ok_or(AppError::Internal)?;
@@ -525,7 +531,11 @@ pub(crate) fn find_itunes_album_candidate<'a>(
         let Some(c_artist) = item["artistName"].as_str() else {
             continue;
         };
-        if album_title_matches(c_title, target_title) && artist_matches(c_artist, target_artist) {
+        let artist_ok = target_artist.is_empty()
+            || artist_matches(c_artist, target_artist)
+            || normalized(c_artist) == "various artists"
+            || normalized(c_artist) == "soundtrack";
+        if album_title_matches(c_title, target_title) && artist_ok {
             let Some(artwork_url) = item["artworkUrl100"].as_str() else {
                 continue;
             };
@@ -578,12 +588,14 @@ impl ImageLookup for PublicSources<'_> {
                     Ok(res) => res,
                     Err(()) => return Ok(Lookup::Ambiguous),
                 };
-                if artists.is_empty() {
-                    return Ok(Lookup::Ambiguous);
-                }
-                let artist = &artists[0];
                 let clean_title = normalize_album_title(&name);
-                let term = format!("{clean_title} {artist}");
+                let (term, target_artist) = if artists.len() == 1 {
+                    (format!("{clean_title} {}", artists[0]), artists[0].as_str())
+                } else if !artists.is_empty() {
+                    (clean_title.clone(), "")
+                } else {
+                    (clean_title.clone(), "")
+                };
                 let target = url(
                     "https://itunes.apple.com/search",
                     &[("term", &term), ("entity", "album"), ("limit", "25")],
@@ -591,7 +603,7 @@ impl ImageLookup for PublicSources<'_> {
                 let Some(data) = json(state, &target).await? else {
                     return Ok(Lookup::Missing);
                 };
-                let Some(candidate) = find_itunes_album_candidate(&data, &name, artist) else {
+                let Some(candidate) = find_itunes_album_candidate(&data, &name, target_artist) else {
                     return Ok(Lookup::Missing);
                 };
                 let upgraded = upgrade_itunes_artwork_url(candidate.artwork_url);
@@ -773,6 +785,7 @@ pub(crate) async fn fetch_with_activity(
 ) -> Result<library::ArtworkFetch> {
     let mut earliest_wait: Option<i64> = None;
     let mut last_error: Option<AppError> = None;
+    let mut had_ambiguous = false;
     for provider in settings.enabled(kind) {
         // Configuration changes fence in-flight lookups as well as later queue entries.
         if artwork_settings::read(&mut *state.read_db.acquire().await?)
@@ -813,7 +826,10 @@ pub(crate) async fn fetch_with_activity(
         };
         match lookup {
             Lookup::Missing => continue,
-            Lookup::Ambiguous => break,
+            Lookup::Ambiguous => {
+                had_ambiguous = true;
+                continue;
+            }
             Lookup::Found(image) => {
                 let mut tx = state.db.begin().await?;
                 sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
@@ -844,6 +860,7 @@ pub(crate) async fn fetch_with_activity(
     if let Some(err) = last_error {
         return Err(err);
     }
+    let _ = had_ambiguous;
     let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
     if artwork_settings::read(&mut tx).await?.version != settings.version {
@@ -939,6 +956,9 @@ mod tests {
                 return Err(AppError::ArtworkWait { retry_at_ms: wait });
             }
             if self.mode == "ambiguous" {
+                return Ok(Lookup::Ambiguous);
+            }
+            if self.mode == "ambiguous_then_itunes" && provider != ImageProvider::Itunes {
                 return Ok(Lookup::Ambiguous);
             }
             if self.mode == "fallback" && provider != ImageProvider::Wikidata {
@@ -1037,7 +1057,7 @@ mod tests {
         state.storage.close().await;
     }
     #[tokio::test]
-    async fn ambiguous_or_failed_lookup_never_falls_through_and_failure_does_not_poison_cache() {
+    async fn ambiguous_or_failed_lookup_falls_through_and_failure_does_not_poison_cache() {
         let (_dir, state) = setup().await;
         for mode in ["ambiguous", "error", "artwork_wait"] {
             let fake = Fake {
@@ -1047,11 +1067,7 @@ mod tests {
             };
             let result =
                 fetch_with(&state, &ArtworkSettings::default(), "artists", mode, &fake).await;
-            if mode == "ambiguous" {
-                assert_eq!(fake.calls.lock().unwrap().len(), 1);
-            } else {
-                assert_eq!(fake.calls.lock().unwrap().len(), 3);
-            }
+            assert_eq!(fake.calls.lock().unwrap().len(), 3);
             if mode == "error" || mode == "artwork_wait" {
                 assert!(result.is_err());
             } else {
@@ -1063,6 +1079,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(misses, vec!["ambiguous"]);
+        state.storage.close().await;
+    }
+    #[tokio::test]
+    async fn ambiguous_lookup_falls_through_to_subsequent_provider_that_succeeds() {
+        let (_dir, state) = setup().await;
+        let fake = Fake {
+            state: &state,
+            calls: Mutex::new(vec![]),
+            mode: "ambiguous_then_itunes",
+        };
+        let result =
+            fetch_with(&state, &ArtworkSettings::default(), "artists", "artist-1", &fake)
+                .await
+                .unwrap();
+        assert_eq!(result, library::ArtworkFetch::Saved);
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            vec![
+                ImageProvider::MusicbrainzImage,
+                ImageProvider::Wikidata,
+                ImageProvider::Itunes
+            ]
+        );
+        let misses: Vec<String> = sqlx::query_scalar("SELECT entity_id FROM artwork_misses")
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+        assert!(misses.is_empty());
         state.storage.close().await;
     }
     #[tokio::test]
@@ -1673,6 +1717,40 @@ mod tests {
         assert_eq!(
             restored.license.as_deref(),
             Some("Promotional artwork; may be copyrighted.")
+        );
+    }
+
+    #[test]
+    fn itunes_candidate_matches_multi_artist_compilation_with_empty_artist_or_various_artists() {
+        let json_data = serde_json::json!({
+            "resultCount": 1,
+            "results": [
+                {
+                    "collectionName": "Arcane League of Legends (Soundtrack from the Animated Series)",
+                    "artistName": "Various Artists",
+                    "artworkUrl100": "https://is1-ssl.mzstatic.com/image/thumb/100x100bb.jpg",
+                    "collectionViewUrl": "https://music.apple.com/us/album/arcane/123"
+                }
+            ]
+        });
+        // 1. With empty target_artist (multi-artist album ignoring artist constraint)
+        let candidate = find_itunes_album_candidate(&json_data, "Arcane League of Legends", "")
+            .expect("matched compilation by album title");
+        assert_eq!(
+            candidate.artwork_url,
+            "https://is1-ssl.mzstatic.com/image/thumb/100x100bb.jpg"
+        );
+
+        // 2. With track artist "Imagine Dragons" matching because collection artistName is "Various Artists"
+        let candidate2 = find_itunes_album_candidate(
+            &json_data,
+            "Arcane League of Legends",
+            "Imagine Dragons",
+        )
+        .expect("matched Various Artists collection with track artist");
+        assert_eq!(
+            candidate2.artwork_url,
+            "https://is1-ssl.mzstatic.com/image/thumb/100x100bb.jpg"
         );
     }
 }

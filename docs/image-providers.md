@@ -9,11 +9,30 @@ history and now playing.
 
 The default order is MusicBrainz → Cover Art Archive for albums, MusicBrainz
 image relationships → Commons for artists, MusicBrainz → Wikidata P18 → Commons
-for artists. Public sources need no Spotify login or API key.
-Coverage varies; multiple exact identities, disambiguation, incomplete search
-results and multiple candidate portraits do not cause a first-result guess.
-An uncertain identity stops automatic association. A temporary provider error
-does not become a cached absence.
+for artists, with Apple iTunes and Deezer as public fallback providers.
+For albums, the iTunes provider searches the Apple iTunes Search API and retrieves
+high-resolution (600x600) album covers. For artists, the iTunes provider searches
+the Deezer public API for artist portraits. Public sources need no Spotify login or API key.
+
+Lookup rules balance high coverage with precision:
+- **Relaxed edition matching**: Common album edition suffixes such as `(Deluxe Edition)`,
+  `[Remastered]`, `(Bonus Track Version)`, `(Soundtrack from the Animated Series)` are normalized,
+  allowing releases with edition variations to match their core release groups.
+- **Multi-artist albums and compilations**: Albums with multiple track artists (compilations,
+  soundtracks, collaborations) allow searching by clean album title, enabling Cover Art Archive
+  and iTunes fallback to discover covers without being aborted by single-artist constraints.
+- **Provider fall-through on ambiguous results**: If an upstream provider returns an ambiguous
+  result (such as multiple candidates with equal scores), retrieval continues to subsequent
+  enabled providers. A confirmed miss is only recorded after all enabled providers have been
+  exhausted without a match. Temporary provider errors or rate limits never poison the negative cache.
+
+### Missing artwork backfill
+
+The **Refresh missing artwork** action (available in **Activities** and **Settings → Image providers**)
+allows re-evaluating the library when new providers are enabled or provider coverage improves.
+The backfill selectively clears negative cache records for entities that still lack artwork,
+resets failed or paused queue members, and re-enqueues all missing entities, reporting the count
+of queued items broken down into album covers and artist portraits.
 
 Settings affect missing images. Existing images, including legacy permanent
 Spotify images, remain in the active archive. A personal image takes precedence,

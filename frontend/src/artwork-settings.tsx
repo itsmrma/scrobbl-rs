@@ -274,7 +274,7 @@ function ArtworkBackfillSection() {
               window.dispatchEvent(new Event("artwork-cache-changed"));
               toast(
                 res.queued > 0
-                  ? `Queued ${res.queued} items for artwork retrieval.`
+                  ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
                   : "No missing artwork found to retrieve.",
               );
             } catch (e) {

@@ -259,7 +259,12 @@ export const api = {
   saveArtworkSettings: (settings: ArtworkSettings) =>
     post<ArtworkSettings>("/api/v1/artwork-providers", settings),
   backfillArtwork: () =>
-    post<{ ok: boolean; queued: number }>("/api/v1/artwork/backfill"),
+    post<{
+      ok: boolean;
+      queued: number;
+      queued_albums: number;
+      queued_artists: number;
+    }>("/api/v1/artwork/backfill"),
   artworkUrl: (kind: string, id: string, url: string | null) =>
     post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, { url }),
   apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),

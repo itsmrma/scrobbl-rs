@@ -80,6 +80,8 @@ pub(crate) async fn enqueue_missing(conn: &mut sqlx::SqliteConnection) -> Result
 pub struct BackfillResult {
     pub ok: bool,
     pub queued: i64,
+    pub queued_albums: i64,
+    pub queued_artists: i64,
 }
 
 pub async fn backfill(
@@ -94,10 +96,12 @@ pub async fn backfill(
         .await?
         .ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
 
-    // Clear negative cache
-    sqlx::query("DELETE FROM artwork_misses")
-        .execute(&mut *tx)
-        .await?;
+    // Selectively clear negative cache for entities lacking artwork
+    sqlx::query(
+        "DELETE FROM artwork_misses WHERE entity_id NOT IN (SELECT entity_id FROM artwork WHERE bytes IS NOT NULL)",
+    )
+    .execute(&mut *tx)
+    .await?;
 
     // Reset pending and failed members on existing artwork jobs, as well as skipped members
     sqlx::query(
@@ -119,8 +123,12 @@ pub async fn backfill(
     .execute(&mut *tx)
     .await?;
 
-    let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM job_members jm JOIN jobs j ON j.id=jm.job_id \
+    let (queued, queued_albums, queued_artists): (i64, i64, i64) = sqlx::query_as(
+        "SELECT \
+            COUNT(*), \
+            COALESCE(SUM(CASE WHEN jm.kind='albums' THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN jm.kind='artists' THEN 1 ELSE 0 END), 0) \
+         FROM job_members jm JOIN jobs j ON j.id=jm.job_id \
          WHERE j.kind='artwork' AND jm.state='pending' AND j.state IN ('queued','running','waiting')"
     )
     .fetch_one(&mut *tx)
@@ -129,7 +137,9 @@ pub async fn backfill(
     tx.commit().await?;
     Ok(Json(BackfillResult {
         ok: true,
-        queued: count,
+        queued,
+        queued_albums,
+        queued_artists,
     }))
 }
 
@@ -882,6 +892,17 @@ mod tests {
         headers.insert("x-csrf-token", axum::http::HeaderValue::from_static("csrf"));
 
         let now = auth::now_ms();
+        // Insert an entity that has artwork and one that lacks artwork
+        sqlx::query("INSERT INTO artwork(kind, entity_id, source, bytes, mime, checked_at_ms) VALUES ('artists', 'has-art', 'custom', X'89504E47', 'image/png', ?)")
+            .bind(now)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO artwork_misses VALUES ('artists', 'has-art', 0, ?)")
+            .bind(now + 86400000)
+            .execute(&state.db)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO artwork_misses VALUES ('artists', 'some-artist', 0, ?)")
             .bind(now + 86400000)
             .execute(&state.db)
@@ -892,7 +913,7 @@ mod tests {
                 .fetch_one(&state.db)
                 .await
                 .unwrap(),
-            1
+            2
         );
 
         sqlx::query("INSERT INTO jobs(id, kind, filename, state, created_at_ms, updated_at_ms, inventory_complete, phase, error_code, retry_at_ms) VALUES ('job-1', 'artwork', 'Download library artwork', 'waiting', ?, ?, 1, 'artwork', 'artwork_paused', ?)")
@@ -909,14 +930,21 @@ mod tests {
             .0;
         assert!(res.ok);
         assert!(res.queued > 0);
+        assert_eq!(res.queued, res.queued_albums + res.queued_artists);
 
+        // 'some-artist' lacked artwork, so it was deleted; 'has-art' had artwork, so it remained
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM artwork_misses")
                 .fetch_one(&state.db)
                 .await
                 .unwrap(),
-            0
+            1
         );
+        let remaining_miss: String = sqlx::query_scalar("SELECT entity_id FROM artwork_misses")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(remaining_miss, "has-art");
 
         let (retry_at, err_code): (Option<i64>, Option<String>) =
             sqlx::query_as("SELECT retry_at_ms, error_code FROM jobs WHERE id='job-1'")

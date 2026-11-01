@@ -468,6 +468,26 @@ export function Activities({
   const toast = useToast();
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const handleBackfill = async () => {
+    setBusy(true);
+    setActionError("");
+    try {
+      const res = await api.backfillArtwork();
+      await refresh();
+      window.dispatchEvent(new Event("artwork-cache-changed"));
+      toast(
+        res.queued > 0
+          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
+          : "No missing artwork found to retrieve.",
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setActionError(msg);
+      toast(msg, true);
+    } finally {
+      setBusy(false);
+    }
+  };
   useEffect(() => {
     setActionError("");
     setIssuesPage(0);
@@ -746,29 +766,7 @@ export function Activities({
                     <button
                       className="secondary"
                       disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        setActionError("");
-                        try {
-                          const res = await api.backfillArtwork();
-                          await refresh();
-                          window.dispatchEvent(
-                            new Event("artwork-cache-changed"),
-                          );
-                          toast(
-                            res.queued > 0
-                              ? `Queued ${res.queued} items for artwork retrieval.`
-                              : "No missing artwork found to retrieve.",
-                          );
-                        } catch (e) {
-                          const msg =
-                            e instanceof Error ? e.message : String(e);
-                          setActionError(msg);
-                          toast(msg, true);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
+                      onClick={handleBackfill}
                     >
                       Refresh missing artwork
                     </button>
@@ -907,23 +905,7 @@ export function Activities({
                 type="button"
                 className="button secondary"
                 disabled={busy}
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    const res = await api.backfillArtwork();
-                    await refresh();
-                    window.dispatchEvent(new Event("artwork-cache-changed"));
-                    toast(
-                      res.queued > 0
-                        ? `Queued ${res.queued} items for artwork retrieval.`
-                        : "No missing artwork found to retrieve.",
-                    );
-                  } catch (e) {
-                    toast(e instanceof Error ? e.message : String(e), true);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
+                onClick={handleBackfill}
               >
                 Refresh missing artwork
               </button>
