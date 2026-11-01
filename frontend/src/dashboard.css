@@ -21,6 +21,66 @@
   width: 100%;
 }
 @media (max-width: 600px) {
+  .widget-span-button,
+  .span-control {
+    display: none !important;
+  }
+  .overview-heading {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+  }
+  .overview-heading-actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .overview-heading-actions > .button,
+  .overview-heading-actions > button {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+  .overview-heading .filters {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .overview-heading .filters label {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+  .overview-heading .filters .select-control {
+    width: 100%;
+    min-width: 0;
+  }
+  .overview-heading .filters .select-trigger {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .dashboard-edit-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .dashboard-edit-actions {
+    flex-direction: column;
+    align-items: stretch;
+    width: 100%;
+    gap: 8px;
+  }
+  .dashboard-edit-actions .button {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
@@ -683,9 +743,9 @@ dialog.widget-catalog-dialog {
 .dashboard-widget .overview-rankings .ranking-row {
   display: grid;
   grid-template-columns: 2ch 38px minmax(0, 1fr);
-  grid-template-rows: 32px 28px 3px;
+  grid-template-rows: auto auto 3px;
   column-gap: 8px;
-  row-gap: 0;
+  row-gap: 4px;
   min-height: 80px;
   padding: 8px 0;
   border: 0;
@@ -982,8 +1042,16 @@ dialog.widget-catalog-dialog {
 .dashboard-widget .widget-totals .stats-grid .stat {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
   min-height: 112px;
+}
+.dashboard-widget .widget-totals .stats-grid .stat > span,
+.dashboard-widget .widget-totals .stats-grid .stat > strong,
+.dashboard-widget .widget-totals .stats-grid .stat > small {
+  text-align: left;
+  align-self: stretch;
 }
 .dashboard-widget .widget-totals .time-composition {
   height: 36px;
@@ -1017,8 +1085,51 @@ dialog.widget-catalog-dialog {
   }
 }
 @container (max-width: 600px) {
+  .widget-edit-controls {
+    align-items: center;
+    gap: 6px;
+  }
+  .widget-remove-button {
+    margin-left: auto;
+    order: 1;
+  }
+  .widget-period-override-control {
+    flex: 1 1 100%;
+    width: 100%;
+    order: 2;
+    margin-top: 2px;
+  }
+  .widget-period-override-control .select-control,
+  .widget-period-override-control .select-trigger {
+    width: 100%;
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .widget-totals .stats-grid {
+    grid-template-columns: 1fr;
+  }
   .dashboard-widget .widget-totals .stats-grid .stat {
-    min-height: 96px;
+    min-height: auto;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
+  }
+  .dashboard-widget .widget-totals .time-composition {
+    height: auto;
+  }
+  .widget-totals-note {
+    height: auto;
+  }
+  .discovery-ratio-metrics {
+    justify-content: flex-start;
+    align-items: flex-start;
+    text-align: left;
+    gap: 8px 16px;
+  }
+  .dashboard-widget .discovery-ratio-metrics .stat {
+    align-items: baseline;
+    justify-content: flex-start;
+    text-align: left;
   }
 }
 
@@ -1074,7 +1185,8 @@ dialog.widget-catalog-dialog {
     height: 496px;
   }
   .dashboard-widget .overview-rankings .ranking-row {
-    grid-template-rows: 32px 44px 3px;
+    grid-template-rows: auto auto 3px;
+    row-gap: 4px;
     min-height: 96px;
   }
   .dashboard-widget .overview-rankings .rank-metrics {

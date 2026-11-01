@@ -550,6 +550,124 @@ test.describe("now playing disclosure", () => {
       .press("Enter");
     await expect(expand).toHaveAttribute("aria-expanded", "false");
   });
+
+  test("mobile drawer allows expanding now playing artwork and scrolls smoothly (#136)", async ({
+    page,
+    browserName,
+  }) => {
+    await page.route("**/api/spotify/status", async (route) => {
+      const response = await route.fetch();
+      await route.fulfill({
+        json: {
+          ...(await response.json()),
+          connected: true,
+          now_playing_seconds: 1,
+        },
+      });
+    });
+    await page.route("**/api/v1/artwork/albums/sidebar*", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#7c9bac"/></svg>',
+      }),
+    );
+    await page.route("**/api/spotify/now-playing", (route) =>
+      route.fulfill({
+        json: {
+          title: "Track with artwork",
+          artists: [{ id: "artist-1", name: "Featured Artist" }],
+          album: "Featured Album",
+          cover_url: "/api/v1/artwork/albums/sidebar",
+          spotify_url: "https://open.spotify.com/track/123",
+          duration_ms: 210000,
+          progress_ms: 60000,
+          response_received_at_ms: Date.now(),
+          observed_at_ms: Date.now(),
+        },
+      }),
+    );
+
+    await login(page);
+
+    // Test on both mobile (< 600px) and tablet/drawer (< 900px) viewports
+    for (const width of [390, 768]) {
+      await page.setViewportSize({ width, height: 667 });
+      await page.evaluate(() => document.fonts.ready);
+
+      // Open navigation drawer
+      const openMenuBtn = page.getByRole("button", {
+        name: "Open navigation",
+        exact: true,
+      });
+      await openMenuBtn.click();
+
+      const sidebar = page.locator(".sidebar");
+      await expect(sidebar).toBeVisible();
+
+      const widget = sidebar.locator(".sidebar-now");
+      await expect(
+        widget.getByRole("link", { name: "Track with artwork" }),
+      ).toBeVisible();
+
+      // The artwork expansion toggle should be visible and have touch target >= 44x44
+      const artworkToggle = widget.getByRole("button", {
+        name: "Expand now playing artwork",
+        exact: true,
+      });
+      await expect(artworkToggle).toBeVisible();
+      const toggleBox = await artworkToggle.boundingBox();
+      expect(Math.round(toggleBox.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(toggleBox.height)).toBeGreaterThanOrEqual(44);
+
+      // Expand the artwork
+      await artworkToggle.click();
+
+      // Check expanded artwork is visible and large cover is shown
+      await expect(
+        widget.getByRole("button", {
+          name: "Collapse now playing artwork",
+          exact: true,
+        }),
+      ).toBeVisible();
+      const expandedCover = widget.locator(
+        ".now-artwork-expansion .cover.large",
+      );
+      await expect(expandedCover).toBeVisible();
+      const coverBox = await expandedCover.boundingBox();
+      expect(coverBox.width).toBeGreaterThan(150);
+
+      // Verify sidebar has vertical scroll (scrollHeight > clientHeight) and scrolls
+      const canScroll = await sidebar.evaluate((el) => {
+        return el.scrollHeight > el.clientHeight;
+      });
+      expect(canScroll).toBe(true);
+
+      // Scroll down inside the sidebar
+      await sidebar.evaluate((el) => {
+        el.scrollTop = el.scrollHeight;
+      });
+      const scrolledTop = await sidebar.evaluate((el) => el.scrollTop);
+      expect(scrolledTop).toBeGreaterThan(0);
+
+      // Ensure navigation links remain reachable
+      const settingsLink = sidebar.getByRole("link", { name: "Settings" });
+      await expect(settingsLink).toBeAttached();
+
+      // Collapse artwork back
+      const collapseToggle = widget.getByRole("button", {
+        name: "Collapse now playing artwork",
+        exact: true,
+      });
+      await collapseToggle.click();
+      await expect(expandedCover).toBeHidden();
+
+      // Close the drawer
+      await sidebar
+        .getByRole("button", { name: "Close navigation", exact: true })
+        .click();
+      await expect(sidebar).toBeHidden();
+    }
+  });
 });
 
 test("music listening patterns switch within one compact chart and header filters match action widths", async ({
@@ -4790,6 +4908,558 @@ test("long original metadata wraps inside music credits and source-entry control
           path: `test-results/responsive-${browserName}-source-entries.png`,
           animations: "disabled",
         });
+    }
+  }
+});
+
+test("totals widget lays out in a single column with left-aligned labels above values and no overlap on narrow viewports", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  for (const width of [320, 375, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+
+    const totalsWidget = page.locator(".widget-totals");
+    await expect(totalsWidget).toBeVisible();
+
+    const stats = totalsWidget.locator(".stats-grid .stat");
+    await expect(stats).toHaveCount(3);
+
+    // 1. Check absence of horizontal overflow
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    expect(hasHorizontalOverflow).toBeFalsy();
+
+    // 2. Check layout of each stat block
+    const statsData = await stats.evaluateAll((nodes) => {
+      return nodes.map((stat) => {
+        const statBox = stat.getBoundingClientRect();
+        const statStyle = window.getComputedStyle(stat);
+        const label = stat.querySelector(":scope > span");
+        const value = stat.querySelector(":scope > strong");
+        const small = stat.querySelector(":scope > small");
+
+        const labelBox = label ? label.getBoundingClientRect() : null;
+        const valueBox = value ? value.getBoundingClientRect() : null;
+        const smallBox = small ? small.getBoundingClientRect() : null;
+
+        const labelStyle = label ? window.getComputedStyle(label) : null;
+        const valueStyle = value ? window.getComputedStyle(value) : null;
+
+        return {
+          statBox: {
+            top: statBox.top,
+            bottom: statBox.bottom,
+            left: statBox.left,
+            right: statBox.right,
+            width: statBox.width,
+          },
+          statStyle: {
+            display: statStyle.display,
+            flexDirection: statStyle.flexDirection,
+            alignItems: statStyle.alignItems,
+            textAlign: statStyle.textAlign,
+            justifyContent: statStyle.justifyContent,
+          },
+          labelBox: labelBox
+            ? {
+                top: labelBox.top,
+                bottom: labelBox.bottom,
+                left: labelBox.left,
+                right: labelBox.right,
+                width: labelBox.width,
+              }
+            : null,
+          valueBox: valueBox
+            ? {
+                top: valueBox.top,
+                bottom: valueBox.bottom,
+                left: valueBox.left,
+                right: valueBox.right,
+                width: valueBox.width,
+              }
+            : null,
+          smallBox: smallBox
+            ? {
+                top: smallBox.top,
+                bottom: smallBox.bottom,
+                left: smallBox.left,
+                right: smallBox.right,
+              }
+            : null,
+          labelStyle: labelStyle
+            ? {
+                textAlign: labelStyle.textAlign,
+              }
+            : null,
+          valueStyle: valueStyle
+            ? {
+                textAlign: valueStyle.textAlign,
+              }
+            : null,
+        };
+      });
+    });
+
+    // Verify single-column layout: stats are stacked vertically
+    for (let i = 0; i < statsData.length - 1; i++) {
+      expect(
+        statsData[i + 1].statBox.top,
+        `Stat ${i + 1} should be below Stat ${i} at ${width}px`,
+      ).toBeGreaterThanOrEqual(statsData[i].statBox.bottom - 1);
+    }
+
+    // Verify label on top, value below, left-aligned, and no overlap
+    for (let i = 0; i < statsData.length; i++) {
+      const { statBox, statStyle, labelBox, valueBox, smallBox } = statsData[i];
+      expect(labelBox).not.toBeNull();
+      expect(valueBox).not.toBeNull();
+
+      // Label is on top of value (vertical stacking)
+      expect(
+        valueBox.top,
+        `Value should be below label in stat ${i} at ${width}px`,
+      ).toBeGreaterThanOrEqual(labelBox.bottom - 1);
+
+      // No geometric overlap between label and value
+      const overlapsLabelValue =
+        labelBox.left < valueBox.right &&
+        labelBox.right > valueBox.left &&
+        labelBox.top < valueBox.bottom &&
+        labelBox.bottom > valueBox.top;
+      expect(
+        overlapsLabelValue,
+        `Label and value must not overlap geometrically in stat ${i} at ${width}px`,
+      ).toBeFalsy();
+
+      // If small/composition is present, it is below value and does not overlap
+      if (smallBox) {
+        expect(
+          smallBox.top,
+          `Composition should be below value in stat ${i} at ${width}px`,
+        ).toBeGreaterThanOrEqual(valueBox.bottom - 1);
+        const overlapsValueSmall =
+          valueBox.left < smallBox.right &&
+          valueBox.right > smallBox.left &&
+          valueBox.top < smallBox.bottom &&
+          valueBox.bottom > smallBox.top;
+        expect(
+          overlapsValueSmall,
+          `Value and small must not overlap in stat ${i} at ${width}px`,
+        ).toBeFalsy();
+      }
+
+      // Left alignment: both label and value start at or near the left edge of the stat box
+      // (within padding / rounding tolerance, and definitely not pushed to the right)
+      expect(
+        Math.abs(labelBox.left - statBox.left),
+        `Label left offset in stat ${i} at ${width}px`,
+      ).toBeLessThan(16);
+      expect(
+        Math.abs(valueBox.left - statBox.left),
+        `Value left offset in stat ${i} at ${width}px`,
+      ).toBeLessThan(16);
+
+      // Align items and text align checks
+      expect(statStyle.alignItems).toBe("flex-start");
+      expect(statStyle.justifyContent).toBe("flex-start");
+      expect(statStyle.textAlign).toBe("left");
+    }
+  }
+});
+
+test("mobile baseline: overview header stacks at full width and edit mode hides span controls (< 600px)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  for (const width of [320, 375, 390, 430]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => document.fonts.ready);
+
+    // 1. Check absence of horizontal overflow
+    const hasHorizontalOverflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > window.innerWidth + 1;
+    });
+    expect(hasHorizontalOverflow).toBeFalsy();
+
+    const overviewHeading = page.locator(".overview-heading");
+    await expect(overviewHeading).toBeVisible();
+
+    const headingActions = page.locator(".overview-heading-actions");
+    await expect(headingActions).toBeVisible();
+
+    const customizeBtn = headingActions.getByRole("button", {
+      name: "Personalizza",
+    });
+    await expect(customizeBtn).toBeVisible();
+
+    const periodFilters = page.locator(".overview-heading .filters");
+    await expect(periodFilters).toBeVisible();
+
+    // Check touch target of customize button
+    const custBox = await customizeBtn.boundingBox();
+    expect(custBox).not.toBeNull();
+    expect(custBox.width).toBeGreaterThanOrEqual(44);
+    expect(custBox.height).toBeGreaterThanOrEqual(44);
+
+    // Check full-width stacking of overview heading items:
+    // Heading actions and customize button take full width of container
+    const actionsBox = await headingActions.boundingBox();
+    expect(actionsBox).not.toBeNull();
+    expect(Math.abs(custBox.width - actionsBox.width)).toBeLessThanOrEqual(4);
+
+    // Period filter comboboxes (Period and Sort)
+    const filterComboboxes = periodFilters.locator("[role=combobox]");
+    const comboCount = await filterComboboxes.count();
+    expect(comboCount).toBeGreaterThanOrEqual(1);
+
+    for (let i = 0; i < comboCount; i++) {
+      const combo = filterComboboxes.nth(i);
+      const box = await combo.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect(box.height).toBeGreaterThanOrEqual(44);
+
+      // Comboboxes take full width of filters container
+      const filtersBox = await periodFilters.boundingBox();
+      expect(Math.abs(box.width - filtersBox.width)).toBeLessThanOrEqual(4);
+    }
+
+    // Verify vertical stacking: customize button is above filters
+    const filtersBox = await periodFilters.boundingBox();
+    expect(custBox.y + custBox.height).toBeLessThanOrEqual(filtersBox.y + 1);
+
+    // Each filter combobox is stacked vertically
+    for (let i = 0; i < comboCount - 1; i++) {
+      const boxA = await filterComboboxes.nth(i).boundingBox();
+      const boxB = await filterComboboxes.nth(i + 1).boundingBox();
+      expect(boxA.y + boxA.height).toBeLessThanOrEqual(boxB.y + 1);
+    }
+  }
+
+  // Interacting with period filter on mobile
+  await page.setViewportSize({ width: 390, height: 900 });
+  const periodCombo = page
+    .locator(".overview-heading .filters [role=combobox]")
+    .first();
+  await chooseOption(periodCombo, "month");
+
+  // Enter Edit Mode on mobile (390px)
+  const customizeBtn = page
+    .locator(".overview-heading-actions")
+    .getByRole("button", { name: "Personalizza" });
+  await customizeBtn.click();
+
+  const editToolbar = page.getByRole("toolbar", {
+    name: "Personalizza dashboard",
+  });
+  await expect(editToolbar).toBeVisible();
+
+  // In edit mode on mobile (< 600px), check widget edit controls
+  const widgets = page.locator(".dashboard-widget.editing");
+  const widgetCount = await widgets.count();
+  expect(widgetCount).toBeGreaterThan(0);
+
+  for (let i = 0; i < widgetCount; i++) {
+    const widget = widgets.nth(i);
+
+    // Span button must be hidden on mobile (< 600px)
+    const spanBtn = widget.locator(".widget-span-button");
+    await expect(spanBtn).toBeHidden();
+
+    // Reorder buttons (move up/down) must be visible and >= 44px
+    const moveUp = widget.locator(".widget-move-up");
+    const moveDown = widget.locator(".widget-move-down");
+    await expect(moveUp).toBeVisible();
+    await expect(moveDown).toBeVisible();
+    const upBox = await moveUp.boundingBox();
+    const downBox = await moveDown.boundingBox();
+    expect(upBox.width).toBeGreaterThanOrEqual(44);
+    expect(upBox.height).toBeGreaterThanOrEqual(44);
+    expect(downBox.width).toBeGreaterThanOrEqual(44);
+    expect(downBox.height).toBeGreaterThanOrEqual(44);
+
+    // Remove button must be visible and >= 44px
+    const removeBtn = widget.locator(".widget-remove-button");
+    await expect(removeBtn).toBeVisible();
+    const removeBox = await removeBtn.boundingBox();
+    expect(removeBox.width).toBeGreaterThanOrEqual(44);
+    expect(removeBox.height).toBeGreaterThanOrEqual(44);
+
+    // Period override if present
+    const overrideControl = widget.locator(".widget-period-override-control");
+    if (await overrideControl.isVisible()) {
+      const trigger = overrideControl.locator(".select-trigger");
+      await expect(trigger).toBeVisible();
+      const triggerBox = await trigger.boundingBox();
+      expect(triggerBox.width).toBeGreaterThanOrEqual(44);
+      expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+    }
+  }
+
+  // Test period override interaction in edit mode
+  const overrideCombobox = page
+    .locator(
+      ".dashboard-widget.editing .widget-period-override-control [role=combobox]",
+    )
+    .first();
+  if (await overrideCombobox.isVisible()) {
+    await chooseOption(overrideCombobox, "week");
+  }
+
+  // Test reordering: move second widget up
+  const firstIdBefore = await widgets.nth(0).getAttribute("data-widget-id");
+  const secondIdBefore = await widgets.nth(1).getAttribute("data-widget-id");
+  expect(firstIdBefore).not.toEqual(secondIdBefore);
+
+  await widgets.nth(1).locator(".widget-move-up").click();
+
+  const firstIdAfter = await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .getAttribute("data-widget-id");
+  expect(firstIdAfter).toBe(secondIdBefore);
+
+  // Restore order by moving it back down
+  await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .locator(".widget-move-down")
+    .click();
+  const firstIdRestored = await page
+    .locator(".dashboard-widget.editing")
+    .nth(0)
+    .getAttribute("data-widget-id");
+  expect(firstIdRestored).toBe(firstIdBefore);
+
+  // Exit edit mode (Annulla with confirmation when dirty)
+  const cancelBtn = editToolbar.getByRole("button", { name: "Annulla" });
+  await expect(cancelBtn).toBeVisible();
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await cancelBtn.click();
+  await expect(editToolbar).toBeHidden();
+  await expect(page.locator(".dashboard-widget.editing")).toHaveCount(0);
+});
+
+test("mobile baseline: ranking rows and recent listen entries preserve clear spacing without overlap on 320px (#133)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.evaluate(() => document.fonts.ready);
+
+  // 1. Check absence of horizontal overflow
+  const hasHorizontalOverflow = await page.evaluate(() => {
+    return document.documentElement.scrollWidth > window.innerWidth + 1;
+  });
+  expect(hasHorizontalOverflow).toBeFalsy();
+
+  // Helper to check 2D AABB geometric collision between two bounding rects
+  const checkNoOverlap = (boxA, boxB, descA, descB) => {
+    expect(boxA).not.toBeNull();
+    expect(boxB).not.toBeNull();
+    const overlaps =
+      boxA.left < boxB.right - 0.5 &&
+      boxA.right > boxB.left + 0.5 &&
+      boxA.top < boxB.bottom - 0.5 &&
+      boxA.bottom > boxB.top + 0.5;
+    expect(
+      overlaps,
+      `${descA} must not collide or overlap with ${descB}`,
+    ).toBeFalsy();
+  };
+
+  // Check ranking rows in overview rankings (.overview-rankings .ranking-row)
+  const rankingRows = page.locator(".overview-rankings .ranking-row");
+  await expect(rankingRows.first()).toBeVisible();
+  const rankRowCount = await rankingRows.count();
+  expect(rankRowCount).toBeGreaterThan(0);
+
+  for (let i = 0; i < rankRowCount; i++) {
+    const row = rankingRows.nth(i);
+    await expect(row).toBeVisible();
+
+    const rowData = await row.evaluate((el) => {
+      const rankNum = el.querySelector(".rank-number");
+      const cover = el.querySelector(".cover");
+      const rankName = el.querySelector(".rank-name");
+      const nameLink = rankName?.querySelector(".music-item-link, a");
+      const subtitle = rankName?.querySelector("small");
+      const rankVal = el.querySelector(".rank-value");
+      const plays = rankVal?.querySelector(".rank-plays");
+      const time = rankVal?.querySelector(".rank-time");
+
+      const toBox = (node) => {
+        if (!node) return null;
+        const r = node.getBoundingClientRect();
+        return {
+          top: r.top,
+          bottom: r.bottom,
+          left: r.left,
+          right: r.right,
+          width: r.width,
+          height: r.height,
+        };
+      };
+
+      return {
+        rankNumBox: toBox(rankNum),
+        coverBox: toBox(cover),
+        rankNameBox: toBox(rankName),
+        nameLinkBox: toBox(nameLink),
+        subtitleBox: toBox(subtitle),
+        rankValBox: toBox(rankVal),
+        playsBox: toBox(plays),
+        timeBox: toBox(time),
+      };
+    });
+
+    const {
+      rankNumBox,
+      coverBox,
+      rankNameBox,
+      nameLinkBox,
+      subtitleBox,
+      rankValBox,
+      playsBox,
+      timeBox,
+    } = rowData;
+
+    expect(rankNumBox).not.toBeNull();
+    expect(rankNameBox).not.toBeNull();
+    expect(rankValBox).not.toBeNull();
+
+    // Rank number is to the left of rank name / value
+    expect(rankNumBox.right).toBeLessThanOrEqual(rankNameBox.left + 1);
+    checkNoOverlap(
+      rankNumBox,
+      rankNameBox,
+      `Rank number in row ${i}`,
+      `Rank name in row ${i}`,
+    );
+    checkNoOverlap(
+      rankNumBox,
+      rankValBox,
+      `Rank number in row ${i}`,
+      `Rank value in row ${i}`,
+    );
+
+    if (coverBox && coverBox.width > 0) {
+      // Cover is between rank number and rank name
+      expect(rankNumBox.right).toBeLessThanOrEqual(coverBox.left + 1);
+      expect(coverBox.right).toBeLessThanOrEqual(rankNameBox.left + 1);
+      checkNoOverlap(
+        coverBox,
+        rankNameBox,
+        `Cover in row ${i}`,
+        `Rank name in row ${i}`,
+      );
+      checkNoOverlap(
+        coverBox,
+        rankValBox,
+        `Cover in row ${i}`,
+        `Rank value in row ${i}`,
+      );
+    }
+
+    // Rank name is vertically stacked above rank value
+    expect(rankNameBox.bottom).toBeLessThanOrEqual(rankValBox.top + 1);
+    checkNoOverlap(
+      rankNameBox,
+      rankValBox,
+      `Rank name in row ${i}`,
+      `Rank value in row ${i}`,
+    );
+
+    // Inside rank name: name link and subtitle
+    if (nameLinkBox && subtitleBox && subtitleBox.height > 0) {
+      checkNoOverlap(
+        nameLinkBox,
+        subtitleBox,
+        `Name link in row ${i}`,
+        `Subtitle in row ${i}`,
+      );
+    }
+
+    // Inside rank value: plays and duration
+    if (playsBox && timeBox && timeBox.height > 0) {
+      checkNoOverlap(
+        playsBox,
+        timeBox,
+        `Play count in row ${i}`,
+        `Duration in row ${i}`,
+      );
+    }
+  }
+
+  // Check recent listen entries (.widget-recent-listens .listen-row)
+  const recentListens = page.locator(".widget-recent-listens .listen-row");
+  const listenCount = await recentListens.count();
+  if (listenCount > 0) {
+    for (let i = 0; i < listenCount; i++) {
+      const row = recentListens.nth(i);
+      await expect(row).toBeVisible();
+
+      const listenData = await row.evaluate((el) => {
+        const cover = el.querySelector(".cover");
+        const heading = el.querySelector(".listen-heading");
+        const headingLink = heading?.querySelector("a");
+        const artists = el.querySelector(".listen-artists");
+
+        const toBox = (node) => {
+          if (!node) return null;
+          const r = node.getBoundingClientRect();
+          return {
+            top: r.top,
+            bottom: r.bottom,
+            left: r.left,
+            right: r.right,
+            width: r.width,
+            height: r.height,
+          };
+        };
+
+        return {
+          coverBox: toBox(cover),
+          headingBox: toBox(heading),
+          headingLinkBox: toBox(headingLink),
+          artistsBox: toBox(artists),
+        };
+      });
+
+      const { coverBox, headingBox, headingLinkBox, artistsBox } = listenData;
+
+      if (coverBox && headingBox) {
+        // Cover is to the left of track heading
+        expect(coverBox.right).toBeLessThanOrEqual(headingBox.left + 1);
+        checkNoOverlap(
+          coverBox,
+          headingBox,
+          `Listen cover in entry ${i}`,
+          `Track heading in entry ${i}`,
+        );
+      }
+
+      if (headingBox && artistsBox && artistsBox.height > 0) {
+        // Track heading is above artist name with clear vertical stacking
+        expect(headingBox.bottom).toBeLessThanOrEqual(artistsBox.top + 1);
+        checkNoOverlap(
+          headingBox,
+          artistsBox,
+          `Track heading in entry ${i}`,
+          `Artist name in entry ${i}`,
+        );
+      }
     }
   }
 });

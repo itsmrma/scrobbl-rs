@@ -861,6 +861,8 @@ test.describe("consultation", () => {
               for (const button of cell.querySelectorAll(
                 ".widget-control, .select-trigger",
               )) {
+                // Span selectors are intentionally hidden on narrow viewports.
+                if (getComputedStyle(button).display === "none") continue;
                 const box = button.getBoundingClientRect();
                 if (box.width < 44 || box.height < 44)
                   failures.push("small target");
