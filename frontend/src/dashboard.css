@@ -21,6 +21,10 @@
   width: 100%;
 }
 @media (max-width: 600px) {
+  .widget-span-button,
+  .span-control {
+    display: none !important;
+  }
   .overview-heading {
     width: 100%;
     flex-direction: column;
@@ -1047,6 +1051,7 @@ dialog.widget-catalog-dialog {
 .dashboard-widget .widget-totals .stats-grid .stat > strong,
 .dashboard-widget .widget-totals .stats-grid .stat > small {
   text-align: left;
+  align-self: stretch;
 }
 .dashboard-widget .widget-totals .time-composition {
   height: 36px;
@@ -1080,10 +1085,6 @@ dialog.widget-catalog-dialog {
   }
 }
 @container (max-width: 600px) {
-  .widget-span-button,
-  .span-control {
-    display: none !important;
-  }
   .widget-edit-controls {
     align-items: center;
     gap: 6px;
