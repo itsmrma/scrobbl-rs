@@ -489,7 +489,10 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
             .unwrap_or(300)
             .clamp(1, 86_400);
         let body: Option<Value> = response.json().await.ok();
-        let reason = body.as_ref().and_then(extract_rate_limit_reason).unwrap_or("");
+        let reason = body
+            .as_ref()
+            .and_then(extract_rate_limit_reason)
+            .unwrap_or("");
         let retry_at = (auth::now_ms() + wait * 1000).to_string();
         diagnostics(
             state,
@@ -540,8 +543,12 @@ async fn checked_json_now_playing(state: &AppState, response: reqwest::Response)
             .clamp(1, 86_400);
         let retry_at = (auth::now_ms() + wait * 1000).to_string();
         let body: Option<Value> = response.json().await.ok();
-        let reason = body.as_ref().and_then(extract_rate_limit_reason).unwrap_or("");
-        let error_msg = format!("Spotify player request limit reached. Retrying in {wait} seconds.");
+        let reason = body
+            .as_ref()
+            .and_then(extract_rate_limit_reason)
+            .unwrap_or("");
+        let error_msg =
+            format!("Spotify player request limit reached. Retrying in {wait} seconds.");
         diagnostics(
             state,
             &[
@@ -811,6 +818,12 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
         let mut checkpoint = state.db.begin().await?;
         crate::jobs::validate_lease(&mut checkpoint, job).await?;
         checkpoint.commit().await?;
+        if page > 0 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            let mut checkpoint = state.db.begin().await?;
+            crate::jobs::validate_lease(&mut checkpoint, job).await?;
+            checkpoint.commit().await?;
+        }
         let mut params = vec![("limit", "50".into())];
         if let Some(cursor) = before {
             params.push(("before", cursor.to_string()));
@@ -1761,6 +1774,102 @@ mod tests {
         handle.abort();
     }
     #[tokio::test]
+    async fn paginated_collection_paces_successive_pages_with_delay() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":batch})),
+                reply(
+                    "/v1/me/player/recently-played",
+                    json!({"items":[item(at - 50 * 180_000)]}),
+                ),
+            ],
+            false,
+        )
+        .await;
+
+        let start = tokio::time::Instant::now();
+        let result = sync(&state).await.unwrap();
+        let elapsed = start.elapsed();
+
+        assert_eq!(result["added"], 51);
+        let calls = mock.calls.lock().await;
+        assert_eq!(calls.len(), 2);
+        assert!(calls[1].1.contains("before="));
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "expected at least 250ms elapsed due to pacing, got {:?}",
+            elapsed
+        );
+        handle.abort();
+    }
+    #[tokio::test]
+    async fn cancellation_during_pagination_pacing_stops_before_subsequent_page() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":batch})),
+                reply(
+                    "/v1/me/player/recently-played",
+                    json!({"items":[item(at - 50 * 180_000)]}),
+                ),
+            ],
+            false,
+        )
+        .await;
+
+        let collector = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state).await }
+        });
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while mock.calls.lock().await.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let id: String = sqlx::query_scalar(
+            "SELECT id FROM jobs WHERE kind='spotify_collection' AND state='running'",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
+
+        state.storage.cancel(&id).await.unwrap();
+
+        assert!(collector.await.unwrap().is_err());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "subsequent page must not be fetched after cancellation"
+        );
+        assert!(
+            db::setting(&state.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        let status: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id=?")
+            .bind(&id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(status, "cancelled");
+        handle.abort();
+    }
+    #[tokio::test]
     async fn oauth_callback_is_bound_to_the_owner_session_and_consumed_once() {
         let (_dir,state,mock,handle)=fixture(vec![reply("/api/token",json!({"access_token":"access-from-code","refresh_token":"refresh-from-code","expires_in":3600}))],false).await;
         let cookie = auth::random_secret();
@@ -2110,10 +2219,16 @@ mod tests {
             Some("QUOTA_EXCEEDED".to_string())
         );
 
-        let current_status = status(State(state.clone()), headers.clone()).await.unwrap().0;
+        let current_status = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
         assert_eq!(current_status.collection, "waiting");
         assert_eq!(current_status.retry_at_ms, Some(retry_at_ms));
-        assert_eq!(current_status.rate_limit_reason.as_deref(), Some("QUOTA_EXCEEDED"));
+        assert_eq!(
+            current_status.rate_limit_reason.as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
         assert!(current_status.now_playing_error.is_some());
 
         // mock called once for currently-playing
@@ -2153,7 +2268,10 @@ mod tests {
                 .is_none()
         );
 
-        let reset_status = status(State(state.clone()), headers.clone()).await.unwrap().0;
+        let reset_status = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
         assert_eq!(reset_status.collection, "active");
         assert!(reset_status.retry_at_ms.is_none());
         assert!(reset_status.rate_limit_reason.is_none());
