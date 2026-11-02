@@ -447,6 +447,9 @@ async fn save_tokens(
         .ok_or_else(|| AppError::Spotify("Spotify returned an invalid token lifetime.".into()))?;
     sqlx::query("INSERT INTO spotify_tokens(id, access_token, refresh_token, expires_at_ms) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET access_token = excluded.access_token, refresh_token = excluded.refresh_token, expires_at_ms = excluded.expires_at_ms")
         .bind(access).bind(refresh).bind(auth::now_ms()+seconds*1000).execute(&state.private_db).await?;
+    if previous_refresh.is_none() {
+        sqlx::query(RESET_STATUS_SQL).execute(&state.db).await?;
+    }
     Ok(())
 }
 pub(crate) fn parse_retry_after(header: &str, now_ms: i64) -> Option<i64> {
@@ -492,6 +495,7 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
             state,
             &[
                 ("retry_at_ms", &retry_at),
+                ("now_playing_retry_at_ms", &retry_at),
                 ("spotify_rate_limit_reason", reason),
             ],
         )
@@ -542,6 +546,7 @@ async fn checked_json_now_playing(state: &AppState, response: reqwest::Response)
             state,
             &[
                 ("now_playing_retry_at_ms", &retry_at),
+                ("retry_at_ms", &retry_at),
                 ("now_playing_error", &error_msg),
                 ("spotify_rate_limit_reason", reason),
             ],
@@ -740,6 +745,15 @@ pub async fn sync(state: &AppState) -> Result<Value> {
                 .into(),
         ));
     }
+    if let Some(retry) = db::setting(&state.db, "retry_at_ms")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok())
+        && retry > auth::now_ms()
+    {
+        return Err(AppError::Spotify(
+            "Waiting for Spotify's request limit to reset.".into(),
+        ));
+    }
     let intervals = intervals(state).await?;
     let pending:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE kind='spotify_collection' AND state IN ('queued','waiting'))").fetch_one(&state.db).await?;
     if !pending {
@@ -775,6 +789,15 @@ pub async fn sync(state: &AppState) -> Result<Value> {
     result
 }
 async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> {
+    if let Some(retry) = db::setting(&state.db, "retry_at_ms")
+        .await?
+        .and_then(|v| v.parse::<i64>().ok())
+        && retry > auth::now_ms()
+    {
+        return Err(AppError::Spotify(
+            "Waiting for Spotify's request limit to reset.".into(),
+        ));
+    }
     let previous = db::setting(&state.db, "recent_cursor_ms")
         .await?
         .and_then(|v| v.parse::<i64>().ok());
@@ -2016,14 +2039,20 @@ mod tests {
         state.storage.close().await;
     }
     #[tokio::test]
-    async fn now_playing_rate_limit_does_not_block_collection_sync() {
+    async fn test_spotify_429_diagnosis_and_coordination() {
         let at = 1_749_000_000_000;
-        let (_dir, state, _mock, handle) = fixture(
+        let (_dir, state, mock, handle) = fixture(
             vec![
                 Reply {
                     path: "/v1/me/player/currently-playing",
                     status: StatusCode::TOO_MANY_REQUESTS,
-                    body: json!({}),
+                    body: json!({
+                        "error": {
+                            "status": 429,
+                            "message": "Rate limit exceeded",
+                            "reason": "QUOTA_EXCEEDED"
+                        }
+                    }),
                     retry: Some("3600"),
                 },
                 reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
@@ -2032,11 +2061,58 @@ mod tests {
         )
         .await;
         let headers = owner_headers(&state).await;
+
+        // 1. A 429 on currently-playing sets both retry_at_ms and now_playing_retry_at_ms
         assert!(
             now_playing(State(state.clone()), headers.clone())
                 .await
                 .is_err()
         );
+
+        let retry_at_str = db::setting(&state.db, "retry_at_ms")
+            .await
+            .unwrap()
+            .expect("retry_at_ms should be set");
+        let now_playing_retry_at_str = db::setting(&state.db, "now_playing_retry_at_ms")
+            .await
+            .unwrap()
+            .expect("now_playing_retry_at_ms should be set");
+        assert_eq!(retry_at_str, now_playing_retry_at_str);
+
+        let retry_at_ms: i64 = retry_at_str.parse().unwrap();
+        assert!(retry_at_ms > auth::now_ms());
+
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap(),
+            Some("QUOTA_EXCEEDED".to_string())
+        );
+
+        let current_status = status(State(state.clone()), headers.clone()).await.unwrap().0;
+        assert_eq!(current_status.collection, "waiting");
+        assert_eq!(current_status.retry_at_ms, Some(retry_at_ms));
+        assert_eq!(current_status.rate_limit_reason.as_deref(), Some("QUOTA_EXCEEDED"));
+        assert!(current_status.now_playing_error.is_some());
+
+        // mock called once for currently-playing
+        assert_eq!(mock.calls.lock().await.len(), 1);
+
+        // 2. Subsequent sync call MUST NOT make HTTP calls to Spotify while retry_at_ms is active
+        let sync_err = sync(&state).await.unwrap_err();
+        assert!(
+            sync_err.to_string().contains("request limit")
+                || sync_err.to_string().contains("waiting")
+                || sync_err.to_string().contains("Waiting")
+        );
+        assert_eq!(mock.calls.lock().await.len(), 1);
+
+        // 3. Reset or expiration clears the rate limit state consistently
+        sqlx::query(RESET_STATUS_SQL)
+            .execute(&state.db)
+            .await
+            .unwrap();
+
         assert!(
             db::setting(&state.db, "retry_at_ms")
                 .await
@@ -2047,13 +2123,26 @@ mod tests {
             db::setting(&state.db, "now_playing_retry_at_ms")
                 .await
                 .unwrap()
-                .is_some()
+                .is_none()
         );
+        assert!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let reset_status = status(State(state.clone()), headers.clone()).await.unwrap().0;
+        assert_eq!(reset_status.collection, "active");
+        assert!(reset_status.retry_at_ms.is_none());
+        assert!(reset_status.rate_limit_reason.is_none());
+        assert!(reset_status.now_playing_error.is_none());
+
+        // Now collection sync can proceed and perform the HTTP request
         let report = sync(&state).await.unwrap();
         assert_eq!(report["added"], 1);
-        let s = status(State(state.clone()), headers).await.unwrap().0;
-        assert_eq!(s.collection, "active");
-        assert!(s.now_playing_error.is_some());
+        assert_eq!(mock.calls.lock().await.len(), 2);
+
         handle.abort();
         state.storage.close().await;
     }
