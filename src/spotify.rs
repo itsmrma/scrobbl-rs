@@ -469,43 +469,58 @@ pub(crate) fn parse_retry_after(header: &str, now_ms: i64) -> Option<i64> {
     None
 }
 
-fn extract_rate_limit_reason(body: &Value) -> Option<&str> {
-    body.get("error")
+pub(crate) fn extract_rate_limit_reason(body: &Value) -> Option<&str> {
+    let raw = body
+        .get("error")
         .and_then(|e| e.get("reason"))
         .and_then(Value::as_str)
         .or_else(|| body.get("reason").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .map(str::trim);
+    match raw {
+        Some(s) if s.eq_ignore_ascii_case("QUOTA_EXCEEDED") => Some("QUOTA_EXCEEDED"),
+        _ => None,
+    }
+}
+
+async fn handle_rate_limit_response(
+    state: &AppState,
+    response: reqwest::Response,
+    is_now_playing: bool,
+) -> Result<Value> {
+    let wait = response
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| parse_retry_after(v, auth::now_ms()))
+        .unwrap_or(300)
+        .clamp(1, 86_400);
+    let retry_at = (auth::now_ms() + wait * 1000).to_string();
+    let body: Option<Value> = response.json().await.ok();
+    let reason = body
+        .as_ref()
+        .and_then(extract_rate_limit_reason)
+        .unwrap_or("");
+    let error_msg = if is_now_playing {
+        format!("Spotify player request limit reached. Retrying in {wait} seconds.")
+    } else {
+        format!("Spotify request limit reached. Retrying in {wait} seconds.")
+    };
+    let mut entries = vec![
+        ("retry_at_ms", retry_at.as_str()),
+        ("now_playing_retry_at_ms", retry_at.as_str()),
+        ("spotify_rate_limit_reason", reason),
+    ];
+    if is_now_playing {
+        entries.push(("now_playing_error", error_msg.as_str()));
+    }
+    diagnostics(state, &entries).await?;
+    Err(AppError::Spotify(error_msg))
 }
 
 async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<Value> {
     let status = response.status();
     if status == StatusCode::TOO_MANY_REQUESTS {
-        let wait = response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| parse_retry_after(v, auth::now_ms()))
-            .unwrap_or(300)
-            .clamp(1, 86_400);
-        let body: Option<Value> = response.json().await.ok();
-        let reason = body
-            .as_ref()
-            .and_then(extract_rate_limit_reason)
-            .unwrap_or("");
-        let retry_at = (auth::now_ms() + wait * 1000).to_string();
-        diagnostics(
-            state,
-            &[
-                ("retry_at_ms", &retry_at),
-                ("now_playing_retry_at_ms", &retry_at),
-                ("spotify_rate_limit_reason", reason),
-            ],
-        )
-        .await?;
-        return Err(AppError::Spotify(format!(
-            "Spotify request limit reached. Retrying in {wait} seconds."
-        )));
+        return handle_rate_limit_response(state, response, false).await;
     }
     if matches!(status.as_u16(), 400 | 401 | 403) {
         diagnostic(state, "spotify_action_required", "true").await?;
@@ -534,34 +549,7 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
 async fn checked_json_now_playing(state: &AppState, response: reqwest::Response) -> Result<Value> {
     let status = response.status();
     if status == StatusCode::TOO_MANY_REQUESTS {
-        let wait = response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| parse_retry_after(v, auth::now_ms()))
-            .unwrap_or(300)
-            .clamp(1, 86_400);
-        let retry_at = (auth::now_ms() + wait * 1000).to_string();
-        let body: Option<Value> = response.json().await.ok();
-        let reason = body
-            .as_ref()
-            .and_then(extract_rate_limit_reason)
-            .unwrap_or("");
-        let error_msg =
-            format!("Spotify player request limit reached. Retrying in {wait} seconds.");
-        diagnostics(
-            state,
-            &[
-                ("now_playing_retry_at_ms", &retry_at),
-                ("retry_at_ms", &retry_at),
-                ("now_playing_error", &error_msg),
-                ("spotify_rate_limit_reason", reason),
-            ],
-        )
-        .await?;
-        return Err(AppError::Spotify(format!(
-            "Spotify player request limit reached. Retrying in {wait} seconds."
-        )));
+        return handle_rate_limit_response(state, response, true).await;
     }
     if matches!(status.as_u16(), 400 | 401 | 403) {
         diagnostic(state, "spotify_action_required", "true").await?;
@@ -786,12 +774,23 @@ pub async fn sync(state: &AppState) -> Result<Value> {
             return Err(AppError::Conflict("Collection cancelled. Saved listens and the previous cursor are kept; future scheduled collections remain enabled.".into()));
         }
         diagnostic(state, "collection_error", &error.to_string()).await?;
-        let retry = db::setting(&state.db, "retry_at_ms")
+        let retry_opt = db::setting(&state.db, "retry_at_ms")
             .await?
             .and_then(|v| v.parse::<i64>().ok())
-            .filter(|v| *v > auth::now_ms())
-            .unwrap_or(auth::now_ms() + intervals.sync_seconds as i64 * 1000);
-        state.storage.pause(&job,Some(retry),"spotify_collection_failed: see Connections for authorization, request limit or network details").await?;
+            .filter(|v| *v > auth::now_ms());
+        let reason = db::setting(&state.db, "spotify_rate_limit_reason").await?;
+        let retry = retry_opt.unwrap_or(auth::now_ms() + intervals.sync_seconds as i64 * 1000);
+        let error_msg = if retry_opt.is_some() {
+            if reason.as_deref() == Some("QUOTA_EXCEEDED") {
+                "spotify_quota_exceeded: Spotify developer account quota exceeded".to_string()
+            } else {
+                let wait = ((retry - auth::now_ms() + 999) / 1000).max(1);
+                format!("spotify_rate_limited: Spotify request limit reached. Retrying in {wait} seconds.")
+            }
+        } else {
+            "spotify_collection_failed: see Connections for authorization, request limit or network details".to_string()
+        };
+        state.storage.pause(&job, Some(retry), &error_msg).await?;
     }
     result
 }
@@ -815,15 +814,12 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     let mut warning = None;
     // Walk backwards using our own cursors. Never follow arbitrary upstream URLs with a bearer token.
     for page in 0..20 {
+        if page > 0 {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
         let mut checkpoint = state.db.begin().await?;
         crate::jobs::validate_lease(&mut checkpoint, job).await?;
         checkpoint.commit().await?;
-        if page > 0 {
-            tokio::time::sleep(Duration::from_millis(300)).await;
-            let mut checkpoint = state.db.begin().await?;
-            crate::jobs::validate_lease(&mut checkpoint, job).await?;
-            checkpoint.commit().await?;
-        }
         let mut params = vec![("limit", "50".into())];
         if let Some(cursor) = before {
             params.push(("before", cursor.to_string()));
@@ -940,7 +936,7 @@ pub async fn retry_now(
     auth::require_write(&state, &headers).await?;
     let mut tx = state.db.begin().await?;
     sqlx::query(
-        "DELETE FROM settings WHERE key IN ('retry_at_ms', 'now_playing_retry_at_ms', 'spotify_rate_limit_reason')",
+        "DELETE FROM settings WHERE key IN ('retry_at_ms', 'now_playing_retry_at_ms', 'spotify_rate_limit_reason', 'now_playing_error', 'collection_error', 'spotify_error', 'last_error')",
     )
     .execute(&mut *tx)
     .await?;
@@ -2450,6 +2446,31 @@ mod tests {
         state.storage.close().await;
     }
     #[test]
+    fn extract_rate_limit_reason_sanitizes_strictly_and_rejects_arbitrary_strings() {
+        assert_eq!(
+            extract_rate_limit_reason(&json!({"error": {"reason": "QUOTA_EXCEEDED"}})),
+            Some("QUOTA_EXCEEDED")
+        );
+        assert_eq!(
+            extract_rate_limit_reason(&json!({"reason": "quota_exceeded"})),
+            Some("QUOTA_EXCEEDED")
+        );
+        assert_eq!(
+            extract_rate_limit_reason(&json!({"error": {"reason": "RATE_LIMIT_EXCEEDED"}})),
+            None
+        );
+        assert_eq!(
+            extract_rate_limit_reason(&json!({"error": {"reason": "Bearer token expired for user 123"}})),
+            None
+        );
+        assert_eq!(
+            extract_rate_limit_reason(&json!({"reason": "internal_rate_limit_bucket_exhausted"})),
+            None
+        );
+        assert_eq!(extract_rate_limit_reason(&json!({})), None);
+    }
+
+    #[test]
     fn parse_retry_after_supports_integers_and_http_dates() {
         let now_sec = 1_700_000_000i64;
         let now_ms = now_sec * 1000;
@@ -2517,6 +2538,16 @@ mod tests {
         assert_eq!(current_status.collection, "waiting");
         assert!(current_status.retry_at_ms.unwrap() > auth::now_ms());
 
+        let job: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            job.error_code.as_deref(),
+            Some("spotify_quota_exceeded: Spotify developer account quota exceeded")
+        );
+
         assert_eq!(mock.calls.lock().await.len(), 1);
         handle.abort();
         state.storage.close().await;
@@ -2557,6 +2588,15 @@ mod tests {
 
         // First 429: QUOTA_EXCEEDED
         assert!(sync(&state).await.is_err());
+        let job1: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(
+            job1.error_code.as_deref(),
+            Some("spotify_quota_exceeded: Spotify developer account quota exceeded")
+        );
         assert_eq!(
             db::setting(&state.db, "spotify_rate_limit_reason")
                 .await
@@ -2575,6 +2615,14 @@ mod tests {
 
         // Second 429: standard (no reason)
         assert!(sync(&state).await.is_err());
+        let job2: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert!(
+            job2.error_code.as_deref().unwrap().starts_with("spotify_rate_limited: Spotify request limit reached. Retrying in")
+        );
         assert!(
             db::setting(&state.db, "spotify_rate_limit_reason")
                 .await
@@ -2694,6 +2742,9 @@ mod tests {
                 ("retry_at_ms", &future_retry),
                 ("now_playing_retry_at_ms", &future_retry),
                 ("spotify_rate_limit_reason", "QUOTA_EXCEEDED"),
+                ("now_playing_error", "Spotify player request limit reached. Retrying in 300 seconds."),
+                ("collection_error", "spotify_quota_exceeded: Spotify developer account quota exceeded"),
+                ("spotify_error", "stale diagnostic error"),
             ],
         )
         .await
@@ -2754,6 +2805,29 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(
+            db::setting(&state.db, "now_playing_error")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::setting(&state.db, "collection_error")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::setting(&state.db, "spotify_error")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let post_retry_status = status(State(state.clone()), valid_headers.clone()).await.unwrap().0;
+        assert!(post_retry_status.last_error.is_none());
+        assert!(post_retry_status.now_playing_error.is_none());
+        assert!(post_retry_status.rate_limit_reason.is_none());
 
         // Verify collection job retry_at_ms is reset to 0 so it can be claimed immediately
         let waiting_retry: Option<i64> = sqlx::query_scalar(
