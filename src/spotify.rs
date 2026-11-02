@@ -56,7 +56,7 @@ impl Spotify {
         }
     }
 }
-pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','now_playing_retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added')";
+pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','now_playing_retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added','spotify_rate_limit_reason')";
 
 async fn credentials(state: &AppState) -> Result<Option<(String, String)>> {
     if let (Some(id), Some(secret)) = (&state.config.env_client_id, &state.config.env_client_secret)
@@ -154,7 +154,8 @@ pub async fn status(
             'last_sync_added',
             'now_playing_error',
             'now_playing_timing',
-            'coverage_warning'
+            'coverage_warning',
+            'spotify_rate_limit_reason'
         )",
     )
     .fetch_all(&mut *conn)
@@ -219,6 +220,7 @@ pub async fn status(
             .and_then(|v| serde_json::from_str(v).ok()),
         coverage_warning: map.remove("coverage_warning"),
         retry_at_ms,
+        rate_limit_reason: map.remove("spotify_rate_limit_reason"),
         review_count: sqlx::query_scalar(
             "SELECT COUNT(*) FROM listens WHERE needs_review=1 AND trashed_at_ms IS NULL",
         )
@@ -447,6 +449,32 @@ async fn save_tokens(
         .bind(access).bind(refresh).bind(auth::now_ms()+seconds*1000).execute(&state.private_db).await?;
     Ok(())
 }
+pub(crate) fn parse_retry_after(header: &str, now_ms: i64) -> Option<i64> {
+    let trimmed = header.trim();
+    if let Ok(seconds) = trimmed.parse::<i64>() {
+        return Some(seconds);
+    }
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(trimmed) {
+        return Some(dt.timestamp() - (now_ms / 1000));
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %d %b %Y %H:%M:%S GMT") {
+        return Some(dt.and_utc().timestamp() - (now_ms / 1000));
+    }
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(trimmed, "%a, %e %b %Y %H:%M:%S GMT") {
+        return Some(dt.and_utc().timestamp() - (now_ms / 1000));
+    }
+    None
+}
+
+fn extract_rate_limit_reason(body: &Value) -> Option<&str> {
+    body.get("error")
+        .and_then(|e| e.get("reason"))
+        .and_then(Value::as_str)
+        .or_else(|| body.get("reason").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<Value> {
     let status = response.status();
     if status == StatusCode::TOO_MANY_REQUESTS {
@@ -454,13 +482,18 @@ async fn checked_json(state: &AppState, response: reqwest::Response) -> Result<V
             .headers()
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<i64>().ok())
+            .and_then(|v| parse_retry_after(v, auth::now_ms()))
             .unwrap_or(300)
-            .clamp(1, 604_800);
-        diagnostic(
+            .clamp(1, 86_400);
+        let body: Option<Value> = response.json().await.ok();
+        let reason = body.as_ref().and_then(extract_rate_limit_reason).unwrap_or("");
+        let retry_at = (auth::now_ms() + wait * 1000).to_string();
+        diagnostics(
             state,
-            "retry_at_ms",
-            &(auth::now_ms() + wait * 1000).to_string(),
+            &[
+                ("retry_at_ms", &retry_at),
+                ("spotify_rate_limit_reason", reason),
+            ],
         )
         .await?;
         return Err(AppError::Spotify(format!(
@@ -498,18 +531,19 @@ async fn checked_json_now_playing(state: &AppState, response: reqwest::Response)
             .headers()
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<i64>().ok())
+            .and_then(|v| parse_retry_after(v, auth::now_ms()))
             .unwrap_or(300)
-            .clamp(1, 604_800);
-        let retry_at = auth::now_ms() + wait * 1000;
+            .clamp(1, 86_400);
+        let retry_at = (auth::now_ms() + wait * 1000).to_string();
+        let body: Option<Value> = response.json().await.ok();
+        let reason = body.as_ref().and_then(extract_rate_limit_reason).unwrap_or("");
+        let error_msg = format!("Spotify player request limit reached. Retrying in {wait} seconds.");
         diagnostics(
             state,
             &[
-                ("now_playing_retry_at_ms", &retry_at.to_string()),
-                (
-                    "now_playing_error",
-                    &format!("Spotify player request limit reached. Retrying in {wait} seconds."),
-                ),
+                ("now_playing_retry_at_ms", &retry_at),
+                ("now_playing_error", &error_msg),
+                ("spotify_rate_limit_reason", reason),
             ],
         )
         .await?;
@@ -635,6 +669,7 @@ async fn api_get_locked(
         &[
             ("spotify_verified_at_ms", &auth::now_ms().to_string()),
             ("spotify_action_required", ""),
+            ("spotify_rate_limit_reason", ""),
         ],
     )
     .await?;
@@ -836,6 +871,7 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     db::set_setting(&mut tx, "last_sync_ms", &auth::now_ms().to_string()).await?;
     db::set_setting(&mut tx, "spotify_error", "").await?;
     db::set_setting(&mut tx, "collection_error", "").await?;
+    db::set_setting(&mut tx, "spotify_rate_limit_reason", "").await?;
     db::set_setting(&mut tx, "last_sync_added", &report.added.to_string()).await?;
     if let Some(warning) = warning {
         db::set_setting(&mut tx, "coverage_warning", warning).await?;
@@ -2185,4 +2221,212 @@ mod tests {
         handle.abort();
         state.storage.close().await;
     }
+    #[test]
+    fn parse_retry_after_supports_integers_and_http_dates() {
+        let now_sec = 1_700_000_000i64;
+        let now_ms = now_sec * 1000;
+
+        // Integer seconds
+        assert_eq!(parse_retry_after("120", now_ms), Some(120));
+        assert_eq!(parse_retry_after("  45  ", now_ms), Some(45));
+        assert_eq!(parse_retry_after("0", now_ms), Some(0));
+
+        // RFC 7231 IMF-fixdate: 120 seconds in future
+        let future_sec = now_sec + 120;
+        let dt = chrono::DateTime::from_timestamp(future_sec, 0).unwrap();
+        let imf_fixdate = dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        assert_eq!(parse_retry_after(&imf_fixdate, now_ms), Some(120));
+
+        // RFC 2822 format: e.g. "Wed, 21 Oct 2026 07:28:00 +0000"
+        let rfc2822 = dt.format("%a, %d %b %Y %H:%M:%S +0000").to_string();
+        assert_eq!(parse_retry_after(&rfc2822, now_ms), Some(120));
+
+        // Single digit day
+        let single_digit = dt.format("%a, %e %b %Y %H:%M:%S GMT").to_string();
+        assert_eq!(parse_retry_after(&single_digit, now_ms), Some(120));
+
+        // Invalid format
+        assert_eq!(parse_retry_after("not-a-date", now_ms), None);
+        assert_eq!(parse_retry_after("", now_ms), None);
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_rate_limit_sets_diagnostic_reason_and_status() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/recently-played",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({
+                    "error": {
+                        "status": 429,
+                        "message": "API rate limit exceeded",
+                        "reason": "QUOTA_EXCEEDED"
+                    }
+                }),
+                retry: Some("60"),
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        let err = sync(&state).await.unwrap_err();
+        assert!(err.to_string().contains("60"));
+
+        // Verify setting persistence
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap(),
+            Some("QUOTA_EXCEEDED".to_string())
+        );
+
+        // Verify SpotifyStatus exposing rate_limit_reason
+        let current_status = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(
+            current_status.rate_limit_reason.as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+        assert_eq!(current_status.collection, "waiting");
+        assert!(current_status.retry_at_ms.unwrap() > auth::now_ms());
+
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn standard_rate_limit_clears_or_leaves_reason_empty() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/me/player/recently-played",
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: json!({
+                        "error": {
+                            "status": 429,
+                            "message": "API rate limit exceeded",
+                            "reason": "QUOTA_EXCEEDED"
+                        }
+                    }),
+                    retry: Some("60"),
+                },
+                Reply {
+                    path: "/v1/me/player/recently-played",
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: json!({
+                        "error": {
+                            "status": 429,
+                            "message": "Too Many Requests"
+                        }
+                    }),
+                    retry: Some("30"),
+                },
+            ],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+
+        // First 429: QUOTA_EXCEEDED
+        assert!(sync(&state).await.is_err());
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap(),
+            Some("QUOTA_EXCEEDED".to_string())
+        );
+
+        // Reset retry_at_ms to bypass wait for next request
+        diagnostic(&state, "retry_at_ms", "0").await.unwrap();
+        sqlx::query(
+            "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+
+        // Second 429: standard (no reason)
+        assert!(sync(&state).await.is_err());
+        assert!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .as_deref()
+                .unwrap_or("")
+                .is_empty()
+        );
+
+        let current_status = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(current_status.rate_limit_reason, None);
+
+        assert_eq!(mock.calls.lock().await.len(), 2);
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn retry_after_http_date_parsing_and_clamping_at_mock_fixture() {
+        let now_sec = auth::now_ms() / 1000;
+        let wait_target_sec = 180;
+        let future_sec = now_sec + wait_target_sec;
+        let dt = chrono::DateTime::from_timestamp(future_sec, 0).unwrap();
+        let http_date = dt.format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+        let leaked_date: &'static str = Box::leak(http_date.into_boxed_str());
+
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/recently-played",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({}),
+                retry: Some(leaked_date),
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        assert!(sync(&state).await.is_err());
+
+        let current_status = status(State(state.clone()), headers).await.unwrap().0;
+        let retry_at_ms = current_status.retry_at_ms.unwrap();
+        let expected_min_ms = auth::now_ms() + (wait_target_sec - 10) * 1000;
+        let expected_max_ms = auth::now_ms() + (wait_target_sec + 10) * 1000;
+        assert!(
+            retry_at_ms >= expected_min_ms && retry_at_ms <= expected_max_ms,
+            "retry_at_ms {retry_at_ms} was not within expected range [{expected_min_ms}, {expected_max_ms}]"
+        );
+
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn retry_after_clamping_to_24h() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/recently-played",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({}),
+                retry: Some("100000"), // > 86_400 (24h)
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+        assert!(sync(&state).await.is_err());
+
+        let current_status = status(State(state.clone()), headers).await.unwrap().0;
+        let retry_at_ms = current_status.retry_at_ms.unwrap();
+        let max_expected_ms = auth::now_ms() + 86_400 * 1000 + 5000;
+        let min_expected_ms = auth::now_ms() + 86_400 * 1000 - 5000;
+        assert!(
+            retry_at_ms >= min_expected_ms && retry_at_ms <= max_expected_ms,
+            "retry_at_ms {retry_at_ms} should be clamped to ~86400s: [{min_expected_ms}, {max_expected_ms}]"
+        );
+
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        handle.abort();
+        state.storage.close().await;
+    }
 }
+
