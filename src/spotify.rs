@@ -920,6 +920,27 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
     }
     result.map(Json)
 }
+pub async fn retry_now(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>> {
+    auth::require_write(&state, &headers).await?;
+    let mut tx = state.db.begin().await?;
+    sqlx::query(
+        "DELETE FROM settings WHERE key IN ('retry_at_ms', 'now_playing_retry_at_ms', 'spotify_rate_limit_reason')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
+    )
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    *state.spotify.cache.lock().await = None;
+    state.spotify.wake_collection();
+    Ok(Json(serde_json::json!({"status": "ok"})))
+}
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     now_playing_in_window(state, headers, None).await
 }
@@ -2517,5 +2538,166 @@ mod tests {
         handle.abort();
         state.storage.close().await;
     }
-}
 
+    #[tokio::test]
+    async fn test_spotify_retry_now_clears_cooldown_and_wakes_collection() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/recently-played",
+                json!({
+                    "items": [{
+                        "played_at": "2024-01-01T00:00:00.000Z",
+                        "track": track()
+                    }]
+                }),
+            )],
+            false,
+        )
+        .await;
+
+        // 1. Rejects unauthenticated requests
+        let unauth_err = retry_now(State(state.clone()), HeaderMap::new()).await;
+        assert!(matches!(unauth_err, Err(AppError::Unauthorized)));
+
+        // 2. Rejects requests without CSRF token
+        let headers_no_csrf = owner_headers(&state).await;
+        let forbidden_err = retry_now(State(state.clone()), headers_no_csrf).await;
+        assert!(matches!(forbidden_err, Err(AppError::Forbidden)));
+
+        // Prepare valid owner headers with CSRF
+        let mut valid_headers = owner_headers(&state).await;
+        valid_headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+
+        // Simulate active rate limit settings and waiting collection job
+        let future_retry = (auth::now_ms() + 300_000).to_string();
+        diagnostics(
+            &state,
+            &[
+                ("retry_at_ms", &future_retry),
+                ("now_playing_retry_at_ms", &future_retry),
+                ("spotify_rate_limit_reason", "QUOTA_EXCEEDED"),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // Enqueue and pause a spotify_collection job with retry_at_ms in future
+        state
+            .storage
+            .enqueue(
+                "spotify_collection",
+                None,
+                Some("Spotify background collection"),
+                &json!({}),
+            )
+            .await
+            .unwrap();
+        let claimed = state
+            .storage
+            .claim("spotify_collection")
+            .await
+            .unwrap()
+            .unwrap();
+        state
+            .storage
+            .pause(&claimed, Some(auth::now_ms() + 300_000), "rate_limited")
+            .await
+            .unwrap();
+
+        // Set up listener for wake notification
+        let wake = state.spotify.wake.clone();
+        let wait_for_wake = tokio::spawn(async move {
+            wake.notified().await;
+        });
+
+        // 3. Call retry_now endpoint
+        let response = retry_now(State(state.clone()), valid_headers.clone())
+            .await
+            .unwrap();
+        assert_eq!(response.0, json!({"status": "ok"}));
+
+        // Verify wake was triggered
+        tokio::time::timeout(Duration::from_millis(500), wait_for_wake)
+            .await
+            .expect("wake notification should be delivered")
+            .unwrap();
+
+        // Verify settings are cleared
+        assert!(db::setting(&state.db, "retry_at_ms").await.unwrap().is_none());
+        assert!(
+            db::setting(&state.db, "now_playing_retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Verify collection job retry_at_ms is reset to 0 so it can be claimed immediately
+        let waiting_retry: Option<i64> = sqlx::query_scalar(
+            "SELECT retry_at_ms FROM jobs WHERE kind='spotify_collection' AND state='waiting'",
+        )
+        .fetch_optional(&state.db)
+        .await
+        .unwrap();
+        assert_eq!(waiting_retry, Some(0));
+
+        // Status no longer shows waiting cooldown
+        let current_status = status(State(state.clone()), valid_headers).await.unwrap().0;
+        assert!(current_status.retry_at_ms.is_none());
+        assert!(current_status.rate_limit_reason.is_none());
+        assert_ne!(current_status.collection, "waiting");
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn test_spotify_retry_now_router_endpoint() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use tower::ServiceExt;
+
+        let (_dir, state, _mock, handle) = fixture(vec![], false).await;
+        let app = crate::web::router(state.clone());
+
+        // 1. Unauthenticated request to /api/spotify/retry-now returns 401
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/spotify/retry-now")
+            .header("host", state.config.host())
+            .header("origin", state.config.origin())
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        // 2. Authenticated request with CSRF token returns 200 OK
+        let cookie = auth::random_secret();
+        sqlx::query("INSERT INTO sessions(digest,csrf,expires_at_ms) VALUES (?,'testcsrf',?)")
+            .bind(auth::digest(&cookie))
+            .bind(auth::now_ms() + 60000)
+            .execute(&state.private_db)
+            .await
+            .unwrap();
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/spotify/retry-now")
+            .header("host", state.config.host())
+            .header("origin", state.config.origin())
+            .header("cookie", format!("scrobbl_session={cookie}"))
+            .header("x-csrf-token", "testcsrf")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        handle.abort();
+        state.storage.close().await;
+    }
+}

@@ -204,6 +204,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/spotify/disconnect", post(spotify::disconnect))
         .route("/api/spotify/sync", post(spotify::sync_now))
+        .route("/api/spotify/retry-now", post(spotify::retry_now))
         .route("/api/spotify/now-playing", get(spotify::now_playing))
         .route("/auth/spotify/callback", get(spotify::callback))
         .layer(DefaultBodyLimit::max(16 * 1024))
