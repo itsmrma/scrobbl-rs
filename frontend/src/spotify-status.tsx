@@ -16,14 +16,7 @@ export function SpotifyNotice({
     );
     const isQuota = status.rate_limit_reason === "QUOTA_EXCEEDED";
     return (
-      <Notice
-        tone="warning"
-        title={
-          isQuota
-            ? "Spotify developer quota exceeded"
-            : "Spotify rate limit cooldown active"
-        }
-      >
+      <Notice tone="warning" title="Spotify requests are paused">
         <p>
           {isQuota
             ? "Spotify developer application quota has been exceeded."

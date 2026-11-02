@@ -9,7 +9,6 @@ import {
   CopyButton,
   date,
   ErrorText,
-  Notice,
   Heading,
   Icon,
   Modal,
@@ -1034,28 +1033,6 @@ export function Connections({
                 </div>
               </div>
               <ErrorText>{error}</ErrorText>
-              {waiting && (
-                <Notice
-                  tone="warning"
-                  title={
-                    isQuota
-                      ? "Spotify developer quota exceeded"
-                      : "Spotify rate limit cooldown active"
-                  }
-                >
-                  <p>
-                    {isQuota
-                      ? "Spotify developer application quota has been exceeded."
-                      : "Spotify request rate limit has been reached."}{" "}
-                    Cooldown expires in {remainingMinutes}{" "}
-                    {remainingMinutes === 1 ? "minute" : "minutes"} ({remainingSeconds}s)
-                    {preferences ? ` at ${date(status.retry_at_ms, preferences)}` : ""}.
-                  </p>
-                  <p>
-                    Use "Retry connection now" below to clear the cooldown and retry immediately.
-                  </p>
-                </Notice>
-              )}
               <div className="connection-actions">
                 <SpotifyConnectButton
                   connected={status.connected}

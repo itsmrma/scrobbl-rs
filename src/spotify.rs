@@ -785,7 +785,9 @@ pub async fn sync(state: &AppState) -> Result<Value> {
                 "spotify_quota_exceeded: Spotify developer account quota exceeded".to_string()
             } else {
                 let wait = ((retry - auth::now_ms() + 999) / 1000).max(1);
-                format!("spotify_rate_limited: Spotify request limit reached. Retrying in {wait} seconds.")
+                format!(
+                    "spotify_rate_limited: Spotify request limit reached. Retrying in {wait} seconds."
+                )
             }
         } else {
             "spotify_collection_failed: see Connections for authorization, request limit or network details".to_string()
@@ -929,10 +931,7 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
     }
     result.map(Json)
 }
-pub async fn retry_now(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Value>> {
+pub async fn retry_now(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
     let mut tx = state.db.begin().await?;
     sqlx::query(
@@ -2460,7 +2459,9 @@ mod tests {
             None
         );
         assert_eq!(
-            extract_rate_limit_reason(&json!({"error": {"reason": "Bearer token expired for user 123"}})),
+            extract_rate_limit_reason(
+                &json!({"error": {"reason": "Bearer token expired for user 123"}})
+            ),
             None
         );
         assert_eq!(
@@ -2621,7 +2622,10 @@ mod tests {
                 .await
                 .unwrap();
         assert!(
-            job2.error_code.as_deref().unwrap().starts_with("spotify_rate_limited: Spotify request limit reached. Retrying in")
+            job2.error_code
+                .as_deref()
+                .unwrap()
+                .starts_with("spotify_rate_limited: Spotify request limit reached. Retrying in")
         );
         assert!(
             db::setting(&state.db, "spotify_rate_limit_reason")
@@ -2742,8 +2746,14 @@ mod tests {
                 ("retry_at_ms", &future_retry),
                 ("now_playing_retry_at_ms", &future_retry),
                 ("spotify_rate_limit_reason", "QUOTA_EXCEEDED"),
-                ("now_playing_error", "Spotify player request limit reached. Retrying in 300 seconds."),
-                ("collection_error", "spotify_quota_exceeded: Spotify developer account quota exceeded"),
+                (
+                    "now_playing_error",
+                    "Spotify player request limit reached. Retrying in 300 seconds.",
+                ),
+                (
+                    "collection_error",
+                    "spotify_quota_exceeded: Spotify developer account quota exceeded",
+                ),
                 ("spotify_error", "stale diagnostic error"),
             ],
         )
@@ -2792,7 +2802,12 @@ mod tests {
             .unwrap();
 
         // Verify settings are cleared
-        assert!(db::setting(&state.db, "retry_at_ms").await.unwrap().is_none());
+        assert!(
+            db::setting(&state.db, "retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
         assert!(
             db::setting(&state.db, "now_playing_retry_at_ms")
                 .await
@@ -2824,7 +2839,10 @@ mod tests {
                 .is_none()
         );
 
-        let post_retry_status = status(State(state.clone()), valid_headers.clone()).await.unwrap().0;
+        let post_retry_status = status(State(state.clone()), valid_headers.clone())
+            .await
+            .unwrap()
+            .0;
         assert!(post_retry_status.last_error.is_none());
         assert!(post_retry_status.now_playing_error.is_none());
         assert!(post_retry_status.rate_limit_reason.is_none());
