@@ -348,6 +348,7 @@ export const api = {
       AbortSignal.timeout(15000),
     ),
   sync: () => post<IngestReport>("/api/spotify/sync"),
+  retrySpotifyNow: () => post<{ status: string }>("/api/spotify/retry-now"),
   disconnect: () => post("/api/spotify/disconnect"),
   importLimits: () => request<ImportLimits>("/api/v1/import/limits"),
   importSpotify: (form: FormData) =>

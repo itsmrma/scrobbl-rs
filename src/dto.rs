@@ -249,6 +249,7 @@ pub struct SpotifyStatus {
     pub now_playing_timing: Option<NowPlayingTiming>,
     pub coverage_warning: Option<String>,
     pub retry_at_ms: Option<i64>,
+    pub rate_limit_reason: Option<String>,
     pub review_count: i64,
 }
 #[derive(Serialize, TS)]

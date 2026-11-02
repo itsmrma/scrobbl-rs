@@ -14,17 +14,20 @@ export function SpotifyNotice({
       1,
       Math.ceil((status.retry_at_ms! - Date.now()) / 60000),
     );
+    const isQuota = status.rate_limit_reason === "QUOTA_EXCEEDED";
     return (
       <Notice tone="warning" title="Spotify requests are paused">
         <p>
-          Spotify has asked this app to wait. Collection and now playing will
-          resume automatically in about {minutes}{" "}
-          {minutes === 1 ? "minute" : "minutes"}
+          {isQuota
+            ? "Spotify developer application quota has been exceeded."
+            : "Spotify has asked this app to wait due to a request rate limit."}{" "}
+          Collection and now playing will resume automatically in about{" "}
+          {minutes} {minutes === 1 ? "minute" : "minutes"}
           {preferences ? ` (${date(status.retry_at_ms, preferences)})` : ""}.
         </p>
         <p>
-          Your saved listens and images are available. Reconnecting or
-          repeatedly retrying won’t shorten Spotify’s wait.
+          Your saved listens and images are available. You can wait for the
+          cooldown to expire or retry connection now in Connections.
         </p>
       </Notice>
     );

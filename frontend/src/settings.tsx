@@ -780,7 +780,18 @@ export function Connections({
     [client, setClient] = useState(""),
     [secret, setSecret] = useState("");
   const toast = useToast();
-  const waiting = !!status?.retry_at_ms && status.retry_at_ms > Date.now();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!status?.retry_at_ms || status.retry_at_ms <= Date.now()) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [status?.retry_at_ms]);
+  const waiting = !!status?.retry_at_ms && status.retry_at_ms > now;
+  const remainingSeconds = waiting
+    ? Math.max(0, Math.ceil((status.retry_at_ms! - now) / 1000))
+    : 0;
+  const remainingMinutes = Math.max(1, Math.ceil(remainingSeconds / 60));
+  const isQuota = status?.rate_limit_reason === "QUOTA_EXCEEDED";
   const needsAction =
     status?.connection === "action_required" ||
     (!!status?.last_error && !waiting);
@@ -822,7 +833,9 @@ export function Connections({
   const collection =
     {
       paused: "Paused",
-      waiting: "Waiting for Spotify’s request limit",
+      waiting: isQuota
+        ? "Developer quota exceeded — cooling down"
+        : "Waiting for Spotify’s request limit",
       error: "Collection error — will retry",
       active: status.last_sync_ms
         ? "Active — background collection scheduled"
@@ -1042,6 +1055,20 @@ export function Connections({
                 >
                   Verify & sync now
                 </button>
+                {status.connected && (
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void action(async () => {
+                        await api.retrySpotifyNow();
+                        return "Cooldown cleared. Spotify collection retry requested.";
+                      })
+                    }
+                  >
+                    Retry connection now
+                  </button>
+                )}
                 <button
                   className="secondary danger"
                   disabled={busy || !status.connected}
@@ -1083,6 +1110,19 @@ export function Connections({
               </dd>
               <dt>Collection interval</dt>
               <dd>Every {status.sync_seconds} seconds</dd>
+              <dt>Rate limit &amp; cooldown status</dt>
+              <dd>
+                {waiting ? (
+                  <span>
+                    {isQuota ? "Developer quota exceeded" : "Request rate limit active"}
+                    {" — retry at "}
+                    {date(status.retry_at_ms, preferences)}
+                    {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
+                  </span>
+                ) : (
+                  "Normal — no cooldown active"
+                )}
+              </dd>
               <dt>Next attempt / request limit</dt>
               <dd>
                 {status.retry_at_ms && status.retry_at_ms > Date.now()
