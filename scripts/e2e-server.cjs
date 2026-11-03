@@ -47,6 +47,9 @@ const child = spawn(binary, [], {
     ...process.env,
     SCROBBL_PORT: process.env.SCROBBL_E2E_PORT || "3211",
     SCROBBL_DATA_DIR: dataDir,
+    // Isolated browser contexts sign in repeatedly per minute; keep the
+    // production brute-force guard (8/min) out of the journey specs.
+    SCROBBL_LOGIN_ATTEMPTS_PER_MINUTE: "100",
     SPOTIFY_CLIENT_ID: "",
     SPOTIFY_CLIENT_SECRET: "",
   },

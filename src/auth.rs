@@ -229,6 +229,19 @@ pub async fn set_username(
     }
     Ok(Json(json!({"saved":true})))
 }
+/// Per-minute allowance for sign-in and owner-setup attempts. A personal
+/// server defaults to a strict 8; automated test harnesses raise it because
+/// isolated browser contexts sign in several times per minute on one process.
+fn login_attempt_allowance() -> usize {
+    static ALLOWANCE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ALLOWANCE.get_or_init(|| {
+        std::env::var("SCROBBL_LOGIN_ATTEMPTS_PER_MINUTE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|attempts| *attempts > 0)
+            .unwrap_or(8)
+    })
+}
 pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
     let mut attempts = state.login_attempts.lock().await;
     let now = Instant::now();
@@ -238,7 +251,7 @@ pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
     {
         attempts.pop_front();
     }
-    if attempts.len() >= 8 {
+    if attempts.len() >= login_attempt_allowance() {
         return Err(AppError::TooManyRequests);
     }
     attempts.push_back(now);
