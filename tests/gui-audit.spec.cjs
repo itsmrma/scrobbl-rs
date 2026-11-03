@@ -1720,7 +1720,7 @@ test("completed Spotify collection runs collapse into dated reports that fill th
     "40 completed runs",
   );
   await expect(page.locator(".collection-run").first()).toBeHidden();
-  await expect(page.locator(".activity-row")).toHaveCount(0);
+  await expect(page.locator(".activity-list .activity-row")).toHaveCount(0);
   const collection = page.locator(".collection-runs");
   const summary = collection.locator(":scope > summary");
   const animateToggle = () =>
@@ -1759,7 +1759,7 @@ test("completed Spotify collection runs collapse into dated reports that fill th
     .locator(".activity-detail")
     .evaluate((el) => [
       el.getBoundingClientRect().width,
-      el.closest("main").clientWidth,
+      (el.closest(".page-container") || el.closest("main")).clientWidth - 48,
     ]);
   expect(widths[1] - widths[0]).toBeLessThan(4);
   await page.screenshot({
@@ -4490,25 +4490,15 @@ test("connection disclosures and import layout use the available card width", as
   const card = page.locator(".spotify-card");
   if (!(await card.evaluate((e) => e.open)))
     await card.locator("summary").first().click();
-  for (const label of [
-    "Collection status & diagnostics",
-    "Refresh intervals",
-  ]) {
-    const summary = card.getByText(label, { exact: true }).locator("..");
-    await expect(summary.locator(".material-icons-outlined")).toHaveText(
-      "expand_more",
-    );
-  }
-  await card
-    .getByText("Connect on a private server with HTTPS", { exact: true })
-    .click();
-  const guide = card
-    .locator(".guide")
-    .filter({ hasText: "Connect on a private server with HTTPS" });
-  await expect(guide).not.toContainText("AdGuard");
-  await expect(
-    guide.getByText("Use a free DuckDNS name", { exact: true }),
-  ).toBeVisible();
+  const diagSummary = card.getByText("Collection status & diagnostics", { exact: true }).locator("..");
+  await expect(diagSummary.locator(".material-icons-outlined")).toHaveText("expand_more");
+  await expect(card.getByLabel("Collection interval (seconds)")).toBeVisible();
+  const guideBtn = card.getByRole("button", { name: /Guida configurazione HTTPS e dominio/i });
+  await guideBtn.click();
+  const guideDialog = page.getByRole("dialog");
+  await expect(guideDialog).not.toContainText("AdGuard");
+  await expect(guideDialog.getByText("Use a free DuckDNS name", { exact: true })).toBeVisible();
+  await guideDialog.getByRole("button", { name: "Close" }).click();
   await page.goto("/import");
   const panel = page.locator(".listenbrainz-import");
   const drop = panel.locator(".upload-dropzone");

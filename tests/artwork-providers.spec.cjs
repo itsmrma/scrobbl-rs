@@ -47,7 +47,7 @@ const test = base.extend({
         .poll(async () => {
           if (child.exitCode !== null) throw new Error(logs);
           try {
-            return (await context.request.get("/healthz")).status();
+            return (await context.request.get("/api/session")).status();
           } catch {
             return 0;
           }
@@ -68,8 +68,8 @@ const test = base.extend({
 
 const password = "a local browser test password 7!";
 async function login(page, path = "/settings/general") {
-  const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
+  const session = await (await page.request.get("/api/session")).json();
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page.getByLabel("Password", { exact: true }).fill(password);
   if (session.setup_required)
