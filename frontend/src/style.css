@@ -1343,15 +1343,70 @@ footer {
 .music-heading .page-heading p {
   overflow-wrap: anywhere;
 }
-.view-toggle,
+/* Reusable Segmented Control */
+.segmented-control {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  box-sizing: border-box;
+}
+.segmented-control button,
+.segmented-control .segmented-option {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  min-height: 38px;
+  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
+}
+.segmented-control button:hover:not([aria-pressed="true"]):not(:disabled),
+.segmented-control .segmented-option:hover:not([aria-pressed="true"]):not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  color: var(--text);
+}
+.segmented-control button[aria-pressed="true"],
+.segmented-control .segmented-option[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  outline: none;
+}
+.segmented-control button:focus-visible,
+.segmented-control .segmented-option:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+@media (max-width: 600px) {
+  .segmented-control button,
+  .segmented-control .segmented-option {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
 .search-inline {
   display: flex;
   align-items: end;
   gap: 8px;
 }
-.view-toggle button[aria-pressed="true"] {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
+.view-toggle {
+  display: inline-flex;
+  align-items: center;
 }
 .entity-filter {
   position: relative;
@@ -3279,21 +3334,47 @@ dialog {
   margin: 0;
 }
 .import-methods {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 2px;
   margin: 24px 0;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  box-sizing: border-box;
 }
 .import-methods button {
   margin: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
+}
+.import-methods button:hover:not([aria-pressed="true"]):not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  color: var(--text);
 }
 .import-methods button[aria-pressed="true"] {
-  border-color: var(--focus);
-  box-shadow: none;
-  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  outline: none;
 }
 .listenbrainz-method {
   max-width: 760px;
@@ -5369,9 +5450,8 @@ dialog {
   height: auto;
 }
 .collage-toggle[aria-pressed="true"] {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  background: var(--surface-raised);
+  outline: none;
+  background: var(--surface);
   color: var(--text);
 }
 .listen-title .listen-artists a {
@@ -5714,6 +5794,7 @@ dialog {
   padding: 3px;
   border: 1px solid var(--border);
   border-radius: 8px;
+  background: var(--surface-raised);
 }
 .review-views::before {
   content: "";
@@ -5722,27 +5803,36 @@ dialog {
   inset: 3px auto 3px 3px;
   width: calc((100% - 6px) / 2);
   border-radius: 5px;
-  background: var(--surface-raised);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
   transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .review-views[data-view="trash"]::before {
   transform: translateX(100%);
 }
-.review-views button {
+.review-views button,
+.review-views .segmented-option {
+  height: 36px;
   min-height: 36px;
   padding: 6px 10px;
   border: 0;
   border-radius: 5px;
   background: transparent;
+  color: var(--muted);
+  outline: none;
 }
-.review-views button[aria-pressed="true"] {
+.review-views button[aria-pressed="true"],
+.review-views .segmented-option[aria-pressed="true"] {
   background: transparent;
   color: var(--text);
+  font-weight: 600;
+  outline: none;
 }
-.review-views button:enabled:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+.review-views button:enabled:hover,
+.review-views .segmented-option:enabled:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
   color: var(--text);
-  box-shadow: 0 2px 14px color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: none;
   filter: none;
 }
 .review-view-content {
@@ -5880,8 +5970,11 @@ dialog {
 }
 @media (max-width: 600px) {
   .review-views button,
+  .review-views .segmented-option,
   .music-back {
+    height: 44px;
     min-height: 44px;
+    min-width: 44px;
   }
   .review-count {
     margin-left: 0;
@@ -5986,7 +6079,7 @@ dialog {
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
 }
 .review-record:focus-within {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: -3px;
 }
 .review-duration {
@@ -6663,6 +6756,7 @@ dialog {
   }
   .ranking-toolbar .view-toggle button {
     min-width: 0;
+    min-height: 44px;
     gap: 4px;
     padding-inline: 4px;
     font-size: 12px;
@@ -7538,12 +7632,15 @@ dialog.artwork-lightbox::backdrop {
   box-shadow: none;
 }
 .search-type-filters {
-  display: flex;
+  display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
   margin: 16px 0 28px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px;
+  box-sizing: border-box;
 }
 .search-type-filters button {
   position: relative;
@@ -7551,18 +7648,29 @@ dialog.artwork-lightbox::backdrop {
   border-radius: 6px;
   background: transparent;
   color: var(--muted);
-  padding-inline: 18px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  outline: none;
+  box-shadow: none;
+  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
 }
-.search-type-filters button[aria-pressed="true"] {
-  background: var(--surface-raised);
+.search-type-filters button:hover:not([aria-pressed="true"]):not(:disabled) {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
   color: var(--text);
 }
-.search-type-filters button[aria-pressed="true"]::after {
-  content: "";
-  position: absolute;
-  inset: auto 18px -9px;
-  height: 2px;
-  background: var(--chart-accent);
+.search-type-filters button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  outline: none;
 }
 .search-query-summary {
   color: var(--muted);

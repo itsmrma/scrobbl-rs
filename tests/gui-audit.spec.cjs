@@ -45,6 +45,11 @@ const test = base.extend({
           .poll(async () => {
             if (child.exitCode !== null) throw new Error(logs);
             try {
+              const bootRes = await request.get("/api/boot-status");
+              if (bootRes.status() === 200) {
+                const b = await bootRes.json();
+                return b.ready ? 200 : 0;
+              }
               return (await request.get("/healthz")).status();
             } catch {
               return 0;
@@ -3396,9 +3401,12 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     collage.getByRole("list", { name: "Collage listening shares" }),
   ).toBeVisible();
-  await expect(
-    albums.getByRole("button", { name: "Collage", exact: true }),
-  ).toHaveCSS("outline-style", "solid");
+  const collageBtn = albums.getByRole("button", {
+    name: "Collage",
+    exact: true,
+  });
+  await expect(collageBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(collageBtn).toHaveCSS("outline-style", "none");
 
   for (let i = 0; i < cells.length; i++)
     for (let j = i + 1; j < cells.length; j++) {
@@ -4547,7 +4555,7 @@ test("duplicate review controls share a height with flagged history first", asyn
   await expect(group).toHaveCSS("border-top-width", "1px");
   await expect(comparisons).toHaveCSS("border-top-width", "0px");
   await trash.hover();
-  await expect(trash).not.toHaveCSS("box-shadow", "none");
+  await expect(trash).toHaveCSS("outline-style", "none");
   await trash.click();
   await expect(trash).toHaveAttribute("aria-pressed", "true");
   await expect(group).toHaveAttribute("data-view", "trash");
@@ -5463,6 +5471,174 @@ test("mobile baseline: ranking rows and recent listen entries preserve clear spa
     }
   }
 });
+
+test("segmented controls use recessed container, solid active surface, touch targets >= 44px and no fluorescent outline", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, "/rankings/artists?period=all");
+
+  // 1. Ranking view segmented control
+  const rankingToggle = page.getByRole("group", {
+    name: "Ranking view",
+    exact: true,
+  });
+  await expect(rankingToggle).toBeVisible();
+  await expect(rankingToggle).toHaveClass(/segmented-control/);
+
+  const rankingButtons = rankingToggle.getByRole("button");
+  const rankingBtnCount = await rankingButtons.count();
+  expect(rankingBtnCount).toBeGreaterThanOrEqual(2);
+
+  for (let i = 0; i < rankingBtnCount; i++) {
+    const btn = rankingButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  // Active option (List) has solid surface, crisp text, and no fluorescent outline
+  const listBtn = rankingToggle.getByRole("button", {
+    name: "List",
+    exact: true,
+  });
+  await expect(listBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(listBtn).toHaveCSS("outline-style", "none");
+
+  // Switch to Grid
+  const gridBtn = rankingToggle.getByRole("button", {
+    name: "Grid",
+    exact: true,
+  });
+  await gridBtn.click();
+  await expect(gridBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(listBtn).toHaveAttribute("aria-pressed", "false");
+  await expect(gridBtn).toHaveCSS("outline-style", "none");
+
+  // Switch to Collage (if present)
+  const collageOption = rankingToggle.getByRole("button", {
+    name: "Collage",
+    exact: true,
+  });
+  if ((await collageOption.count()) > 0) {
+    await collageOption.click();
+    await expect(collageOption).toHaveAttribute("aria-pressed", "true");
+    await expect(collageOption).toHaveCSS("outline-style", "none");
+  }
+
+  // 2. Search category filters segmented control
+  await page.goto("/search?q=Seed");
+  const searchFilters = page.getByRole("group", {
+    name: "Search categories",
+    exact: true,
+  });
+  await expect(searchFilters).toBeVisible();
+  await expect(searchFilters).toHaveClass(/segmented-control/);
+
+  const searchButtons = searchFilters.getByRole("button");
+  const searchBtnCount = await searchButtons.count();
+  expect(searchBtnCount).toBeGreaterThanOrEqual(3);
+
+  for (let i = 0; i < searchBtnCount; i++) {
+    const btn = searchButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const allFilter = searchFilters.getByRole("button", {
+    name: "All",
+    exact: true,
+  });
+  await expect(allFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(allFilter).toHaveCSS("outline-style", "none");
+
+  const tracksFilter = searchFilters.getByRole("button", {
+    name: "Tracks",
+    exact: true,
+  });
+  await tracksFilter.click();
+  await expect(tracksFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(allFilter).toHaveAttribute("aria-pressed", "false");
+  await expect(tracksFilter).toHaveCSS("outline-style", "none");
+
+  // 3. Review views segmented control
+  await page.goto("/review");
+  const reviewViews = page.getByRole("group", {
+    name: "Review views",
+    exact: true,
+  });
+  await expect(reviewViews).toBeVisible();
+  await expect(reviewViews).toHaveClass(/segmented-control/);
+
+  const reviewButtons = reviewViews.getByRole("button");
+  const reviewBtnCount = await reviewButtons.count();
+  expect(reviewBtnCount).toBe(2);
+
+  for (let i = 0; i < reviewBtnCount; i++) {
+    const btn = reviewButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const comparisonsBtn = reviewViews.getByRole("button", {
+    name: "Comparisons",
+    exact: true,
+  });
+  await expect(comparisonsBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(comparisonsBtn).toHaveCSS("outline-style", "none");
+
+  const trashBtn = reviewViews.getByRole("button", {
+    name: "Trash",
+    exact: true,
+  });
+  await trashBtn.hover();
+  await expect(trashBtn).toHaveCSS("outline-style", "none");
+  await trashBtn.click();
+  await expect(trashBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(trashBtn).toHaveCSS("outline-style", "none");
+
+  // 4. Import methods segmented control
+  await page.goto("/import");
+  const importMethods = page.getByRole("group", {
+    name: "ListenBrainz import method",
+    exact: true,
+  });
+  await expect(importMethods).toBeVisible();
+  await expect(importMethods).toHaveClass(/segmented-control/);
+
+  const importButtons = importMethods.getByRole("button");
+  const importBtnCount = await importButtons.count();
+  expect(importBtnCount).toBe(2);
+
+  for (let i = 0; i < importBtnCount; i++) {
+    const btn = importButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const uploadBtn = importMethods.getByRole("button", {
+    name: "Import files",
+    exact: true,
+  });
+  await expect(uploadBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(uploadBtn).toHaveCSS("outline-style", "none");
+
+  const fetchBtn = importMethods.getByRole("button", {
+    name: "Fetch public listens",
+    exact: true,
+  });
+  await fetchBtn.click();
+  await expect(fetchBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(fetchBtn).toHaveCSS("outline-style", "none");
+});
+
 
 test("layout tokens: .page-container centered max-width 1200px on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
   page,

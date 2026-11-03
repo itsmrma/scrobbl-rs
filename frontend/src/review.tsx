@@ -14,6 +14,7 @@ import {
   Heading,
   Icon,
   number,
+  SegmentedControl,
 } from "./ui";
 import { SkeletonCardList, SkeletonList, SkeletonText } from "./skeleton";
 
@@ -327,27 +328,25 @@ export function ReviewPage({
         >
           <Icon>arrow_back</Icon>Flagged history
         </Link>
-        <div
+        <SegmentedControl
           className="review-views"
           data-view={view}
-          role="group"
-          aria-label="Review views"
-        >
-          <button
-            className="secondary"
-            aria-pressed={view === "comparisons"}
-            onClick={() => setView("comparisons")}
-          >
-            <Icon>compare_arrows</Icon>Comparisons
-          </button>
-          <button
-            className="secondary"
-            aria-pressed={view === "trash"}
-            onClick={() => setView("trash")}
-          >
-            <Icon>delete_outline</Icon>Trash
-          </button>
-        </div>
+          ariaLabel="Review views"
+          value={view}
+          onChange={(val) => setView(val as "comparisons" | "trash")}
+          options={[
+            {
+              value: "comparisons",
+              label: "Comparisons",
+              icon: "compare_arrows",
+            },
+            {
+              value: "trash",
+              label: "Trash",
+              icon: "delete_outline",
+            },
+          ]}
+        />
         <button
           className="secondary icon-button"
           aria-label="Refresh review"
