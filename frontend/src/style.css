@@ -47,6 +47,9 @@
     var(--border) 25%
   );
   --skeleton-highlight: rgba(255, 255, 255, 0.08);
+  --rounded-xs: 4px;
+  --rounded-sm: 6px;
+  --rounded-md: 8px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :root.theme-light {
@@ -495,21 +498,29 @@ main#main {
   list-style: none;
   padding: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .ranking-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid var(--border);
-  padding: 14px 0;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  padding: 12px 14px;
+  border-bottom: none;
+  transition: background-color 160ms ease;
 }
 .ranking-row:last-child {
   border: none;
-  padding-bottom: 0;
 }
 .rank-number {
   font-size: 10px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
 }
 .rank-name {
   min-width: 0;
@@ -550,6 +561,13 @@ main#main {
   align-items: center;
   justify-content: center;
 }
+#history-list,
+.listens-list,
+.widget-recent-content > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .listen-row {
   --listen-cover-size: min(72px, var(--listen-artwork, 38px));
   display: grid;
@@ -558,11 +576,20 @@ main#main {
     150px 90px;
   align-items: center;
   gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  border-bottom: none;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 160ms ease;
 }
 .listen-row:last-child {
   border: none;
+}
+@media (hover: hover) {
+  .listen-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .listen-title {
   min-width: 0;
@@ -1006,6 +1033,7 @@ footer {
     display: grid;
     grid-template-columns: 1fr 1fr;
     column-gap: 24px;
+    row-gap: 4px;
   }
   .listen-album {
     display: none;
@@ -1572,8 +1600,9 @@ footer {
 
 /* Shared interaction and surface language. */
 :root {
-  --motion-fast: 140ms;
-  --motion-view: 200ms;
+  --motion-fast: 150ms;
+  --motion-view: 160ms;
+  --motion-dialog: 180ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 ::selection {
@@ -1669,8 +1698,8 @@ button:disabled {
 }
 .sidebar {
   transition:
-    width var(--motion-view) var(--ease-out),
-    transform var(--motion-view) var(--ease-out),
+    width 180ms var(--ease-out),
+    transform 180ms var(--ease-out),
     visibility 0s;
 }
 .main-area {
@@ -1680,7 +1709,13 @@ button:disabled {
 #main > section:not([hidden]),
 #main > .page-heading,
 .settings-form,
-.music-heading {
+.music-heading,
+.rankings-panel,
+.review-view-content,
+.tab-content,
+[role="tabpanel"],
+.page-container > section,
+.page-container > .panel {
   animation: view-in 160ms ease-out;
 }
 @keyframes view-in {
@@ -1704,7 +1739,8 @@ button:disabled {
     opacity: 1;
   }
 }
-dialog {
+dialog,
+.modal {
   animation: dialog-in 180ms var(--ease-out);
 }
 @keyframes dialog-in {
@@ -1718,7 +1754,15 @@ dialog {
   }
 }
 .sidebar-backdrop {
-  animation: view-in 140ms ease-out;
+  animation: backdrop-in 180ms ease-out;
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .sidebar-now {
   display: flex;
@@ -2144,12 +2188,12 @@ dialog {
   .sidebar,
   .collapsed .sidebar {
     transition:
-      transform var(--motion-view) var(--ease-out),
-      visibility 0s var(--motion-view);
+      transform 180ms var(--ease-out),
+      visibility 0s 180ms;
   }
   .mobile-open .sidebar {
     transition:
-      transform var(--motion-view) var(--ease-out),
+      transform 180ms var(--ease-out),
       visibility 0s;
   }
   .edit-layout {
@@ -2307,19 +2351,37 @@ dialog {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
   .sidebar,
   .collapsed .sidebar,
-  .main-area {
-    transition: none;
-  }
+  .main-area,
   #main > section:not([hidden]),
   #main > .page-heading,
   .settings-form,
   .music-heading,
+  .rankings-panel,
   .toast,
   dialog,
-  .sidebar-backdrop {
-    animation: view-in 100ms linear;
+  .modal,
+  .sidebar-backdrop,
+  .review-view-content,
+  .ranking-row,
+  .listen-row,
+  .activity-row,
+  .member-row {
+    animation: none !important;
+    transition: none !important;
   }
   button:not(:disabled):active,
   .button:active {
@@ -2771,9 +2833,24 @@ dialog {
   margin: 16px 0;
   padding: 0;
 }
+.member-row,
 .group-members li {
-  border-bottom: 1px solid var(--border);
-  padding: 12px 0;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  border-bottom: none;
+  padding: 10px 14px;
+  margin-bottom: 4px;
+  transition: background-color 160ms ease;
+}
+.member-row:last-child,
+.group-members li:last-child {
+  margin-bottom: 0;
+}
+@media (hover: hover) {
+  .member-row:hover,
+  .group-members li:hover {
+    background: var(--surface-raised);
+  }
 }
 .group-members .check {
   display: flex;
@@ -3857,7 +3934,7 @@ dialog {
   z-index: 1;
 }
 :is(.music-card, .ranking-row):has(.music-item-link):hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  background: var(--surface-raised);
 }
 :is(.music-card, .ranking-row):has(.music-item-link:focus-visible) {
   outline: 3px solid var(--focus);
@@ -4020,7 +4097,9 @@ dialog {
   flex-direction: column;
 }
 .ranking-panel .ranking-list {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .ranking-toolbar {
   display: flex;
@@ -4124,14 +4203,24 @@ dialog {
   object-fit: cover;
 }
 .ranking-row:last-child {
-  padding-bottom: 14px;
+  border: none;
 }
 .ranking-panel .ranking-row {
   display: grid;
   grid-template-columns: 3ch 44px minmax(0, 1fr) minmax(0, 0.8fr);
   gap: 8px 12px;
-  padding: 12px 8px;
-  border-radius: 6px;
+  padding: 12px 14px;
+  border-radius: var(--rounded-sm, 6px);
+  background: var(--surface);
+  border-bottom: none;
+  transition: background-color 160ms ease;
+}
+@media (hover: hover) {
+  .ranking-row:hover,
+  .rankings-panel .ranking-row:hover,
+  :is(.music-card, .ranking-row):has(.music-item-link):hover {
+    background: var(--surface-raised);
+  }
 }
 .ranking-panel .ranking-row .cover {
   width: 44px;
@@ -4642,6 +4731,7 @@ dialog {
 }
 .listen-row .listen-duration {
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Small glyphs retain a comfortable target without a large hover halo. */
@@ -4893,11 +4983,23 @@ dialog {
   font-size: 11px;
 }
 .activity-row {
-  padding: 18px;
-  margin-top: 12px;
+  padding: 16px 18px;
+  margin-top: 0;
+  margin-bottom: 4px;
   gap: 14px;
-  border-radius: 12px;
+  border-radius: var(--rounded-sm, 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
   align-items: center;
+  transition: background-color 160ms ease;
+}
+.activity-row:last-child {
+  margin-bottom: 0;
+}
+@media (hover: hover) {
+  .activity-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .activity-row.is-active {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));

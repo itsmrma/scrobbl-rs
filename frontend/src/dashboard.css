@@ -763,9 +763,16 @@ dialog.widget-catalog-dialog {
   column-gap: 8px;
   row-gap: 4px;
   min-height: 80px;
-  padding: 8px 0;
+  padding: 8px 10px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--rounded-sm, 6px);
+  background: var(--surface);
+  transition: background-color 160ms ease;
+}
+@media (hover: hover) {
+  .dashboard-widget .overview-rankings .ranking-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .dashboard-widget .overview-rankings .ranking-row > .cover {
   width: 38px;
@@ -835,7 +842,16 @@ dialog.widget-catalog-dialog {
   grid-template-columns: 38px minmax(0, 1fr);
   gap: 12px;
   height: 72px;
-  padding: 12px 0;
+  padding: 12px 10px;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  border-bottom: none;
+  transition: background-color 160ms ease;
+}
+@media (hover: hover) {
+  .dashboard-widget .widget-recent-listens .listen-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .dashboard-widget .widget-recent-listens .listen-main {
   min-width: 0;
