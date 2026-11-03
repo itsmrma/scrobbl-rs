@@ -385,3 +385,102 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     fullPage: true,
   });
 });
+
+test("restart application triggers full-screen transition, polls boot-status and reconnects", async ({
+  page,
+}) => {
+  await login(page, "/settings/application");
+  let bootStatusCalls = 0;
+  let isReady = false;
+
+  await page.route("**/api/v1/application", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 202,
+        json: { accepted: true },
+      });
+    }
+    return route.continue();
+  });
+
+  await page.route("**/api/boot-status", (route) => {
+    bootStatusCalls++;
+    return route.fulfill({
+      status: 200,
+      json: {
+        ready: isReady,
+        stage: isReady ? "ready" : "initializing",
+        error: null,
+      },
+    });
+  });
+
+  await page
+    .getByRole("button", { name: "Restart application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Restart now", exact: true }).click();
+
+  const lifecycle = page.locator(".lifecycle-screen");
+  await expect(lifecycle).toBeVisible();
+  await expect(lifecycle).toContainText("Riavvio di scrobbl.rs in corso...");
+  await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
+  await expect(lifecycle.locator(".lifecycle-dot")).toBeVisible();
+
+  await expect.poll(() => bootStatusCalls).toBeGreaterThan(0);
+
+  isReady = true;
+  await expect(lifecycle).toContainText(
+    /restarted|pronto|Riavvio completato/i,
+    { timeout: 10000 },
+  );
+});
+
+test("stop application triggers full-screen transition with safe shutdown message and reconnect button", async ({
+  page,
+}) => {
+  await login(page, "/settings/application");
+  let bootStatusChecked = false;
+
+  await page.route("**/api/v1/application", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 202,
+        json: { accepted: true },
+      });
+    }
+    return route.continue();
+  });
+
+  await page.route("**/api/boot-status", (route) => {
+    bootStatusChecked = true;
+    return route.fulfill({
+      status: 200,
+      json: {
+        ready: false,
+        stage: "stopped",
+        error: null,
+      },
+    });
+  });
+
+  await page
+    .getByRole("button", { name: "Stop application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Stop now", exact: true }).click();
+
+  const lifecycle = page.locator(".lifecycle-screen");
+  await expect(lifecycle).toBeVisible();
+  await expect(lifecycle).toContainText(
+    "Applicazione arrestata. L'archivio è stato chiuso in sicurezza. Riavvia il container da Docker quando desideri.",
+  );
+  await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
+
+  const reconnectBtn = lifecycle.getByRole("button", {
+    name: /Verifica disponibilità|Riconnetti/i,
+  });
+  await expect(reconnectBtn).toBeVisible();
+  await reconnectBtn.click();
+  expect(bootStatusChecked).toBe(true);
+});

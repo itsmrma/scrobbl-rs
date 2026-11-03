@@ -5763,3 +5763,228 @@ test("layout tokens: .page-container centered max-width 1200px on desktop, 14px 
     expect(gap).toBeCloseTo(12, 0);
   }
 });
+
+
+test("list rows and micro-transitions: vertical separation, dedicated surface, desktop hover, and fast animations (#163)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page);
+
+  // 1. Seed second item to have multiple rows in lists
+  const session = await (await page.request.get("/api/session")).json();
+  const importResp = await (
+    await page.request.post("/api/import/spotify", {
+      headers: { Origin: new URL(page.url()).origin, "X-CSRF-Token": session.csrf },
+      multipart: {
+        files: {
+          name: "seed2.json",
+          mimeType: "application/json",
+          buffer: Buffer.from(
+            JSON.stringify([
+              {
+                ts: "2025-05-01T12:10:00Z",
+                ms_played: 210000,
+                master_metadata_track_name: "Second track",
+                master_metadata_album_artist_name: "Another artist",
+                master_metadata_album_album_name: "Another album",
+                spotify_track_uri: "spotify:track:0000000000000000000089",
+                platform: "Android app",
+                conn_country: "IT",
+                shuffle: false,
+                offline: false,
+                skipped: false,
+                reason_end: "trackdone",
+              },
+            ]),
+          ),
+        },
+      },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/api/v1/activities/${importResp.job_id}`)
+          ).json()
+        ).activity.state,
+    )
+    .toBe("completed");
+
+  // 2. Check History list rows (.listen-row)
+  await page.goto("/history");
+  const listenRows = page.locator("#history-list .listen-row");
+  await expect(listenRows).toHaveCount(2);
+
+  const listenBox0 = await listenRows.nth(0).boundingBox();
+  const listenBox1 = await listenRows.nth(1).boundingBox();
+  expect(listenBox0).not.toBeNull();
+  expect(listenBox1).not.toBeNull();
+
+  // 4px vertical separation between consecutive rows (no overlap)
+  const listenSeparation = listenBox1.y - (listenBox0.y + listenBox0.height);
+  expect(Math.abs(listenSeparation - 4)).toBeLessThanOrEqual(1.5);
+  expect(listenBox1.y).toBeGreaterThanOrEqual(listenBox0.y + listenBox0.height);
+
+  // Border-radius 4px or 6px, and dedicated surface background
+  const listenStyle = await listenRows.nth(0).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      borderRadius: parseFloat(cs.borderRadius),
+      bg: cs.backgroundColor,
+      hasTabularNums: cs.fontVariantNumeric.includes("tabular-nums"),
+    };
+  });
+  expect(listenStyle.borderRadius).toBeGreaterThanOrEqual(4);
+  expect(listenStyle.borderRadius).toBeLessThanOrEqual(6.5);
+  expect(listenStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(listenStyle.hasTabularNums).toBeTruthy();
+
+  // Column alignment: secondary column .listen-duration has tabular nums and crisp right alignment
+  const durationAlign = await listenRows.nth(0).locator(".listen-duration").evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      textAlign: cs.textAlign,
+      tabular: cs.fontVariantNumeric.includes("tabular-nums"),
+    };
+  });
+  expect(durationAlign.tabular).toBeTruthy();
+
+  // Desktop hover effect on .listen-row
+  await listenRows.nth(0).hover();
+  const listenHoverBg = await listenRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(listenHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // 3. Check Rankings rows (.ranking-row)
+  await page.goto("/rankings/artists?period=all");
+  const rankingRows = page.locator(".rankings-panel .ranking-row");
+  await expect(rankingRows).toHaveCount(2);
+
+  const rankBox0 = await rankingRows.nth(0).boundingBox();
+  const rankBox1 = await rankingRows.nth(1).boundingBox();
+  expect(rankBox0).not.toBeNull();
+  expect(rankBox1).not.toBeNull();
+
+  // 4px vertical separation
+  const rankSeparation = rankBox1.y - (rankBox0.y + rankBox0.height);
+  expect(Math.abs(rankSeparation - 4)).toBeLessThanOrEqual(1.5);
+  expect(rankBox1.y).toBeGreaterThanOrEqual(rankBox0.y + rankBox0.height);
+
+  const rankStyle = await rankingRows.nth(0).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      borderRadius: parseFloat(cs.borderRadius),
+      bg: cs.backgroundColor,
+    };
+  });
+  expect(rankStyle.borderRadius).toBeGreaterThanOrEqual(4);
+  expect(rankStyle.borderRadius).toBeLessThanOrEqual(6.5);
+  expect(rankStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // Secondary elements tabular alignment (.rank-number, .rank-plays, .rank-time)
+  const rankNumTabular = await rankingRows.nth(0).locator(".rank-number").evaluate((el) => {
+    return getComputedStyle(el).fontVariantNumeric.includes("tabular-nums");
+  });
+  expect(rankNumTabular).toBeTruthy();
+
+  // Desktop hover effect on .ranking-row
+  await rankingRows.nth(0).hover();
+  const rankHoverBg = await rankingRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(rankHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // 4. Check Activities rows (.activity-row)
+  await page.goto("/activities");
+  const activityRows = page.locator(".activity-row");
+  await expect(activityRows.first()).toBeVisible();
+  const actCount = await activityRows.count();
+  if (actCount >= 2) {
+    const actBox0 = await activityRows.nth(0).boundingBox();
+    const actBox1 = await activityRows.nth(1).boundingBox();
+    expect(actBox0).not.toBeNull();
+    expect(actBox1).not.toBeNull();
+
+    const actSeparation = actBox1.y - (actBox0.y + actBox0.height);
+    expect(Math.abs(actSeparation - 4)).toBeLessThanOrEqual(1.5);
+    expect(actBox1.y).toBeGreaterThanOrEqual(actBox0.y + actBox0.height);
+
+    const actStyle = await activityRows.nth(0).evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        borderRadius: parseFloat(cs.borderRadius),
+        bg: cs.backgroundColor,
+      };
+    });
+    expect(actStyle.borderRadius).toBeGreaterThanOrEqual(4);
+    expect(actStyle.borderRadius).toBeLessThanOrEqual(6.5);
+    expect(actStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await activityRows.nth(0).hover();
+    const actHoverBg = await activityRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(actHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+  }
+
+  // 5. Check micro-animations & transitions (150-180ms)
+  const motionValues = await page.evaluate(() => {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const mainSection = document.querySelector("#main > section:not([hidden])") || document.querySelector(".page-container");
+    const sectionAnim = mainSection ? getComputedStyle(mainSection).animationDuration : "";
+    const dialogEl = document.createElement("dialog");
+    document.body.appendChild(dialogEl);
+    const dialogAnim = getComputedStyle(dialogEl).animationDuration;
+    dialogEl.remove();
+
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarTransition = sidebar ? getComputedStyle(sidebar).transitionDuration : "";
+
+    return {
+      motionView: rootStyle.getPropertyValue("--motion-view").trim(),
+      sectionAnim,
+      dialogAnim,
+      sidebarTransition,
+    };
+  });
+
+  const parseMs = (val) => {
+    if (!val) return 0;
+    if (val.endsWith("ms")) return parseFloat(val);
+    if (val.endsWith("s")) return parseFloat(val) * 1000;
+    return parseFloat(val);
+  };
+
+  const sectionMs = parseMs(motionValues.sectionAnim);
+  expect(sectionMs).toBeGreaterThanOrEqual(150);
+  expect(sectionMs).toBeLessThanOrEqual(180);
+
+  const dialogMs = parseMs(motionValues.dialogAnim);
+  expect(dialogMs).toBeGreaterThanOrEqual(150);
+  expect(dialogMs).toBeLessThanOrEqual(180);
+
+  // 6. Check prefers-reduced-motion: reduce sets instantaneous transitions (0s)
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/dashboard");
+
+  const reducedMotionValues = await page.evaluate(() => {
+    const mainSection = document.querySelector("#main > section:not([hidden])") || document.querySelector(".page-container");
+    const sectionAnimDuration = mainSection ? getComputedStyle(mainSection).animationDuration : "0s";
+
+    const dialogEl = document.createElement("dialog");
+    document.body.appendChild(dialogEl);
+    const dialogAnimDuration = getComputedStyle(dialogEl).animationDuration;
+    dialogEl.remove();
+
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarTransitionDuration = sidebar ? getComputedStyle(sidebar).transitionDuration : "0s";
+
+    return {
+      sectionAnimDuration,
+      dialogAnimDuration,
+      sidebarTransitionDuration,
+    };
+  });
+
+  expect(parseMs(reducedMotionValues.sectionAnimDuration)).toBeLessThanOrEqual(1);
+  expect(parseMs(reducedMotionValues.dialogAnimDuration)).toBeLessThanOrEqual(1);
+  expect(parseMs(reducedMotionValues.sidebarTransitionDuration)).toBeLessThanOrEqual(1);
+});

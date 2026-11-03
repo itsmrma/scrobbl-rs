@@ -132,7 +132,7 @@ async fn dispatch_handler(State(boot): State<BootManager>, req: Request<Body>) -
             .unwrap_or_else(|infallible| match infallible {})
     } else {
         let path = req.uri().path();
-        if path.starts_with("/api/") {
+        if path == "/healthz" || path.starts_with("/api/") {
             let status = boot.status();
             let mut response = (
                 StatusCode::SERVICE_UNAVAILABLE,

@@ -47,6 +47,9 @@
     var(--border) 25%
   );
   --skeleton-highlight: rgba(255, 255, 255, 0.08);
+  --rounded-xs: 4px;
+  --rounded-sm: 6px;
+  --rounded-md: 8px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :root.theme-light {
@@ -495,21 +498,29 @@ main#main {
   list-style: none;
   padding: 0;
   margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .ranking-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-bottom: 1px solid var(--border);
-  padding: 14px 0;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  padding: 12px 14px;
+  border-bottom: none;
+  transition: background-color 160ms ease;
 }
 .ranking-row:last-child {
   border: none;
-  padding-bottom: 0;
 }
 .rank-number {
   font-size: 10px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 3ch;
+  text-align: right;
 }
 .rank-name {
   min-width: 0;
@@ -550,6 +561,13 @@ main#main {
   align-items: center;
   justify-content: center;
 }
+#history-list,
+.listens-list,
+.widget-recent-content > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .listen-row {
   --listen-cover-size: min(72px, var(--listen-artwork, 38px));
   display: grid;
@@ -558,11 +576,20 @@ main#main {
     150px 90px;
   align-items: center;
   gap: 16px;
-  padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  border-bottom: none;
+  font-variant-numeric: tabular-nums;
+  transition: background-color 160ms ease;
 }
 .listen-row:last-child {
   border: none;
+}
+@media (hover: hover) {
+  .listen-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .listen-title {
   min-width: 0;
@@ -1006,6 +1033,7 @@ footer {
     display: grid;
     grid-template-columns: 1fr 1fr;
     column-gap: 24px;
+    row-gap: 4px;
   }
   .listen-album {
     display: none;
@@ -1627,8 +1655,9 @@ footer {
 
 /* Shared interaction and surface language. */
 :root {
-  --motion-fast: 140ms;
-  --motion-view: 200ms;
+  --motion-fast: 150ms;
+  --motion-view: 160ms;
+  --motion-dialog: 180ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 }
 ::selection {
@@ -1724,8 +1753,8 @@ button:disabled {
 }
 .sidebar {
   transition:
-    width var(--motion-view) var(--ease-out),
-    transform var(--motion-view) var(--ease-out),
+    width 180ms var(--ease-out),
+    transform 180ms var(--ease-out),
     visibility 0s;
 }
 .main-area {
@@ -1735,7 +1764,13 @@ button:disabled {
 #main > section:not([hidden]),
 #main > .page-heading,
 .settings-form,
-.music-heading {
+.music-heading,
+.rankings-panel,
+.review-view-content,
+.tab-content,
+[role="tabpanel"],
+.page-container > section,
+.page-container > .panel {
   animation: view-in 160ms ease-out;
 }
 @keyframes view-in {
@@ -1759,7 +1794,8 @@ button:disabled {
     opacity: 1;
   }
 }
-dialog {
+dialog,
+.modal {
   animation: dialog-in 180ms var(--ease-out);
 }
 @keyframes dialog-in {
@@ -1773,7 +1809,15 @@ dialog {
   }
 }
 .sidebar-backdrop {
-  animation: view-in 140ms ease-out;
+  animation: backdrop-in 180ms ease-out;
+}
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .sidebar-now {
   display: flex;
@@ -2199,12 +2243,12 @@ dialog {
   .sidebar,
   .collapsed .sidebar {
     transition:
-      transform var(--motion-view) var(--ease-out),
-      visibility 0s var(--motion-view);
+      transform 180ms var(--ease-out),
+      visibility 0s 180ms;
   }
   .mobile-open .sidebar {
     transition:
-      transform var(--motion-view) var(--ease-out),
+      transform 180ms var(--ease-out),
       visibility 0s;
   }
   .edit-layout {
@@ -2362,19 +2406,37 @@ dialog {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-delay: 0s !important;
+  }
+  html {
+    scroll-behavior: auto !important;
+  }
   .sidebar,
   .collapsed .sidebar,
-  .main-area {
-    transition: none;
-  }
+  .main-area,
   #main > section:not([hidden]),
   #main > .page-heading,
   .settings-form,
   .music-heading,
+  .rankings-panel,
   .toast,
   dialog,
-  .sidebar-backdrop {
-    animation: view-in 100ms linear;
+  .modal,
+  .sidebar-backdrop,
+  .review-view-content,
+  .ranking-row,
+  .listen-row,
+  .activity-row,
+  .member-row {
+    animation: none !important;
+    transition: none !important;
   }
   button:not(:disabled):active,
   .button:active {
@@ -2826,9 +2888,24 @@ dialog {
   margin: 16px 0;
   padding: 0;
 }
+.member-row,
 .group-members li {
-  border-bottom: 1px solid var(--border);
-  padding: 12px 0;
+  background: var(--surface);
+  border-radius: var(--rounded-sm, 6px);
+  border-bottom: none;
+  padding: 10px 14px;
+  margin-bottom: 4px;
+  transition: background-color 160ms ease;
+}
+.member-row:last-child,
+.group-members li:last-child {
+  margin-bottom: 0;
+}
+@media (hover: hover) {
+  .member-row:hover,
+  .group-members li:hover {
+    background: var(--surface-raised);
+  }
 }
 .group-members .check {
   display: flex;
@@ -3938,7 +4015,7 @@ dialog {
   z-index: 1;
 }
 :is(.music-card, .ranking-row):has(.music-item-link):hover {
-  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  background: var(--surface-raised);
 }
 :is(.music-card, .ranking-row):has(.music-item-link:focus-visible) {
   outline: 3px solid var(--focus);
@@ -4101,7 +4178,9 @@ dialog {
   flex-direction: column;
 }
 .ranking-panel .ranking-list {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .ranking-toolbar {
   display: flex;
@@ -4205,14 +4284,24 @@ dialog {
   object-fit: cover;
 }
 .ranking-row:last-child {
-  padding-bottom: 14px;
+  border: none;
 }
 .ranking-panel .ranking-row {
   display: grid;
   grid-template-columns: 3ch 44px minmax(0, 1fr) minmax(0, 0.8fr);
   gap: 8px 12px;
-  padding: 12px 8px;
-  border-radius: 6px;
+  padding: 12px 14px;
+  border-radius: var(--rounded-sm, 6px);
+  background: var(--surface);
+  border-bottom: none;
+  transition: background-color 160ms ease;
+}
+@media (hover: hover) {
+  .ranking-row:hover,
+  .rankings-panel .ranking-row:hover,
+  :is(.music-card, .ranking-row):has(.music-item-link):hover {
+    background: var(--surface-raised);
+  }
 }
 .ranking-panel .ranking-row .cover {
   width: 44px;
@@ -4723,6 +4812,7 @@ dialog {
 }
 .listen-row .listen-duration {
   font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 /* Small glyphs retain a comfortable target without a large hover halo. */
@@ -4974,11 +5064,23 @@ dialog {
   font-size: 11px;
 }
 .activity-row {
-  padding: 18px;
-  margin-top: 12px;
+  padding: 16px 18px;
+  margin-top: 0;
+  margin-bottom: 4px;
   gap: 14px;
-  border-radius: 12px;
+  border-radius: var(--rounded-sm, 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
   align-items: center;
+  transition: background-color 160ms ease;
+}
+.activity-row:last-child {
+  margin-bottom: 0;
+}
+@media (hover: hover) {
+  .activity-row:hover {
+    background: var(--surface-raised);
+  }
 }
 .activity-row.is-active {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -8160,4 +8262,130 @@ dialog.artwork-lightbox::backdrop {
 .https-guide-dialog {
   max-height: 70vh;
   overflow-y: auto;
+}
+
+/* Lifecycle Transition Screen (Ticket #160) */
+.lifecycle-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-color: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  min-height: 100vh;
+  width: 100vw;
+  box-sizing: border-box;
+}
+
+.lifecycle-brand {
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  margin-bottom: 24px;
+  user-select: none;
+}
+
+.lifecycle-brand .accent {
+  color: var(--accent);
+}
+
+.lifecycle-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  height: 24px;
+}
+
+.lifecycle-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: lifecycle-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes lifecycle-pulse {
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lifecycle-dot {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+.lifecycle-icon-success {
+  font-size: 32px;
+  color: var(--success);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lifecycle-icon-stopped {
+  font-size: 32px;
+  color: var(--muted);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lifecycle-status {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 8px 0;
+  max-width: 520px;
+  line-height: 1.5;
+}
+
+.lifecycle-details {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  max-width: 460px;
+  line-height: 1.5;
+}
+
+.lifecycle-subtext {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  max-width: 440px;
+  line-height: 1.5;
+  display: block;
+}
+
+.lifecycle-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.lifecycle-feedback {
+  font-size: 14px;
+  color: var(--accent);
+  margin-top: 16px;
+  max-width: 440px;
 }
