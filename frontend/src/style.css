@@ -7882,3 +7882,129 @@ dialog.artwork-lightbox::backdrop {
     padding: 16px;
   }
 }
+
+/* Lifecycle Transition Screen (Ticket #160) */
+.lifecycle-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background-color: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  min-height: 100vh;
+  width: 100vw;
+  box-sizing: border-box;
+}
+
+.lifecycle-brand {
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--text);
+  margin-bottom: 24px;
+  user-select: none;
+}
+
+.lifecycle-brand .accent {
+  color: var(--accent);
+}
+
+.lifecycle-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  height: 24px;
+}
+
+.lifecycle-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent);
+  animation: lifecycle-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes lifecycle-pulse {
+  0%,
+  100% {
+    transform: scale(0.75);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lifecycle-dot {
+    animation: none;
+    opacity: 0.9;
+  }
+}
+
+.lifecycle-icon-success {
+  font-size: 32px;
+  color: var(--success);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lifecycle-icon-stopped {
+  font-size: 32px;
+  color: var(--muted);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lifecycle-status {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--text);
+  margin: 0 0 8px 0;
+  max-width: 520px;
+  line-height: 1.5;
+}
+
+.lifecycle-details {
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  max-width: 460px;
+  line-height: 1.5;
+}
+
+.lifecycle-subtext {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  max-width: 440px;
+  line-height: 1.5;
+  display: block;
+}
+
+.lifecycle-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.lifecycle-feedback {
+  font-size: 14px;
+  color: var(--accent);
+  margin-top: 16px;
+  max-width: 440px;
+}
