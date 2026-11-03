@@ -4,7 +4,7 @@ import { useLoad } from "./load";
 import { Link, navigate, useSearch } from "./navigation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
-import { Cover, ErrorText, Heading, Icon, number } from "./ui";
+import { Cover, ErrorText, Heading, Icon, number, SegmentedControl } from "./ui";
 import { SkeletonList } from "./skeleton";
 
 const labels: Record<Kind, string> = {
@@ -163,23 +163,21 @@ export function SearchPage() {
           Search
         </button>
       </form>
-      <div
+      <SegmentedControl
         className="search-type-filters"
-        role="group"
-        aria-label="Search categories"
-      >
-        {[null, ...kinds].map((type) => (
-          <button
-            key={type || "all"}
-            type="button"
-            className="secondary"
-            aria-pressed={kind === type}
-            onClick={() => change(query, type)}
-          >
-            {type ? labels[type] : "All"}
-          </button>
-        ))}
-      </div>
+        ariaLabel="Search categories"
+        value={kind ?? "all"}
+        onChange={(val) =>
+          change(query, val === "all" ? null : (val as Kind))
+        }
+        options={[
+          { value: "all", label: "All" },
+          ...kinds.map((type) => ({
+            value: type,
+            label: labels[type],
+          })),
+        ]}
+      />
       {query ? (
         <>
           <p className="search-query-summary" role="status">
