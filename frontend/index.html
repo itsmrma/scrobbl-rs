@@ -6,9 +6,105 @@
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>scrobbl.rs</title>
+    <style>
+      :root {
+        color-scheme: dark light;
+        --splash-bg: #13151b;
+        --splash-text: #f2f3f7;
+        --splash-muted: #bac0cc;
+        --splash-accent: #c9ee8b;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --splash-bg: #f5f6fa;
+          --splash-text: #18212d;
+          --splash-muted: #425065;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background-color: var(--splash-bg);
+        color: var(--splash-text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+          Arial, sans-serif;
+      }
+      .pre-splash-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 24px;
+        text-align: center;
+      }
+      .pre-splash-brand {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        color: var(--splash-text);
+        margin-bottom: 24px;
+        user-select: none;
+      }
+      .pre-splash-brand .accent {
+        color: var(--splash-accent);
+      }
+      .pre-splash-loader {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 16px;
+        height: 24px;
+      }
+      .pre-splash-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background-color: var(--splash-accent);
+        box-shadow: 0 0 12px var(--splash-accent);
+        animation: pre-splash-pulse 1.4s ease-in-out infinite;
+      }
+      @keyframes pre-splash-pulse {
+        0%,
+        100% {
+          transform: scale(0.75);
+          opacity: 0.4;
+        }
+        50% {
+          transform: scale(1.25);
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pre-splash-dot {
+          animation: none;
+          opacity: 0.9;
+        }
+      }
+      .pre-splash-status {
+        font-size: 14px;
+        color: var(--splash-muted);
+        margin: 0;
+        max-width: 360px;
+        line-height: 1.5;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="pre-splash-container">
+        <div class="pre-splash-brand">
+          scrobbl<span class="accent">.</span>rs
+        </div>
+        <div class="pre-splash-loader">
+          <div class="pre-splash-dot"></div>
+        </div>
+        <p class="pre-splash-status">Avvio di scrobbl.rs in corso...</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

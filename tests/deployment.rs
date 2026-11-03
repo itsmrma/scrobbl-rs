@@ -331,3 +331,201 @@ fn external_origin_is_strict_and_keeps_nonstandard_ports_and_ipv6() {
         );
     }
 }
+
+async fn call_raw(
+    app: &Router,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Body,
+) -> (StatusCode, axum::http::HeaderMap, String) {
+    let mut request = Request::builder().method(method).uri(path);
+    for (key, value) in headers {
+        request = request.header(*key, *value);
+    }
+    let response = app
+        .clone()
+        .oneshot(request.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+#[tokio::test]
+async fn early_boot_serves_splash_and_status_and_blocks_operational_apis() {
+    let boot = scrobbl_rs::boot::BootManager::new();
+    let app = scrobbl_rs::boot::router(boot.clone());
+
+    // 1. /api/boot-status responds immediately with starting state
+    let (status, _, body) = call(&app, "GET", "/api/boot-status", &[], json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["stage"], "starting");
+    assert!(body["error"].is_null());
+
+    // 2. Browser request to root receives 200 OK standalone splash HTML
+    let (status, headers, html) = call_raw(&app, "GET", "/", &[], Body::empty()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        headers["content-type"]
+            .to_str()
+            .unwrap()
+            .contains("text/html")
+    );
+    assert!(html.contains("splash-container"));
+    assert!(html.contains("scrobbl"));
+    assert!(html.contains("Avvio di scrobbl.rs in corso..."));
+
+    // 3. Operational APIs receive 503 with Retry-After: 1 header
+    for path in ["/api/setup", "/api/session", "/api/v1/preferences"] {
+        let (status, headers, body) = call(&app, "GET", path, &[], json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Path {path} should return 503"
+        );
+        assert_eq!(
+            headers["retry-after"], "1",
+            "Path {path} must have Retry-After: 1"
+        );
+        assert_eq!(body["ready"], false);
+    }
+
+    // 4. Stage updates are reflected immediately in /api/boot-status
+    boot.set_stage("migrating");
+    let (status, _, body) = call(&app, "GET", "/api/boot-status", &[], json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["stage"], "migrating");
+
+    // 5. When database and workers become ready, transitions seamlessly
+    let (_dir, state, real_app) = deployment("http://127.0.0.1:3210").await;
+    boot.set_ready(real_app);
+
+    let (status, _, body) = call(&app, "GET", "/api/boot-status", &[], json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ready"], true);
+    assert_eq!(body["stage"], "ready");
+
+    // Operational APIs now succeed (not 503)
+    let host = state.config.host();
+    let (status, _, body) = call(&app, "GET", "/api/session", &[("host", &host)], json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["setup_required"], true);
+
+    state.storage.close().await;
+}
+
+#[tokio::test]
+async fn boot_failure_sets_error_in_status_and_splash_page() {
+    let boot = scrobbl_rs::boot::BootManager::new();
+    let app = scrobbl_rs::boot::router(boot.clone());
+
+    boot.set_error("sqlite3: disk image is malformed during migration");
+
+    // /api/boot-status indicates failure
+    let (status, _, body) = call(&app, "GET", "/api/boot-status", &[], json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ready"], false);
+    assert_eq!(body["stage"], "error");
+    assert_eq!(
+        body["error"],
+        "sqlite3: disk image is malformed during migration"
+    );
+
+    // Splash screen explicitly shows error message
+    let (status, _, html) = call_raw(&app, "GET", "/", &[], Body::empty()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("sqlite3: disk image is malformed during migration"));
+    assert!(html.contains("Errore durante l'avvio") || html.contains("Errore durante l&#39;avvio"));
+
+    // Operational APIs still blocked
+    let (status, headers, body) = call(&app, "POST", "/api/setup", &[], json!({})).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(headers["retry-after"], "1");
+    assert_eq!(
+        body["details"],
+        "sqlite3: disk image is malformed during migration"
+    );
+}
+
+#[tokio::test]
+async fn early_tcp_bind_responds_before_full_database_ready() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let boot = scrobbl_rs::boot::BootManager::new();
+    let app = scrobbl_rs::boot::router(boot.clone());
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.changed().await;
+            })
+            .await
+    });
+
+    let client = reqwest::Client::new();
+
+    // Early bind check: client connects and receives 200 from /api/boot-status before DB is opened
+    let res = client
+        .get(format!("http://{addr}/api/boot-status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    let status_json: scrobbl_rs::boot::BootStatus = res.json().await.unwrap();
+    assert!(!status_json.ready);
+    assert_eq!(status_json.stage, "starting");
+
+    // Splash screen available at root
+    let res = client.get(format!("http://{addr}/")).send().await.unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    let text = res.text().await.unwrap();
+    assert!(text.contains("splash-container"));
+
+    // API blocked with 503 and Retry-After
+    let res = client
+        .get(format!("http://{addr}/api/session"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(res.headers().get("retry-after").unwrap(), "1");
+
+    // Transition to ready
+    let origin = format!("http://127.0.0.1:{}", addr.port());
+    let (_dir, state, real_app) = deployment(&origin).await;
+    boot.set_ready(real_app);
+
+    // Boot status now reports ready
+    let res = client
+        .get(format!("http://{addr}/api/boot-status"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+    let status_json: scrobbl_rs::boot::BootStatus = res.json().await.unwrap();
+    assert!(status_json.ready);
+    assert_eq!(status_json.stage, "ready");
+
+    // Operational API is now served
+    let res = client
+        .get(format!("http://{addr}/api/session"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+
+    // Clean shutdown
+    let _ = shutdown_tx.send(true);
+    let _ = server.await;
+    state.storage.close().await;
+}
