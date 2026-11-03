@@ -15,8 +15,24 @@ use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+thread_local! {
+    // Tests run on their own harness thread. A thread-local offset lets a test
+    // advance the application clock without waiting for real hours, while
+    // keeping unrelated tests on the wall clock.
+    static CLOCK_OFFSET_MS: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
+}
+
 pub fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    let now = chrono::Utc::now().timestamp_millis();
+    #[cfg(test)]
+    let now = now + CLOCK_OFFSET_MS.with(std::cell::Cell::get);
+    now
+}
+
+#[cfg(test)]
+pub(crate) fn advance_clock(ms: i64) {
+    CLOCK_OFFSET_MS.with(|offset| offset.set(offset.get().saturating_add(ms)));
 }
 pub fn random_secret() -> String {
     let mut bytes = [0u8; 32];

@@ -890,12 +890,12 @@ export function SpotifyConnectedCard({
             disabled={busy}
             onClick={() =>
               void action(async () => {
-                await api.retrySpotifyNow();
-                return "Cooldown cleared. Spotify collection retry requested.";
+                const result = await api.retrySpotifyNow();
+                return result.message;
               })
             }
           >
-            Retry connection now
+            Retry collection now
           </button>
           <button
             className="secondary danger"
@@ -951,6 +951,10 @@ export function SpotifyConnectedCard({
                   {date(status.retry_at_ms, preferences)}
                   {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
                 </span>
+              ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
+                "Developer quota exceeded — retry requested; waiting for Spotify’s response"
+              ) : status.rate_limit_reason ? (
+                "Request rate limit — retry requested; waiting for Spotify’s response"
               ) : (
                 "Normal — no cooldown active"
               )}
@@ -1359,6 +1363,10 @@ export function SpotifySetupWizard({
                   {date(status.retry_at_ms, preferences)}
                   {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
                 </span>
+              ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
+                "Developer quota exceeded — retry requested; waiting for Spotify’s response"
+              ) : status.rate_limit_reason ? (
+                "Request rate limit — retry requested; waiting for Spotify’s response"
               ) : (
                 "Normal — no cooldown active"
               )}

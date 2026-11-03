@@ -21,13 +21,16 @@ export function SpotifyNotice({
           {isQuota
             ? "Spotify developer application quota has been exceeded."
             : "Spotify has asked this app to wait due to a request rate limit."}{" "}
-          Collection and now playing will resume automatically in about{" "}
+          Collection and now playing will try again automatically in about{" "}
           {minutes} {minutes === 1 ? "minute" : "minutes"}
-          {preferences ? ` (${date(status.retry_at_ms, preferences)})` : ""}.
+          {preferences ? ` (${date(status.retry_at_ms, preferences)})` : ""}. If
+          Spotify still reports the limit as active, the pause is renewed.
         </p>
         <p>
-          Your saved listens and images are available. You can wait for the
-          cooldown to expire or retry connection now in Connections.
+          Your saved listens and images are available.{" "}
+          {isQuota
+            ? "Waiting is the only way to restore an exhausted developer quota; retrying collection in Connections requests one immediate attempt but cannot reset the quota."
+            : "You can wait for the cooldown to expire or retry collection in Connections."}
         </p>
       </Notice>
     );

@@ -2401,7 +2401,7 @@ test("connection cards show a verified check and a readable automatic wait", asy
   }
   await expect(
     page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
-  ).toContainText("resume automatically");
+  ).toContainText("try again automatically");
   await expect(
     page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
   ).toContainText("Collection and now playing");
