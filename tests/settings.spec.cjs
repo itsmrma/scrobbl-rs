@@ -161,6 +161,29 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   );
   await require("./recovery-flow.cjs")(page);
   await require("./navigation-flow.cjs")(page);
+  // Test Refresh missing artwork is NOT in Settings
+  await page.goto("/settings/images");
+  await expect(page.getByRole("button", { name: "Refresh missing artwork" })).toHaveCount(0);
+
+  // Test Refresh missing artwork is present and working in Activities worker card
+  await page.goto("/activities");
+  const activitiesWorkerBtn = page.locator(".artwork-work").getByRole("button", { name: "Refresh missing artwork" });
+  await expect(activitiesWorkerBtn).toBeVisible();
+  await page.route("**/api/v1/artwork/backfill", (route) =>
+    route.fulfill({
+      json: { ok: true, queued: 5, queued_albums: 3, queued_artists: 2 },
+    }),
+  );
+  await activitiesWorkerBtn.click();
+  await expect(page.locator(".toast").first()).toContainText("Queued 5 items");
+
+  // Test Refresh missing artwork is present and functioning in Library tools menu
+  await page.locator("#library-tools-trigger").click();
+  const libraryToolsBtn = page.locator("#library-tools-menu").getByRole("button", { name: "Refresh missing artwork" });
+  await expect(libraryToolsBtn).toBeVisible();
+  await libraryToolsBtn.click();
+  await expect(page.locator(".toast").first()).toBeVisible();
+  await page.unroute("**/api/v1/artwork/backfill");
   expect(errors).toEqual([]);
 });
 
@@ -290,6 +313,22 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     timeout: 10000,
   });
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
+
+  // Ticket #164: operational flat card assertions
+  await expect(page.locator(".spotify-operational-card, .spotify-card")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Verify & sync now" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+  await expect(page.getByLabel("Collection interval (seconds)")).toBeVisible();
+  await expect(page.getByLabel("Now playing interval (seconds)")).toBeVisible();
+
+  // Test HTTPS guide modal
+  await page.getByRole("button", { name: "Guida configurazione HTTPS e dominio" }).click();
+  const guideModal = page.getByRole("dialog");
+  await expect(guideModal).toBeVisible();
+  await expect(guideModal.getByText("Use a free DuckDNS name", { exact: true })).toBeVisible();
+  await guideModal.getByRole("button", { name: "Close" }).click();
+  await expect(guideModal).not.toBeVisible();
+
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.clock.install();
   await page.getByLabel("Instance name").fill("Toast one");

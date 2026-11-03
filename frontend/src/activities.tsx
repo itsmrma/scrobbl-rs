@@ -344,12 +344,37 @@ export function ActivityMenu({
 export function ArtworkWork({
   work,
   compact = false,
+  onRefresh,
 }: {
   work: ArtworkActivity;
   compact?: boolean;
+  onRefresh?: () => Promise<void>;
 }) {
-  if (!work.total) return null;
-  const progress = (
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  if (compact && !work.total) return null;
+
+  const handleBackfill = async () => {
+    setBusy(true);
+    try {
+      const res = await api.backfillArtwork();
+      if (onRefresh) await onRefresh();
+      window.dispatchEvent(new Event("artwork-cache-changed"));
+      toast(
+        res.queued > 0
+          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
+          : "No missing artwork found to retrieve.",
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast(msg, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const progress = work.total > 0 ? (
     <div className="activity-progress">
       {work.pending > 0 && (
         <progress
@@ -366,7 +391,8 @@ export function ArtworkWork({
           : ""}
       </small>
     </div>
-  );
+  ) : null;
+
   return compact ? (
     <Link to="/activities" className="sidebar-job artwork-work">
       <span className="sidebar-job-heading">
@@ -401,6 +427,16 @@ export function ArtworkWork({
         </div>
         <p>Artwork is saved locally and reused across your archive.</p>
         {progress}
+        <div className="activity-actions">
+          <button
+            type="button"
+            className="secondary button"
+            disabled={busy}
+            onClick={handleBackfill}
+          >
+            {busy ? "Refreshing…" : "Refresh missing artwork"}
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -897,7 +933,7 @@ export function Activities({
               results and recovery actions.
             </p>
           </div>
-          <ArtworkWork work={artworkWork} />
+          <ArtworkWork work={artworkWork} onRefresh={refresh} />
           <div className="activities-toolbar">
             <h2>Activity history</h2>
             <div className="activities-toolbar-actions">

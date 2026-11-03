@@ -6,7 +6,7 @@ import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
 import { Activities, ActivityMenu } from "./activities";
-import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
+import { ImportPage, Now, NowPlayingProvider, NowPlayingPage, LibraryToolsMenu } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
@@ -379,6 +379,7 @@ function Shell({ logout }: { logout: () => void }) {
             </button>
             <span>Your library / {title}</span>
             <div className="topbar-actions">
+              <LibraryToolsMenu />
               <ActivityMenu
                 jobs={jobs}
                 work={artworkWork}
