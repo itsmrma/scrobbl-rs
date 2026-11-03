@@ -1,3 +1,10 @@
+.page-container {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
+  box-sizing: border-box;
+}
 .overview-heading {
   display: flex;
   align-items: end;
@@ -21,6 +28,9 @@
   width: 100%;
 }
 @media (max-width: 600px) {
+  .page-container {
+    padding-inline: 14px;
+  }
   .widget-span-button,
   .span-control {
     display: none !important;
@@ -30,6 +40,7 @@
     flex-direction: column;
     align-items: stretch;
     gap: 16px;
+    margin-bottom: 12px;
   }
   .overview-heading-actions {
     width: 100%;
@@ -83,9 +94,14 @@
   }
   .dashboard-grid {
     grid-template-columns: 1fr;
+    gap: 12px;
   }
   .dashboard-grid > .dashboard-widget {
     grid-column: 1 / -1 !important;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    margin-inline: 0;
   }
 }
 .dashboard-widget {

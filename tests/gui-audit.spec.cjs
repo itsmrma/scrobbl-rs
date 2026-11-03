@@ -2334,7 +2334,7 @@ test("ranking categories keep distinct identities during tab changes and back na
     const data = await (await response).json();
     expect(data.items[0].name).toBe(expected[kind]);
     const rows = page.locator(
-      "#main > .panel .rank-name a, #main > .rankings-panel .rank-name a",
+      "#main .panel .rank-name a, #main .rankings-panel .rank-name a",
     );
     await expect(rows.filter({ hasText: expected[kind] })).toBeVisible();
     for (const other of Object.keys(expected).filter((k) => k !== kind))
@@ -2348,7 +2348,7 @@ test("ranking categories keep distinct identities during tab changes and back na
   await page.goBack();
   await expect(
     page
-      .locator("#main > .panel .rank-name a")
+      .locator("#main .panel .rank-name a")
       .filter({ hasText: expected.artists }),
   ).toBeVisible();
 });
@@ -5461,5 +5461,139 @@ test("mobile baseline: ranking rows and recent listen entries preserve clear spa
         );
       }
     }
+  }
+});
+
+test("layout tokens: .page-container centered max-width 1200px on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  const views = [
+    { name: "Dashboard", path: "/dashboard" },
+    { name: "Consultation History", path: "/history" },
+    { name: "Consultation Rankings", path: "/rankings/artists?period=all" },
+    { name: "Settings", path: "/settings/account" },
+    { name: "Activities", path: "/activities" },
+    { name: "Library Import", path: "/import" },
+  ];
+
+  // 1. Desktop checks (1440px)
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  for (const view of views) {
+    await page.goto(view.path);
+    const container = page.locator(".page-container:visible").first();
+    await expect(container, `page-container should exist in ${view.name}`).toBeVisible();
+
+    const box = await container.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeLessThanOrEqual(1200.5);
+
+    const styles = await container.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        paddingLeft: parseFloat(cs.paddingLeft),
+        paddingRight: parseFloat(cs.paddingRight),
+      };
+    });
+    expect(styles.paddingLeft).toBeCloseTo(24, 0);
+    expect(styles.paddingRight).toBeCloseTo(24, 0);
+
+    const margins = await container.evaluate((el) => {
+      const parent = el.parentElement;
+      const pRect = parent.getBoundingClientRect();
+      const cRect = el.getBoundingClientRect();
+      return {
+        leftSpace: cRect.left - pRect.left,
+        rightSpace: pRect.right - cRect.right,
+      };
+    });
+    expect(Math.abs(margins.leftSpace - margins.rightSpace)).toBeLessThanOrEqual(2);
+  }
+
+  // 2. Mobile checks (375px and 412px)
+  for (const width of [375, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+
+    for (const view of views) {
+      await page.goto(view.path);
+      const container = page.locator(".page-container:visible").first();
+      await expect(container).toBeVisible();
+
+      const hasHorizontalOverflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 1,
+      );
+      expect(hasHorizontalOverflow, `No horizontal scroll at ${width}px in ${view.name}`).toBeFalsy();
+
+      const styles = await container.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return {
+          paddingLeft: parseFloat(cs.paddingLeft),
+          paddingRight: parseFloat(cs.paddingRight),
+        };
+      });
+      expect(styles.paddingLeft, `paddingLeft at ${width}px in ${view.name}`).toBeCloseTo(14, 0);
+      expect(styles.paddingRight, `paddingRight at ${width}px in ${view.name}`).toBeCloseTo(14, 0);
+
+      const containerBox = await container.boundingBox();
+      const contentWidth = containerBox.width - 28;
+
+      // Top-level cards and panels take full 100% available width in container
+      const cards = container.locator(
+        ".dashboard-widget, .panel, .activity-card, .worker-card"
+      );
+      const cardCount = await cards.count();
+      for (let i = 0; i < Math.min(cardCount, 3); i++) {
+        const card = cards.nth(i);
+        if (await card.isVisible()) {
+          const cardBox = await card.boundingBox();
+          if (cardBox && cardBox.width > 50) {
+            expect(
+              Math.abs(cardBox.width - contentWidth),
+              `Card ${i} width in ${view.name} at ${width}px should take full available width`,
+            ).toBeLessThanOrEqual(4);
+            // Verify right edge alignment (no asymmetrical empty margin on the right)
+            const cardRight = cardBox.x + cardBox.width;
+            const containerInnerRight = containerBox.x + containerBox.width - 14;
+            expect(
+              Math.abs(cardRight - containerInnerRight),
+              `Card ${i} in ${view.name} at ${width}px should eliminate asymmetrical dead space on the right`,
+            ).toBeLessThanOrEqual(3);
+          }
+        }
+      }
+
+      // Forms take 100% of their container's content width
+      const forms = container.locator("form:not(.search-inline)");
+      const formCount = await forms.count();
+      for (let i = 0; i < Math.min(formCount, 2); i++) {
+        const form = forms.nth(i);
+        if (await form.isVisible()) {
+          const formBox = await form.boundingBox();
+          const parentContentWidth = await form.evaluate((el) => {
+            const p = el.parentElement;
+            const cs = getComputedStyle(p);
+            return p.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+          });
+          if (formBox && parentContentWidth > 50) {
+            expect(
+              Math.abs(formBox.width - parentContentWidth),
+              `Form ${i} in ${view.name} at ${width}px should take 100% width of its container`,
+            ).toBeLessThanOrEqual(4);
+          }
+        }
+      }
+    }
+
+    await page.goto("/dashboard");
+    const grid = page.locator(".dashboard-grid");
+    await expect(grid).toBeVisible();
+    const gap = await grid.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return parseFloat(cs.rowGap || cs.gap);
+    });
+    expect(gap).toBeCloseTo(12, 0);
   }
 });
