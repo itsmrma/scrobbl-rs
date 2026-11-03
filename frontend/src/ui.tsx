@@ -438,4 +438,55 @@ export function Modal({
     </dialog>
   );
 }
+export interface SegmentedOption<T extends string = string> {
+  value: T;
+  label: ReactNode;
+  icon?: string;
+  className?: string;
+  ariaLabel?: string;
+}
+
+export interface SegmentedControlProps<T extends string = string>
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
+  value: T;
+  onChange: (value: T) => void;
+  options: SegmentedOption<T>[];
+  ariaLabel: string;
+}
+
+export function SegmentedControl<T extends string = string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  className = "",
+  ...rest
+}: SegmentedControlProps<T>) {
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className={`segmented-control ${className}`.trim()}
+      {...rest}
+    >
+      {options.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            className={`segmented-option ${option.className || ""}`.trim()}
+            aria-pressed={active}
+            aria-label={option.ariaLabel}
+            onClick={() => onChange(option.value)}
+          >
+            {option.icon && <Icon>{option.icon}</Icon>}
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export type Style = CSSProperties & Record<`--${string}`, string | number>;
