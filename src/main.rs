@@ -88,7 +88,8 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let (action_tx, action_rx) = tokio::sync::watch::channel(scrobbl_rs::account::Action::Stop);
-    let (running_tx, running_rx) = tokio::sync::oneshot::channel::<RunningState>();
+    let (boot_result_tx, mut boot_result_rx) =
+        tokio::sync::oneshot::channel::<anyhow::Result<RunningState>>();
 
     let boot_task = {
         let boot = boot.clone();
@@ -100,8 +101,9 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
             let pool = match db::open(&config.data_dir).await {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("Database opening failed: {e:#}");
                     boot.set_error(e.to_string());
+                    let _ = boot_result_tx.send(Err(e));
+                    let _ = shutdown_tx_action.send(true);
                     return;
                 }
             };
@@ -131,7 +133,7 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
                 }
             });
 
-            let _ = running_tx.send(RunningState { state, workers });
+            let _ = boot_result_tx.send(Ok(RunningState { state, workers }));
         })
     };
 
@@ -148,17 +150,19 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
         .await;
 
     boot_task.abort();
-    if let Ok(RunningState { state, workers }) = running_rx.await {
-        for worker in workers {
-            worker.abort();
-            let _ = worker.await;
+    serve_result?;
+
+    match (&mut boot_result_rx).await {
+        Ok(Ok(RunningState { state, workers })) => {
+            for worker in workers {
+                worker.abort();
+                let _ = worker.await;
+            }
+            state.storage.close().await;
+            Ok(*action_rx.borrow())
         }
-        state.storage.close().await;
-        serve_result?;
-        Ok(*action_rx.borrow())
-    } else {
-        serve_result?;
-        Ok(*action_rx.borrow())
+        Ok(Err(e)) => Err(e),
+        Err(_) => Ok(*action_rx.borrow()),
     }
 }
 
