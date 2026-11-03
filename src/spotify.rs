@@ -56,7 +56,7 @@ impl Spotify {
         }
     }
 }
-pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','now_playing_retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_sync_added','spotify_rate_limit_reason')";
+pub(crate) const RESET_STATUS_SQL: &str = "DELETE FROM settings WHERE key IN ('spotify_error','retry_at_ms','now_playing_retry_at_ms','collection_error','now_playing_error','now_playing_timing','spotify_action_required','spotify_verified_at_ms','last_attempt_ms','last_sync_ms','last_collection_finished_ms','last_sync_added','spotify_rate_limit_reason')";
 
 async fn credentials(state: &AppState) -> Result<Option<(String, String)>> {
     if let (Some(id), Some(secret)) = (&state.config.env_client_id, &state.config.env_client_secret)
@@ -487,28 +487,59 @@ async fn handle_rate_limit_response(
     response: reqwest::Response,
     is_now_playing: bool,
 ) -> Result<Value> {
+    let now = auth::now_ms();
     let wait = response
         .headers()
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| parse_retry_after(v, auth::now_ms()))
+        .and_then(|v| parse_retry_after(v, now))
         .unwrap_or(300)
         .clamp(1, 86_400);
-    let retry_at = (auth::now_ms() + wait * 1000).to_string();
+    let proposed_at = now + wait * 1000;
     let body: Option<Value> = response.json().await.ok();
-    let reason = body
+    let new_reason = body
         .as_ref()
         .and_then(extract_rate_limit_reason)
         .unwrap_or("");
-    let error_msg = if is_now_playing {
-        format!("Spotify player request limit reached. Retrying in {wait} seconds.")
-    } else {
-        format!("Spotify request limit reached. Retrying in {wait} seconds.")
+    // Collection and now playing share one cooldown. A later 429 may arrive
+    // while an earlier, longer pause is still active; it must never shorten it.
+    let active_at = [
+        db::setting(&state.db, "retry_at_ms").await?,
+        db::setting(&state.db, "now_playing_retry_at_ms").await?,
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|value| value.parse::<i64>().ok())
+    .filter(|value| *value > now)
+    .max();
+    let (retry_at, reason) = match active_at {
+        Some(active) => {
+            let existing_reason = db::setting(&state.db, "spotify_rate_limit_reason")
+                .await?
+                .unwrap_or_default();
+            let reason = if new_reason == "QUOTA_EXCEEDED" || existing_reason == "QUOTA_EXCEEDED" {
+                "QUOTA_EXCEEDED".to_string()
+            } else {
+                new_reason.to_string()
+            };
+            (active.max(proposed_at), reason)
+        }
+        None => (proposed_at, new_reason.to_string()),
     };
+    let remaining = ((retry_at - now + 999) / 1000).max(1);
+    let error_msg = if is_now_playing {
+        format!("Spotify player request limit reached. Retrying in {remaining} seconds.")
+    } else {
+        format!("Spotify request limit reached. Retrying in {remaining} seconds.")
+    };
+    let retry_at_string = retry_at.to_string();
     let mut entries = vec![
-        ("retry_at_ms", retry_at.as_str()),
-        ("now_playing_retry_at_ms", retry_at.as_str()),
-        ("spotify_rate_limit_reason", reason),
+        ("retry_at_ms", retry_at_string.as_str()),
+        ("now_playing_retry_at_ms", retry_at_string.as_str()),
+        ("spotify_rate_limit_reason", reason.as_str()),
+        // The last request did not succeed, so the badge must not claim that
+        // authorization was verified by it. A later success sets it again.
+        ("spotify_verified_at_ms", ""),
     ];
     if is_now_playing {
         entries.push(("now_playing_error", error_msg.as_str()));
@@ -730,8 +761,34 @@ pub fn parse_track(row: &Value) -> Result<Track> {
         structured: true,
     })
 }
+const SYNC_COALESCE_MS: i64 = 15_000;
+const COALESCED_SYNC_MESSAGE: &str =
+    "A collection attempt finished just now. Please wait a few seconds.";
+
+async fn recently_synchronized(state: &AppState) -> Result<bool> {
+    // Finished runs, successful or failed, share one short window so that a
+    // waiting manual click or worker wake cannot start a second collection.
+    Ok(db::setting(&state.db, "last_collection_finished_ms")
+        .await?
+        .and_then(|value| value.parse::<i64>().ok())
+        .is_some_and(|at| auth::now_ms().saturating_sub(at) < SYNC_COALESCE_MS))
+}
+
 pub async fn sync(state: &AppState) -> Result<Value> {
     let _collection = state.spotify.collection_gate.lock().await;
+    if recently_synchronized(state).await? {
+        return Ok(json!({"skipped": "recently_synchronized"}));
+    }
+    sync_guarded(state).await
+}
+
+#[cfg(test)]
+async fn sync_force(state: &AppState) -> Result<Value> {
+    let _collection = state.spotify.collection_gate.lock().await;
+    sync_guarded(state).await
+}
+
+async fn sync_guarded(state: &AppState) -> Result<Value> {
     if state.storage.directory.join("recovery.pending").exists()
         || crate::recovery::paused(&state.storage).await
     {
@@ -769,6 +826,14 @@ pub async fn sync(state: &AppState) -> Result<Value> {
         .ok_or_else(|| AppError::Conflict("Collection is waiting for its next attempt.".into()))?;
     diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
     let result = sync_locked(state, &job).await;
+    // Coalescing uses the end of the run, so a long collection still protects
+    // a waiting manual click or worker wake, even when the run failed.
+    let _ = diagnostic(
+        state,
+        "last_collection_finished_ms",
+        &auth::now_ms().to_string(),
+    )
+    .await;
     if let Err(ref error) = result {
         if state.storage.job(&job.id).await?.state == "cancelled" {
             return Err(AppError::Conflict("Collection cancelled. Saved listens and the previous cursor are kept; future scheduled collections remain enabled.".into()));
@@ -915,17 +980,15 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
 }
 pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
-    // Coalesce manual clicks; do not let them bypass the background cadence.
-    if db::setting(&state.db, "last_sync_ms")
-        .await?
-        .and_then(|v| v.parse::<i64>().ok())
-        .is_some_and(|at| auth::now_ms() - at < 15_000)
-    {
-        return Err(AppError::Conflict(
-            "The archive was just synchronized. Please wait a few seconds.".into(),
-        ));
-    }
-    let result = sync(&state).await;
+    let result = {
+        // Coalesce after acquiring the collection gate so that concurrent
+        // browser windows and the background worker cannot start two runs.
+        let _collection = state.spotify.collection_gate.lock().await;
+        if recently_synchronized(&state).await? {
+            return Err(AppError::Conflict(COALESCED_SYNC_MESSAGE.into()));
+        }
+        sync_guarded(&state).await
+    };
     if let Err(ref e) = result {
         diagnostic(&state, "spotify_error", &e.to_string()).await?;
     }
@@ -934,20 +997,28 @@ pub async fn sync_now(State(state): State<AppState>, headers: HeaderMap) -> Resu
 pub async fn retry_now(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::require_write(&state, &headers).await?;
     let mut tx = state.db.begin().await?;
-    sqlx::query(
-        "DELETE FROM settings WHERE key IN ('retry_at_ms', 'now_playing_retry_at_ms', 'spotify_rate_limit_reason', 'now_playing_error', 'collection_error', 'spotify_error', 'last_error')",
-    )
-    .execute(&mut *tx)
-    .await?;
+    // A manual retry is an explicit override of the local pause. It cannot
+    // reset Spotify's developer quota, so the last real diagnosis stays
+    // visible until a request actually succeeds.
+    sqlx::query("DELETE FROM settings WHERE key IN ('retry_at_ms', 'now_playing_retry_at_ms', 'last_collection_finished_ms')")
+        .execute(&mut *tx)
+        .await?;
     sqlx::query(
         "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
     )
     .execute(&mut *tx)
     .await?;
+    // The old messages may contain a countdown that is no longer running.
+    let waiting = "Retry requested. Waiting for Spotify to accept a request.";
+    db::set_setting(&mut tx, "collection_error", waiting).await?;
+    db::set_setting(&mut tx, "now_playing_error", waiting).await?;
     tx.commit().await?;
     *state.spotify.cache.lock().await = None;
     state.spotify.wake_collection();
-    Ok(Json(serde_json::json!({"status": "ok"})))
+    Ok(Json(serde_json::json!({
+        "status": "retry_requested",
+        "message": "Retry requested. This does not reset your Spotify quota; if Spotify is still limiting requests, the cooldown will return."
+    })))
 }
 pub async fn now_playing(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     now_playing_in_window(state, headers, None).await
@@ -1207,6 +1278,19 @@ mod tests {
         Mock,
         tokio::task::JoinHandle<()>,
     ) {
+        fixture_with_intervals(replies, expired, 120, 30).await
+    }
+    async fn fixture_with_intervals(
+        replies: Vec<Reply>,
+        expired: bool,
+        sync_seconds: u64,
+        now_playing_seconds: u64,
+    ) -> (
+        tempfile::TempDir,
+        AppState,
+        Mock,
+        tokio::task::JoinHandle<()>,
+    ) {
         let mock = Mock::default();
         *mock.replies.lock().await = replies.into();
         let app = Router::new()
@@ -1224,8 +1308,8 @@ mod tests {
             external_origin: None,
             port: 3210,
             data_dir: dir.path().to_owned(),
-            sync_seconds: 120,
-            now_playing_seconds: 30,
+            sync_seconds,
+            now_playing_seconds,
             import_limits: Default::default(),
             api_snapshot_limits: Default::default(),
             env_client_id: Some("clientid".into()),
@@ -1244,6 +1328,38 @@ mod tests {
             body,
             retry: None,
         }
+    }
+    async fn wait_for_calls(mock: &Mock, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while mock.calls.lock().await.len() < expected {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {expected} Spotify call(s)"));
+    }
+    async fn wait_for_setting(state: &AppState, key: &str) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while db::setting(&state.db, key).await.unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for setting {key}"));
+    }
+    async fn call_count(mock: &Mock, path: &str) -> usize {
+        mock.calls
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, uri)| uri.split('?').next() == Some(path))
+            .count()
+    }
+    fn replay_base_urls(from: &AppState) -> (String, String) {
+        (
+            from.spotify.api_base.clone(),
+            from.spotify.token_url.clone(),
+        )
     }
     #[test]
     fn parse_track_ignores_spotify_image_urls_and_keeps_structured_metadata() {
@@ -1387,6 +1503,20 @@ mod tests {
         })
         .await
         .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while db::setting(&state.db, "last_sync_ms")
+                .await
+                .unwrap()
+                .is_none()
+            {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        // Let the coalescing window of the just-finished collection pass; the
+        // save must still wake the worker into a real collection.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         let _ = save_intervals(State(state.clone()), headers, Json(configured))
             .await
             .unwrap();
@@ -1535,7 +1665,7 @@ mod tests {
             "/v1/me/player/recently-played",
             json!({"items":[item(at)]}),
         ));
-        assert_eq!(sync(&restarted).await.unwrap()["duplicates"], 1);
+        assert_eq!(sync_force(&restarted).await.unwrap()["duplicates"], 1);
         assert_eq!(mock.calls.lock().await.len(), 3);
         handle.abort();
     }
@@ -1564,6 +1694,8 @@ mod tests {
         )
         .await;
         assert!(sync(&state).await.unwrap_err().to_string().contains("120"));
+        // The next cadence window must hit the persisted cooldown, not coalesce.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         assert!(sync(&state).await.is_err());
         assert!(
             api_get(&state, "/me/player/currently-playing", &[])
@@ -1613,6 +1745,8 @@ mod tests {
         )
         .await;
         sync(&state).await.unwrap();
+        // The next background cadence window.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         assert!(sync(&state).await.is_err());
         assert_eq!(
             db::setting(&state.db, "recent_cursor_ms").await.unwrap(),
@@ -1625,6 +1759,9 @@ mod tests {
             .parse()
             .unwrap();
         assert!((retry - auth::now_ms() - 72_000_000).abs() < 1000);
+        // Past the coalescing window, the restarted archive must stop at the
+        // persisted pause instead of coalescing.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         let api = state.spotify.clone();
         let config = state.config.clone();
         state.storage.close().await;
@@ -1645,7 +1782,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(sync(&restarted).await.unwrap()["added"], 1);
-        assert_eq!(sync(&restarted).await.unwrap()["duplicates"], 2);
+        assert_eq!(sync_force(&restarted).await.unwrap()["duplicates"], 2);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
                 .fetch_one(&restarted.db)
@@ -1757,6 +1894,7 @@ mod tests {
         .execute(&state.db)
         .await
         .unwrap();
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         assert_eq!(sync(&state).await.unwrap()["added"], 51);
         let completed: crate::jobs::Job =
             sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
@@ -2404,7 +2542,7 @@ mod tests {
                 .unwrap();
         let image =
             crate::library::ensure_artwork_with(&state, "albums", &album, &PublicMisses).await;
-        let collection = sync(&state).await;
+        let collection = sync_force(&state).await;
         assert!(
             collection.is_ok(),
             "Artwork must not block new listens: {collection:?}; image result: {image:?}"
@@ -2432,7 +2570,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(sync(&state).await.unwrap()["duplicates"], 2);
+        assert_eq!(sync_force(&state).await.unwrap()["duplicates"], 2);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
                 .fetch_one(&state.db)
@@ -2605,14 +2743,18 @@ mod tests {
             Some("QUOTA_EXCEEDED".to_string())
         );
 
-        // Reset retry_at_ms to bypass wait for next request
+        // Reset both shared cooldown timers to bypass the wait for the next request.
         diagnostic(&state, "retry_at_ms", "0").await.unwrap();
+        diagnostic(&state, "now_playing_retry_at_ms", "0")
+            .await
+            .unwrap();
         sqlx::query(
             "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
         )
         .execute(&state.db)
         .await
         .unwrap();
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
 
         // Second 429: standard (no reason)
         assert!(sync(&state).await.is_err());
@@ -2710,7 +2852,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_spotify_retry_now_clears_cooldown_and_wakes_collection() {
+    async fn test_spotify_retry_now_overrides_local_cooldown_and_keeps_the_real_diagnosis() {
         let (_dir, state, _mock, handle) = fixture(
             vec![reply(
                 "/v1/me/player/recently-played",
@@ -2793,7 +2935,13 @@ mod tests {
         let response = retry_now(State(state.clone()), valid_headers.clone())
             .await
             .unwrap();
-        assert_eq!(response.0, json!({"status": "ok"}));
+        assert_eq!(response.0["status"], "retry_requested");
+        assert!(
+            response.0["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("does not reset")
+        );
 
         // Verify wake was triggered
         tokio::time::timeout(Duration::from_millis(500), wait_for_wake)
@@ -2801,7 +2949,8 @@ mod tests {
             .expect("wake notification should be delivered")
             .unwrap();
 
-        // Verify settings are cleared
+        // The local cooldown is cleared, but the last real diagnosis stays
+        // visible until Spotify actually answers successfully.
         assert!(
             db::setting(&state.db, "retry_at_ms")
                 .await
@@ -2814,38 +2963,43 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
+        assert_eq!(
             db::setting(&state.db, "spotify_rate_limit_reason")
                 .await
                 .unwrap()
-                .is_none()
+                .as_deref(),
+            Some("QUOTA_EXCEEDED")
         );
         assert!(
             db::setting(&state.db, "now_playing_error")
                 .await
                 .unwrap()
-                .is_none()
+                .is_some_and(|value| value.contains("Retry requested"))
         );
         assert!(
             db::setting(&state.db, "collection_error")
                 .await
                 .unwrap()
-                .is_none()
+                .is_some_and(|value| value.contains("Retry requested"))
         );
         assert!(
             db::setting(&state.db, "spotify_error")
                 .await
                 .unwrap()
-                .is_none()
+                .is_some()
         );
 
         let post_retry_status = status(State(state.clone()), valid_headers.clone())
             .await
             .unwrap()
             .0;
-        assert!(post_retry_status.last_error.is_none());
-        assert!(post_retry_status.now_playing_error.is_none());
-        assert!(post_retry_status.rate_limit_reason.is_none());
+        assert!(post_retry_status.last_error.is_some());
+        assert!(post_retry_status.now_playing_error.is_some());
+        assert_eq!(
+            post_retry_status.rate_limit_reason.as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+        assert_eq!(post_retry_status.connection, "unverified");
 
         // Verify collection job retry_at_ms is reset to 0 so it can be claimed immediately
         let waiting_retry: Option<i64> = sqlx::query_scalar(
@@ -2856,10 +3010,13 @@ mod tests {
         .unwrap();
         assert_eq!(waiting_retry, Some(0));
 
-        // Status no longer shows waiting cooldown
+        // The local cooldown is gone, but nothing claims a verified connection.
         let current_status = status(State(state.clone()), valid_headers).await.unwrap().0;
         assert!(current_status.retry_at_ms.is_none());
-        assert!(current_status.rate_limit_reason.is_none());
+        assert_eq!(
+            current_status.rate_limit_reason.as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
         assert_ne!(current_status.collection, "waiting");
 
         handle.abort();
@@ -2906,6 +3063,727 @@ mod tests {
             .unwrap();
         let res = app.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    fn quota_429(retry: &'static str) -> Reply {
+        Reply {
+            path: "/v1/me/player/recently-played",
+            status: StatusCode::TOO_MANY_REQUESTS,
+            body: json!({
+                "error": {
+                    "status": 429,
+                    "message": "API rate limit exceeded",
+                    "reason": "QUOTA_EXCEEDED"
+                }
+            }),
+            retry: Some(retry),
+        }
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_on_collection_pauses_now_playing_without_http() {
+        let (_dir, state, mock, handle) = fixture(vec![quota_429("7200")], false).await;
+        let headers = owner_headers(&state).await;
+
+        assert!(sync(&state).await.is_err());
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        let retry: i64 = db::setting(&state.db, "retry_at_ms")
+            .await
+            .unwrap()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(retry > auth::now_ms() + 7_000_000);
+
+        for offset in [0, 60_000, 3_600_000] {
+            let poll_at = auth::now_ms() + offset;
+            let sample = now_playing_in_window(state.clone(), headers.clone(), Some(poll_at))
+                .await
+                .unwrap()
+                .0;
+            assert!(sample.is_null());
+        }
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "now playing must not contact Spotify during the shared cooldown"
+        );
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn quota_exceeded_on_now_playing_pauses_collection_without_http() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/currently-playing",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({
+                    "error": {
+                        "status": 429,
+                        "message": "API rate limit exceeded",
+                        "reason": "QUOTA_EXCEEDED"
+                    }
+                }),
+                retry: Some("7200"),
+            }],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+
+        assert!(
+            now_playing(State(state.clone()), headers.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        assert!(sync(&state).await.is_err());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "collection must not contact Spotify during the shared cooldown"
+        );
+        let shown = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(shown.collection, "waiting");
+        assert_eq!(shown.rate_limit_reason.as_deref(), Some("QUOTA_EXCEEDED"));
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn rate_limit_clears_a_previous_verification_until_a_request_succeeds() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":[]})),
+                quota_429("3600"),
+            ],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+
+        sync(&state).await.unwrap();
+        let verified = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(verified.connection, "verified");
+        assert!(verified.verified_at_ms.is_some());
+
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        assert!(sync(&state).await.is_err());
+        let limited = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(limited.connection, "unverified");
+        assert!(limited.verified_at_ms.is_none());
+        assert_eq!(limited.collection, "waiting");
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_later_shorter_429_never_shortens_an_active_longer_pause() {
+        let (_dir, state, _mock, handle) = fixture(
+            vec![Reply {
+                path: "/v1/me/player/recently-played",
+                status: StatusCode::TOO_MANY_REQUESTS,
+                body: json!({
+                    "error": {"status": 429, "message": "Too Many Requests"}
+                }),
+                retry: Some("30"),
+            }],
+            false,
+        )
+        .await;
+        let now = auth::now_ms();
+        let long_pause = (now + 3_600_000).to_string();
+        diagnostics(
+            &state,
+            &[
+                ("retry_at_ms", &long_pause),
+                ("now_playing_retry_at_ms", &long_pause),
+                ("spotify_rate_limit_reason", "QUOTA_EXCEEDED"),
+            ],
+        )
+        .await
+        .unwrap();
+
+        // A request that was already authorized before the longer pause (for
+        // example a token exchange) can still return a shorter 429.
+        let response = state
+            .spotify
+            .client
+            .get(format!(
+                "{}/me/player/recently-played",
+                state.spotify.api_base
+            ))
+            .bearer_auth("test-token")
+            .send()
+            .await
+            .unwrap();
+        assert!(checked_json(&state, response).await.is_err());
+
+        let retry: i64 = db::setting(&state.db, "retry_at_ms")
+            .await
+            .unwrap()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            retry >= now + 3_500_000,
+            "a later shorter 429 shortened the active pause to {} ms from now",
+            retry - now
+        );
+        let now_playing_retry = db::setting(&state.db, "now_playing_retry_at_ms")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(now_playing_retry, retry.to_string());
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn worker_resumes_collection_after_cooldown_and_restart_without_losing_or_duplicating() {
+        let at = 1_749_000_000_000;
+        let (dir, state, mock, handle) = fixture_with_intervals(
+            vec![
+                quota_429("3600"),
+                // The controlled clock also crosses the one-hour token lifetime.
+                reply(
+                    "/api/token",
+                    json!({"access_token":"access-after-cooldown","expires_in":3600}),
+                ),
+                reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
+                reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
+            ],
+            false,
+            1,
+            30,
+        )
+        .await;
+        let config = state.config.clone();
+        let (api_base, token_url) = replay_base_urls(&state);
+
+        let collecting = tokio::spawn(worker(state.clone()));
+        wait_for_calls(&mock, 1).await;
+        wait_for_setting(&state, "retry_at_ms").await;
+        let retry: i64 = db::setting(&state.db, "retry_at_ms")
+            .await
+            .unwrap()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(retry > auth::now_ms() + 3_000_000);
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "the worker must not contact Spotify during the cooldown"
+        );
+        assert!(
+            db::setting(&state.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        collecting.abort();
+        let _ = collecting.await;
+        // Let the coalescing window expire without expiring the cooldown, so
+        // the restarted worker must stop at the persisted pause itself.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        state.storage.close().await;
+        let mut restarted = AppState::new(db::open(dir.path()).await.unwrap(), config);
+        restarted.spotify.api_base = api_base;
+        restarted.spotify.token_url = token_url;
+
+        let collecting = tokio::spawn(worker(restarted.clone()));
+        tokio::time::sleep(Duration::from_millis(1_500)).await;
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "a restart must still respect the persisted cooldown"
+        );
+        assert!(
+            db::setting(&restarted.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Only the controlled clock moves: the worker keeps its normal schedule.
+        auth::advance_clock(3_601_000);
+        wait_for_calls(&mock, 2).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
+                    .fetch_one(&restarted.db)
+                    .await
+                    .unwrap();
+                if count == 1 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            db::setting(&restarted.db, "recent_cursor_ms")
+                .await
+                .unwrap(),
+            Some(at.to_string())
+        );
+
+        collecting.abort();
+        let _ = collecting.await;
+
+        // The next cadence window sees the same history again: it must be a duplicate.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        let report = sync(&restarted).await.unwrap();
+        assert_eq!(report["added"], 0);
+        assert_eq!(report["duplicates"], 1);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
+                .fetch_one(&restarted.db)
+                .await
+                .unwrap(),
+            1
+        );
+
+        handle.abort();
+        restarted.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn now_playing_resumes_after_cooldown_and_restart_without_duplicate_requests() {
+        let (dir, state, mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/me/player/currently-playing",
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: json!({
+                        "error": {
+                            "status": 429,
+                            "message": "API rate limit exceeded",
+                            "reason": "QUOTA_EXCEEDED"
+                        }
+                    }),
+                    retry: Some("3600"),
+                },
+                // The controlled clock also crosses the one-hour token lifetime.
+                reply(
+                    "/api/token",
+                    json!({"access_token":"access-after-cooldown","expires_in":3600}),
+                ),
+                reply(
+                    "/v1/me/player/currently-playing",
+                    json!({
+                        "is_playing": true,
+                        "currently_playing_type": "track",
+                        "item": track()
+                    }),
+                ),
+            ],
+            false,
+        )
+        .await;
+        let headers = owner_headers(&state).await;
+
+        assert!(
+            now_playing(State(state.clone()), headers.clone())
+                .await
+                .is_err()
+        );
+        assert_eq!(mock.calls.lock().await.len(), 1);
+
+        let config = state.config.clone();
+        let (api_base, token_url) = replay_base_urls(&state);
+        state.storage.close().await;
+        let mut restarted = AppState::new(db::open(dir.path()).await.unwrap(), config);
+        restarted.spotify.api_base = api_base;
+        restarted.spotify.token_url = token_url;
+
+        let during = now_playing(State(restarted.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert!(during.is_null());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "now playing must not contact Spotify while the cooldown is active after restart"
+        );
+
+        auth::advance_clock(3_601_000);
+        // The controlled clock also expires the short-lived test session.
+        let headers = owner_headers(&restarted).await;
+        let resumed = now_playing(State(restarted.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(resumed["title"], "Test track");
+        assert_eq!(
+            call_count(&mock, "/v1/me/player/currently-playing").await,
+            2
+        );
+        assert_eq!(call_count(&mock, "/api/token").await, 1);
+        let shown = status(State(restarted.clone()), headers).await.unwrap().0;
+        assert!(shown.now_playing_error.is_none());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
+                .fetch_one(&restarted.db)
+                .await
+                .unwrap(),
+            0,
+            "now playing must never create listens"
+        );
+
+        handle.abort();
+        restarted.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_manual_and_background_syncs_are_coalesced_after_the_gate() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/recently-played",
+                json!({"items":[],"_test_delay_ms":250}),
+            )],
+            false,
+        )
+        .await;
+        let mut first_headers = owner_headers(&state).await;
+        first_headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+        let mut second_headers = owner_headers(&state).await;
+        second_headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+
+        let first = tokio::spawn({
+            let state = state.clone();
+            let headers = first_headers;
+            async move { sync_now(State(state), headers).await }
+        });
+        wait_for_calls(&mock, 1).await;
+
+        let second = tokio::spawn({
+            let state = state.clone();
+            let headers = second_headers;
+            async move { sync_now(State(state), headers).await }
+        });
+        let background = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state).await }
+        });
+
+        assert_eq!(first.await.unwrap().unwrap().0["added"], 0);
+        assert!(matches!(second.await.unwrap(), Err(AppError::Conflict(_))));
+        assert!(background.await.unwrap().is_ok());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "concurrent manual and background syncs must not run two collections"
+        );
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_collection_still_coalesces_the_next_waiting_sync() {
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                Reply {
+                    path: "/v1/me/player/recently-played",
+                    status: StatusCode::INTERNAL_SERVER_ERROR,
+                    body: json!({"_test_delay_ms": 250}),
+                    retry: None,
+                },
+                reply("/v1/me/player/recently-played", json!({"items":[]})),
+            ],
+            false,
+        )
+        .await;
+        let mut headers = owner_headers(&state).await;
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+
+        let first = tokio::spawn({
+            let state = state.clone();
+            async move { sync_now(State(state), headers).await }
+        });
+        wait_for_calls(&mock, 1).await;
+        let background = tokio::spawn({
+            let state = state.clone();
+            async move { sync(&state).await }
+        });
+
+        assert!(first.await.unwrap().is_err());
+        assert!(background.await.unwrap().is_ok());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            1,
+            "a failed run must still coalesce a waiting sync"
+        );
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn manual_retry_keeps_the_last_diagnosis_and_restores_cooldown_after_another_429() {
+        let (_dir, state, mock, handle) =
+            fixture(vec![quota_429("3600"), quota_429("3600")], false).await;
+        let mut headers = owner_headers(&state).await;
+        headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
+
+        assert!(sync(&state).await.is_err());
+        assert_eq!(mock.calls.lock().await.len(), 1);
+        let before = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(before.connection, "unverified");
+        assert_eq!(before.collection, "waiting");
+
+        let response = retry_now(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(response["status"], "retry_requested");
+        let message = response["message"].as_str().unwrap_or_default();
+        assert!(!message.to_ascii_lowercase().contains("verified"));
+        assert!(message.to_ascii_lowercase().contains("quota"));
+        assert!(message.to_ascii_lowercase().contains("not reset"));
+
+        assert!(
+            db::setting(&state.db, "retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db::setting(&state.db, "now_playing_retry_at_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // The last real failure stays visible until Spotify actually answers.
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+        assert!(
+            db::setting(&state.db, "collection_error")
+                .await
+                .unwrap()
+                .is_some_and(|value| value.contains("Retry requested"))
+        );
+        let after_retry = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(after_retry.connection, "unverified");
+        assert_ne!(after_retry.collection, "waiting");
+        assert!(after_retry.rate_limit_reason.is_some());
+        assert!(after_retry.last_error.is_some());
+
+        // Spotify still answers 429: one attempt, then the real cooldown returns.
+        assert!(sync(&state).await.is_err());
+        assert_eq!(mock.calls.lock().await.len(), 2);
+        let restored = status(State(state.clone()), headers.clone())
+            .await
+            .unwrap()
+            .0;
+        assert_eq!(restored.collection, "waiting");
+        assert_eq!(
+            restored.rate_limit_reason.as_deref(),
+            Some("QUOTA_EXCEEDED")
+        );
+
+        // No request loop while the cooldown is active again.
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        assert!(sync(&state).await.is_err());
+        assert_eq!(mock.calls.lock().await.len(), 2);
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn recent_history_gap_is_reported_and_points_to_extended_import() {
+        let at = 1_749_000_000_000;
+        let (_dir, state, _mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":[item(at)]})),
+                reply(
+                    "/v1/me/player/recently-played",
+                    json!({"items":[item(at + 1_000_000)]}),
+                ),
+            ],
+            false,
+        )
+        .await;
+
+        sync(&state).await.unwrap();
+        assert_eq!(
+            db::setting(&state.db, "recent_cursor_ms").await.unwrap(),
+            Some(at.to_string())
+        );
+
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        let report = sync(&state).await.unwrap();
+        assert_eq!(report["added"], 1);
+        let warning = db::setting(&state.db, "coverage_warning")
+            .await
+            .unwrap()
+            .expect("a recent-history gap must be reported");
+        assert!(warning.contains("extended-history import"), "{warning}");
+        let headers = owner_headers(&state).await;
+        let shown = status(State(state.clone()), headers).await.unwrap().0;
+        assert_eq!(shown.coverage_warning.as_deref(), Some(warning.as_str()));
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn request_consumption_is_measured_per_endpoint_and_deduplicated_across_windows() {
+        let at = 1_749_000_000_000i64;
+        let page1: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let page2: Vec<_> = (50..100).map(|i| item(at - i * 180_000)).collect();
+        let page3 = vec![item(at - 100 * 180_000)];
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                reply(
+                    "/api/token",
+                    json!({"access_token":"new-access","expires_in":3600}),
+                ),
+                reply("/v1/me/player/recently-played", json!({"items":page1})),
+                reply("/v1/me/player/recently-played", json!({"items":page2})),
+                reply("/v1/me/player/recently-played", json!({"items":page3})),
+                reply(
+                    "/v1/me/player/currently-playing",
+                    json!({
+                        "is_playing": true,
+                        "currently_playing_type": "track",
+                        "item": track()
+                    }),
+                ),
+            ],
+            true,
+        )
+        .await;
+
+        assert_eq!(sync(&state).await.unwrap()["added"], 101);
+        let headers = owner_headers(&state).await;
+        let mut windows = Vec::new();
+        for _ in 0..8 {
+            windows.push(tokio::spawn({
+                let state = state.clone();
+                let headers = headers.clone();
+                async move { now_playing(State(state), headers).await }
+            }));
+        }
+        for window in windows {
+            assert!(window.await.unwrap().is_ok());
+        }
+
+        let token = call_count(&mock, "/api/token").await;
+        let history = call_count(&mock, "/v1/me/player/recently-played").await;
+        let player = call_count(&mock, "/v1/me/player/currently-playing").await;
+        assert_eq!((token, history, player), (1, 3, 1));
+        let intervals = intervals(&state).await.unwrap();
+        println!(
+            "Spotify request consumption: token_refresh={token}, history_pages={history}, now_playing={player}; configured sync={}s (~{}/h), now_playing={}s (~{}/h)",
+            intervals.sync_seconds,
+            3600 / intervals.sync_seconds,
+            intervals.now_playing_seconds,
+            3600 / intervals.now_playing_seconds
+        );
+
+        handle.abort();
+        state.storage.close().await;
+    }
+
+    #[tokio::test]
+    async fn rate_limit_mid_pagination_keeps_cursor_and_commits_no_partial_batch() {
+        let at = 1_749_000_000_000;
+        let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
+        let (_dir, state, mock, handle) = fixture(
+            vec![
+                reply("/v1/me/player/recently-played", json!({"items":batch})),
+                Reply {
+                    path: "/v1/me/player/recently-played",
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: json!({
+                        "error": {
+                            "status": 429,
+                            "message": "API rate limit exceeded",
+                            "reason": "QUOTA_EXCEEDED"
+                        }
+                    }),
+                    retry: Some("600"),
+                },
+            ],
+            false,
+        )
+        .await;
+
+        assert!(sync(&state).await.is_err());
+        assert_eq!(mock.calls.lock().await.len(), 2);
+        assert!(
+            db::setting(&state.db, "recent_cursor_ms")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
+                .fetch_one(&state.db)
+                .await
+                .unwrap(),
+            0
+        );
+        let job: crate::jobs::Job =
+            sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(job.state, "waiting");
+        assert!(job.retry_at_ms.unwrap() > auth::now_ms());
+
+        let headers = owner_headers(&state).await;
+        let sample = now_playing(State(state.clone()), headers).await.unwrap().0;
+        assert!(sample.is_null());
+        assert_eq!(
+            mock.calls.lock().await.len(),
+            2,
+            "now playing must not contact Spotify during the cooldown"
+        );
 
         handle.abort();
         state.storage.close().await;
