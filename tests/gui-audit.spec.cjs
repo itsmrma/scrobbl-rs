@@ -4501,11 +4501,9 @@ test("connection disclosures and import layout use the available card width", as
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page, "/settings/connections");
   const card = page.locator(".spotify-card");
-  if (
-    (await card.locator("summary").count()) > 0 &&
-    !(await card.evaluate((e) => e.open))
-  )
-    await card.locator("summary").first().click();
+  const cardSummary = card.locator(":scope > summary");
+  if ((await cardSummary.count()) > 0 && !(await card.evaluate((e) => e.open)))
+    await cardSummary.first().click();
   await expect(
     card.getByText("Collection status & diagnostics", { exact: true }),
   ).toBeVisible();

@@ -209,6 +209,11 @@ test("image providers save instance order, handle conflicts and fit mobile setti
     path: "docs/screenshots/image-providers-mobile.png",
     fullPage: true,
   });
+  // The license modal blocks the provider list below: dismiss it first.
+  if (await page.locator("dialog[open]").count()) {
+    await page.keyboard.press("Escape");
+    await expect(page.locator("dialog[open]")).toHaveCount(0);
+  }
   // Restore defaults for the other browser scenarios sharing this isolated server.
   await page
     .getByRole("button", {
