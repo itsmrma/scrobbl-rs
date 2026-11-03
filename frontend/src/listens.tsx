@@ -66,7 +66,7 @@ export function ListenList({
     };
   }, [items]);
   return (
-    <div id={id} ref={list}>
+    <div id={id} ref={list} className="listens-list">
       {!items.length ? (
         <div className="empty">
           <strong>No listens in this selection</strong>
