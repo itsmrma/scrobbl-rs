@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { ArtworkRetry, downloadArtwork } from "./api";
+import { api, ArtworkRetry, downloadArtwork } from "./api";
 
 export type ArtworkActivity = {
   total: number;
@@ -96,4 +96,21 @@ export function useArtworkActivity() {
     },
     () => snapshot,
   );
+}
+
+export async function triggerArtworkBackfill(
+  toast?: (message: string, error?: boolean) => void,
+  onRefresh?: () => Promise<void> | void,
+) {
+  const res = await api.backfillArtwork();
+  if (onRefresh) await onRefresh();
+  window.dispatchEvent(new Event("artwork-cache-changed"));
+  if (toast) {
+    toast(
+      res.queued > 0
+        ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
+        : "No missing artwork found to retrieve.",
+    );
+  }
+  return res;
 }

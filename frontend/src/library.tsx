@@ -29,6 +29,7 @@ import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
 import { phaseLabel, Progress } from "./activities";
+import { triggerArtworkBackfill } from "./artwork-activity";
 import { isBool, useBrowserPreference } from "./preferences";
 import {
   MusicPageSkeleton,
@@ -812,13 +813,7 @@ export function LibraryToolsMenu() {
     close();
     setBusy(true);
     try {
-      const res = await api.backfillArtwork();
-      window.dispatchEvent(new Event("artwork-cache-changed"));
-      toast(
-        res.queued > 0
-          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
-          : "No missing artwork found to retrieve.",
-      );
+      await triggerArtworkBackfill(toast);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast(msg, true);
@@ -865,5 +860,3 @@ export function LibraryToolsMenu() {
     </div>
   );
 }
-
-export const LibraryToolbar = LibraryToolsMenu;

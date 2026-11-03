@@ -7,18 +7,41 @@ export interface LifecycleScreenProps {
   onReconnect?: () => void;
 }
 
+interface BootStatusResponse {
+  ready?: boolean;
+  stage?: string;
+  error?: string | null;
+}
+
+async function fetchBootStatus(
+  signal?: AbortSignal,
+): Promise<BootStatusResponse | null> {
+  try {
+    const response = await fetch("/api/boot-status", {
+      signal,
+      cache: "no-store",
+    });
+    if (response.ok) {
+      return (await response.json()) as BootStatusResponse;
+    }
+  } catch {
+    // Network errors expected during server restart/shutdown
+  }
+  return null;
+}
+
 export function LifecycleScreen({
   action,
   onDismiss,
   onReconnect,
 }: LifecycleScreenProps) {
-  const [phase, setPhase] = useState<
-    "starting" | "polling" | "ready" | "stopped"
-  >(action === "restart" ? "polling" : "stopped");
+  const [phase, setPhase] = useState<"polling" | "ready" | "stopped">(
+    action === "restart" ? "polling" : "stopped",
+  );
   const [statusMessage, setStatusMessage] = useState(
     action === "restart"
-      ? "Riavvio di scrobbl.rs in corso..."
-      : "Applicazione arrestata. L'archivio è stato chiuso in sicurezza. Riavvia il container da Docker quando desideri.",
+      ? "Restarting scrobbl.rs..."
+      : "Application stopped. The archive has been closed safely. Restart the container from Docker when you are ready.",
   );
   const [details, setDetails] = useState("");
   const [checking, setChecking] = useState(false);
@@ -30,35 +53,22 @@ export function LifecycleScreen({
     let timer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
-      try {
-        const response = await fetch("/api/boot-status", {
-          signal: controller.signal,
-          cache: "no-store",
-        });
-        if (response.ok) {
-          const data = (await response.json()) as {
-            ready?: boolean;
-            stage?: string;
-            error?: string | null;
-          };
-          if (data.ready) {
-            setPhase("ready");
-            setStatusMessage("Riavvio completato. scrobbl.rs has restarted.");
-            window.dispatchEvent(new Event("read-data-changed"));
-            timer = setTimeout(() => {
-              if (onReconnect) {
-                onReconnect();
-              } else {
-                window.location.reload();
-              }
-            }, 1200);
-            return;
-          } else if (data.stage) {
-            setDetails(`Stato di avvio: ${data.stage}`);
+      const data = await fetchBootStatus(controller.signal);
+      if (data?.ready) {
+        setPhase("ready");
+        setStatusMessage("Restart complete. scrobbl.rs has restarted.");
+        window.dispatchEvent(new Event("read-data-changed"));
+        timer = setTimeout(() => {
+          if (onReconnect) {
+            onReconnect();
+          } else {
+            window.location.reload();
           }
-        }
-      } catch {
-        // Expected network error while the server restarts
+        }, 1200);
+        return;
+      }
+      if (data?.stage) {
+        setDetails(`Startup status: ${data.stage}`);
       }
       if (!controller.signal.aborted) {
         timer = setTimeout(poll, 1000);
@@ -76,31 +86,22 @@ export function LifecycleScreen({
     setChecking(true);
     setCheckFeedback("");
     try {
-      const response = await fetch("/api/boot-status", { cache: "no-store" });
-      if (response.ok) {
-        const data = (await response.json()) as {
-          ready?: boolean;
-          stage?: string;
-        };
-        if (data.ready) {
-          setCheckFeedback("Server pronto! Riconnessione in corso...");
-          setTimeout(() => {
-            if (onReconnect) onReconnect();
-            else window.location.reload();
-          }, 800);
-          return;
-        } else {
-          setCheckFeedback(
-            `Server in fase di avvio (${data.stage || "inizializzazione"}). Riprova a breve.`,
-          );
-        }
+      const data = await fetchBootStatus();
+      if (data?.ready) {
+        setCheckFeedback("Server is ready! Reconnecting...");
+        setTimeout(() => {
+          if (onReconnect) onReconnect();
+          else window.location.reload();
+        }, 800);
+      } else if (data?.stage) {
+        setCheckFeedback(
+          `Server is starting (${data.stage}). Try again shortly.`,
+        );
       } else {
-        setCheckFeedback("Server non ancora raggiungibile. Riprova tra poco.");
+        setCheckFeedback(
+          "Server is not yet reachable. Start the container from Docker when you are ready.",
+        );
       }
-    } catch {
-      setCheckFeedback(
-        "Server non ancora raggiungibile. Avvia il container da Docker quando desideri.",
-      );
     } finally {
       setChecking(false);
     }
@@ -112,7 +113,7 @@ export function LifecycleScreen({
       role="dialog"
       aria-modal="true"
       aria-label={
-        action === "restart" ? "Riavvio in corso" : "Applicazione arrestata"
+        action === "restart" ? "Restart in progress" : "Application stopped"
       }
     >
       <div className="lifecycle-brand">
@@ -151,9 +152,7 @@ export function LifecycleScreen({
               onClick={() => void checkStatus()}
             >
               <Icon>refresh</Icon>
-              {checking
-                ? "Verifica in corso..."
-                : "Verifica disponibilità / Riconnetti"}
+              {checking ? "Checking..." : "Check availability / Reconnect"}
             </button>
           </div>
           {checkFeedback && (

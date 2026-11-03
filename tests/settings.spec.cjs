@@ -163,11 +163,15 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   await require("./navigation-flow.cjs")(page);
   // Test Refresh missing artwork is NOT in Settings
   await page.goto("/settings/images");
-  await expect(page.getByRole("button", { name: "Refresh missing artwork" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Refresh missing artwork" }),
+  ).toHaveCount(0);
 
   // Test Refresh missing artwork is present and working in Activities worker card
   await page.goto("/activities");
-  const activitiesWorkerBtn = page.locator(".artwork-work").getByRole("button", { name: "Refresh missing artwork" });
+  const activitiesWorkerBtn = page
+    .locator(".artwork-work")
+    .getByRole("button", { name: "Refresh missing artwork" });
   await expect(activitiesWorkerBtn).toBeVisible();
   await page.route("**/api/v1/artwork/backfill", (route) =>
     route.fulfill({
@@ -179,7 +183,9 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
 
   // Test Refresh missing artwork is present and functioning in Library tools menu
   await page.locator("#library-tools-trigger").click();
-  const libraryToolsBtn = page.locator("#library-tools-menu").getByRole("button", { name: "Refresh missing artwork" });
+  const libraryToolsBtn = page
+    .locator("#library-tools-menu")
+    .getByRole("button", { name: "Refresh missing artwork" });
   await expect(libraryToolsBtn).toBeVisible();
   await libraryToolsBtn.click();
   await expect(page.locator(".toast").first()).toBeVisible();
@@ -291,10 +297,10 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     collection: "paused",
     last_error: "Reconnect your account to resume collection.",
   };
-  await expect(page.locator(".spotify-card")).toHaveAttribute("open", "", {
+  await expect(page.locator(".spotify-card")).toBeVisible({
     timeout: 10000,
   });
-  await expect(page.locator(".spotify-card > summary")).toContainText(
+  await expect(page.locator("#connection-badge")).toContainText(
     "Action required",
   );
   await expect(
@@ -315,17 +321,23 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
 
   // Ticket #164: operational flat card assertions
-  await expect(page.locator(".spotify-operational-card, .spotify-card")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Verify & sync now" })).toBeVisible();
+  await expect(
+    page.locator(".spotify-operational-card, .spotify-card"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Verify & sync now" }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
   await expect(page.getByLabel("Collection interval (seconds)")).toBeVisible();
   await expect(page.getByLabel("Now playing interval (seconds)")).toBeVisible();
 
   // Test HTTPS guide modal
-  await page.getByRole("button", { name: "Guida configurazione HTTPS e dominio" }).click();
+  await page.getByRole("button", { name: /HTTPS/i }).click();
   const guideModal = page.getByRole("dialog");
   await expect(guideModal).toBeVisible();
-  await expect(guideModal.getByText("Use a free DuckDNS name", { exact: true })).toBeVisible();
+  await expect(
+    guideModal.getByText("Use a free DuckDNS name", { exact: true }),
+  ).toBeVisible();
   await guideModal.getByRole("button", { name: "Close" }).click();
   await expect(guideModal).not.toBeVisible();
 
@@ -423,7 +435,7 @@ test("restart application triggers full-screen transition, polls boot-status and
 
   const lifecycle = page.locator(".lifecycle-screen");
   await expect(lifecycle).toBeVisible();
-  await expect(lifecycle).toContainText("Riavvio di scrobbl.rs in corso...");
+  await expect(lifecycle).toContainText("Restarting scrobbl.rs...");
   await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
   await expect(lifecycle.locator(".lifecycle-dot")).toBeVisible();
 
@@ -473,12 +485,12 @@ test("stop application triggers full-screen transition with safe shutdown messag
   const lifecycle = page.locator(".lifecycle-screen");
   await expect(lifecycle).toBeVisible();
   await expect(lifecycle).toContainText(
-    "Applicazione arrestata. L'archivio è stato chiuso in sicurezza. Riavvia il container da Docker quando desideri.",
+    "Application stopped. The archive has been closed safely. Restart the container from Docker when you are ready.",
   );
   await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
 
   const reconnectBtn = lifecycle.getByRole("button", {
-    name: /Verifica disponibilità|Riconnetti/i,
+    name: /Check availability|Reconnect|Verifica disponibilità|Riconnetti/i,
   });
   await expect(reconnectBtn).toBeVisible();
   await reconnectBtn.click();

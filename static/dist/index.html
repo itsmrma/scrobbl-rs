@@ -19,8 +19,32 @@
         <div class="pre-splash-loader">
           <div class="pre-splash-dot"></div>
         </div>
-        <p class="pre-splash-status">Avvio di scrobbl.rs in corso...</p>
+        <p class="pre-splash-status">Starting scrobbl.rs...</p>
       </div>
     </div>
+    <script>
+      (function () {
+        var statusEl = document.querySelector(".pre-splash-status");
+        function check() {
+          fetch("/api/boot-status", { cache: "no-store" })
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (data) {
+              if (data && !data.ready) {
+                if (data.stage && statusEl) {
+                  statusEl.textContent =
+                    "Starting scrobbl.rs (" + data.stage + ")...";
+                }
+                setTimeout(check, 800);
+              }
+            })
+            .catch(function () {
+              setTimeout(check, 1000);
+            });
+        }
+        check();
+      })();
+    </script>
   </body>
 </html>

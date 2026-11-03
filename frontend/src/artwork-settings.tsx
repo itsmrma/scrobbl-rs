@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ArtworkSettings, ImageProvider } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
-import { ErrorText, Icon, useToast } from "./ui";
+import { ErrorText, Icon, Modal, useToast } from "./ui";
 import { SkeletonCardList } from "./skeleton";
 
 const providers: Record<
@@ -109,6 +109,8 @@ function ProviderForm({
   const [baseline, setBaseline] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [inspectingProvider, setInspectingProvider] =
+    useState<ImageProvider | null>(null);
   const toast = useToast();
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   function move(index: number, direction: number) {
@@ -156,7 +158,10 @@ function ProviderForm({
         {draft.providers.map((item, index) => {
           const info = providers[item.provider];
           return (
-            <li key={item.provider} className="artwork-provider compact-provider">
+            <li
+              key={item.provider}
+              className="artwork-provider compact-provider"
+            >
               <div className="artwork-provider-main">
                 <label className="checkbox-label">
                   <input
@@ -195,37 +200,49 @@ function ProviderForm({
                   >
                     <Icon>arrow_downward</Icon>
                   </button>
-                  <details className="provider-info-details">
-                    <summary className="button secondary icon-button provider-info-trigger" aria-label={`Details and license for ${info.name}`}>
-                      <Icon>info</Icon>
-                      <span>Access, limits &amp; image rights</span>
-                    </summary>
-                    <div className="provider-info-popover panel">
-                      <p className="provider-coverage">{info.coverage}</p>
-                      <dl>
-                        <dt>Access</dt>
-                        <dd>{info.access}</dd>
-                        <dt>Limits &amp; retention</dt>
-                        <dd>{info.limits}</dd>
-                        <dt>Reuse &amp; attribution</dt>
-                        <dd>{info.rights}</dd>
-                      </dl>
-                      <div className="artwork-provider-links">
-                        {info.sources.map(([title, href]) => (
-                          <a key={href} href={href} target="_blank" rel="noreferrer">
-                            {title}
-                            <Icon>open_in_new</Icon>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  </details>
+                  <button
+                    type="button"
+                    className="button secondary icon-button provider-info-trigger"
+                    aria-label={`Details and license for ${info.name}`}
+                    onClick={() => setInspectingProvider(item.provider)}
+                  >
+                    <Icon>info</Icon>
+                    <span>Access, limits &amp; image rights</span>
+                  </button>
                 </div>
               </div>
             </li>
           );
         })}
       </ol>
+      {inspectingProvider && (
+        <Modal
+          title={`Details & license: ${providers[inspectingProvider].name}`}
+          close={() => setInspectingProvider(null)}
+        >
+          <div className="provider-info-modal">
+            <p className="provider-coverage">
+              {providers[inspectingProvider].coverage}
+            </p>
+            <dl className="diagnostics">
+              <dt>Access</dt>
+              <dd>{providers[inspectingProvider].access}</dd>
+              <dt>Limits &amp; retention</dt>
+              <dd>{providers[inspectingProvider].limits}</dd>
+              <dt>Reuse &amp; attribution</dt>
+              <dd>{providers[inspectingProvider].rights}</dd>
+            </dl>
+            <div className="artwork-provider-links">
+              {providers[inspectingProvider].sources.map(([title, href]) => (
+                <a key={href} href={href} target="_blank" rel="noreferrer">
+                  {title}
+                  <Icon>open_in_new</Icon>
+                </a>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
       <p className="subtle">
         Last.fm is unavailable as an image provider: its API data licence
         excludes artwork.{" "}

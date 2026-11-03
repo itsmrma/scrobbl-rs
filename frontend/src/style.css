@@ -422,10 +422,8 @@ small,
   padding-inline: 24px;
   box-sizing: border-box;
 }
-.music-edit-page {
-  width: 100%;
-  padding-inline: 24px;
-  box-sizing: border-box;
+.page-container:has(.edit-layout) {
+  max-width: none;
 }
 main#main {
   padding-top: 36px;
@@ -1390,7 +1388,8 @@ footer {
   color: var(--muted);
   font-size: 13px;
   font-weight: 500;
-  min-height: 38px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 6px 14px;
   display: inline-flex;
   align-items: center;
@@ -1399,10 +1398,13 @@ footer {
   cursor: pointer;
   outline: none;
   box-shadow: none;
-  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
+  transition:
+    background-color var(--motion-fast, 150ms ease),
+    color var(--motion-fast, 150ms ease);
 }
 .segmented-control button:hover:not([aria-pressed="true"]):not(:disabled),
-.segmented-control .segmented-option:hover:not([aria-pressed="true"]):not(:disabled) {
+.segmented-control
+  .segmented-option:hover:not([aria-pressed="true"]):not(:disabled) {
   background: color-mix(in srgb, var(--surface) 60%, transparent);
   color: var(--text);
 }
@@ -3439,7 +3441,9 @@ dialog,
   cursor: pointer;
   outline: none;
   box-shadow: none;
-  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
+  transition:
+    background-color var(--motion-fast, 150ms ease),
+    color var(--motion-fast, 150ms ease);
 }
 .import-methods button:hover:not([aria-pressed="true"]):not(:disabled) {
   background: color-mix(in srgb, var(--surface) 60%, transparent);
@@ -5914,8 +5918,9 @@ dialog,
 }
 .review-views button,
 .review-views .segmented-option {
-  height: 36px;
-  min-height: 36px;
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 6px 10px;
   border: 0;
   border-radius: 5px;
@@ -5962,6 +5967,12 @@ dialog,
   justify-content: flex-start;
   gap: 10px;
   margin-bottom: 16px;
+}
+.review-controls > a.button {
+  min-height: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
 }
 .review-count {
   margin-left: auto;
@@ -7761,7 +7772,9 @@ dialog.artwork-lightbox::backdrop {
   cursor: pointer;
   outline: none;
   box-shadow: none;
-  transition: background-color var(--motion-fast, 150ms ease), color var(--motion-fast, 150ms ease);
+  transition:
+    background-color var(--motion-fast, 150ms ease),
+    color var(--motion-fast, 150ms ease);
 }
 .search-type-filters button:hover:not([aria-pressed="true"]):not(:disabled) {
   background: color-mix(in srgb, var(--surface) 60%, transparent);
@@ -8227,7 +8240,7 @@ dialog.artwork-lightbox::backdrop {
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   padding: 8px 12px;
   border: 0;
   border-radius: 6px;
@@ -8242,6 +8255,15 @@ dialog.artwork-lightbox::backdrop {
 }
 
 /* Flattened Spotify Card and operational tools */
+.connection-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
 .spotify-operational-card,
 .spotify-setup-card {
   display: grid;
@@ -8256,6 +8278,12 @@ dialog.artwork-lightbox::backdrop {
   margin-top: 12px;
 }
 .spotify-intervals-surface {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.connection-diagnostics {
+  display: grid;
+  gap: 12px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
 }

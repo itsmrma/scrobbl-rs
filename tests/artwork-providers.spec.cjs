@@ -177,10 +177,15 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await expect(
     page.getByRole("checkbox", { name: "Spotify", exact: true }),
   ).toHaveCount(0);
-  await page.locator(".artwork-provider").first().locator("summary").click();
-  await settleDisclosure(
-    page.locator(".artwork-provider").first().locator("details"),
+  const infoTrigger = page
+    .locator(".artwork-provider")
+    .first()
+    .locator("summary, button.provider-info-trigger");
+  await infoTrigger.click();
+  const infoDisclosure = page.locator(
+    "dialog[open], .artwork-provider details",
   );
+  await settleDisclosure(infoDisclosure);
   await expect(
     page.getByRole("link", { name: "Cover Art Archive API", exact: true }),
   ).toBeVisible();

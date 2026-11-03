@@ -1,5 +1,6 @@
 import { Select } from "./select";
 import type { ArtworkActivity } from "./artwork-activity";
+import { triggerArtworkBackfill } from "./artwork-activity";
 import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
@@ -358,14 +359,7 @@ export function ArtworkWork({
   const handleBackfill = async () => {
     setBusy(true);
     try {
-      const res = await api.backfillArtwork();
-      if (onRefresh) await onRefresh();
-      window.dispatchEvent(new Event("artwork-cache-changed"));
-      toast(
-        res.queued > 0
-          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
-          : "No missing artwork found to retrieve.",
-      );
+      await triggerArtworkBackfill(toast, onRefresh);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       toast(msg, true);
@@ -374,24 +368,25 @@ export function ArtworkWork({
     }
   };
 
-  const progress = work.total > 0 ? (
-    <div className="activity-progress">
-      {work.pending > 0 && (
-        <progress
-          aria-label="Artwork download progress"
-          value={work.loaded + work.failed}
-          max={work.total}
-        />
-      )}
-      <small>
-        {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
-        remaining
-        {work.failed > 0
-          ? " · " + number.format(work.failed) + " could not load"
-          : ""}
-      </small>
-    </div>
-  ) : null;
+  const progress =
+    work.total > 0 ? (
+      <div className="activity-progress">
+        {work.pending > 0 && (
+          <progress
+            aria-label="Artwork download progress"
+            value={work.loaded + work.failed}
+            max={work.total}
+          />
+        )}
+        <small>
+          {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
+          remaining
+          {work.failed > 0
+            ? " · " + number.format(work.failed) + " could not load"
+            : ""}
+        </small>
+      </div>
+    ) : null;
 
   return compact ? (
     <Link to="/activities" className="sidebar-job artwork-work">
@@ -508,14 +503,7 @@ export function Activities({
     setBusy(true);
     setActionError("");
     try {
-      const res = await api.backfillArtwork();
-      await refresh();
-      window.dispatchEvent(new Event("artwork-cache-changed"));
-      toast(
-        res.queued > 0
-          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
-          : "No missing artwork found to retrieve.",
-      );
+      await triggerArtworkBackfill(toast, refresh);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setActionError(msg);
