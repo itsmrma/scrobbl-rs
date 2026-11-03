@@ -72,47 +72,98 @@ async fn start() -> anyhow::Result<scrobbl_rs::account::Action> {
     run(config).await
 }
 
+struct RunningState {
+    state: AppState,
+    workers: Vec<tokio::task::JoinHandle<()>>,
+}
+
 async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
     scrobbl_rs::listenbrainz::Limits::from_env()?;
-    let pool = db::open(&config.data_dir).await?;
-    let state = AppState::new(pool, config.clone());
     let listener = tokio::net::TcpListener::bind(config.address()).await?;
-    let worker = tokio::spawn(spotify::worker(state.clone()));
-    let calendar_worker = tokio::spawn(scrobbl_rs::calendar::worker(state.storage.clone()));
-    let import_worker = tokio::spawn(scrobbl_rs::import_worker::worker(state.storage.clone()));
-    let listenbrainz_worker = tokio::spawn(scrobbl_rs::listenbrainz::worker(state.storage.clone()));
-    let recovery_worker = tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone()));
-    let retention_worker = tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone()));
-    let artwork_worker = tokio::spawn(scrobbl_rs::artwork::worker(state.clone()));
     println!("scrobbl.rs is running at {}", config.origin());
-    println!("Data: {}", config.data_dir.canonicalize()?.display());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
-    let mut control = state.application.action.subscribe();
-    let result = axum::serve(listener, web::router(state.clone()))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown() => {},
-                _ = control.changed() => {},
+
+    let boot = scrobbl_rs::boot::BootManager::new();
+    let app = scrobbl_rs::boot::router(boot.clone());
+
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+    let (action_tx, action_rx) = tokio::sync::watch::channel(scrobbl_rs::account::Action::Stop);
+    let (boot_result_tx, mut boot_result_rx) =
+        tokio::sync::oneshot::channel::<anyhow::Result<RunningState>>();
+
+    let boot_task = {
+        let boot = boot.clone();
+        let config = config.clone();
+        let shutdown_tx_action = shutdown_tx.clone();
+        let action_tx_clone = action_tx.clone();
+        tokio::spawn(async move {
+            boot.set_stage("opening_database");
+            let pool = match db::open(&config.data_dir).await {
+                Ok(p) => p,
+                Err(e) => {
+                    boot.set_error(e.to_string());
+                    let _ = boot_result_tx.send(Err(e));
+                    let _ = shutdown_tx_action.send(true);
+                    return;
+                }
+            };
+            let state = AppState::new(pool, config.clone());
+            boot.set_stage("starting_workers");
+            let workers = vec![
+                tokio::spawn(spotify::worker(state.clone())),
+                tokio::spawn(scrobbl_rs::calendar::worker(state.storage.clone())),
+                tokio::spawn(scrobbl_rs::import_worker::worker(state.storage.clone())),
+                tokio::spawn(scrobbl_rs::listenbrainz::worker(state.storage.clone())),
+                tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone())),
+                tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone())),
+                tokio::spawn(scrobbl_rs::artwork::worker(state.clone())),
+            ];
+            if let Ok(canon) = config.data_dir.canonicalize() {
+                println!("Data: {}", canon.display());
             }
+            let ready_router = web::router(state.clone());
+            boot.set_ready(ready_router);
+
+            let mut control = state.application.action.subscribe();
+            tokio::spawn(async move {
+                if control.changed().await.is_ok() {
+                    let action = *control.borrow();
+                    let _ = action_tx_clone.send(action);
+                    let _ = shutdown_tx_action.send(true);
+                }
+            });
+
+            let _ = boot_result_tx.send(Ok(RunningState { state, workers }));
+        })
+    };
+
+    let signal_tx = shutdown_tx.clone();
+    tokio::spawn(async move {
+        shutdown().await;
+        let _ = signal_tx.send(true);
+    });
+
+    let serve_result = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.changed().await;
         })
         .await;
-    worker.abort();
-    let _ = worker.await;
-    calendar_worker.abort();
-    let _ = calendar_worker.await;
-    import_worker.abort();
-    let _ = import_worker.await;
-    recovery_worker.abort();
-    let _ = recovery_worker.await;
-    retention_worker.abort();
-    let _ = retention_worker.await;
-    listenbrainz_worker.abort();
-    let _ = listenbrainz_worker.await;
-    artwork_worker.abort();
-    let _ = artwork_worker.await;
-    state.storage.close().await;
-    result?;
-    Ok(*state.application.action.borrow())
+
+    boot_task.abort();
+    serve_result?;
+
+    match (&mut boot_result_rx).await {
+        Ok(Ok(RunningState { state, workers })) => {
+            for worker in workers {
+                worker.abort();
+                let _ = worker.await;
+            }
+            state.storage.close().await;
+            Ok(*action_rx.borrow())
+        }
+        Ok(Err(e)) => Err(e),
+        Err(_) => Ok(*action_rx.borrow()),
+    }
 }
 
 async fn shutdown() {

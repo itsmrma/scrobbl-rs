@@ -29,6 +29,7 @@ import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
 import { phaseLabel, Progress } from "./activities";
+import { triggerArtworkBackfill } from "./artwork-activity";
 import { isBool, useBrowserPreference } from "./preferences";
 import {
   MusicPageSkeleton,
@@ -798,5 +799,64 @@ export function ImportPage({
         preferences={preferences}
       />
     </>
+  );
+}
+
+export function LibraryToolsMenu() {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
+  const toast = useToast();
+  const close = () => menu.current?.hidePopover();
+
+  const handleRefreshArtwork = async () => {
+    close();
+    setBusy(true);
+    try {
+      await triggerArtworkBackfill(toast);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast(msg, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="library-tools-wrapper">
+      <button
+        id="library-tools-trigger"
+        className="icon-button library-tools-trigger"
+        aria-label="Library tools"
+        title="Library tools"
+        popoverTarget="library-tools-menu"
+        aria-expanded={open}
+        onClick={(event) => event.currentTarget.focus()}
+      >
+        <Icon>more_vert</Icon>
+      </button>
+      <div
+        popover="auto"
+        id="library-tools-menu"
+        className="library-tools-menu panel"
+        ref={menu}
+        onToggle={(e) => setOpen(e.newState === "open")}
+      >
+        <div className="menu-heading">
+          <strong>Library tools</strong>
+        </div>
+        <nav aria-label="Library tools">
+          <button
+            type="button"
+            className="menu-item button-flat"
+            disabled={busy}
+            onClick={handleRefreshArtwork}
+          >
+            <Icon>photo_library</Icon>
+            <span>Refresh missing artwork</span>
+          </button>
+        </nav>
+      </div>
+    </div>
   );
 }

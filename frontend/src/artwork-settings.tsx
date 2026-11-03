@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ArtworkSettings, ImageProvider } from "./generated";
 import { api } from "./api";
 import { useLoad } from "./load";
-import { ErrorText, Icon, useToast } from "./ui";
+import { ErrorText, Icon, Modal, useToast } from "./ui";
 import { SkeletonCardList } from "./skeleton";
 
 const providers: Record<
@@ -109,6 +109,8 @@ function ProviderForm({
   const [baseline, setBaseline] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [inspectingProvider, setInspectingProvider] =
+    useState<ImageProvider | null>(null);
   const toast = useToast();
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
   function move(index: number, direction: number) {
@@ -156,8 +158,11 @@ function ProviderForm({
         {draft.providers.map((item, index) => {
           const info = providers[item.provider];
           return (
-            <li key={item.provider} className="artwork-provider">
-              <div className="artwork-provider-header">
+            <li
+              key={item.provider}
+              className="artwork-provider compact-provider"
+            >
+              <div className="artwork-provider-main">
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
@@ -174,12 +179,12 @@ function ProviderForm({
                       }))
                     }
                   />
-                  {info.name}
+                  <span className="artwork-provider-name">{info.name}</span>
                 </label>
-                <div className="artwork-provider-order">
+                <div className="artwork-provider-actions">
                   <button
                     type="button"
-                    className="button secondary"
+                    className="button secondary icon-button"
                     aria-label={`Move ${info.name} up`}
                     disabled={busy || index === 0}
                     onClick={() => move(index, -1)}
@@ -188,39 +193,56 @@ function ProviderForm({
                   </button>
                   <button
                     type="button"
-                    className="button secondary"
+                    className="button secondary icon-button"
                     aria-label={`Move ${info.name} down`}
                     disabled={busy || index >= draft.providers.length - 1}
                     onClick={() => move(index, 1)}
                   >
                     <Icon>arrow_downward</Icon>
                   </button>
+                  <button
+                    type="button"
+                    className="button secondary icon-button provider-info-trigger"
+                    aria-label={`Details and license for ${info.name}`}
+                    onClick={() => setInspectingProvider(item.provider)}
+                  >
+                    <Icon>info</Icon>
+                    <span>Access, limits &amp; image rights</span>
+                  </button>
                 </div>
               </div>
-              <p>{info.coverage}</p>
-              <details>
-                <summary>Access, limits &amp; image rights</summary>
-                <dl>
-                  <dt>Access</dt>
-                  <dd>{info.access}</dd>
-                  <dt>Limits &amp; retention</dt>
-                  <dd>{info.limits}</dd>
-                  <dt>Reuse &amp; attribution</dt>
-                  <dd>{info.rights}</dd>
-                </dl>
-                <div className="artwork-provider-links">
-                  {info.sources.map(([title, href]) => (
-                    <a key={href} href={href} target="_blank" rel="noreferrer">
-                      {title}
-                      <Icon>open_in_new</Icon>
-                    </a>
-                  ))}
-                </div>
-              </details>
             </li>
           );
         })}
       </ol>
+      {inspectingProvider && (
+        <Modal
+          title={`Details & license: ${providers[inspectingProvider].name}`}
+          close={() => setInspectingProvider(null)}
+        >
+          <div className="provider-info-modal">
+            <p className="provider-coverage">
+              {providers[inspectingProvider].coverage}
+            </p>
+            <dl className="diagnostics">
+              <dt>Access</dt>
+              <dd>{providers[inspectingProvider].access}</dd>
+              <dt>Limits &amp; retention</dt>
+              <dd>{providers[inspectingProvider].limits}</dd>
+              <dt>Reuse &amp; attribution</dt>
+              <dd>{providers[inspectingProvider].rights}</dd>
+            </dl>
+            <div className="artwork-provider-links">
+              {providers[inspectingProvider].sources.map(([title, href]) => (
+                <a key={href} href={href} target="_blank" rel="noreferrer">
+                  {title}
+                  <Icon>open_in_new</Icon>
+                </a>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
       <p className="subtle">
         Last.fm is unavailable as an image provider: its API data licence
         excludes artwork.{" "}
@@ -246,53 +268,6 @@ function ProviderForm({
   );
 }
 
-function ArtworkBackfillSection() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const toast = useToast();
-
-  return (
-    <section className="panel padded artwork-backfill-panel">
-      <h2>Refresh missing artwork</h2>
-      <p>
-        Re-evaluate all library artists and albums that are currently missing
-        covers or artist portraits. This clears temporary lookup misses and
-        enqueues background downloads using your enabled providers without
-        blocking navigation.
-      </p>
-      <ErrorText>{error}</ErrorText>
-      <div className="form-actions">
-        <button
-          type="button"
-          className="button secondary"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError("");
-            try {
-              const res = await api.backfillArtwork();
-              window.dispatchEvent(new Event("artwork-cache-changed"));
-              toast(
-                res.queued > 0
-                  ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
-                  : "No missing artwork found to retrieve.",
-              );
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              setError(msg);
-              toast(msg, true);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {busy ? "Refreshing…" : "Refresh missing artwork"}
-        </button>
-      </div>
-    </section>
-  );
-}
-
 export function ArtworkProviderSettings() {
   const [revision, setRevision] = useState(0);
   const settings = useLoad(
@@ -303,14 +278,11 @@ export function ArtworkProviderSettings() {
     <>
       <ErrorText>{settings.error}</ErrorText>
       {settings.data ? (
-        <>
-          <ProviderForm
-            key={`${settings.data.version}:${revision}`}
-            initial={settings.data}
-            reload={() => setRevision((v) => v + 1)}
-          />
-          <ArtworkBackfillSection />
-        </>
+        <ProviderForm
+          key={`${settings.data.version}:${revision}`}
+          initial={settings.data}
+          reload={() => setRevision((v) => v + 1)}
+        />
       ) : (
         !settings.error && (
           <SkeletonCardList count={3} label="Loading image providers…" />

@@ -161,6 +161,35 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   );
   await require("./recovery-flow.cjs")(page);
   await require("./navigation-flow.cjs")(page);
+  // Test Refresh missing artwork is NOT in Settings
+  await page.goto("/settings/images");
+  await expect(
+    page.getByRole("button", { name: "Refresh missing artwork" }),
+  ).toHaveCount(0);
+
+  // Test Refresh missing artwork is present and working in Activities worker card
+  await page.goto("/activities");
+  const activitiesWorkerBtn = page
+    .locator(".artwork-work")
+    .getByRole("button", { name: "Refresh missing artwork" });
+  await expect(activitiesWorkerBtn).toBeVisible();
+  await page.route("**/api/v1/artwork/backfill", (route) =>
+    route.fulfill({
+      json: { ok: true, queued: 5, queued_albums: 3, queued_artists: 2 },
+    }),
+  );
+  await activitiesWorkerBtn.click();
+  await expect(page.locator(".toast").first()).toContainText("Queued 5 items");
+
+  // Test Refresh missing artwork is present and functioning in Library tools menu
+  await page.locator("#library-tools-trigger").click();
+  const libraryToolsBtn = page
+    .locator("#library-tools-menu")
+    .getByRole("button", { name: "Refresh missing artwork" });
+  await expect(libraryToolsBtn).toBeVisible();
+  await libraryToolsBtn.click();
+  await expect(page.locator(".toast").first()).toBeVisible();
+  await page.unroute("**/api/v1/artwork/backfill");
   expect(errors).toEqual([]);
 });
 
@@ -268,10 +297,10 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     collection: "paused",
     last_error: "Reconnect your account to resume collection.",
   };
-  await expect(page.locator(".spotify-card")).toHaveAttribute("open", "", {
+  await expect(page.locator(".spotify-card")).toBeVisible({
     timeout: 10000,
   });
-  await expect(page.locator(".spotify-card > summary")).toContainText(
+  await expect(page.locator("#connection-badge")).toContainText(
     "Action required",
   );
   await expect(
@@ -290,6 +319,28 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     timeout: 10000,
   });
   await expect(page.getByText("0 — successful, no new listens")).toBeVisible();
+
+  // Ticket #164: operational flat card assertions
+  await expect(
+    page.locator(".spotify-operational-card, .spotify-card"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Verify & sync now" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
+  await expect(page.getByLabel("Collection interval (seconds)")).toBeVisible();
+  await expect(page.getByLabel("Now playing interval (seconds)")).toBeVisible();
+
+  // Test HTTPS guide modal
+  await page.getByRole("button", { name: /HTTPS/i }).click();
+  const guideModal = page.getByRole("dialog");
+  await expect(guideModal).toBeVisible();
+  await expect(
+    guideModal.getByText("Use a free DuckDNS name", { exact: true }),
+  ).toBeVisible();
+  await guideModal.getByRole("button", { name: "Close" }).click();
+  await expect(guideModal).not.toBeVisible();
+
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.clock.install();
   await page.getByLabel("Instance name").fill("Toast one");
@@ -345,4 +396,103 @@ test("global activities, connection states, timed toasts, sidebar and direct rou
     path: "test-results/settings-desktop.png",
     fullPage: true,
   });
+});
+
+test("restart application triggers full-screen transition, polls boot-status and reconnects", async ({
+  page,
+}) => {
+  await login(page, "/settings/application");
+  let bootStatusCalls = 0;
+  let isReady = false;
+
+  await page.route("**/api/v1/application", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 202,
+        json: { accepted: true },
+      });
+    }
+    return route.continue();
+  });
+
+  await page.route("**/api/boot-status", (route) => {
+    bootStatusCalls++;
+    return route.fulfill({
+      status: 200,
+      json: {
+        ready: isReady,
+        stage: isReady ? "ready" : "initializing",
+        error: null,
+      },
+    });
+  });
+
+  await page
+    .getByRole("button", { name: "Restart application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Restart now", exact: true }).click();
+
+  const lifecycle = page.locator(".lifecycle-screen");
+  await expect(lifecycle).toBeVisible();
+  await expect(lifecycle).toContainText("Restarting scrobbl.rs...");
+  await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
+  await expect(lifecycle.locator(".lifecycle-dot")).toBeVisible();
+
+  await expect.poll(() => bootStatusCalls).toBeGreaterThan(0);
+
+  isReady = true;
+  await expect(lifecycle).toContainText(
+    /restarted|pronto|Riavvio completato/i,
+    { timeout: 10000 },
+  );
+});
+
+test("stop application triggers full-screen transition with safe shutdown message and reconnect button", async ({
+  page,
+}) => {
+  await login(page, "/settings/application");
+  let bootStatusChecked = false;
+
+  await page.route("**/api/v1/application", (route) => {
+    if (route.request().method() === "POST") {
+      return route.fulfill({
+        status: 202,
+        json: { accepted: true },
+      });
+    }
+    return route.continue();
+  });
+
+  await page.route("**/api/boot-status", (route) => {
+    bootStatusChecked = true;
+    return route.fulfill({
+      status: 200,
+      json: {
+        ready: false,
+        stage: "stopped",
+        error: null,
+      },
+    });
+  });
+
+  await page
+    .getByRole("button", { name: "Stop application", exact: true })
+    .first()
+    .click();
+  await page.getByRole("button", { name: "Stop now", exact: true }).click();
+
+  const lifecycle = page.locator(".lifecycle-screen");
+  await expect(lifecycle).toBeVisible();
+  await expect(lifecycle).toContainText(
+    "Application stopped. The archive has been closed safely. Restart the container from Docker when you are ready.",
+  );
+  await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
+
+  const reconnectBtn = lifecycle.getByRole("button", {
+    name: /Check availability|Reconnect|Verifica disponibilità|Riconnetti/i,
+  });
+  await expect(reconnectBtn).toBeVisible();
+  await reconnectBtn.click();
+  expect(bootStatusChecked).toBe(true);
 });

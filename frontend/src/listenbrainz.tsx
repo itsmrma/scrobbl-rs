@@ -3,7 +3,7 @@ import { api } from "./api";
 import type { ListenBrainzOriginalsPage } from "./api";
 import type { Preferences } from "./generated";
 import { useLoad } from "./load";
-import { ErrorText, Icon, useToast } from "./ui";
+import { ErrorText, Icon, SegmentedControl, useToast } from "./ui";
 import { Link } from "./navigation";
 import { SkeletonList } from "./skeleton";
 
@@ -69,28 +69,24 @@ export function ListenBrainzImport({
         Bring your listening history into your archive. Use an export for your
         full history, or fetch a short public interval.
       </p>
-      <div
+      <SegmentedControl
         className="import-methods"
-        role="group"
-        aria-label="ListenBrainz import method"
-      >
-        <button
-          type="button"
-          className="secondary"
-          aria-pressed={method === "upload"}
-          onClick={() => setMethod("upload")}
-        >
-          <Icon>upload_file</Icon>Import files
-        </button>
-        <button
-          type="button"
-          className="secondary"
-          aria-pressed={method === "fetch"}
-          onClick={() => setMethod("fetch")}
-        >
-          <Icon>cloud_download</Icon>Fetch public listens
-        </button>
-      </div>
+        ariaLabel="ListenBrainz import method"
+        value={method}
+        onChange={(val) => setMethod(val as "upload" | "fetch")}
+        options={[
+          {
+            value: "upload",
+            label: "Import files",
+            icon: "upload_file",
+          },
+          {
+            value: "fetch",
+            label: "Fetch public listens",
+            icon: "cloud_download",
+          },
+        ]}
+      />
       <div className="listenbrainz-method">
         <form
           hidden={method !== "upload"}

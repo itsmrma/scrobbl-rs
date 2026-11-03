@@ -93,3 +93,17 @@ Il livello minimo garantito di fruibilità dell'interfaccia su schermi stretti (
 
 **Isolamento a container del widget**:
 L'adattamento responsive autonomo del widget alla larghezza assegnata dal layout tramite container queries (`@container`), disaccoppiato dalle media queries globali della finestra.
+
+
+**Schermata di caricamento di avvio**:
+La presentazione visiva immediata all'avvio del container o al primo caricamento del client, che mostra l'avanzamento dell'inizializzazione dell'archivio (migrazioni database e verifiche di integrità) prima della disponibilità completa della consultazione.
+
+**Controllo a segmenti**:
+Un gruppo compatto di opzioni mutuamente esclusive contenuto in una singola barra visiva a contrasto neutro, privo di bordi fluorescenti, usato per commutare viste o modalità senza ricaricare la pagina.
+
+**Scheda di stato del collegamento**:
+La rappresentazione appiattita e priva di sezioni annidate dello stato operativo di una fonte (come Spotify), che separa le azioni frequenti (pausa, sincronizzazione, stato verificato) dalle guide tecniche e dal primo setup dell'applicazione.
+
+
+**Schermata di transizione dell'applicazione**:
+La presentazione visiva a schermo intero durante il riavvio o lo spegnimento controllato di scrobbl.rs, che conferma la chiusura in sicurezza dell'archivio, effettua il polling di riconnessione in caso di riavvio o fornisce indicazioni chiare sulla ripresa manuale del container in caso di arresto.

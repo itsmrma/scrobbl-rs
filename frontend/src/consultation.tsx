@@ -32,7 +32,7 @@ import {
 } from "./listening-patterns";
 import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
-import { Cover, date, duration, ErrorText, Heading, Icon, number } from "./ui";
+import { Cover, date, duration, ErrorText, Heading, Icon, number, SegmentedControl } from "./ui";
 import type { Style } from "./ui";
 import {
   ChartSkeleton,
@@ -633,37 +633,33 @@ function RankingsPanel({
               <Icon>search</Icon>
             </button>
           </form>
-          <div className="view-toggle" role="group" aria-label="Ranking view">
-            <button
-              className="secondary"
-              aria-pressed={!collage && list.view === "list"}
-              onClick={() => {
-                list.setView("list");
+          <SegmentedControl
+            className="view-toggle"
+            ariaLabel="Ranking view"
+            value={collage ? "collage" : list.view}
+            onChange={(val) => {
+              if (val === "collage") {
+                setCollage(true);
+              } else {
                 setCollage(false);
-              }}
-            >
-              <Icon>view_list</Icon>List
-            </button>
-            <button
-              className="secondary"
-              aria-pressed={!collage && list.view === "grid"}
-              onClick={() => {
-                list.setView("grid");
-                setCollage(false);
-              }}
-            >
-              <Icon>grid_view</Icon>Grid
-            </button>
-            {kind !== "tracks" && (
-              <button
-                className="secondary collage-toggle"
-                aria-pressed={collage}
-                onClick={() => setCollage(!collage)}
-              >
-                <Icon>dashboard</Icon>Collage
-              </button>
-            )}
-          </div>
+                list.setView(val as "list" | "grid");
+              }
+            }}
+            options={[
+              { value: "list", label: "List", icon: "view_list" },
+              { value: "grid", label: "Grid", icon: "grid_view" },
+              ...(kind !== "tracks"
+                ? [
+                    {
+                      value: "collage",
+                      label: "Collage",
+                      icon: "dashboard",
+                      className: "collage-toggle",
+                    },
+                  ]
+                : []),
+            ]}
+          />
           <div
             className={`card-size-control ${collage || list.view !== "grid" ? "inactive" : ""}`}
             aria-hidden={collage || list.view !== "grid"}

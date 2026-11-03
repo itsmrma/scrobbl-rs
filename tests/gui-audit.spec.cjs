@@ -45,6 +45,11 @@ const test = base.extend({
           .poll(async () => {
             if (child.exitCode !== null) throw new Error(logs);
             try {
+              const bootRes = await request.get("/api/boot-status");
+              if (bootRes.status() === 200) {
+                const b = await bootRes.json();
+                return b.ready ? 200 : 0;
+              }
               return (await request.get("/healthz")).status();
             } catch {
               return 0;
@@ -1190,13 +1195,21 @@ test("report and duplicate review links use the shared action button style", asy
     }),
   );
   await page.goto("/settings/connections");
-  await page.locator(".spotify-card > summary").click();
+  if ((await page.locator(".spotify-card > summary").count()) > 0) {
+    await page.locator(".spotify-card > summary").click();
+  }
   const reports = page.getByRole("link", {
     name: "Collection and import reports",
     exact: true,
   });
-  const monitor = page.locator(".connection-monitor").filter({ has: reports });
-  if ((await monitor.getAttribute("open")) === null)
+  const monitor = page
+    .locator(".connection-monitor, .connection-diagnostics")
+    .filter({ has: reports });
+  if (
+    (await monitor.count()) > 0 &&
+    (await monitor.locator(":scope > summary").count()) > 0 &&
+    (await monitor.getAttribute("open")) === null
+  )
     await monitor.locator(":scope > summary").click();
   for (const link of [reports, review]) {
     await expect(link).toBeVisible();
@@ -1715,7 +1728,7 @@ test("completed Spotify collection runs collapse into dated reports that fill th
     "40 completed runs",
   );
   await expect(page.locator(".collection-run").first()).toBeHidden();
-  await expect(page.locator(".activity-row")).toHaveCount(0);
+  await expect(page.locator(".activity-list .activity-row")).toHaveCount(0);
   const collection = page.locator(".collection-runs");
   const summary = collection.locator(":scope > summary");
   const animateToggle = () =>
@@ -1754,7 +1767,7 @@ test("completed Spotify collection runs collapse into dated reports that fill th
     .locator(".activity-detail")
     .evaluate((el) => [
       el.getBoundingClientRect().width,
-      el.closest("main").clientWidth,
+      (el.closest(".page-container") || el.closest("main")).clientWidth - 48,
     ]);
   expect(widths[1] - widths[0]).toBeLessThan(4);
   await page.screenshot({
@@ -2334,7 +2347,7 @@ test("ranking categories keep distinct identities during tab changes and back na
     const data = await (await response).json();
     expect(data.items[0].name).toBe(expected[kind]);
     const rows = page.locator(
-      "#main > .panel .rank-name a, #main > .rankings-panel .rank-name a",
+      "#main .panel .rank-name a, #main .rankings-panel .rank-name a",
     );
     await expect(rows.filter({ hasText: expected[kind] })).toBeVisible();
     for (const other of Object.keys(expected).filter((k) => k !== kind))
@@ -2348,7 +2361,7 @@ test("ranking categories keep distinct identities during tab changes and back na
   await page.goBack();
   await expect(
     page
-      .locator("#main > .panel .rank-name a")
+      .locator("#main .panel .rank-name a")
       .filter({ hasText: expected.artists }),
   ).toBeVisible();
 });
@@ -2383,8 +2396,9 @@ test("connection cards show a verified check and a readable automatic wait", asy
   expect(
     Math.abs(identity.y + identity.height / 2 - badge.y - badge.height / 2),
   ).toBeLessThanOrEqual(1);
-  const summary = page.locator(".spotify-card > summary");
-  await summary.click();
+  if ((await page.locator(".spotify-card > summary").count()) > 0) {
+    await page.locator(".spotify-card > summary").click();
+  }
   await expect(
     page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
   ).toContainText("resume automatically");
@@ -2394,10 +2408,12 @@ test("connection cards show a verified check and a readable automatic wait", asy
   await expect(
     page.getByRole("status").filter({ hasText: "Spotify requests are paused" }),
   ).not.toContainText("new artwork");
-  await expect(page.locator(".spotify-card > summary")).not.toContainText(
-    "2100 seconds",
-  );
-  await page.locator(".guide > summary").first().click();
+  await expect(
+    page.locator(".connection-card-header, .spotify-card > summary"),
+  ).not.toContainText("2100 seconds");
+  if ((await page.locator(".guide > summary").count()) > 0) {
+    await page.locator(".guide > summary").first().click();
+  }
   await page.screenshot({
     path: `test-results/gui-feedback-connections-${browserName}.png`,
     fullPage: true,
@@ -2992,10 +3008,12 @@ test("copy actions show a nearby check without success toasts and report failure
     animations: "disabled",
   });
   await page.goto("/settings/connections");
-  await page.locator(".spotify-card").evaluate((e) => (e.open = true));
+  await page.locator(".spotify-card").evaluate((e) => {
+    if ("open" in e) e.open = true;
+  });
   await page
     .locator(".guide")
-    .nth(1)
+    .first()
     .evaluate((e) => (e.open = true));
   const redirect = page.getByRole("button", {
     name: "Copy redirect URI",
@@ -3396,9 +3414,12 @@ test("compact music toolbar, adjustable grids, aligned collections and collage P
   await expect(
     collage.getByRole("list", { name: "Collage listening shares" }),
   ).toBeVisible();
-  await expect(
-    albums.getByRole("button", { name: "Collage", exact: true }),
-  ).toHaveCSS("outline-style", "solid");
+  const collageBtn = albums.getByRole("button", {
+    name: "Collage",
+    exact: true,
+  });
+  await expect(collageBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(collageBtn).toHaveCSS("outline-style", "none");
 
   for (let i = 0; i < cells.length; i++)
     for (let j = i + 1; j < cells.length; j++) {
@@ -3689,9 +3710,9 @@ test("overview charts and activity reports have compact responsive layouts", asy
   await page.keyboard.press("Escape");
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    await expect(page.locator(".activity-row").first()).toContainText(
-      "Streaming history",
-    );
+    await expect(
+      page.locator(".activity-row:not(.artwork-work)").first(),
+    ).toContainText("Streaming history");
     await page.screenshot({
       path:
         "test-results/gui-sixth-activities-" +
@@ -4480,27 +4501,21 @@ test("connection disclosures and import layout use the available card width", as
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page, "/settings/connections");
   const card = page.locator(".spotify-card");
-  if (!(await card.evaluate((e) => e.open)))
-    await card.locator("summary").first().click();
-  for (const label of [
-    "Collection status & diagnostics",
-    "Refresh intervals",
-  ]) {
-    const summary = card.getByText(label, { exact: true }).locator("..");
-    await expect(summary.locator(".material-icons-outlined")).toHaveText(
-      "expand_more",
-    );
-  }
-  await card
-    .getByText("Connect on a private server with HTTPS", { exact: true })
-    .click();
-  const guide = card
-    .locator(".guide")
-    .filter({ hasText: "Connect on a private server with HTTPS" });
-  await expect(guide).not.toContainText("AdGuard");
+  const cardSummary = card.locator(":scope > summary");
+  if ((await cardSummary.count()) > 0 && !(await card.evaluate((e) => e.open)))
+    await cardSummary.first().click();
   await expect(
-    guide.getByText("Use a free DuckDNS name", { exact: true }),
+    card.getByText("Collection status & diagnostics", { exact: true }),
   ).toBeVisible();
+  await expect(card.getByLabel("Collection interval (seconds)")).toBeVisible();
+  const guideBtn = card.getByRole("button", { name: /HTTPS/i });
+  await guideBtn.click();
+  const guideDialog = page.getByRole("dialog");
+  await expect(guideDialog).not.toContainText("AdGuard");
+  await expect(
+    guideDialog.getByText("Use a free DuckDNS name", { exact: true }),
+  ).toBeVisible();
+  await guideDialog.getByRole("button", { name: "Close" }).click();
   await page.goto("/import");
   const panel = page.locator(".listenbrainz-import");
   const drop = panel.locator(".upload-dropzone");
@@ -4547,7 +4562,7 @@ test("duplicate review controls share a height with flagged history first", asyn
   await expect(group).toHaveCSS("border-top-width", "1px");
   await expect(comparisons).toHaveCSS("border-top-width", "0px");
   await trash.hover();
-  await expect(trash).not.toHaveCSS("box-shadow", "none");
+  await expect(trash).toHaveCSS("outline-style", "none");
   await trash.click();
   await expect(trash).toHaveAttribute("aria-pressed", "true");
   await expect(group).toHaveAttribute("data-view", "trash");
@@ -4720,9 +4735,9 @@ test("every active activity offers cancellation in the list and report", async (
         name: /^Cancel (Test activity|Recalculate assigned calendar)$/,
       })
       .click();
-    await expect(page.locator(".activity-row .state-badge")).toContainText(
-      "Cancelled",
-    );
+    await expect(
+      page.locator(".activity-row:not(.artwork-work) .state-badge"),
+    ).toContainText("Cancelled");
     job = { ...job, state: "running" };
     await page.goto("/activities/" + job.id);
     await page
@@ -4772,7 +4787,7 @@ test("expanded connection steps and API help keep text and buttons within their 
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/settings/connections");
     const spotify = page.locator(".spotify-card");
-    await expect(spotify).toHaveAttribute("open", "");
+    await expect(spotify).toBeVisible();
     await expect(page.locator(".connection-step").first()).toBeVisible();
     for (const disclosure of await spotify.locator("details").all()) {
       if (!(await disclosure.evaluate((node) => node.open)))
@@ -5462,4 +5477,581 @@ test("mobile baseline: ranking rows and recent listen entries preserve clear spa
       }
     }
   }
+});
+
+test("segmented controls use recessed container, solid active surface, touch targets >= 44px and no fluorescent outline", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, "/rankings/artists?period=all");
+
+  // 1. Ranking view segmented control
+  const rankingToggle = page.getByRole("group", {
+    name: "Ranking view",
+    exact: true,
+  });
+  await expect(rankingToggle).toBeVisible();
+  await expect(rankingToggle).toHaveClass(/segmented-control/);
+
+  const rankingButtons = rankingToggle.getByRole("button");
+  const rankingBtnCount = await rankingButtons.count();
+  expect(rankingBtnCount).toBeGreaterThanOrEqual(2);
+
+  for (let i = 0; i < rankingBtnCount; i++) {
+    const btn = rankingButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  // Active option (List) has solid surface, crisp text, and no fluorescent outline
+  const listBtn = rankingToggle.getByRole("button", {
+    name: "List",
+    exact: true,
+  });
+  await expect(listBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(listBtn).toHaveCSS("outline-style", "none");
+
+  // Switch to Grid
+  const gridBtn = rankingToggle.getByRole("button", {
+    name: "Grid",
+    exact: true,
+  });
+  await gridBtn.click();
+  await expect(gridBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(listBtn).toHaveAttribute("aria-pressed", "false");
+  await expect(gridBtn).toHaveCSS("outline-style", "none");
+
+  // Switch to Collage (if present)
+  const collageOption = rankingToggle.getByRole("button", {
+    name: "Collage",
+    exact: true,
+  });
+  if ((await collageOption.count()) > 0) {
+    await collageOption.click();
+    await expect(collageOption).toHaveAttribute("aria-pressed", "true");
+    await expect(collageOption).toHaveCSS("outline-style", "none");
+  }
+
+  // 2. Search category filters segmented control
+  await page.goto("/search?q=Seed");
+  const searchFilters = page.getByRole("group", {
+    name: "Search categories",
+    exact: true,
+  });
+  await expect(searchFilters).toBeVisible();
+  await expect(searchFilters).toHaveClass(/segmented-control/);
+
+  const searchButtons = searchFilters.getByRole("button");
+  const searchBtnCount = await searchButtons.count();
+  expect(searchBtnCount).toBeGreaterThanOrEqual(3);
+
+  for (let i = 0; i < searchBtnCount; i++) {
+    const btn = searchButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const allFilter = searchFilters.getByRole("button", {
+    name: "All",
+    exact: true,
+  });
+  await expect(allFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(allFilter).toHaveCSS("outline-style", "none");
+
+  const tracksFilter = searchFilters.getByRole("button", {
+    name: "Tracks",
+    exact: true,
+  });
+  await tracksFilter.click();
+  await expect(tracksFilter).toHaveAttribute("aria-pressed", "true");
+  await expect(allFilter).toHaveAttribute("aria-pressed", "false");
+  await expect(tracksFilter).toHaveCSS("outline-style", "none");
+
+  // 3. Review views segmented control
+  await page.goto("/review");
+  const reviewViews = page.getByRole("group", {
+    name: "Review views",
+    exact: true,
+  });
+  await expect(reviewViews).toBeVisible();
+  await expect(reviewViews).toHaveClass(/segmented-control/);
+
+  const reviewButtons = reviewViews.getByRole("button");
+  const reviewBtnCount = await reviewButtons.count();
+  expect(reviewBtnCount).toBe(2);
+
+  for (let i = 0; i < reviewBtnCount; i++) {
+    const btn = reviewButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const comparisonsBtn = reviewViews.getByRole("button", {
+    name: "Comparisons",
+    exact: true,
+  });
+  await expect(comparisonsBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(comparisonsBtn).toHaveCSS("outline-style", "none");
+
+  const trashBtn = reviewViews.getByRole("button", {
+    name: "Trash",
+    exact: true,
+  });
+  await trashBtn.hover();
+  await expect(trashBtn).toHaveCSS("outline-style", "none");
+  await trashBtn.click();
+  await expect(trashBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(trashBtn).toHaveCSS("outline-style", "none");
+
+  // 4. Import methods segmented control
+  await page.goto("/import");
+  const importMethods = page.getByRole("group", {
+    name: "ListenBrainz import method",
+    exact: true,
+  });
+  await expect(importMethods).toBeVisible();
+  await expect(importMethods).toHaveClass(/segmented-control/);
+
+  const importButtons = importMethods.getByRole("button");
+  const importBtnCount = await importButtons.count();
+  expect(importBtnCount).toBe(2);
+
+  for (let i = 0; i < importBtnCount; i++) {
+    const btn = importButtons.nth(i);
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeGreaterThanOrEqual(44);
+    expect(box.height).toBeGreaterThanOrEqual(44);
+  }
+
+  const uploadBtn = importMethods.getByRole("button", {
+    name: "Import files",
+    exact: true,
+  });
+  await expect(uploadBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(uploadBtn).toHaveCSS("outline-style", "none");
+
+  const fetchBtn = importMethods.getByRole("button", {
+    name: "Fetch public listens",
+    exact: true,
+  });
+  await fetchBtn.click();
+  await expect(fetchBtn).toHaveAttribute("aria-pressed", "true");
+  await expect(fetchBtn).toHaveCSS("outline-style", "none");
+});
+
+test("layout tokens: .page-container centered max-width 1200px on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await login(page);
+
+  const views = [
+    { name: "Dashboard", path: "/dashboard" },
+    { name: "Consultation History", path: "/history" },
+    { name: "Consultation Rankings", path: "/rankings/artists?period=all" },
+    { name: "Settings", path: "/settings/account" },
+    { name: "Activities", path: "/activities" },
+    { name: "Library Import", path: "/import" },
+  ];
+
+  // 1. Desktop checks (1440px)
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  for (const view of views) {
+    await page.goto(view.path);
+    const container = page.locator(".page-container:visible").first();
+    await expect(
+      container,
+      `page-container should exist in ${view.name}`,
+    ).toBeVisible();
+
+    const box = await container.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box.width).toBeLessThanOrEqual(1200.5);
+
+    const styles = await container.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        paddingLeft: parseFloat(cs.paddingLeft),
+        paddingRight: parseFloat(cs.paddingRight),
+      };
+    });
+    expect(styles.paddingLeft).toBeCloseTo(24, 0);
+    expect(styles.paddingRight).toBeCloseTo(24, 0);
+
+    const margins = await container.evaluate((el) => {
+      const parent = el.parentElement;
+      const pRect = parent.getBoundingClientRect();
+      const cRect = el.getBoundingClientRect();
+      return {
+        leftSpace: cRect.left - pRect.left,
+        rightSpace: pRect.right - cRect.right,
+      };
+    });
+    expect(
+      Math.abs(margins.leftSpace - margins.rightSpace),
+    ).toBeLessThanOrEqual(2);
+  }
+
+  // 2. Mobile checks (375px and 412px)
+  for (const width of [375, 412]) {
+    await page.setViewportSize({ width, height: 800 });
+
+    for (const view of views) {
+      await page.goto(view.path);
+      const container = page.locator(".page-container:visible").first();
+      await expect(container).toBeVisible();
+
+      const hasHorizontalOverflow = await page.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 1,
+      );
+      expect(
+        hasHorizontalOverflow,
+        `No horizontal scroll at ${width}px in ${view.name}`,
+      ).toBeFalsy();
+
+      const styles = await container.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return {
+          paddingLeft: parseFloat(cs.paddingLeft),
+          paddingRight: parseFloat(cs.paddingRight),
+        };
+      });
+      expect(
+        styles.paddingLeft,
+        `paddingLeft at ${width}px in ${view.name}`,
+      ).toBeCloseTo(14, 0);
+      expect(
+        styles.paddingRight,
+        `paddingRight at ${width}px in ${view.name}`,
+      ).toBeCloseTo(14, 0);
+
+      const containerBox = await container.boundingBox();
+      const contentWidth = containerBox.width - 28;
+
+      // Top-level cards and panels take full 100% available width in container
+      const cards = container.locator(
+        ".dashboard-widget, .panel, .activity-card, .worker-card",
+      );
+      const cardCount = await cards.count();
+      for (let i = 0; i < Math.min(cardCount, 3); i++) {
+        const card = cards.nth(i);
+        if (await card.isVisible()) {
+          const cardBox = await card.boundingBox();
+          if (cardBox && cardBox.width > 50) {
+            expect(
+              Math.abs(cardBox.width - contentWidth),
+              `Card ${i} width in ${view.name} at ${width}px should take full available width`,
+            ).toBeLessThanOrEqual(4);
+            // Verify right edge alignment (no asymmetrical empty margin on the right)
+            const cardRight = cardBox.x + cardBox.width;
+            const containerInnerRight =
+              containerBox.x + containerBox.width - 14;
+            expect(
+              Math.abs(cardRight - containerInnerRight),
+              `Card ${i} in ${view.name} at ${width}px should eliminate asymmetrical dead space on the right`,
+            ).toBeLessThanOrEqual(3);
+          }
+        }
+      }
+
+      // Forms take 100% of their container's content width
+      const forms = container.locator("form:not(.search-inline)");
+      const formCount = await forms.count();
+      for (let i = 0; i < Math.min(formCount, 2); i++) {
+        const form = forms.nth(i);
+        if (await form.isVisible()) {
+          const formBox = await form.boundingBox();
+          const parentContentWidth = await form.evaluate((el) => {
+            const p = el.parentElement;
+            const cs = getComputedStyle(p);
+            return (
+              p.clientWidth -
+              parseFloat(cs.paddingLeft) -
+              parseFloat(cs.paddingRight)
+            );
+          });
+          if (formBox && parentContentWidth > 50) {
+            expect(
+              Math.abs(formBox.width - parentContentWidth),
+              `Form ${i} in ${view.name} at ${width}px should take 100% width of its container`,
+            ).toBeLessThanOrEqual(4);
+          }
+        }
+      }
+    }
+
+    await page.goto("/dashboard");
+    const grid = page.locator(".dashboard-grid");
+    await expect(grid).toBeVisible();
+    const gap = await grid.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return parseFloat(cs.rowGap || cs.gap);
+    });
+    expect(gap).toBeCloseTo(12, 0);
+  }
+});
+
+test("list rows and micro-transitions: vertical separation, dedicated surface, desktop hover, and fast animations (#163)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page);
+
+  // 1. Seed second item to have multiple rows in lists
+  const session = await (await page.request.get("/api/session")).json();
+  const importResp = await (
+    await page.request.post("/api/import/spotify", {
+      headers: {
+        Origin: new URL(page.url()).origin,
+        "X-CSRF-Token": session.csrf,
+      },
+      multipart: {
+        files: {
+          name: "seed2.json",
+          mimeType: "application/json",
+          buffer: Buffer.from(
+            JSON.stringify([
+              {
+                ts: "2025-05-01T12:10:00Z",
+                ms_played: 210000,
+                master_metadata_track_name: "Second track",
+                master_metadata_album_artist_name: "Another artist",
+                master_metadata_album_album_name: "Another album",
+                spotify_track_uri: "spotify:track:0000000000000000000089",
+                platform: "Android app",
+                conn_country: "IT",
+                shuffle: false,
+                offline: false,
+                skipped: false,
+                reason_end: "trackdone",
+              },
+            ]),
+          ),
+        },
+      },
+    })
+  ).json();
+  await expect
+    .poll(
+      async () =>
+        (
+          await (
+            await page.request.get(`/api/v1/activities/${importResp.job_id}`)
+          ).json()
+        ).activity.state,
+    )
+    .toBe("completed");
+
+  // 2. Check History list rows (.listen-row)
+  await page.goto("/history");
+  const listenRows = page.locator("#history-list .listen-row");
+  await expect(listenRows).toHaveCount(2);
+
+  const listenBox0 = await listenRows.nth(0).boundingBox();
+  const listenBox1 = await listenRows.nth(1).boundingBox();
+  expect(listenBox0).not.toBeNull();
+  expect(listenBox1).not.toBeNull();
+
+  // 4px vertical separation between consecutive rows (no overlap)
+  const listenSeparation = listenBox1.y - (listenBox0.y + listenBox0.height);
+  expect(Math.abs(listenSeparation - 4)).toBeLessThanOrEqual(1.5);
+  expect(listenBox1.y).toBeGreaterThanOrEqual(listenBox0.y + listenBox0.height);
+
+  // Border-radius 4px or 6px, and dedicated surface background
+  const listenStyle = await listenRows.nth(0).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      borderRadius: parseFloat(cs.borderRadius),
+      bg: cs.backgroundColor,
+      hasTabularNums: cs.fontVariantNumeric.includes("tabular-nums"),
+    };
+  });
+  expect(listenStyle.borderRadius).toBeGreaterThanOrEqual(4);
+  expect(listenStyle.borderRadius).toBeLessThanOrEqual(6.5);
+  expect(listenStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(listenStyle.hasTabularNums).toBeTruthy();
+
+  // Column alignment: secondary column .listen-duration has tabular nums and crisp right alignment
+  const durationAlign = await listenRows
+    .nth(0)
+    .locator(".listen-duration")
+    .evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        textAlign: cs.textAlign,
+        tabular: cs.fontVariantNumeric.includes("tabular-nums"),
+      };
+    });
+  expect(durationAlign.tabular).toBeTruthy();
+
+  // Desktop hover effect on .listen-row
+  await listenRows.nth(0).hover();
+  const listenHoverBg = await listenRows
+    .nth(0)
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(listenHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // 3. Check Rankings rows (.ranking-row)
+  await page.goto("/rankings/artists?period=all");
+  const rankingRows = page.locator(".rankings-panel .ranking-row");
+  await expect(rankingRows).toHaveCount(2);
+
+  const rankBox0 = await rankingRows.nth(0).boundingBox();
+  const rankBox1 = await rankingRows.nth(1).boundingBox();
+  expect(rankBox0).not.toBeNull();
+  expect(rankBox1).not.toBeNull();
+
+  // 4px vertical separation
+  const rankSeparation = rankBox1.y - (rankBox0.y + rankBox0.height);
+  expect(Math.abs(rankSeparation - 4)).toBeLessThanOrEqual(1.5);
+  expect(rankBox1.y).toBeGreaterThanOrEqual(rankBox0.y + rankBox0.height);
+
+  const rankStyle = await rankingRows.nth(0).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    return {
+      borderRadius: parseFloat(cs.borderRadius),
+      bg: cs.backgroundColor,
+    };
+  });
+  expect(rankStyle.borderRadius).toBeGreaterThanOrEqual(4);
+  expect(rankStyle.borderRadius).toBeLessThanOrEqual(6.5);
+  expect(rankStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // Secondary elements tabular alignment (.rank-number, .rank-plays, .rank-time)
+  const rankNumTabular = await rankingRows
+    .nth(0)
+    .locator(".rank-number")
+    .evaluate((el) => {
+      return getComputedStyle(el).fontVariantNumeric.includes("tabular-nums");
+    });
+  expect(rankNumTabular).toBeTruthy();
+
+  // Desktop hover effect on .ranking-row
+  await rankingRows.nth(0).hover();
+  const rankHoverBg = await rankingRows
+    .nth(0)
+    .evaluate((el) => getComputedStyle(el).backgroundColor);
+  expect(rankHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+
+  // 4. Check Activities rows (.activity-row)
+  await page.goto("/activities");
+  const activityRows = page.locator(".activity-row:not(.artwork-work)");
+  await expect(activityRows.first()).toBeVisible();
+  const actCount = await activityRows.count();
+  if (actCount >= 2) {
+    const actBox0 = await activityRows.nth(0).boundingBox();
+    const actBox1 = await activityRows.nth(1).boundingBox();
+    expect(actBox0).not.toBeNull();
+    expect(actBox1).not.toBeNull();
+
+    const actSeparation = actBox1.y - (actBox0.y + actBox0.height);
+    expect(Math.abs(actSeparation - 4)).toBeLessThanOrEqual(1.5);
+    expect(actBox1.y).toBeGreaterThanOrEqual(actBox0.y + actBox0.height);
+
+    const actStyle = await activityRows.nth(0).evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return {
+        borderRadius: parseFloat(cs.borderRadius),
+        bg: cs.backgroundColor,
+      };
+    });
+    expect(actStyle.borderRadius).toBeGreaterThanOrEqual(4);
+    expect(actStyle.borderRadius).toBeLessThanOrEqual(6.5);
+    expect(actStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+
+    await activityRows.nth(0).hover();
+    const actHoverBg = await activityRows
+      .nth(0)
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(actHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+  }
+
+  // 5. Check micro-animations & transitions (150-180ms)
+  const motionValues = await page.evaluate(() => {
+    const rootStyle = getComputedStyle(document.documentElement);
+    const mainSection =
+      document.querySelector("#main > section:not([hidden])") ||
+      document.querySelector(".page-container");
+    const sectionAnim = mainSection
+      ? getComputedStyle(mainSection).animationDuration
+      : "";
+    const dialogEl = document.createElement("dialog");
+    document.body.appendChild(dialogEl);
+    const dialogAnim = getComputedStyle(dialogEl).animationDuration;
+    dialogEl.remove();
+
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarTransition = sidebar
+      ? getComputedStyle(sidebar).transitionDuration
+      : "";
+
+    return {
+      motionView: rootStyle.getPropertyValue("--motion-view").trim(),
+      sectionAnim,
+      dialogAnim,
+      sidebarTransition,
+    };
+  });
+
+  const parseMs = (val) => {
+    if (!val) return 0;
+    if (val.endsWith("ms")) return parseFloat(val);
+    if (val.endsWith("s")) return parseFloat(val) * 1000;
+    return parseFloat(val);
+  };
+
+  const sectionMs = parseMs(motionValues.sectionAnim);
+  expect(sectionMs).toBeGreaterThanOrEqual(150);
+  expect(sectionMs).toBeLessThanOrEqual(180);
+
+  const dialogMs = parseMs(motionValues.dialogAnim);
+  expect(dialogMs).toBeGreaterThanOrEqual(150);
+  expect(dialogMs).toBeLessThanOrEqual(180);
+
+  // 6. Check prefers-reduced-motion: reduce sets instantaneous transitions (0s)
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/dashboard");
+
+  const reducedMotionValues = await page.evaluate(() => {
+    const mainSection =
+      document.querySelector("#main > section:not([hidden])") ||
+      document.querySelector(".page-container");
+    const sectionAnimDuration = mainSection
+      ? getComputedStyle(mainSection).animationDuration
+      : "0s";
+
+    const dialogEl = document.createElement("dialog");
+    document.body.appendChild(dialogEl);
+    const dialogAnimDuration = getComputedStyle(dialogEl).animationDuration;
+    dialogEl.remove();
+
+    const sidebar = document.querySelector(".sidebar");
+    const sidebarTransitionDuration = sidebar
+      ? getComputedStyle(sidebar).transitionDuration
+      : "0s";
+
+    return {
+      sectionAnimDuration,
+      dialogAnimDuration,
+      sidebarTransitionDuration,
+    };
+  });
+
+  expect(parseMs(reducedMotionValues.sectionAnimDuration)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(parseMs(reducedMotionValues.dialogAnimDuration)).toBeLessThanOrEqual(
+    1,
+  );
+  expect(
+    parseMs(reducedMotionValues.sidebarTransitionDuration),
+  ).toBeLessThanOrEqual(1);
 });

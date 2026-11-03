@@ -5,14 +5,15 @@ const { mkdirSync } = require("node:fs");
 async function openSpotify(page) {
   const card = page.locator(".spotify-card");
   await expect(card).toBeVisible();
-  if (!(await card.evaluate((element) => element.open)))
-    await card.locator("summary").first().click();
+  const summary = card.locator("summary").first();
+  if ((await summary.count()) > 0 && !(await card.evaluate((element) => element.open)))
+    await summary.click();
   const intervals = card.locator(".connection-monitor").filter({
     has: page
       .locator("summary > span")
       .filter({ hasText: /^Refresh intervals$/ }),
   });
-  if (!(await intervals.evaluate((element) => element.open)))
+  if ((await intervals.count()) > 0 && !(await intervals.evaluate((element) => element.open)))
     await intervals.locator("summary").click();
   await settleDisclosure(card);
 }
@@ -60,6 +61,8 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   await openSpotify(page);
   const collection = page.getByLabel("Collection interval (seconds)");
   const now = page.getByLabel("Now playing interval (seconds)");
+  await expect(collection).toBeVisible();
+  await expect(now).toBeVisible();
   const baseline = await (await page.request.get("/api/spotify/status")).json();
   await expect(collection).toHaveValue(String(baseline.sync_seconds));
   await collection.fill("90");

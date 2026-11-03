@@ -1,5 +1,6 @@
 import { Select } from "./select";
 import type { ArtworkActivity } from "./artwork-activity";
+import { triggerArtworkBackfill } from "./artwork-activity";
 import { api } from "./api";
 import type { Activity, ActivityDetail, Preferences } from "./generated";
 import { date, ErrorText, Heading, Icon, number, useToast } from "./ui";
@@ -344,29 +345,49 @@ export function ActivityMenu({
 export function ArtworkWork({
   work,
   compact = false,
+  onRefresh,
 }: {
   work: ArtworkActivity;
   compact?: boolean;
+  onRefresh?: () => Promise<void>;
 }) {
-  if (!work.total) return null;
-  const progress = (
-    <div className="activity-progress">
-      {work.pending > 0 && (
-        <progress
-          aria-label="Artwork download progress"
-          value={work.loaded + work.failed}
-          max={work.total}
-        />
-      )}
-      <small>
-        {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
-        remaining
-        {work.failed > 0
-          ? " · " + number.format(work.failed) + " could not load"
-          : ""}
-      </small>
-    </div>
-  );
+  const [busy, setBusy] = useState(false);
+  const toast = useToast();
+
+  if (compact && !work.total) return null;
+
+  const handleBackfill = async () => {
+    setBusy(true);
+    try {
+      await triggerArtworkBackfill(toast, onRefresh);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast(msg, true);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const progress =
+    work.total > 0 ? (
+      <div className="activity-progress">
+        {work.pending > 0 && (
+          <progress
+            aria-label="Artwork download progress"
+            value={work.loaded + work.failed}
+            max={work.total}
+          />
+        )}
+        <small>
+          {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
+          remaining
+          {work.failed > 0
+            ? " · " + number.format(work.failed) + " could not load"
+            : ""}
+        </small>
+      </div>
+    ) : null;
+
   return compact ? (
     <Link to="/activities" className="sidebar-job artwork-work">
       <span className="sidebar-job-heading">
@@ -401,6 +422,16 @@ export function ArtworkWork({
         </div>
         <p>Artwork is saved locally and reused across your archive.</p>
         {progress}
+        <div className="activity-actions">
+          <button
+            type="button"
+            className="secondary button"
+            disabled={busy}
+            onClick={handleBackfill}
+          >
+            {busy ? "Refreshing…" : "Refresh missing artwork"}
+          </button>
+        </div>
       </div>
     </article>
   );
@@ -472,14 +503,7 @@ export function Activities({
     setBusy(true);
     setActionError("");
     try {
-      const res = await api.backfillArtwork();
-      await refresh();
-      window.dispatchEvent(new Event("artwork-cache-changed"));
-      toast(
-        res.queued > 0
-          ? `Queued ${res.queued} items (${res.queued_albums} album covers, ${res.queued_artists} artist portraits) for artwork retrieval.`
-          : "No missing artwork found to retrieve.",
-      );
+      await triggerArtworkBackfill(toast, refresh);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setActionError(msg);
@@ -897,18 +921,10 @@ export function Activities({
               results and recovery actions.
             </p>
           </div>
-          <ArtworkWork work={artworkWork} />
+          <ArtworkWork work={artworkWork} onRefresh={refresh} />
           <div className="activities-toolbar">
             <h2>Activity history</h2>
             <div className="activities-toolbar-actions">
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy}
-                onClick={handleBackfill}
-              >
-                Refresh missing artwork
-              </button>
               <label>
                 Activity type
                 <Select

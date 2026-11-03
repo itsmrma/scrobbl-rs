@@ -6,7 +6,13 @@ import type { Session } from "./api";
 import { api, setCsrf } from "./api";
 import type { Activity, Preferences, SpotifyStatus } from "./generated";
 import { Activities, ActivityMenu } from "./activities";
-import { ImportPage, Now, NowPlayingProvider, NowPlayingPage } from "./library";
+import {
+  ImportPage,
+  Now,
+  NowPlayingProvider,
+  NowPlayingPage,
+  LibraryToolsMenu,
+} from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
@@ -379,6 +385,7 @@ function Shell({ logout }: { logout: () => void }) {
             </button>
             <span>Your library / {title}</span>
             <div className="topbar-actions">
+              <LibraryToolsMenu />
               <ActivityMenu
                 jobs={jobs}
                 work={artworkWork}
@@ -389,31 +396,37 @@ function Shell({ logout }: { logout: () => void }) {
             </div>
           </header>
           <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
-            {page === "search" && <SearchPage />}
-            <section hidden={page !== "dashboard"}>
+            {page === "search" && (
+              <section className="page-container">
+                <SearchPage />
+              </section>
+            )}
+            <section className="page-container" hidden={page !== "dashboard"}>
               <Overview
                 preferences={preferences}
                 visible={page === "dashboard"}
                 status={status}
               />
             </section>
-            <section hidden={page !== "history"}>
+            <section className="page-container" hidden={page !== "history"}>
               <HistoryPage
                 preferences={preferences}
                 visible={page === "history"}
               />
             </section>
             {page === "review" && (
-              <ReviewPage preferences={preferences} refresh={refresh} />
+              <section className="page-container">
+                <ReviewPage preferences={preferences} refresh={refresh} />
+              </section>
             )}
-            <section hidden={page !== "import"}>
+            <section className="page-container" hidden={page !== "import"}>
               <ImportPage
                 refresh={refresh}
                 visible={page === "import"}
                 preferences={preferences}
               />
             </section>
-            <section hidden={page !== "settings"}>
+            <section className="page-container" hidden={page !== "settings"}>
               <Settings
                 section={settingsSection}
                 preferences={preferences}
@@ -425,7 +438,7 @@ function Shell({ logout }: { logout: () => void }) {
                 visible={page === "settings"}
               />
             </section>
-            <section hidden={page !== "activities"}>
+            <section className="page-container" hidden={page !== "activities"}>
               <Activities
                 loading={jobsLoading}
                 jobs={jobs}
@@ -438,31 +451,40 @@ function Shell({ logout }: { logout: () => void }) {
             </section>
             {page === "rankings" &&
               kinds.includes(path.split("/")[2] as Kind) && (
-                <RankingsPage
-                  status={status}
-                  preferences={preferences}
-                  kind={path.split("/")[2] as Kind}
-                  key={path}
-                />
+                <section className="page-container">
+                  <RankingsPage
+                    status={status}
+                    preferences={preferences}
+                    kind={path.split("/")[2] as Kind}
+                    key={path}
+                  />
+                </section>
               )}
-            {path === "/music/now-playing" && <NowPlayingPage />}
+            {path === "/music/now-playing" && (
+              <section className="page-container">
+                <NowPlayingPage />
+              </section>
+            )}
             {page === "music" &&
               kinds.includes(path.split("/")[2] as Kind) &&
-              path.split("/")[3] &&
-              (path.split("/")[4] === "edit" ? (
-                <MusicEdit
-                  kind={path.split("/")[2] as Kind}
-                  id={decodeURIComponent(path.split("/")[3])}
-                  key={path}
-                />
-              ) : (
-                <MusicPage
-                  preferences={preferences}
-                  kind={path.split("/")[2] as Kind}
-                  id={decodeURIComponent(path.split("/")[3])}
-                  key={path}
-                />
-              ))}
+              path.split("/")[3] && (
+                <section className="page-container">
+                  {path.split("/")[4] === "edit" ? (
+                    <MusicEdit
+                      kind={path.split("/")[2] as Kind}
+                      id={decodeURIComponent(path.split("/")[3])}
+                      key={path}
+                    />
+                  ) : (
+                    <MusicPage
+                      preferences={preferences}
+                      kind={path.split("/")[2] as Kind}
+                      id={decodeURIComponent(path.split("/")[3])}
+                      key={path}
+                    />
+                  )}
+                </section>
+              )}
             {![
               "rankings",
               "music",
@@ -474,10 +496,10 @@ function Shell({ logout }: { logout: () => void }) {
               "settings",
               "activities",
             ].includes(page) && (
-              <>
+              <section className="page-container">
                 <Heading title="Page not found" />
                 <Link to="/dashboard">Back to overview</Link>
-              </>
+              </section>
             )}
           </main>
           <footer>
@@ -551,9 +573,39 @@ function App() {
     </Toasts>
   );
 }
-const spotifyReturn = location.pathname.match(
-  /^\/spotify\/connect-result\/([a-f0-9]{64})$/,
-);
-createRoot(document.getElementById("root")!).render(
-  spotifyReturn ? <SpotifyConnectReturn attempt={spotifyReturn[1]} /> : <App />,
-);
+async function mount() {
+  const rootEl = document.getElementById("root")!;
+  const statusEl = rootEl.querySelector(".pre-splash-status");
+
+  try {
+    let res = await fetch("/api/boot-status", { cache: "no-store" });
+    if (res.ok) {
+      let data = (await res.json()) as { ready?: boolean; stage?: string };
+      while (!data.ready) {
+        if (data.stage && statusEl) {
+          statusEl.textContent = `Starting scrobbl.rs (${data.stage})...`;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        res = await fetch("/api/boot-status", { cache: "no-store" });
+        if (res.ok) {
+          data = (await res.json()) as { ready?: boolean; stage?: string };
+        }
+      }
+    }
+  } catch {
+    // Proceed to mount so React or error boundary handles connectivity
+  }
+
+  const spotifyReturn = location.pathname.match(
+    /^\/spotify\/connect-result\/([a-f0-9]{64})$/,
+  );
+  createRoot(rootEl).render(
+    spotifyReturn ? (
+      <SpotifyConnectReturn attempt={spotifyReturn[1]} />
+    ) : (
+      <App />
+    ),
+  );
+}
+
+void mount();

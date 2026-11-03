@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { api, setCsrf } from "./api";
 import type { AccountProfile } from "./api";
 import { useLoad } from "./load";
@@ -6,6 +6,7 @@ import { SkeletonCard } from "./skeleton";
 import { Link } from "./navigation";
 import { ErrorText, Icon, Modal, useToast } from "./ui";
 import { PasswordFeedback, passwordChecks } from "./account";
+import { LifecycleScreen } from "./lifecycle-screen";
 
 function useAccount() {
   return useLoad(api.account, "account", true, undefined, true);
@@ -362,99 +363,47 @@ function ApplicationDialog({
   action: "restart" | "stop";
   close: () => void;
 }) {
-  const [phase, setPhase] = useState("confirm");
+  const [phase, setPhase] = useState<"confirm" | "active">("confirm");
   const [error, setError] = useState("");
-  const boot = useRef("");
-  useEffect(() => {
-    if (phase !== "restarting") return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    const until = Date.now() + 60000;
-    const poll = async () => {
-      try {
-        const response = await fetch("/api/v1/application", {
-          signal: controller.signal,
-        });
-        if (response.ok && (await response.json()).boot_id !== boot.current) {
-          if (!controller.signal.aborted) {
-            setPhase("restarted");
-            window.dispatchEvent(new Event("read-data-changed"));
-          }
-          return;
-        }
-      } catch {
-        /* The listener is unavailable while the archive reopens. */
-      }
-      if (controller.signal.aborted) return;
-      if (Date.now() > until) {
-        setPhase("waiting");
-        return;
-      }
-      timer = setTimeout(poll, 1000);
-    };
-    timer = setTimeout(poll, 1000);
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
-  }, [phase]);
+
   const confirm = async () => {
     setError("");
-    setPhase("sending");
     try {
-      boot.current = (await api.application()).boot_id;
       await api.controlApplication(action);
-      setPhase(action === "restart" ? "restarting" : "stopped");
+      setPhase("active");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("confirm");
     }
   };
+
+  if (phase === "active") {
+    return <LifecycleScreen action={action} onDismiss={close} />;
+  }
+
   return (
     <Modal
       title={action === "restart" ? "Restart application" : "Stop application"}
       close={close}
     >
       <ErrorText>{error}</ErrorText>
-      {phase === "confirm" && (
-        <>
-          <p>
-            {action === "restart"
-              ? "Restart scrobbl.rs now? Collection pauses while the archive closes and reopens."
-              : "Stop scrobbl.rs now? Collection will stop and this page will become unavailable. You will need Docker or your process manager to start it again."}
-          </p>
-          <p>
-            Your saved archive is retained. Your host and other containers stay
-            running.
-          </p>
-          <div className="form-actions">
-            <button className="secondary" onClick={close}>
-              Cancel
-            </button>
-            <button className="primary" onClick={() => void confirm()}>
-              {action === "restart" ? "Restart now" : "Stop now"}
-            </button>
-          </div>
-        </>
-      )}
-      {phase !== "confirm" && (
-        <>
-          <p role="status">
-            {phase === "sending"
-              ? "Closing the application safely…"
-              : phase === "restarting"
-                ? "Restarting scrobbl.rs…"
-                : phase === "restarted"
-                  ? "scrobbl.rs has restarted. Your archive is ready."
-                  : phase === "stopped"
-                    ? "Stop accepted. Start scrobbl.rs from Docker or your process manager when you are ready."
-                    : "The application has not returned yet. Check its logs, then reload this page."}
-          </p>
-          <button className="secondary" onClick={close}>
-            Close
-          </button>
-        </>
-      )}
+      <p>
+        {action === "restart"
+          ? "Restart scrobbl.rs now? Collection pauses while the archive closes and reopens."
+          : "Stop scrobbl.rs now? Collection will stop and this page will become unavailable. You will need Docker or your process manager to start it again."}
+      </p>
+      <p>
+        Your saved archive is retained. Your host and other containers stay
+        running.
+      </p>
+      <div className="form-actions">
+        <button className="secondary" onClick={close}>
+          Cancel
+        </button>
+        <button className="primary" onClick={() => void confirm()}>
+          {action === "restart" ? "Restart now" : "Stop now"}
+        </button>
+      </div>
     </Modal>
   );
 }

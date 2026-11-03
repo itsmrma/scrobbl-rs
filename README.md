@@ -81,6 +81,7 @@ Collection and now-playing intervals can be changed in **Settings → Connection
 | `SCROBBL_DATA_DIR` | `./data` | Persistent SQLite directory |
 | `SCROBBL_SYNC_SECONDS` | `120` | Initial collection interval; minimum 60 seconds |
 | `SCROBBL_NOW_PLAYING_SECONDS` | `30` | Initial now-playing interval; minimum 15 seconds |
+| `SCROBBL_LOGIN_ATTEMPTS_PER_MINUTE` | `8` | Sign-in and owner-setup attempts allowed per minute |
 | `SCROBBL_IMPORT_UPLOAD_BYTES` | `268435456` | Total received bytes per file selection |
 | `SCROBBL_IMPORT_EXPANDED_BYTES` | `1073741824` | Cumulative expanded ZIP/JSON bytes |
 | `SCROBBL_IMPORT_MEMBER_BYTES` | `268435456` | Expanded bytes per member/file |

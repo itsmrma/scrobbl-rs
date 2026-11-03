@@ -5,6 +5,7 @@ pub mod artwork;
 pub mod artwork_settings;
 pub mod artwork_sources;
 pub mod auth;
+pub mod boot;
 pub mod browse;
 pub mod calendar;
 pub mod config;

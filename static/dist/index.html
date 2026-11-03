@@ -6,10 +6,45 @@
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>scrobbl.rs</title>
+    <style>:root{--lightningcss-light:initial;--lightningcss-dark: ;color-scheme:light dark;--splash-bg:#13151b;--splash-text:#f2f3f7;--splash-muted:#bac0cc;--splash-accent:#c9ee8b}@media (prefers-color-scheme:dark){:root{--lightningcss-light: ;--lightningcss-dark:initial}}@media (prefers-color-scheme:light){:root{--splash-bg:#f5f6fa;--splash-text:#18212d;--splash-muted:#425065}}*{box-sizing:border-box}body{background-color:var(--splash-bg);color:var(--splash-text);margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.pre-splash-container{text-align:center;flex-direction:column;justify-content:center;align-items:center;min-height:100vh;padding:24px;display:flex}.pre-splash-brand{letter-spacing:-.04em;color:var(--splash-text);-webkit-user-select:none;user-select:none;margin-bottom:24px;font-size:32px;font-weight:700}.pre-splash-brand .accent{color:var(--splash-accent)}.pre-splash-loader{justify-content:center;align-items:center;height:24px;margin-bottom:16px;display:flex}.pre-splash-dot{background-color:var(--splash-accent);width:10px;height:10px;box-shadow:0 0 12px var(--splash-accent);border-radius:50%;animation:1.4s ease-in-out infinite pre-splash-pulse}@keyframes pre-splash-pulse{0%,to{opacity:.4;transform:scale(.75)}50%{opacity:1;transform:scale(1.25)}}@media (prefers-reduced-motion:reduce){.pre-splash-dot{opacity:.9;animation:none}}.pre-splash-status{color:var(--splash-muted);max-width:360px;margin:0;font-size:14px;line-height:1.5}</style>
     <script type="module" crossorigin src="/app.js"></script>
     <link rel="stylesheet" crossorigin href="/style.css">
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="pre-splash-container">
+        <div class="pre-splash-brand">
+          scrobbl<span class="accent">.</span>rs
+        </div>
+        <div class="pre-splash-loader">
+          <div class="pre-splash-dot"></div>
+        </div>
+        <p class="pre-splash-status">Starting scrobbl.rs...</p>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var statusEl = document.querySelector(".pre-splash-status");
+        function check() {
+          fetch("/api/boot-status", { cache: "no-store" })
+            .then(function (r) {
+              return r.json();
+            })
+            .then(function (data) {
+              if (data && !data.ready) {
+                if (data.stage && statusEl) {
+                  statusEl.textContent =
+                    "Starting scrobbl.rs (" + data.stage + ")...";
+                }
+                setTimeout(check, 800);
+              }
+            })
+            .catch(function () {
+              setTimeout(check, 1000);
+            });
+        }
+        check();
+      })();
+    </script>
   </body>
 </html>

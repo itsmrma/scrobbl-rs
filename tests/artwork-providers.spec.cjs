@@ -47,7 +47,7 @@ const test = base.extend({
         .poll(async () => {
           if (child.exitCode !== null) throw new Error(logs);
           try {
-            return (await context.request.get("/healthz")).status();
+            return (await context.request.get("/api/session")).status();
           } catch {
             return 0;
           }
@@ -68,8 +68,8 @@ const test = base.extend({
 
 const password = "a local browser test password 7!";
 async function login(page, path = "/settings/general") {
-  const session = await (await page.request.get("/api/session")).json();
   await page.goto(path);
+  const session = await (await page.request.get("/api/session")).json();
   await page.getByLabel("Username", { exact: true }).fill("owner");
   await page.getByLabel("Password", { exact: true }).fill(password);
   if (session.setup_required)
@@ -177,10 +177,15 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await expect(
     page.getByRole("checkbox", { name: "Spotify", exact: true }),
   ).toHaveCount(0);
-  await page.locator(".artwork-provider").first().locator("summary").click();
-  await settleDisclosure(
-    page.locator(".artwork-provider").first().locator("details"),
+  const infoTrigger = page
+    .locator(".artwork-provider")
+    .first()
+    .locator("summary, button.provider-info-trigger");
+  await infoTrigger.click();
+  const infoDisclosure = page.locator(
+    "dialog[open], .artwork-provider details",
   );
+  await settleDisclosure(infoDisclosure);
   await expect(
     page.getByRole("link", { name: "Cover Art Archive API", exact: true }),
   ).toBeVisible();
@@ -204,6 +209,11 @@ test("image providers save instance order, handle conflicts and fit mobile setti
     path: "docs/screenshots/image-providers-mobile.png",
     fullPage: true,
   });
+  // The license modal blocks the provider list below: dismiss it first.
+  if (await page.locator("dialog[open]").count()) {
+    await page.keyboard.press("Escape");
+    await expect(page.locator("dialog[open]")).toHaveCount(0);
+  }
   // Restore defaults for the other browser scenarios sharing this isolated server.
   await page
     .getByRole("button", {
