@@ -49,7 +49,7 @@ test("Spotify opens a separate tab; the original dialog follows decline, closure
     }),
   );
   await page.reload();
-  await page.locator(".spotify-card > summary").click();
+  // The Spotify card is flat now: the actions are visible without expanding.
   const start = async () => {
     const opened = context.waitForEvent("page");
     await page

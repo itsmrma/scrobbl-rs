@@ -28,7 +28,7 @@ Lookup rules balance high coverage with precision:
 
 ### Missing artwork backfill
 
-The **Refresh missing artwork** action (available in **Activities** and **Settings → Image providers**)
+The **Refresh missing artwork** action (available in **Activities** and the **Library tools menu**)
 allows re-evaluating the library when new providers are enabled or provider coverage improves.
 The backfill selectively clears negative cache records for entities that still lack artwork,
 resets failed or paused queue members, and re-enqueues all missing entities, reporting the count

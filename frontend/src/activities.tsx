@@ -925,14 +925,6 @@ export function Activities({
           <div className="activities-toolbar">
             <h2>Activity history</h2>
             <div className="activities-toolbar-actions">
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy}
-                onClick={handleBackfill}
-              >
-                Refresh missing artwork
-              </button>
               <label>
                 Activity type
                 <Select
