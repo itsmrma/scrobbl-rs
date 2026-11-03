@@ -389,31 +389,49 @@ function Shell({ logout }: { logout: () => void }) {
             </div>
           </header>
           <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
-            {page === "search" && <SearchPage />}
-            <section hidden={page !== "dashboard"}>
+            {page === "search" && (
+              <section className="page-container">
+                <SearchPage />
+              </section>
+            )}
+            <section
+              className="page-container"
+              hidden={page !== "dashboard"}
+            >
               <Overview
                 preferences={preferences}
                 visible={page === "dashboard"}
                 status={status}
               />
             </section>
-            <section hidden={page !== "history"}>
+            <section
+              className="page-container"
+              hidden={page !== "history"}
+            >
               <HistoryPage
                 preferences={preferences}
                 visible={page === "history"}
               />
             </section>
             {page === "review" && (
-              <ReviewPage preferences={preferences} refresh={refresh} />
+              <section className="page-container">
+                <ReviewPage preferences={preferences} refresh={refresh} />
+              </section>
             )}
-            <section hidden={page !== "import"}>
+            <section
+              className="page-container"
+              hidden={page !== "import"}
+            >
               <ImportPage
                 refresh={refresh}
                 visible={page === "import"}
                 preferences={preferences}
               />
             </section>
-            <section hidden={page !== "settings"}>
+            <section
+              className="page-container"
+              hidden={page !== "settings"}
+            >
               <Settings
                 section={settingsSection}
                 preferences={preferences}
@@ -425,7 +443,10 @@ function Shell({ logout }: { logout: () => void }) {
                 visible={page === "settings"}
               />
             </section>
-            <section hidden={page !== "activities"}>
+            <section
+              className="page-container"
+              hidden={page !== "activities"}
+            >
               <Activities
                 loading={jobsLoading}
                 jobs={jobs}
@@ -438,31 +459,46 @@ function Shell({ logout }: { logout: () => void }) {
             </section>
             {page === "rankings" &&
               kinds.includes(path.split("/")[2] as Kind) && (
-                <RankingsPage
-                  status={status}
-                  preferences={preferences}
-                  kind={path.split("/")[2] as Kind}
-                  key={path}
-                />
+                <section className="page-container">
+                  <RankingsPage
+                    status={status}
+                    preferences={preferences}
+                    kind={path.split("/")[2] as Kind}
+                    key={path}
+                  />
+                </section>
               )}
-            {path === "/music/now-playing" && <NowPlayingPage />}
+            {path === "/music/now-playing" && (
+              <section className="page-container">
+                <NowPlayingPage />
+              </section>
+            )}
             {page === "music" &&
               kinds.includes(path.split("/")[2] as Kind) &&
-              path.split("/")[3] &&
-              (path.split("/")[4] === "edit" ? (
-                <MusicEdit
-                  kind={path.split("/")[2] as Kind}
-                  id={decodeURIComponent(path.split("/")[3])}
-                  key={path}
-                />
-              ) : (
-                <MusicPage
-                  preferences={preferences}
-                  kind={path.split("/")[2] as Kind}
-                  id={decodeURIComponent(path.split("/")[3])}
-                  key={path}
-                />
-              ))}
+              path.split("/")[3] && (
+                <section
+                  className={
+                    path.split("/")[4] === "edit"
+                      ? "music-edit-page"
+                      : "page-container"
+                  }
+                >
+                  {path.split("/")[4] === "edit" ? (
+                    <MusicEdit
+                      kind={path.split("/")[2] as Kind}
+                      id={decodeURIComponent(path.split("/")[3])}
+                      key={path}
+                    />
+                  ) : (
+                    <MusicPage
+                      preferences={preferences}
+                      kind={path.split("/")[2] as Kind}
+                      id={decodeURIComponent(path.split("/")[3])}
+                      key={path}
+                    />
+                  )}
+                </section>
+              )}
             {![
               "rankings",
               "music",
@@ -474,10 +510,10 @@ function Shell({ logout }: { logout: () => void }) {
               "settings",
               "activities",
             ].includes(page) && (
-              <>
+              <section className="page-container">
                 <Heading title="Page not found" />
                 <Link to="/dashboard">Back to overview</Link>
-              </>
+              </section>
             )}
           </main>
           <footer>
