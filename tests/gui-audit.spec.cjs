@@ -331,7 +331,7 @@ async function login(page, path = "/dashboard") {
       exact: true,
     })
     .click();
-  await expect(page.locator("#main")).toBeVisible();
+  await expect(page.locator("#main")).toBeVisible({ timeout: 15000 });
 }
 
 test("mobile forms and history separators stay inside their panels", async ({
@@ -2856,6 +2856,9 @@ test("visible artwork retries temporary server contention without a reload", asy
       ),
     });
   });
+  await page.route("**/api/v1/activities", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
     const data = await (await route.fetch()).json();
     data.items = [

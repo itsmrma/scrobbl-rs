@@ -1347,7 +1347,7 @@ export function RecentListensWidget({
     if (!needsFetch) return null;
     const hp = new URLSearchParams(params);
     hp.set("page", "1");
-    hp.set("page_size", "8");
+    hp.set("page_size", "10");
     return hp;
   }, [needsFetch, params]);
   const isPreview =
@@ -1357,7 +1357,8 @@ export function RecentListensWidget({
     `recent-widget:${historyParams?.toString()}:${preferences.version}`,
     needsFetch && !isPreview,
   );
-  const items = recent !== undefined ? recent : fetched.data?.items || [];
+  const items =
+    recent !== undefined ? recent : (fetched.data?.items || []).slice(0, 8);
   const isLoading = loading || (needsFetch && fetched.loading);
 
   return (

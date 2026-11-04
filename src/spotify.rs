@@ -1496,37 +1496,15 @@ mod tests {
             .await
             .unwrap();
         let collecting = tokio::spawn(worker(state.clone()));
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while mock.calls.lock().await.is_empty() {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while db::setting(&state.db, "last_sync_ms")
-                .await
-                .unwrap()
-                .is_none()
-            {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
+        wait_for_calls(&mock, 1).await;
+        wait_for_setting(&state, "last_sync_ms").await;
         // Let the coalescing window of the just-finished collection pass; the
         // save must still wake the worker into a real collection.
         auth::advance_clock(SYNC_COALESCE_MS + 1_000);
         let _ = save_intervals(State(state.clone()), headers, Json(configured))
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), async {
-            while mock.calls.lock().await.len() < 2 {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
+        wait_for_calls(&mock, 2).await;
         collecting.abort();
         let _ = collecting.await;
         handle.abort();
