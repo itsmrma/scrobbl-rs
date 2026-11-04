@@ -2763,6 +2763,21 @@ dialog.cover-lightbox {
   min-width: 0;
 }
 
+.search-inline > button {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.search-inline > button.icon-button,
+.ranking-toolbar .search-inline > button {
+  padding: 0;
+  width: 44px;
+}
+
 .card-size-control {
   display: inline-flex;
   align-items: center;
@@ -4813,6 +4828,16 @@ dialog.cover-lightbox {
     grid-auto-flow: column;
     grid-auto-columns: minmax(0, 1fr);
     width: 100%;
+  }
+
+  .ranking-toolbar .view-toggle .segmented-option {
+    padding: 6px 4px;
+    gap: 4px;
+    font-size: 12px;
+  }
+
+  .ranking-toolbar .view-toggle .segmented-option .material-icons {
+    font-size: 18px;
   }
 
   .ranking-row,

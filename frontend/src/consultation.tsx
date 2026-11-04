@@ -639,7 +639,7 @@ function RankingsPanel({
               onChange={(event) => setDraft(event.target.value)}
               maxLength={500}
             />
-            <button className="secondary" aria-label="Search">
+            <button className="secondary icon-button" aria-label="Search">
               <Icon>search</Icon>
             </button>
           </form>

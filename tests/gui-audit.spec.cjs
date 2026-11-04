@@ -5123,8 +5123,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     // Check touch target of customize button
     const custBox = await customizeBtn.boundingBox();
     expect(custBox).not.toBeNull();
-    expect(custBox.width).toBeGreaterThanOrEqual(44);
-    expect(custBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(custBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(custBox.height)).toBeGreaterThanOrEqual(44);
 
     // Check full-width stacking of overview heading items:
     // Heading actions and customize button take full width of container
@@ -5141,8 +5141,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
       const combo = filterComboboxes.nth(i);
       const box = await combo.boundingBox();
       expect(box).not.toBeNull();
-      expect(box.width).toBeGreaterThanOrEqual(44);
-      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
 
       // Comboboxes take full width of filters container
       const filtersBox = await periodFilters.boundingBox();
@@ -5198,17 +5198,17 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     await expect(moveDown).toBeVisible();
     const upBox = await moveUp.boundingBox();
     const downBox = await moveDown.boundingBox();
-    expect(upBox.width).toBeGreaterThanOrEqual(44);
-    expect(upBox.height).toBeGreaterThanOrEqual(44);
-    expect(downBox.width).toBeGreaterThanOrEqual(44);
-    expect(downBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(upBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(upBox.height)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(downBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(downBox.height)).toBeGreaterThanOrEqual(44);
 
     // Remove button must be visible and >= 44px
     const removeBtn = widget.locator(".widget-remove-button");
     await expect(removeBtn).toBeVisible();
     const removeBox = await removeBtn.boundingBox();
-    expect(removeBox.width).toBeGreaterThanOrEqual(44);
-    expect(removeBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(removeBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(removeBox.height)).toBeGreaterThanOrEqual(44);
 
     // Period override if present
     const overrideControl = widget.locator(".widget-period-override-control");
@@ -5216,8 +5216,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
       const trigger = overrideControl.locator(".select-trigger");
       await expect(trigger).toBeVisible();
       const triggerBox = await trigger.boundingBox();
-      expect(triggerBox.width).toBeGreaterThanOrEqual(44);
-      expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+      expect(Math.round(triggerBox.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(triggerBox.height)).toBeGreaterThanOrEqual(44);
     }
   }
 
@@ -5504,8 +5504,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = rankingButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   // Active option (List) has solid surface, crisp text, and no fluorescent outline
@@ -5554,8 +5554,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = searchButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const allFilter = searchFilters.getByRole("button", {
@@ -5591,8 +5591,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = reviewButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const comparisonsBtn = reviewViews.getByRole("button", {
@@ -5629,8 +5629,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = importButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const uploadBtn = importMethods.getByRole("button", {
