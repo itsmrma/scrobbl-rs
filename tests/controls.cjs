@@ -2,17 +2,32 @@
 async function chooseOption(control, value) {
   control = control.and(control.page().getByRole("combobox"));
   await control.click();
+  await control
+    .page()
+    .locator('[role="listbox"]:visible')
+    .waitFor({ state: "visible", timeout: 5000 });
   const id = await control.getAttribute("aria-controls");
-  const options = control.page().locator(`[id="${id}"] [role="option"]`);
+  const listbox = id
+    ? control.page().locator(`[id="${id}"]`)
+    : control.page().locator('[role="listbox"]:visible');
+
   if (typeof value === "object") {
-    await control
-      .page()
-      .locator(`[id="${id}"]`)
+    await listbox
       .getByRole("option", { name: value.label, exact: true })
       .click();
     return;
   }
-  for (const option of await options.all()) {
+  const byValue = listbox.locator(`[role="option"][data-value="${value}"]`);
+  if (await byValue.count()) {
+    await byValue.click();
+    return;
+  }
+  const byName = listbox.getByRole("option", { name: String(value) });
+  if (await byName.count()) {
+    await byName.click();
+    return;
+  }
+  for (const option of await listbox.locator('[role="option"]').all()) {
     if ((await option.getAttribute("data-value")) === String(value)) {
       await option.click();
       return;

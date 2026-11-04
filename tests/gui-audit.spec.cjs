@@ -1976,6 +1976,7 @@ test("listening-time explanation works with keyboard and touch-sized trigger", a
   page,
 }) => {
   await login(page);
+  await expect(page.locator("#total-time")).toBeVisible();
   const help = page
     .getByRole("button", { name: "How we calculate listening time" })
     .first();
