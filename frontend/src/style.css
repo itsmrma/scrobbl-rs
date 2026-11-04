@@ -67,9 +67,9 @@
   --radius-lg: 12px;
   --radius-xl: 14px;
 
-  --shadow-sm: 0 2px 6px color-mix(in oklab, #13151b 32%, transparent);
-  --shadow-md: 0 12px 30px color-mix(in oklab, #13151b 52%, transparent);
-  --shadow-lg: 0 22px 54px color-mix(in oklab, #13151b 66%, transparent);
+  --shadow-sm: 0 2px 6px rgb(19 21 27 / 32%);
+  --shadow-md: 0 12px 30px rgb(19 21 27 / 52%);
+  --shadow-lg: 0 22px 54px rgb(19 21 27 / 66%);
 
   --motion-fast: 150ms;
   --motion-view: 160ms;
@@ -109,9 +109,9 @@ html.theme-light {
 
   --focus: color-mix(in oklab, var(--accent) 52%, var(--text));
 
-  --shadow-sm: 0 1px 4px color-mix(in oklab, #18212d 8%, transparent);
-  --shadow-md: 0 12px 28px color-mix(in oklab, #18212d 14%, transparent);
-  --shadow-lg: 0 22px 50px color-mix(in oklab, #18212d 20%, transparent);
+  --shadow-sm: 0 1px 4px rgb(24 33 45 / 8%);
+  --shadow-md: 0 12px 28px rgb(24 33 45 / 14%);
+  --shadow-lg: 0 22px 50px rgb(24 33 45 / 20%);
 }
 
 /* --------------------------------------------------------------------------
@@ -1054,7 +1054,7 @@ dialog.widget-catalog-dialog {
 }
 
 dialog::backdrop {
-  background: color-mix(in oklab, #13151b 74%, transparent);
+  background: rgb(19 21 27 / 74%);
   backdrop-filter: blur(4px);
 }
 
@@ -2114,7 +2114,7 @@ footer {
   height: 36px !important;
   min-height: 36px !important;
   border-radius: var(--radius-sm) !important;
-  background: color-mix(in oklab, #13151b 82%, transparent) !important;
+  background: rgb(19 21 27 / 82%) !important;
   color: #f2f3f7 !important;
   border: 1px solid var(--border-strong) !important;
   backdrop-filter: blur(6px);
@@ -2723,7 +2723,7 @@ dialog.artwork-lightbox {
   pointer-events: none;
   padding: 2px 7px;
   border-radius: 999px;
-  background: color-mix(in oklab, #13151b 84%, transparent);
+  background: rgb(19 21 27 / 84%);
   color: #f2f3f7;
   border: 1px solid var(--border-strong);
   font-size: 11px;
@@ -3243,7 +3243,7 @@ dialog.artwork-lightbox {
   height: 36px;
   min-height: 36px;
   padding: 4px;
-  background: color-mix(in oklab, #13151b 82%, transparent);
+  background: rgb(19 21 27 / 82%);
   color: #f2f3f7;
 }
 
@@ -3427,7 +3427,7 @@ dialog.artwork-lightbox {
   bottom: 6px;
   padding: 2px 6px;
   border-radius: var(--radius-xs);
-  background: color-mix(in oklab, #13151b 84%, transparent);
+  background: rgb(19 21 27 / 84%);
   color: #f2f3f7;
   font-size: 11px;
   font-weight: 600;
@@ -4276,7 +4276,7 @@ dialog.artwork-lightbox {
   right: 0;
   bottom: 0;
   padding: 4px 6px;
-  background: color-mix(in oklab, #13151b 76%, transparent);
+  background: rgb(19 21 27 / 76%);
   color: #f2f3f7;
   font-size: 11px;
   font-weight: 600;
@@ -4845,7 +4845,7 @@ dialog.artwork-lightbox {
     inset: 0;
     z-index: 190;
     border: none;
-    background: color-mix(in oklab, #13151b 65%, transparent);
+    background: rgb(19 21 27 / 65%);
     backdrop-filter: blur(2px);
   }
 
