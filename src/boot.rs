@@ -184,147 +184,183 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         "flex"
     };
     let initial_status = if status.error.is_some() {
-        "Si è verificato un errore critico durante l'avvio."
+        "A critical error occurred while starting the archive."
     } else if status.stage == "migrating" || status.stage == "opening_database" {
-        "Aggiornamento del database in corso..."
+        "Opening and verifying SQLite WAL archive..."
     } else if status.stage == "starting_workers" {
-        "Avvio dei servizi in corso..."
+        "Starting background collection and artwork workers..."
     } else {
-        "Avvio di scrobbl.rs in corso..."
+        "Starting scrobbl.rs..."
     };
     let escaped_error = html_escape(status.error.as_deref().unwrap_or(""));
 
     format!(
         r#"<!doctype html>
-<html lang="it">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>scrobbl.rs - Avvio</title>
+    <title>scrobbl.rs — Starting</title>
     <style>
       :root {{
         color-scheme: dark light;
-        --splash-bg: #13151b;
-        --splash-text: #f2f3f7;
-        --splash-muted: #bac0cc;
+        --splash-bg: #0d0f13;
+        --splash-surface: #151921;
+        --splash-surface-raised: #1e2430;
+        --splash-border: rgba(255, 255, 255, 0.1);
+        --splash-text: #f3f5f8;
+        --splash-muted: #9aa3b2;
         --splash-accent: #c9ee8b;
-        --splash-surface: #1c1f27;
-        --splash-surface-raised: #292d38;
-        --splash-border: #454a58;
-        --splash-error: #ffaaa0;
-        --splash-error-bg: rgba(255, 170, 160, 0.1);
+        --splash-error: #ff8e80;
+        --splash-error-bg: rgba(255, 142, 128, 0.1);
       }}
       @media (prefers-color-scheme: light) {{
         :root {{
-          --splash-bg: #f5f6fa;
-          --splash-text: #18212d;
-          --splash-muted: #425065;
+          --splash-bg: #f4f6f9;
           --splash-surface: #ffffff;
-          --splash-surface-raised: #e9ecf3;
-          --splash-border: #9da7b6;
-          --splash-error: #a22620;
-          --splash-error-bg: rgba(162, 38, 32, 0.08);
+          --splash-surface-raised: #eef1f6;
+          --splash-border: rgba(20, 28, 40, 0.14);
+          --splash-text: #141b24;
+          --splash-muted: #4b5668;
+          --splash-error: #b3261e;
+          --splash-error-bg: rgba(179, 38, 30, 0.08);
         }}
       }}
-      * {{
-        box-sizing: border-box;
-      }}
-      body, html {{
+      * {{ box-sizing: border-box; }}
+      html, body {{
         margin: 0;
         padding: 0;
         width: 100%;
-        height: 100%;
-        background-color: var(--splash-bg);
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(201, 238, 139, 0.09), transparent 55%),
+          var(--splash-bg);
         color: var(--splash-text);
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       }}
       .splash-container {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        display: grid;
+        place-items: center;
         min-height: 100vh;
         padding: 24px;
-        text-align: center;
+      }}
+      .splash-card {{
+        width: min(560px, 100%);
+        background: var(--splash-surface);
+        border: 1px solid var(--splash-border);
+        border-radius: 16px;
+        padding: 36px 32px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+      }}
+      .splash-header {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
       }}
       .splash-brand {{
-        font-size: 32px;
-        font-weight: 700;
+        font-size: 30px;
+        font-weight: 800;
         letter-spacing: -0.04em;
-        color: var(--splash-text);
-        margin-bottom: 24px;
-        user-select: none;
+        line-height: 1;
       }}
-      .splash-brand .accent {{
-        color: var(--splash-accent);
+      .splash-brand .accent {{ color: var(--splash-accent); }}
+      .splash-pill {{
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        background: var(--splash-surface-raised);
+        border: 1px solid var(--splash-border);
+        color: var(--splash-muted);
       }}
       .splash-loader {{
         display: {loader_display};
         align-items: center;
-        justify-content: center;
-        margin-bottom: 16px;
-        height: 24px;
+        gap: 10px;
       }}
       .splash-dot {{
-        width: 10px;
-        height: 10px;
+        width: 9px;
+        height: 9px;
         border-radius: 50%;
-        background-color: var(--splash-accent);
+        background: var(--splash-accent);
         box-shadow: 0 0 12px var(--splash-accent);
-        animation: splash-pulse 1.4s ease-in-out infinite;
+        animation: splash-pulse 1.3s ease-in-out infinite;
       }}
       @keyframes splash-pulse {{
-        0%, 100% {{
-          transform: scale(0.75);
-          opacity: 0.4;
-        }}
-        50% {{
-          transform: scale(1.25);
-          opacity: 1;
-        }}
+        0%, 100% {{ transform: scale(0.8); opacity: 0.45; }}
+        50% {{ transform: scale(1.2); opacity: 1; }}
       }}
       @media (prefers-reduced-motion: reduce) {{
-        .splash-dot {{
-          animation: none;
-          opacity: 0.9;
-        }}
+        .splash-dot {{ animation: none; opacity: 1; }}
       }}
       .splash-status {{
-        font-size: 14px;
-        color: var(--splash-muted);
-        margin: 0;
-        max-width: 360px;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--splash-text);
+        margin: 0 0 20px;
         line-height: 1.5;
+      }}
+      .splash-stages {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }}
+      .splash-stage {{
+        padding: 12px;
+        border-radius: 10px;
+        background: var(--splash-surface-raised);
+        border: 1px solid var(--splash-border);
+      }}
+      .splash-stage small {{
+        display: block;
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--splash-muted);
+        margin-bottom: 4px;
+      }}
+      .splash-stage strong {{
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+      }}
+      @media (max-width: 560px) {{
+        .splash-card {{ padding: 24px 20px; }}
+        .splash-stages {{ grid-template-columns: 1fr; }}
       }}
       .splash-error-panel {{
         display: {error_display};
-        margin-top: 24px;
-        max-width: 480px;
-        width: 100%;
-        padding: 16px 20px;
+        margin-top: 20px;
+        padding: 16px 18px;
         border-radius: 12px;
         background: var(--splash-error-bg);
         border: 1px solid var(--splash-error);
-        text-align: left;
       }}
       .splash-error-title {{
-        font-size: 15px;
-        font-weight: 600;
+        font-size: 14px;
+        font-weight: 700;
         color: var(--splash-error);
         margin: 0 0 8px;
       }}
       .splash-error-message {{
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--splash-text);
         margin: 0;
         line-height: 1.5;
+        white-space: pre-wrap;
         word-break: break-word;
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         background: var(--splash-surface-raised);
         padding: 10px 12px;
-        border-radius: 6px;
+        border-radius: 8px;
         border: 1px solid var(--splash-border);
       }}
       .splash-retry-btn {{
@@ -332,8 +368,8 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 8px 16px;
-        min-height: 38px;
+        padding: 10px 16px;
+        min-height: 44px;
         font-size: 13px;
         font-weight: 600;
         border-radius: 8px;
@@ -342,28 +378,35 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         border: 1px solid var(--splash-border);
         cursor: pointer;
       }}
-      .splash-retry-btn:hover {{
-        filter: brightness(1.1);
-      }}
     </style>
   </head>
   <body>
     <div class="splash-container">
-      <div class="splash-brand">scrobbl<span class="accent">.</span>rs</div>
-      <div class="splash-loader" id="splash-loader">
-        <div class="splash-dot"></div>
-      </div>
-      <p class="splash-status" id="splash-status">{initial_status}</p>
-      <div class="splash-error-panel" id="splash-error-panel">
-        <div class="splash-error-title">Errore durante l'avvio</div>
-        <pre class="splash-error-message" id="splash-error-message">{escaped_error}</pre>
-        <button type="button" class="splash-retry-btn" onclick="location.reload()">Ricarica pagina</button>
+      <div class="splash-card">
+        <div class="splash-header">
+          <div class="splash-brand">scrobbl<span class="accent">.</span>rs</div>
+          <div class="splash-pill">
+            <span class="splash-loader" id="splash-loader"><span class="splash-dot"></span></span>
+            <span id="splash-badge">Booting</span>
+          </div>
+        </div>
+        <p class="splash-status" id="splash-status">{initial_status}</p>
+        <div class="splash-stages">
+          <div class="splash-stage"><small>01 · LISTENER</small><strong>HTTP Bound</strong></div>
+          <div class="splash-stage"><small>02 · ARCHIVE</small><strong id="stage-db">SQLite WAL</strong></div>
+          <div class="splash-stage"><small>03 · WORKERS</small><strong id="stage-workers">Sync &amp; Art</strong></div>
+        </div>
+        <div class="splash-error-panel" id="splash-error-panel">
+          <div class="splash-error-title">Startup error</div>
+          <pre class="splash-error-message" id="splash-error-message">{escaped_error}</pre>
+          <button type="button" class="splash-retry-btn" onclick="location.reload()">Reload page</button>
+        </div>
       </div>
     </div>
     <script>
       (function() {{
         var timer = setInterval(function() {{
-          fetch('/api/boot-status')
+          fetch('/api/boot-status', {{ cache: 'no-store' }})
             .then(function(r) {{ return r.json(); }})
             .then(function(s) {{
               if (s.ready) {{
@@ -372,22 +415,24 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
               }} else if (s.error) {{
                 clearInterval(timer);
                 var loader = document.getElementById('splash-loader');
+                var badge = document.getElementById('splash-badge');
                 var statusEl = document.getElementById('splash-status');
                 var errPanel = document.getElementById('splash-error-panel');
                 var errMsg = document.getElementById('splash-error-message');
                 if (loader) loader.style.display = 'none';
-                if (statusEl) statusEl.textContent = 'Si è verificato un errore critico durante l\'avvio.';
+                if (badge) badge.textContent = 'Error';
+                if (statusEl) statusEl.textContent = 'A critical error occurred while starting the archive.';
                 if (errMsg) errMsg.textContent = s.error;
                 if (errPanel) errPanel.style.display = 'block';
               }} else if (s.stage) {{
                 var statusEl = document.getElementById('splash-status');
                 if (statusEl) {{
                   if (s.stage === 'migrating' || s.stage === 'opening_database') {{
-                    statusEl.textContent = 'Aggiornamento del database in corso...';
+                    statusEl.textContent = 'Opening and verifying SQLite WAL archive...';
                   }} else if (s.stage === 'starting_workers') {{
-                    statusEl.textContent = 'Avvio dei servizi in corso...';
+                    statusEl.textContent = 'Starting background collection and artwork workers...';
                   }} else {{
-                    statusEl.textContent = 'Avvio di scrobbl.rs in corso...';
+                    statusEl.textContent = 'Starting scrobbl.rs...';
                   }}
                 }}
               }}

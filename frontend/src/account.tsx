@@ -58,6 +58,7 @@ export function passwordChecks(password: string, username = "") {
     },
   ];
 }
+
 export function PasswordFeedback({
   password,
   username = "",
@@ -81,41 +82,7 @@ export function PasswordFeedback({
     </div>
   );
 }
-export function UsernameSetup({ done }: { done: () => Promise<void> }) {
-  const [username, setUsername] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  return (
-    <main className="account-upgrade panel padded">
-      <h1>Choose your username</h1>
-      <p>
-        Your archive now supports a username for signing in. Add yours to finish
-        setting up your account.
-      </p>
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          setBusy(true);
-          setError("");
-          try {
-            await api.setUsername(username);
-            await done();
-          } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <Username value={username} change={setUsername} />
-        <ErrorText>{error}</ErrorText>
-        <button className="primary" disabled={busy}>
-          Save username and open archive<Icon>arrow_forward</Icon>
-        </button>
-      </form>
-    </main>
-  );
-}
+
 function Username({
   value,
   change,
@@ -146,6 +113,65 @@ function Username({
     </label>
   );
 }
+
+export function UsernameSetup({ done }: { done: () => Promise<void> }) {
+  const [username, setUsername] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="auth-layout">
+      <div className="auth-story">
+        <div className="brand">
+          <img src="/favicon.svg" alt="" width="34" height="34" />
+          <Wordmark />
+        </div>
+        <p className="eyebrow">ACCOUNT UPGRADE</p>
+        <h1>
+          Claim your owner identity<span className="accent">.</span>
+        </h1>
+        <p>
+          Your archive now supports an explicit owner username for signing in
+          across devices. Choose yours once to open your listening ledger.
+        </p>
+      </div>
+      <main className="account-upgrade auth-card panel padded">
+        <h2>
+          Choose your username<span className="accent">.</span>
+        </h2>
+        <p>
+          Add a username to finish setting up your owner account. Your existing
+          listens and settings remain untouched.
+        </p>
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBusy(true);
+            setError("");
+            try {
+              await api.setUsername(username);
+              await done();
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Username value={username} change={setUsername} />
+          <ErrorText>{error}</ErrorText>
+          <button
+            type="submit"
+            className="btn btn-primary primary"
+            disabled={busy}
+          >
+            Save username and open archive<Icon>arrow_forward</Icon>
+          </button>
+        </form>
+      </main>
+    </div>
+  );
+}
+
 export function Auth({
   setup,
   usernameRequired,
@@ -172,17 +198,46 @@ export function Auth({
         </a>
         <p className="eyebrow">YOUR MUSIC, REMEMBERED.</p>
         <h1>
-          A little archive.
-          <br />A lifetime of listening.
+          A little archive<span className="accent">.</span>
+          <br />A lifetime of listening<span className="accent">.</span>
         </h1>
         <p>
           Your favourite songs, the late-night repeats, the artists you keep
-          coming back to. All in one place, on your own server.
+          coming back to. Preserved in an immutable, local-first ledger on your
+          own server.
         </p>
-        <span className="local-label">Private by default · Stored locally</span>
+        <div className="auth-feature-grid">
+          <div className="auth-feature-item">
+            <Icon>verified_user</Icon>
+            <div>
+              <strong>Private by default</strong>
+              <small>Zero third-party CDNs or telemetry</small>
+            </div>
+          </div>
+          <div className="auth-feature-item">
+            <Icon>storage</Icon>
+            <div>
+              <strong>Local SQLite WAL</strong>
+              <small>Instant rankings, backups &amp; provenance</small>
+            </div>
+          </div>
+          <div className="auth-feature-item">
+            <Icon>library_music</Icon>
+            <div>
+              <strong>Multi-source sync</strong>
+              <small>Spotify live collection &amp; ListenBrainz</small>
+            </div>
+          </div>
+        </div>
+        <span className="local-label">
+          <Icon>lock</Icon> Private by default · Stored locally
+        </span>
       </div>
       <main className="auth-card">
-        <h2>{setup ? "Make this space yours" : "Welcome back"}</h2>
+        <h2>
+          {setup ? "Make this space yours" : "Welcome back"}
+          <span className="accent">.</span>
+        </h2>
         <p>
           {setup
             ? "Create your owner account to start your listening archive."
@@ -247,7 +302,7 @@ export function Auth({
               />
               <button
                 type="button"
-                className="icon-button"
+                className="btn-icon icon-button"
                 aria-label={show ? "Hide password" : "Show password"}
                 aria-pressed={show}
                 onClick={() => setShow(!show)}
@@ -282,7 +337,7 @@ export function Auth({
                   </Icon>
                   {confirmation === password
                     ? "Passwords match"
-                    : "Passwords do not match yet"}
+                    : "Enter the same password again"}
                 </p>
               )}
             </>
@@ -290,19 +345,16 @@ export function Auth({
           <ErrorText>{error}</ErrorText>
           <button
             type="submit"
-            className="primary"
+            className="btn btn-primary primary"
             aria-busy={busy}
-            disabled={busy || (setup && (!valid || password !== confirmation))}
+            disabled={
+              busy ||
+              (setup && (!valid || !confirmation || password !== confirmation))
+            }
           >
             {setup ? "Create your archive" : "Sign in"}
-            <Icon>arrow_forward</Icon>
           </button>
         </form>
-        <p className="subtle">
-          A personal space for your music.
-          <br />
-          No shared account. No cloud database.
-        </p>
       </main>
     </div>
   );

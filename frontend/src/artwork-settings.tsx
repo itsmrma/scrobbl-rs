@@ -1,8 +1,10 @@
 import { useState } from "react";
 import type { ArtworkSettings, ImageProvider } from "./generated";
 import { api } from "./api";
+import { useArtworkActivity } from "./artwork-activity";
 import { useLoad } from "./load";
-import { ErrorText, Icon, Modal, useToast } from "./ui";
+import { Link } from "./navigation";
+import { ErrorText, Icon, Modal, number, useToast } from "./ui";
 import { SkeletonCardList } from "./skeleton";
 
 const providers: Record<
@@ -252,12 +254,15 @@ function ProviderForm({
       </p>
       <ErrorText>{error}</ErrorText>
       <div className="form-actions">
-        <button className="button" disabled={busy || !dirty}>
+        <button
+          className="btn btn-primary primary button"
+          disabled={busy || !dirty}
+        >
           {busy ? "Saving…" : "Save image providers"}
         </button>
         <button
           type="button"
-          className="button secondary"
+          className="btn btn-secondary button secondary"
           disabled={busy}
           onClick={reload}
         >
@@ -270,12 +275,48 @@ function ProviderForm({
 
 export function ArtworkProviderSettings() {
   const [revision, setRevision] = useState(0);
+  const artworkWork = useArtworkActivity();
   const settings = useLoad(
     () => api.artworkSettings(),
     `artwork-settings:${revision}`,
   );
   return (
     <>
+      <article className="panel padded artwork-sync-overview">
+        <div className="panel-title">
+          <h2>Library artwork sync</h2>
+          <span className="pill">
+            {artworkWork.serverSync
+              ? artworkWork.serverSync.paused
+                ? "Paused"
+                : "Running"
+              : artworkWork.pending > 0
+                ? `${number.format(artworkWork.pending)} queued`
+                : "Idle"}
+          </span>
+        </div>
+        <p>
+          Manage missing artwork scans from Library tools or Activities, or pick
+          custom artwork directly on any artist, album, or track page.
+        </p>
+        {artworkWork.serverSync && !artworkWork.serverSync.paused && (
+          <div className="artwork-coordination-banner" role="status">
+            <Icon>bolt</Icon>
+            <span>
+              Library sync is checking{" "}
+              {artworkWork.serverSync.expected
+                ? `${number.format(artworkWork.serverSync.processed)} of ${number.format(artworkWork.serverSync.expected)}`
+                : "missing"}{" "}
+              items. Browse-time fetches yield automatically while it runs.
+            </span>
+          </div>
+        )}
+        <div className="connection-actions">
+          <Link to="/activities" className="btn btn-secondary button secondary">
+            <Icon>receipt_long</Icon>Open artwork activities
+          </Link>
+        </div>
+      </article>
       <ErrorText>{settings.error}</ErrorText>
       {settings.data ? (
         <ProviderForm

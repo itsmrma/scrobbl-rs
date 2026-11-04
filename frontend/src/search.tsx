@@ -4,7 +4,14 @@ import { useLoad } from "./load";
 import { Link, navigate, useSearch } from "./navigation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
-import { Cover, ErrorText, Heading, Icon, number, SegmentedControl } from "./ui";
+import {
+  Cover,
+  ErrorText,
+  Heading,
+  Icon,
+  number,
+  SegmentedControl,
+} from "./ui";
 import { SkeletonList } from "./skeleton";
 
 const labels: Record<Kind, string> = {
@@ -167,9 +174,7 @@ export function SearchPage() {
         className="search-type-filters"
         ariaLabel="Search categories"
         value={kind ?? "all"}
-        onChange={(val) =>
-          change(query, val === "all" ? null : (val as Kind))
-        }
+        onChange={(val) => change(query, val === "all" ? null : (val as Kind))}
         options={[
           { value: "all", label: "All" },
           ...kinds.map((type) => ({

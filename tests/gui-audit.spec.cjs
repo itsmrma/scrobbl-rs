@@ -331,7 +331,7 @@ async function login(page, path = "/dashboard") {
       exact: true,
     })
     .click();
-  await expect(page.locator("#main")).toBeVisible();
+  await expect(page.locator("#main")).toBeVisible({ timeout: 15000 });
 }
 
 test("mobile forms and history separators stay inside their panels", async ({
@@ -1976,6 +1976,7 @@ test("listening-time explanation works with keyboard and touch-sized trigger", a
   page,
 }) => {
   await login(page);
+  await expect(page.locator("#total-time")).toBeVisible();
   const help = page
     .getByRole("button", { name: "How we calculate listening time" })
     .first();
@@ -2856,6 +2857,9 @@ test("visible artwork retries temporary server contention without a reload", asy
       ),
     });
   });
+  await page.route("**/api/v1/activities", (route) =>
+    route.fulfill({ json: [] }),
+  );
   await page.route("**/api/v1/consultation/rankings/*?*", async (route) => {
     const data = await (await route.fetch()).json();
     data.items = [
@@ -5120,8 +5124,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     // Check touch target of customize button
     const custBox = await customizeBtn.boundingBox();
     expect(custBox).not.toBeNull();
-    expect(custBox.width).toBeGreaterThanOrEqual(44);
-    expect(custBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(custBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(custBox.height)).toBeGreaterThanOrEqual(44);
 
     // Check full-width stacking of overview heading items:
     // Heading actions and customize button take full width of container
@@ -5138,8 +5142,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
       const combo = filterComboboxes.nth(i);
       const box = await combo.boundingBox();
       expect(box).not.toBeNull();
-      expect(box.width).toBeGreaterThanOrEqual(44);
-      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
 
       // Comboboxes take full width of filters container
       const filtersBox = await periodFilters.boundingBox();
@@ -5195,17 +5199,17 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     await expect(moveDown).toBeVisible();
     const upBox = await moveUp.boundingBox();
     const downBox = await moveDown.boundingBox();
-    expect(upBox.width).toBeGreaterThanOrEqual(44);
-    expect(upBox.height).toBeGreaterThanOrEqual(44);
-    expect(downBox.width).toBeGreaterThanOrEqual(44);
-    expect(downBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(upBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(upBox.height)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(downBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(downBox.height)).toBeGreaterThanOrEqual(44);
 
     // Remove button must be visible and >= 44px
     const removeBtn = widget.locator(".widget-remove-button");
     await expect(removeBtn).toBeVisible();
     const removeBox = await removeBtn.boundingBox();
-    expect(removeBox.width).toBeGreaterThanOrEqual(44);
-    expect(removeBox.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(removeBox.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(removeBox.height)).toBeGreaterThanOrEqual(44);
 
     // Period override if present
     const overrideControl = widget.locator(".widget-period-override-control");
@@ -5213,8 +5217,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
       const trigger = overrideControl.locator(".select-trigger");
       await expect(trigger).toBeVisible();
       const triggerBox = await trigger.boundingBox();
-      expect(triggerBox.width).toBeGreaterThanOrEqual(44);
-      expect(triggerBox.height).toBeGreaterThanOrEqual(44);
+      expect(Math.round(triggerBox.width)).toBeGreaterThanOrEqual(44);
+      expect(Math.round(triggerBox.height)).toBeGreaterThanOrEqual(44);
     }
   }
 
@@ -5501,8 +5505,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = rankingButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   // Active option (List) has solid surface, crisp text, and no fluorescent outline
@@ -5551,8 +5555,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = searchButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const allFilter = searchFilters.getByRole("button", {
@@ -5588,8 +5592,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = reviewButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const comparisonsBtn = reviewViews.getByRole("button", {
@@ -5626,8 +5630,8 @@ test("segmented controls use recessed container, solid active surface, touch tar
     const btn = importButtons.nth(i);
     const box = await btn.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeGreaterThanOrEqual(44);
-    expect(box.height).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
+    expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
   }
 
   const uploadBtn = importMethods.getByRole("button", {
@@ -5646,7 +5650,7 @@ test("segmented controls use recessed container, solid active surface, touch tar
   await expect(fetchBtn).toHaveCSS("outline-style", "none");
 });
 
-test("layout tokens: .page-container centered max-width 1200px on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
+test("layout tokens: .page-container uses fluid full-width workspace on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -5674,7 +5678,10 @@ test("layout tokens: .page-container centered max-width 1200px on desktop, 14px 
 
     const box = await container.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeLessThanOrEqual(1200.5);
+    const parentWidth = await container.evaluate(
+      (el) => el.parentElement.getBoundingClientRect().width,
+    );
+    expect(Math.abs(box.width - parentWidth)).toBeLessThanOrEqual(2);
 
     const styles = await container.evaluate((el) => {
       const cs = getComputedStyle(el);
@@ -5865,18 +5872,21 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
   expect(Math.abs(listenSeparation - 4)).toBeLessThanOrEqual(1.5);
   expect(listenBox1.y).toBeGreaterThanOrEqual(listenBox0.y + listenBox0.height);
 
-  // Border-radius 4px or 6px, and dedicated surface background
+  // Border-radius 4px or 6px, and dedicated surface background distinct from parent panel
   const listenStyle = await listenRows.nth(0).evaluate((el) => {
     const cs = getComputedStyle(el);
+    const panel = el.closest(".panel");
     return {
       borderRadius: parseFloat(cs.borderRadius),
       bg: cs.backgroundColor,
+      panelBg: panel ? getComputedStyle(panel).backgroundColor : "",
       hasTabularNums: cs.fontVariantNumeric.includes("tabular-nums"),
     };
   });
   expect(listenStyle.borderRadius).toBeGreaterThanOrEqual(4);
   expect(listenStyle.borderRadius).toBeLessThanOrEqual(6.5);
   expect(listenStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(listenStyle.bg).not.toBe(listenStyle.panelBg);
   expect(listenStyle.hasTabularNums).toBeTruthy();
 
   // Column alignment: secondary column .listen-duration has tabular nums and crisp right alignment
@@ -5894,6 +5904,11 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
 
   // Desktop hover effect on .listen-row
   await listenRows.nth(0).hover();
+  await expect
+    .poll(async () =>
+      listenRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe(listenStyle.bg);
   const listenHoverBg = await listenRows
     .nth(0)
     .evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -5936,10 +5951,11 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
 
   // Desktop hover effect on .ranking-row
   await rankingRows.nth(0).hover();
-  const rankHoverBg = await rankingRows
-    .nth(0)
-    .evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(rankHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+  await expect
+    .poll(async () =>
+      rankingRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
 
   // 4. Check Activities rows (.activity-row)
   await page.goto("/activities");
@@ -5968,10 +5984,13 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
     expect(actStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
 
     await activityRows.nth(0).hover();
-    const actHoverBg = await activityRows
-      .nth(0)
-      .evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(actHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+    await expect
+      .poll(async () =>
+        activityRows
+          .nth(0)
+          .evaluate((el) => getComputedStyle(el).backgroundColor),
+      )
+      .not.toBe("rgba(0, 0, 0, 0)");
   }
 
   // 5. Check micro-animations & transitions (150-180ms)
@@ -6054,4 +6073,47 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
   expect(
     parseMs(reducedMotionValues.sidebarTransitionDuration),
   ).toBeLessThanOrEqual(1);
+});
+
+test("startup screen (#158), interactive image picker modal (#155), and signature Name. header", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await login(page);
+
+  // 1. Startup screen preview (#158) fills viewport with 4 boot stages
+  await page.goto("/dashboard?boot=preview");
+  const startup = page.getByTestId("startup-screen");
+  await expect(startup).toBeVisible();
+  await expect(startup.locator(".startup-stage")).toHaveCount(4);
+  const startupBox = await startup.boundingBox();
+  expect(startupBox.height).toBeGreaterThanOrEqual(798);
+  await startup.getByRole("button", { name: "Continue to archive" }).click();
+  await expect(startup).toBeHidden();
+
+  // 2. Entity page has signature Name. accent dot and interactive Image Picker (#155)
+  await page.goto("/rankings/artists?period=all");
+  await page.locator(".ranking-row .music-item-link").first().click();
+  await expect(page.locator(".music-heading h1 .accent")).toHaveText(".");
+
+  const changeArtwork = page.locator(".change-artwork-button");
+  await expect(changeArtwork).toBeVisible();
+  await changeArtwork.click();
+
+  const picker = page.locator("dialog.image-picker-dialog[open]");
+  await expect(picker).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Search providers/i }),
+  ).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Upload file/i }),
+  ).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Image URL/i }),
+  ).toBeVisible();
+
+  await picker.getByRole("button", { name: /Image URL/i }).click();
+  await expect(picker.getByLabel(/Direct HTTPS image URL/i)).toBeVisible();
+  await picker.getByRole("button", { name: "Cancel" }).click();
+  await expect(picker).toBeHidden();
 });

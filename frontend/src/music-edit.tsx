@@ -1,5 +1,6 @@
 import { NameGroup } from "./name-groups";
 import { ImageCredits } from "./image-credit";
+import { ImagePickerModal } from "./image-picker";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
@@ -106,7 +107,7 @@ function Stars({
         </output>
         {value !== null && (
           <button
-            className="icon-button"
+            className="btn btn-icon icon-button"
             type="button"
             aria-label="Clear rating"
             onClick={() => {
@@ -168,6 +169,7 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
     measure();
     return () => observer.disconnect();
   }, [details.data?.spotify_url, kind]);
+
   return (
     <div className="music-personal" ref={actions}>
       {details.data && (
@@ -199,12 +201,15 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
           }}
         />
       )}
-      <Link className="button secondary" to={`/music/${kind}/${id}/edit`}>
+      <Link
+        className="btn btn-secondary button secondary"
+        to={`/music/${kind}/${id}/edit`}
+      >
         <Icon>edit</Icon>Edit details{kind !== "tracks" && " & image"}
       </Link>
       {details.data?.spotify_url && (
         <a
-          className="spotify-attribution"
+          className="btn btn-secondary spotify-attribution"
           href={details.data.spotify_url}
           target="_blank"
           rel="noreferrer"
@@ -230,9 +235,11 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const [preview, setPreview] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const initialized = useRef("");
   const toast = useToast();
   const back = `/music/${kind}/${id}`;
+
   useLayoutEffect(() => {
     if (details.data && initialized.current !== `${kind}:${id}`) {
       initialized.current = `${kind}:${id}`;
@@ -240,6 +247,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
       setRating(details.data.rating);
     }
   }, [details.data]);
+
   useEffect(() => {
     const objectUrl = file ? URL.createObjectURL(file) : "";
     setPreview(objectUrl);
@@ -247,12 +255,35 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [file]);
+
   return (
     <>
-      <Link to={back} back className="back-link button secondary">
-        <Icon>arrow_back</Icon>Back to{" "}
-        {kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}
-      </Link>
+      <div className="edit-header-bar">
+        <Link
+          to={back}
+          back
+          className="back-link btn btn-secondary button secondary"
+        >
+          <Icon>arrow_back</Icon>Back to{" "}
+          {kind === "artists"
+            ? "artist"
+            : kind === "albums"
+              ? "album"
+              : "track"}
+        </Link>
+        {details.data && (
+          <button
+            type="button"
+            className="btn btn-secondary secondary"
+            onClick={() => setPickerOpen(true)}
+          >
+            <Icon>travel_explore</Icon>
+            {kind === "tracks"
+              ? "Choose release artwork"
+              : "Open visual image picker"}
+          </button>
+        )}
+      </div>
       <Heading
         title={`Edit ${kind === "artists" ? "artist" : kind === "albums" ? "album" : "track"}`}
       >
@@ -299,7 +330,7 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                   <strong>{details.data.original_name}</strong>
                 </p>
                 <button
-                  className="secondary"
+                  className="btn btn-secondary secondary"
                   type="button"
                   disabled={busy || name === details.data.original_name}
                   onClick={() => setName(details.data!.original_name)}
@@ -310,10 +341,14 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
               <Stars value={rating} change={setRating} disabled={busy} />
               <ErrorText>{error}</ErrorText>
               <div className="connection-actions">
-                <button className="primary" disabled={busy}>
+                <button className="btn btn-primary primary" disabled={busy}>
                   {busy ? "Saving…" : "Save details"}
                 </button>
-                <Link className="button secondary" to={back} back>
+                <Link
+                  className="btn btn-secondary button secondary"
+                  to={back}
+                  back
+                >
                   Cancel
                 </Link>
               </div>
@@ -321,10 +356,21 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
           </article>
           {kind !== "tracks" && (
             <article className="panel padded artwork-editor">
-              <h2>{kind === "artists" ? "Artist image" : "Album artwork"}</h2>
+              <div className="panel-title">
+                <h2>{kind === "artists" ? "Artist image" : "Album artwork"}</h2>
+                <button
+                  type="button"
+                  className="btn btn-secondary secondary"
+                  disabled={busy}
+                  onClick={() => setPickerOpen(true)}
+                >
+                  <Icon>photo_library</Icon>Browse providers
+                </button>
+              </div>
               <p>
-                Upload a file or paste a direct image link. Your choice replaces
-                automatic artwork until you reset it.
+                Search public providers visually, upload a file, or paste a
+                direct image link. Your choice replaces automatic artwork until
+                you reset it.
               </p>
               <div className="artwork-visual">
                 {preview ? (
@@ -396,14 +442,14 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                 </label>
                 <div className="connection-actions">
                   <button
-                    className="primary"
+                    className="btn btn-primary primary"
                     disabled={busy || (!file && !url)}
                   >
                     {busy ? "Saving image…" : "Save image"}
                   </button>
                   <button
                     type="button"
-                    className="secondary"
+                    className="btn btn-secondary secondary"
                     disabled={busy || !details.data.custom_image}
                     onClick={async () => {
                       setBusy(true);
@@ -441,6 +487,16 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
         !details.error && (
           <SkeletonCardList count={2} label="Loading details…" />
         )
+      )}
+      {pickerOpen && details.data && (
+        <ImagePickerModal
+          kind={kind}
+          id={id}
+          entityName={details.data.name}
+          customImage={details.data.custom_image}
+          onClose={() => setPickerOpen(false)}
+          onSaved={() => setVersion((v) => v + 1)}
+        />
       )}
     </>
   );

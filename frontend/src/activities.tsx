@@ -354,7 +354,8 @@ export function ArtworkWork({
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
-  if (compact && !work.total) return null;
+  const serverSync = work.serverSync;
+  if (compact && !work.total && !serverSync) return null;
 
   const handleBackfill = async () => {
     setBusy(true);
@@ -381,6 +382,9 @@ export function ArtworkWork({
         <small>
           {number.format(work.loaded)} saved · {number.format(work.pending)}{" "}
           remaining
+          {work.deferred > 0
+            ? ` (${number.format(work.deferred)} queued behind library sync)`
+            : ""}
           {work.failed > 0
             ? " · " + number.format(work.failed) + " could not load"
             : ""}
@@ -391,12 +395,19 @@ export function ArtworkWork({
   return compact ? (
     <Link to="/activities" className="sidebar-job artwork-work">
       <span className="sidebar-job-heading">
-        <Icon>{work.pending ? "downloading" : "photo_library"}</Icon>
+        <Icon>
+          {work.pending || serverSync ? "downloading" : "photo_library"}
+        </Icon>
         <strong>
-          {work.pending ? "Downloading artwork" : "Artwork downloads"}
+          {work.pending || serverSync
+            ? "Downloading artwork"
+            : "Artwork downloads"}
         </strong>
         <Icon>chevron_right</Icon>
       </span>
+      {serverSync && !serverSync.paused && work.deferred > 0 && (
+        <small>Browse fetches yielded to library sync</small>
+      )}
       {progress}
     </Link>
   ) : (
@@ -405,32 +416,61 @@ export function ArtworkWork({
       aria-label="Artwork downloads"
     >
       <div className="activity-symbol">
-        <Icon>{work.pending ? "downloading" : "photo_library"}</Icon>
+        <Icon>
+          {work.pending || serverSync ? "downloading" : "photo_library"}
+        </Icon>
       </div>
       <div className="activity-content">
         <div className="activity-row-heading">
           <strong>
-            {work.pending ? "Downloading artwork" : "Artwork downloads"}
+            {work.pending || serverSync
+              ? "Downloading artwork"
+              : "Artwork downloads"}
           </strong>
           <span className="state-badge">
-            {work.pending
-              ? "In progress"
-              : work.failed
-                ? "Finished with unavailable images"
-                : "Complete"}
+            {serverSync
+              ? serverSync.paused
+                ? "Library sync paused"
+                : "Library sync active"
+              : work.pending
+                ? "In progress"
+                : work.failed
+                  ? "Finished with unavailable images"
+                  : "Complete"}
           </span>
         </div>
-        <p>Artwork is saved locally and reused across your archive.</p>
+        <p>
+          Artwork is saved locally and reused across your archive. You can also
+          pick or upload custom images on any artist, album, or track page.
+        </p>
+        {serverSync && !serverSync.paused && (
+          <div className="artwork-coordination-banner" role="status">
+            <Icon>bolt</Icon>
+            <span>
+              <strong>Coordinated background queue:</strong> Library artwork
+              sync is running
+              {serverSync.expected
+                ? ` (${number.format(serverSync.processed)} of ${number.format(serverSync.expected)})`
+                : ""}
+              . Browse-time fetches yield automatically to avoid provider rate
+              limits.
+            </span>
+          </div>
+        )}
         {progress}
         <div className="activity-actions">
           <button
             type="button"
-            className="secondary button"
+            className="btn btn-secondary secondary button"
             disabled={busy}
             onClick={handleBackfill}
           >
+            <Icon>refresh</Icon>
             {busy ? "Refreshing…" : "Refresh missing artwork"}
           </button>
+          <Link to="/settings/images" className="btn btn-ghost button">
+            <Icon>tune</Icon>Provider order
+          </Link>
         </div>
       </div>
     </article>
@@ -954,95 +994,97 @@ export function Activities({
           {listLoading ? (
             <SkeletonCardList count={3} label="Loading activities…" />
           ) : visibleJobs.length ? (
-            separateJobs.map((job) => (
-              <article
-                className={
-                  "activity-row panel " + (isActive(job) ? "is-active" : "")
-                }
-                key={job.id}
-              >
-                <div className="activity-symbol">
-                  <Icon>
-                    {job.kind === "artwork"
-                      ? "photo_library"
-                      : job.kind === "calendar"
-                        ? "calendar_month"
-                        : job.kind === "spotify_collection"
-                          ? "sync"
-                          : "file_upload"}
-                  </Icon>
-                </div>
-                <div className="activity-content">
-                  <div className="activity-row-heading">
-                    <Link to={`/activities/${job.id}`}>
-                      <strong>{activityName(job)}</strong>
-                    </Link>
-                    <StateBadge job={job} />
-                  </div>
-                  <p>{phaseLabel(job)}</p>
-                  <Progress job={job} />
-                  {!isActive(job) && job.kind === "artwork" && (
-                    <small>
-                      {number.format(job.added)} images saved ·{" "}
-                      {number.format(job.duplicates)} already cached ·{" "}
-                      {number.format(job.skipped)} unavailable
-                    </small>
-                  )}
-                  {!isActive(job) && job.kind !== "artwork" && (
-                    <small>
-                      {number.format(job.added)} new listens ·{" "}
-                      {number.format(job.duplicates)} already present ·{" "}
-                      {number.format(job.invalid)} invalid rows
-                    </small>
-                  )}
-                  {job.error_code && (
-                    <p className="form-error">
+            <div className="activities-list">
+              {separateJobs.map((job) => (
+                <article
+                  className={
+                    "activity-row panel " + (isActive(job) ? "is-active" : "")
+                  }
+                  key={job.id}
+                >
+                  <div className="activity-symbol">
+                    <Icon>
                       {job.kind === "artwork"
-                        ? jobMessage(job.error_code)
-                        : `${job.error_code}. Open the report for details and available actions.`}
-                    </p>
-                  )}
-                  {job.retry_at_ms && (
-                    <p>Next attempt: {date(job.retry_at_ms, preferences)}</p>
-                  )}
-                </div>
-                <div className="activity-row-actions">
-                  {isActive(job) && (
-                    <button
-                      className="secondary icon-button activity-cancel"
-                      aria-label={`Cancel ${activityName(job)}`}
-                      title="Cancel activity"
-                      disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        setActionError("");
-                        try {
-                          await api.activityAction(job.id, "cancel");
-                          await refresh();
-                          toast(
-                            "Cancellation requested. Saved progress is kept; the current step stops at a safe boundary.",
-                          );
-                        } catch (error) {
-                          toast(
-                            error instanceof Error
-                              ? error.message
-                              : String(error),
-                            true,
-                          );
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      <Icon>close</Icon>
-                    </button>
-                  )}
-                  <span className="activity-open" aria-hidden="true">
-                    <Icon>arrow_forward</Icon>
-                  </span>
-                </div>
-              </article>
-            ))
+                        ? "photo_library"
+                        : job.kind === "calendar"
+                          ? "calendar_month"
+                          : job.kind === "spotify_collection"
+                            ? "sync"
+                            : "file_upload"}
+                    </Icon>
+                  </div>
+                  <div className="activity-content">
+                    <div className="activity-row-heading">
+                      <Link to={`/activities/${job.id}`}>
+                        <strong>{activityName(job)}</strong>
+                      </Link>
+                      <StateBadge job={job} />
+                    </div>
+                    <p>{phaseLabel(job)}</p>
+                    <Progress job={job} />
+                    {!isActive(job) && job.kind === "artwork" && (
+                      <small>
+                        {number.format(job.added)} images saved ·{" "}
+                        {number.format(job.duplicates)} already cached ·{" "}
+                        {number.format(job.skipped)} unavailable
+                      </small>
+                    )}
+                    {!isActive(job) && job.kind !== "artwork" && (
+                      <small>
+                        {number.format(job.added)} new listens ·{" "}
+                        {number.format(job.duplicates)} already present ·{" "}
+                        {number.format(job.invalid)} invalid rows
+                      </small>
+                    )}
+                    {job.error_code && (
+                      <p className="form-error">
+                        {job.kind === "artwork"
+                          ? jobMessage(job.error_code)
+                          : `${job.error_code}. Open the report for details and available actions.`}
+                      </p>
+                    )}
+                    {job.retry_at_ms && (
+                      <p>Next attempt: {date(job.retry_at_ms, preferences)}</p>
+                    )}
+                  </div>
+                  <div className="activity-row-actions">
+                    {isActive(job) && (
+                      <button
+                        className="secondary icon-button activity-cancel"
+                        aria-label={`Cancel ${activityName(job)}`}
+                        title="Cancel activity"
+                        disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          setActionError("");
+                          try {
+                            await api.activityAction(job.id, "cancel");
+                            await refresh();
+                            toast(
+                              "Cancellation requested. Saved progress is kept; the current step stops at a safe boundary.",
+                            );
+                          } catch (error) {
+                            toast(
+                              error instanceof Error
+                                ? error.message
+                                : String(error),
+                              true,
+                            );
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        <Icon>close</Icon>
+                      </button>
+                    )}
+                    <span className="activity-open" aria-hidden="true">
+                      <Icon>arrow_forward</Icon>
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
           ) : (
             !listError && (
               <div className="empty activity-empty">

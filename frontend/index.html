@@ -9,126 +9,185 @@
     <style>
       :root {
         color-scheme: dark light;
-        --splash-bg: #13151b;
-        --splash-text: #f2f3f7;
-        --splash-muted: #bac0cc;
+        --splash-bg: #0d0f13;
+        --splash-surface: #151921;
+        --splash-surface-raised: #1e2430;
+        --splash-border: rgba(255, 255, 255, 0.1);
+        --splash-text: #f3f5f8;
+        --splash-muted: #9aa3b2;
         --splash-accent: #c9ee8b;
       }
       @media (prefers-color-scheme: light) {
         :root {
-          --splash-bg: #f5f6fa;
-          --splash-text: #18212d;
-          --splash-muted: #425065;
+          --splash-bg: #f4f6f9;
+          --splash-surface: #ffffff;
+          --splash-surface-raised: #eef1f6;
+          --splash-border: rgba(20, 28, 40, 0.14);
+          --splash-text: #141b24;
+          --splash-muted: #4b5668;
         }
       }
       * {
         box-sizing: border-box;
       }
+      html,
       body {
         margin: 0;
-        background-color: var(--splash-bg);
+        padding: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(
+            circle at 50% 0%,
+            rgba(201, 238, 139, 0.08),
+            transparent 55%
+          ),
+          var(--splash-bg);
         color: var(--splash-text);
         font-family:
           -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
           Arial, sans-serif;
       }
       .pre-splash-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+        display: grid;
+        place-items: center;
         min-height: 100vh;
         padding: 24px;
-        text-align: center;
+      }
+      .pre-splash-card {
+        width: min(560px, 100%);
+        background: var(--splash-surface);
+        border: 1px solid var(--splash-border);
+        border-radius: 16px;
+        padding: 36px 32px;
+        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+      }
+      .pre-splash-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
       }
       .pre-splash-brand {
-        font-size: 32px;
-        font-weight: 700;
+        font-size: 30px;
+        font-weight: 800;
         letter-spacing: -0.04em;
-        color: var(--splash-text);
-        margin-bottom: 24px;
+        line-height: 1;
         user-select: none;
       }
       .pre-splash-brand .accent {
         color: var(--splash-accent);
       }
-      .pre-splash-loader {
-        display: flex;
+      .pre-splash-pill {
+        display: inline-flex;
         align-items: center;
-        justify-content: center;
-        margin-bottom: 16px;
-        height: 24px;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+        background: var(--splash-surface-raised);
+        border: 1px solid var(--splash-border);
+        color: var(--splash-muted);
       }
       .pre-splash-dot {
-        width: 10px;
-        height: 10px;
+        width: 8px;
+        height: 8px;
         border-radius: 50%;
         background-color: var(--splash-accent);
-        box-shadow: 0 0 12px var(--splash-accent);
-        animation: pre-splash-pulse 1.4s ease-in-out infinite;
+        box-shadow: 0 0 10px var(--splash-accent);
+        animation: pre-splash-pulse 1.3s ease-in-out infinite;
       }
       @keyframes pre-splash-pulse {
         0%,
         100% {
-          transform: scale(0.75);
-          opacity: 0.4;
+          transform: scale(0.8);
+          opacity: 0.45;
         }
         50% {
-          transform: scale(1.25);
+          transform: scale(1.2);
           opacity: 1;
         }
       }
       @media (prefers-reduced-motion: reduce) {
         .pre-splash-dot {
           animation: none;
-          opacity: 0.9;
+          opacity: 1;
         }
       }
       .pre-splash-status {
-        font-size: 14px;
-        color: var(--splash-muted);
-        margin: 0;
-        max-width: 360px;
+        font-size: 15px;
+        font-weight: 500;
+        color: var(--splash-text);
+        margin: 0 0 20px;
         line-height: 1.5;
+      }
+      .pre-splash-stages {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .pre-splash-stage {
+        padding: 12px;
+        border-radius: 10px;
+        background: var(--splash-surface-raised);
+        border: 1px solid var(--splash-border);
+      }
+      .pre-splash-stage small {
+        display: block;
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--splash-muted);
+        margin-bottom: 4px;
+      }
+      .pre-splash-stage strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      @media (max-width: 560px) {
+        .pre-splash-card {
+          padding: 24px 20px;
+        }
+        .pre-splash-stages {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <div id="root">
       <div class="pre-splash-container">
-        <div class="pre-splash-brand">
-          scrobbl<span class="accent">.</span>rs
+        <div class="pre-splash-card">
+          <div class="pre-splash-top">
+            <div class="pre-splash-brand">
+              scrobbl<span class="accent">.</span>rs
+            </div>
+            <div class="pre-splash-pill">
+              <span class="pre-splash-dot"></span>
+              <span>Starting</span>
+            </div>
+          </div>
+          <p class="pre-splash-status">Initializing local listening archive…</p>
+          <div class="pre-splash-stages">
+            <div class="pre-splash-stage">
+              <small>01 · SERVER</small>
+              <strong>Connected</strong>
+            </div>
+            <div class="pre-splash-stage">
+              <small>02 · ARCHIVE</small>
+              <strong>SQLite WAL</strong>
+            </div>
+            <div class="pre-splash-stage">
+              <small>03 · INTERFACE</small>
+              <strong>Hydrating</strong>
+            </div>
+          </div>
         </div>
-        <div class="pre-splash-loader">
-          <div class="pre-splash-dot"></div>
-        </div>
-        <p class="pre-splash-status">Starting scrobbl.rs...</p>
       </div>
     </div>
-    <script>
-      (function () {
-        var statusEl = document.querySelector(".pre-splash-status");
-        function check() {
-          fetch("/api/boot-status", { cache: "no-store" })
-            .then(function (r) {
-              return r.json();
-            })
-            .then(function (data) {
-              if (data && !data.ready) {
-                if (data.stage && statusEl) {
-                  statusEl.textContent =
-                    "Starting scrobbl.rs (" + data.stage + ")...";
-                }
-                setTimeout(check, 800);
-              }
-            })
-            .catch(function () {
-              setTimeout(check, 1000);
-            });
-        }
-        check();
-      })();
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

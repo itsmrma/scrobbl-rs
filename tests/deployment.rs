@@ -381,7 +381,7 @@ async fn early_boot_serves_splash_and_status_and_blocks_operational_apis() {
     );
     assert!(html.contains("splash-container"));
     assert!(html.contains("scrobbl"));
-    assert!(html.contains("Avvio di scrobbl.rs in corso..."));
+    assert!(html.contains("Starting scrobbl.rs..."));
 
     // 3. Operational APIs receive 503 with Retry-After: 1 header
     for path in ["/api/setup", "/api/session", "/api/v1/preferences"] {
@@ -443,7 +443,7 @@ async fn boot_failure_sets_error_in_status_and_splash_page() {
     let (status, _, html) = call_raw(&app, "GET", "/", &[], Body::empty()).await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("sqlite3: disk image is malformed during migration"));
-    assert!(html.contains("Errore durante l'avvio") || html.contains("Errore durante l&#39;avvio"));
+    assert!(html.contains("Startup error"));
 
     // Operational APIs still blocked
     let (status, headers, body) = call(&app, "POST", "/api/setup", &[], json!({})).await;

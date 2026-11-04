@@ -13,7 +13,7 @@ module.exports = defineConfig({
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   webServer: {
     command: "node scripts/e2e-server.cjs",
-    url: `http://127.0.0.1:${process.env.SCROBBL_E2E_PORT || 3211}`,
+    url: `http://127.0.0.1:${process.env.SCROBBL_E2E_PORT || 3211}/healthz`,
     reuseExistingServer: false,
     timeout: 120000,
     gracefulShutdown: { signal: "SIGTERM", timeout: 10000 },

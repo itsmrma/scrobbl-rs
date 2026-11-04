@@ -1,6 +1,6 @@
 import { queueArtwork } from "./artwork-activity";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
 
 export function Icon({ children }: { children: string }) {
@@ -10,6 +10,7 @@ export function Icon({ children }: { children: string }) {
     </span>
   );
 }
+
 export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
   return name === "scrobbl.rs" ? (
     <span className="wordmark">
@@ -17,9 +18,44 @@ export function Wordmark({ name = "scrobbl.rs" }: { name?: string }) {
       <span className="wordmark-suffix">rs</span>
     </span>
   ) : (
-    <span className="wordmark">{name}</span>
+    <span className="wordmark">
+      {name}
+      {!name.endsWith(".") && <span className="accent">.</span>}
+    </span>
   );
 }
+
+export type ButtonVariant =
+  "primary" | "secondary" | "ghost" | "icon" | "danger";
+
+export const buttonClass = (
+  variant: ButtonVariant = "secondary",
+  extra = "",
+) => {
+  const map: Record<ButtonVariant, string> = {
+    primary: "btn btn-primary primary",
+    secondary: "btn btn-secondary secondary",
+    ghost: "btn btn-ghost",
+    icon: "btn-icon icon-button",
+    danger: "btn btn-danger danger",
+  };
+  return `${map[variant]} ${extra}`.trim();
+};
+
+export function Button({
+  variant = "secondary",
+  className = "",
+  type = "button",
+  children,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant }) {
+  return (
+    <button type={type} className={buttonClass(variant, className)} {...rest}>
+      {children}
+    </button>
+  );
+}
+
 export function CopyButton({
   value,
   children,
@@ -44,7 +80,7 @@ export function CopyButton({
     <div className="copy-control">
       <button
         type="button"
-        className="secondary"
+        className="btn btn-secondary secondary"
         disabled={disabled}
         onClick={async () => {
           setError("");
@@ -76,6 +112,7 @@ export function CopyButton({
     </div>
   );
 }
+
 export function Cover({
   url,
   large = false,
@@ -104,16 +141,19 @@ export function Cover({
       if (dialog.open) dialog.close();
     };
   }, [zoomed]);
+
   const local = !!url?.startsWith("/api/v1/artwork/");
   const source = local
     ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
     : "";
+
   useEffect(() => {
     const src = ready?.src;
     return () => {
       if (src?.startsWith("blob:")) URL.revokeObjectURL(src);
     };
   }, [ready?.src]);
+
   useEffect(() => {
     if (!local || !source || !marker.current) return;
     let pending = false;
@@ -144,11 +184,11 @@ export function Cover({
       observer.disconnect();
     };
   }, [local, source, cacheMiss, url]);
+
   useEffect(() => setFailed(false), [url]);
+
   useEffect(() => {
     if (!failed || !local) return;
-    // Failed images recover after a temporary network or provider failure
-    // without requiring the owner to reload.
     const due = Date.now() + 60_000;
     const retry = () => {
       if (!document.hidden && Date.now() >= due) {
@@ -165,6 +205,7 @@ export function Cover({
       window.removeEventListener("online", retry);
     };
   }, [failed, local]);
+
   useEffect(() => {
     if (!failed || !local) return;
     const changed = () => {
@@ -174,6 +215,7 @@ export function Cover({
     window.addEventListener("artwork-cache-changed", changed);
     return () => window.removeEventListener("artwork-cache-changed", changed);
   }, [failed, local]);
+
   useEffect(() => {
     const changed = (event: Event) => {
       const { kind, id } = (event as CustomEvent<{ kind: string; id: string }>)
@@ -186,6 +228,7 @@ export function Cover({
     window.addEventListener("artwork-updated", changed);
     return () => window.removeEventListener("artwork-updated", changed);
   }, [url]);
+
   return local && !failed && ready?.source === source ? (
     <span className={`cover image-frame ${large ? "large" : ""}`}>
       <img
@@ -237,7 +280,7 @@ export function Cover({
           <div className="artwork-lightbox-container">
             <button
               type="button"
-              className="icon-button artwork-lightbox-close"
+              className="btn-icon icon-button artwork-lightbox-close"
               aria-label="Close enlarged artwork"
               onClick={() => setZoomed(false)}
             >
@@ -260,7 +303,9 @@ export function Cover({
     </span>
   );
 }
+
 export const number = new Intl.NumberFormat("en-GB");
+
 export function duration(ms: number | null, compact = false): string {
   if (ms === null) return "Unknown";
   const seconds = Math.floor(ms / 1000),
@@ -272,6 +317,7 @@ export function duration(ms: number | null, compact = false): string {
       : `${number.format(minutes)}m`
     : `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
+
 const dateFormatters = new Map<string, Intl.DateTimeFormat>();
 export function date(ms: number | null, preferences: Preferences) {
   if (ms === null) return "Never";
@@ -292,35 +338,47 @@ export function date(ms: number | null, preferences: Preferences) {
   }
   return formatter.format(ms);
 }
+
 const SOURCE_LABELS: Record<string, string> = {
   spotify_api: "Spotify collection",
   spotify_import: "Spotify import",
   listenbrainz: "ListenBrainz",
 };
+
 export function formatSources(sources: string[]): string {
   return [...new Set(sources)]
     .map((source) => SOURCE_LABELS[source] || source)
     .join(" + ");
 }
+
+/**
+ * Signature typographic header (`Name.`): every page and entity title ends
+ * immediately with the warm/accent period `<span className="accent">.</span>`.
+ */
 export function Heading({
   title,
   children,
+  actions,
 }: {
   title: string;
   children?: ReactNode;
+  actions?: ReactNode;
 }) {
+  const cleanTitle = title.endsWith(".") ? title.slice(0, -1) : title;
   return (
     <div className="page-heading">
-      <div>
+      <div className="page-heading-copy">
         <h1>
-          {title}
+          {cleanTitle}
           <span className="accent">.</span>
         </h1>
         {children && <p>{children}</p>}
       </div>
+      {actions && <div className="page-heading-actions">{actions}</div>}
     </div>
   );
 }
+
 export function Notice({
   children,
   title,
@@ -352,13 +410,16 @@ export function Notice({
     </div>
   ) : null;
 }
+
 export function ErrorText({ children }: { children?: ReactNode }) {
   return <Notice title="Something needs attention">{children}</Notice>;
 }
+
 const ToastContext = createContext<(message: string, error?: boolean) => void>(
   () => {},
 );
 export const useToast = () => useContext(ToastContext);
+
 export function Toasts({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<
     { id: number; message: string; error: boolean }[]
@@ -394,7 +455,8 @@ export function Toasts({ children }: { children: ReactNode }) {
           >
             <div>{item.message}</div>
             <button
-              className="icon-button"
+              type="button"
+              className="btn-icon icon-button"
               aria-label="Dismiss notification"
               onClick={() => dismiss(item.id)}
             >
@@ -407,14 +469,17 @@ export function Toasts({ children }: { children: ReactNode }) {
     </ToastContext>
   );
 }
+
 export function Modal({
   title,
   children,
   close,
+  className = "",
 }: {
   title: string;
   children: ReactNode;
   close: () => void;
+  className?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -427,17 +492,25 @@ export function Modal({
   return (
     <dialog
       ref={ref}
+      className={className || undefined}
+      onClick={(e) => {
+        if (e.target === ref.current) close();
+      }}
       onCancel={(e) => {
         e.preventDefault();
         close();
       }}
       aria-labelledby="dialog-title"
     >
-      <h2 id="dialog-title">{title}</h2>
+      <h2 id="dialog-title">
+        {title}
+        {!title.endsWith(".") && <span className="accent">.</span>}
+      </h2>
       {children}
     </dialog>
   );
 }
+
 export interface SegmentedOption<T extends string = string> {
   value: T;
   label: ReactNode;
@@ -446,8 +519,10 @@ export interface SegmentedOption<T extends string = string> {
   ariaLabel?: string;
 }
 
-export interface SegmentedControlProps<T extends string = string>
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
+export interface SegmentedControlProps<T extends string = string> extends Omit<
+  React.HTMLAttributes<HTMLDivElement>,
+  "onChange"
+> {
   value: T;
   onChange: (value: T) => void;
   options: SegmentedOption<T>[];
