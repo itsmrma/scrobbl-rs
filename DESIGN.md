@@ -76,6 +76,7 @@ typography:
     lineHeight: 1.4
     letterSpacing: "0.15em"
 rounded:
+  hairline: "2px"
   track: "3px"
   xs: "4px"
   bar: "5px"
@@ -85,6 +86,7 @@ rounded:
   card: "10px"
   panel: "12px"
   modal: "14px"
+  pill: "999px"
   full: "50%"
 spacing:
   xs: "4px"

@@ -181,7 +181,7 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
     let loader_display = if status.error.is_some() {
         "none"
     } else {
-        "flex"
+        "block"
     };
     let initial_status = if status.error.is_some() {
         "A critical error occurred while starting the archive."
@@ -191,6 +191,15 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         "Starting background collection and artwork workers..."
     } else {
         "Starting scrobbl.rs..."
+    };
+    let initial_progress = if status.error.is_some() {
+        "100%"
+    } else if status.stage == "starting_workers" {
+        "84%"
+    } else if status.stage == "migrating" || status.stage == "opening_database" {
+        "58%"
+    } else {
+        "28%"
     };
     let escaped_error = html_escape(status.error.as_deref().unwrap_or(""));
 
@@ -206,26 +215,24 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
     <style>
       :root {{
         color-scheme: dark light;
-        --splash-bg: #0d0f13;
-        --splash-surface: #151921;
-        --splash-surface-raised: #1e2430;
-        --splash-border: rgba(255, 255, 255, 0.1);
-        --splash-text: #f3f5f8;
-        --splash-muted: #9aa3b2;
+        --splash-bg: #13151b;
+        --splash-surface: #1c1f27;
+        --splash-surface-raised: #292d38;
+        --splash-border: #454a58;
+        --splash-text: #f2f3f7;
+        --splash-muted: #bac0cc;
         --splash-accent: #c9ee8b;
-        --splash-error: #ff8e80;
-        --splash-error-bg: rgba(255, 142, 128, 0.1);
+        --splash-error: #ffaaa0;
       }}
       @media (prefers-color-scheme: light) {{
         :root {{
-          --splash-bg: #f4f6f9;
+          --splash-bg: #f5f6fa;
           --splash-surface: #ffffff;
-          --splash-surface-raised: #eef1f6;
-          --splash-border: rgba(20, 28, 40, 0.14);
-          --splash-text: #141b24;
-          --splash-muted: #4b5668;
-          --splash-error: #b3261e;
-          --splash-error-bg: rgba(179, 38, 30, 0.08);
+          --splash-surface-raised: #e9ecf3;
+          --splash-border: #9da7b6;
+          --splash-text: #18212d;
+          --splash-muted: #425065;
+          --splash-error: #a22620;
         }}
       }}
       * {{ box-sizing: border-box; }}
@@ -234,11 +241,9 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         padding: 0;
         width: 100%;
         min-height: 100vh;
-        background:
-          radial-gradient(circle at 50% 0%, rgba(201, 238, 139, 0.09), transparent 55%),
-          var(--splash-bg);
+        background: var(--splash-bg);
         color: var(--splash-text);
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }}
       .splash-container {{
         display: grid;
@@ -247,133 +252,102 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         padding: 24px;
       }}
       .splash-card {{
-        width: min(560px, 100%);
+        width: min(460px, 100%);
         background: var(--splash-surface);
         border: 1px solid var(--splash-border);
-        border-radius: 16px;
-        padding: 36px 32px;
-        box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+        border-radius: 12px;
+        padding: 26px;
+        display: grid;
+        gap: 16px;
       }}
       .splash-header {{
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 24px;
+        gap: 12px;
       }}
       .splash-brand {{
-        font-size: 30px;
-        font-weight: 800;
-        letter-spacing: -0.04em;
-        line-height: 1;
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.035em;
+        line-height: 1.2;
       }}
       .splash-brand .accent {{ color: var(--splash-accent); }}
       .splash-pill {{
         display: inline-flex;
         align-items: center;
-        gap: 8px;
-        padding: 6px 12px;
+        padding: 4px 10px;
         border-radius: 999px;
         font-size: 12px;
         font-weight: 600;
-        letter-spacing: 0.03em;
-        text-transform: uppercase;
         background: var(--splash-surface-raised);
         border: 1px solid var(--splash-border);
         color: var(--splash-muted);
+      }}
+      .splash-status {{
+        font-size: 14px;
+        color: var(--splash-text);
+        margin: 0;
+        line-height: 1.5;
       }}
       .splash-loader {{
         display: {loader_display};
-        align-items: center;
-        gap: 10px;
+        width: 100%;
+        height: 4px;
+        border-radius: 3px;
+        background: var(--splash-surface-raised);
+        overflow: hidden;
       }}
-      .splash-dot {{
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
+      .splash-bar {{
+        height: 100%;
+        width: {initial_progress};
+        border-radius: 3px;
         background: var(--splash-accent);
-        box-shadow: 0 0 12px var(--splash-accent);
-        animation: splash-pulse 1.3s ease-in-out infinite;
-      }}
-      @keyframes splash-pulse {{
-        0%, 100% {{ transform: scale(0.8); opacity: 0.45; }}
-        50% {{ transform: scale(1.2); opacity: 1; }}
+        transition: width 320ms cubic-bezier(0.16, 1, 0.3, 1);
       }}
       @media (prefers-reduced-motion: reduce) {{
-        .splash-dot {{ animation: none; opacity: 1; }}
-      }}
-      .splash-status {{
-        font-size: 15px;
-        font-weight: 500;
-        color: var(--splash-text);
-        margin: 0 0 20px;
-        line-height: 1.5;
-      }}
-      .splash-stages {{
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 10px;
-      }}
-      .splash-stage {{
-        padding: 12px;
-        border-radius: 10px;
-        background: var(--splash-surface-raised);
-        border: 1px solid var(--splash-border);
-      }}
-      .splash-stage small {{
-        display: block;
-        font-size: 11px;
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        color: var(--splash-muted);
-        margin-bottom: 4px;
-      }}
-      .splash-stage strong {{
-        display: block;
-        font-size: 13px;
-        font-weight: 600;
+        .splash-bar {{ transition: none; }}
       }}
       @media (max-width: 560px) {{
-        .splash-card {{ padding: 24px 20px; }}
-        .splash-stages {{ grid-template-columns: 1fr; }}
+        .splash-card {{ padding: 18px; }}
       }}
       .splash-error-panel {{
         display: {error_display};
-        margin-top: 20px;
-        padding: 16px 18px;
-        border-radius: 12px;
-        background: var(--splash-error-bg);
+        padding: 16px;
+        border-radius: 10px;
+        background: var(--splash-surface-raised);
         border: 1px solid var(--splash-error);
       }}
       .splash-error-title {{
         font-size: 14px;
-        font-weight: 700;
+        font-weight: 600;
         color: var(--splash-error);
         margin: 0 0 8px;
       }}
       .splash-error-message {{
-        font-size: 12.5px;
+        font-size: 12px;
         color: var(--splash-text);
         margin: 0;
         line-height: 1.5;
         white-space: pre-wrap;
         word-break: break-word;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        background: var(--splash-surface-raised);
+        background: var(--splash-bg);
         padding: 10px 12px;
         border-radius: 8px;
         border: 1px solid var(--splash-border);
       }}
       .splash-retry-btn {{
-        margin-top: 14px;
+        margin-top: 12px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 10px 16px;
+        padding: 10px 15px;
         min-height: 44px;
         font-size: 13px;
         font-weight: 600;
         border-radius: 8px;
-        background: var(--splash-surface-raised);
+        background: var(--splash-surface);
         color: var(--splash-text);
         border: 1px solid var(--splash-border);
         cursor: pointer;
@@ -386,15 +360,12 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         <div class="splash-header">
           <div class="splash-brand">scrobbl<span class="accent">.</span>rs</div>
           <div class="splash-pill">
-            <span class="splash-loader" id="splash-loader"><span class="splash-dot"></span></span>
-            <span id="splash-badge">Booting</span>
+            <span id="splash-badge">Starting</span>
           </div>
         </div>
         <p class="splash-status" id="splash-status">{initial_status}</p>
-        <div class="splash-stages">
-          <div class="splash-stage"><small>01 · LISTENER</small><strong>HTTP Bound</strong></div>
-          <div class="splash-stage"><small>02 · ARCHIVE</small><strong id="stage-db">SQLite WAL</strong></div>
-          <div class="splash-stage"><small>03 · WORKERS</small><strong id="stage-workers">Sync &amp; Art</strong></div>
+        <div class="splash-loader" id="splash-loader" aria-hidden="true">
+          <div class="splash-bar" id="splash-bar"></div>
         </div>
         <div class="splash-error-panel" id="splash-error-panel">
           <div class="splash-error-title">Startup error</div>
@@ -426,13 +397,17 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
                 if (errPanel) errPanel.style.display = 'block';
               }} else if (s.stage) {{
                 var statusEl = document.getElementById('splash-status');
+                var barEl = document.getElementById('splash-bar');
                 if (statusEl) {{
                   if (s.stage === 'migrating' || s.stage === 'opening_database') {{
                     statusEl.textContent = 'Opening and verifying SQLite WAL archive...';
+                    if (barEl) barEl.style.width = '58%';
                   }} else if (s.stage === 'starting_workers') {{
                     statusEl.textContent = 'Starting background collection and artwork workers...';
+                    if (barEl) barEl.style.width = '84%';
                   }} else {{
                     statusEl.textContent = 'Starting scrobbl.rs...';
+                    if (barEl) barEl.style.width = '28%';
                   }}
                 }}
               }}

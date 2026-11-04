@@ -35,26 +35,22 @@ import { Auth, UsernameSetup } from "./account";
 import { AccountMenu } from "./account-settings";
 import { SearchPage } from "./search";
 import { StartupScreen } from "./startup-screen";
-import type { BootStageId } from "./startup-screen";
 
-function shouldAnimateStartup(): boolean {
-  if (typeof navigator !== "undefined" && navigator.webdriver) return false;
-  if (
-    typeof matchMedia === "function" &&
-    matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function Shell({ logout }: { logout: () => void }) {
+function Shell({
+  logout,
+  initialPreferences = null,
+}: {
+  logout: () => void;
+  initialPreferences?: Preferences | null;
+}) {
   useDisclosureMotion();
   const artworkWork = useArtworkActivity();
   const path = useLocation(),
     search = useSearch(),
     appearance = useAppearance();
-  const [preferences, setPreferences] = useState<Preferences | null>(null),
+  const [preferences, setPreferences] = useState<Preferences | null>(
+      initialPreferences,
+    ),
     [loadError, setLoadError] = useState("");
   const [status, setStatus] = useState<SpotifyStatus | null>(null),
     [statusError, setStatusError] = useState("");
@@ -193,17 +189,19 @@ function Shell({ logout }: { logout: () => void }) {
 
   useEffect(() => {
     alive.current = true;
-    void api
-      .preferences()
-      .then((p) => {
-        if (alive.current) {
-          setPreferences(p);
-          setLoadError("");
-        }
-      })
-      .catch((e) => {
-        if (alive.current) setLoadError(e.message);
-      });
+    if (!initialPreferences) {
+      void api
+        .preferences()
+        .then((p) => {
+          if (alive.current) {
+            setPreferences(p);
+            setLoadError("");
+          }
+        })
+        .catch((e) => {
+          if (alive.current) setLoadError(e.message);
+        });
+    }
     let polling = false;
     const poll = async () => {
       if (polling) return;
@@ -352,7 +350,7 @@ function Shell({ logout }: { logout: () => void }) {
               <Icon>close</Icon>
             </button>
           </div>
-          <p className="eyebrow nav-copy">YOUR LIBRARY</p>
+          <p className="sidebar-section-label nav-copy">Your library</p>
           <nav aria-label="Main navigation">
             {nav.map(([to, key, label, icon]) => (
               <Link
@@ -607,54 +605,57 @@ function Shell({ logout }: { logout: () => void }) {
   );
 }
 
-function App() {
-  const [session, setSession] = useState<Session | null>(null),
-    [error, setError] = useState("");
-  const [bootHoldStage, setBootHoldStage] = useState<BootStageId | null>(() =>
-    shouldAnimateStartup() ? "database" : null,
-  );
-
-  useEffect(() => {
-    if (!bootHoldStage) return;
-    const t1 = setTimeout(() => setBootHoldStage("session"), 180);
-    const t2 = setTimeout(() => setBootHoldStage(null), 380);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, []);
-
-  useEffect(() => {
-    void api
-      .session()
-      .then((data) => {
-        setCsrf(data.csrf);
-        setSession(data);
-      })
-      .catch((e) => setError(e.message));
-    const expired = () =>
-      void api
-        .session()
-        .then((data) => {
-          setCsrf(data.csrf);
-          setSession(data);
-        })
-        .catch((e) => setError(e.message));
-    window.addEventListener("session-expired", expired);
-    return () => window.removeEventListener("session-expired", expired);
-  }, []);
+function App({
+  initialSession = null,
+  initialPreferences = null,
+  initialError = "",
+}: {
+  initialSession?: Session | null;
+  initialPreferences?: Preferences | null;
+  initialError?: string;
+}) {
+  const [session, setSession] = useState<Session | null>(initialSession),
+    [bootPreferences, setBootPreferences] = useState<Preferences | null>(
+      initialPreferences,
+    ),
+    [error, setError] = useState(initialError);
 
   async function reloadSession() {
     const data = await api.session();
     setCsrf(data.csrf);
+    if (data.authenticated && !data.username_setup_required) {
+      try {
+        const prefs = await api.preferences();
+        setBootPreferences(prefs);
+      } catch {
+        setBootPreferences(null);
+      }
+    } else {
+      setBootPreferences(null);
+    }
+    setError("");
     setSession(data);
   }
 
+  useEffect(() => {
+    if (!initialSession) {
+      void reloadSession().catch((e) =>
+        setError(e instanceof Error ? e.message : String(e)),
+      );
+    }
+    const expired = () =>
+      void reloadSession().catch((e) =>
+        setError(e instanceof Error ? e.message : String(e)),
+      );
+    window.addEventListener("session-expired", expired);
+    return () => window.removeEventListener("session-expired", expired);
+  }, []);
+
   return (
     <Toasts>
-      {!session || bootHoldStage ? (
+      {!session ? (
         <StartupScreen
-          stage={bootHoldStage || "session"}
+          stage="session"
           error={error || undefined}
           onReload={() => location.reload()}
         />
@@ -663,6 +664,7 @@ function App() {
           <UsernameSetup done={reloadSession} />
         ) : (
           <Shell
+            initialPreferences={bootPreferences}
             logout={() => {
               navigate("/dashboard");
               void reloadSession();
@@ -683,6 +685,7 @@ function App() {
 async function mount() {
   const rootEl = document.getElementById("root")!;
   const statusEl = rootEl.querySelector(".pre-splash-status");
+  const barEl = rootEl.querySelector<HTMLElement>(".pre-splash-bar");
 
   try {
     let res = await fetch("/api/boot-status", { cache: "no-store" });
@@ -690,7 +693,21 @@ async function mount() {
       let data = (await res.json()) as { ready?: boolean; stage?: string };
       while (data.ready === false) {
         if (data.stage && statusEl) {
-          statusEl.textContent = `Starting scrobbl.rs (${data.stage})...`;
+          statusEl.textContent =
+            data.stage === "migrating" || data.stage === "opening_database"
+              ? "Verifying SQLite WAL archive…"
+              : data.stage === "starting_workers"
+                ? "Starting background workers…"
+                : "Starting scrobbl.rs…";
+          if (barEl) {
+            barEl.style.width =
+              data.stage === "starting_workers"
+                ? "84%"
+                : data.stage === "migrating" ||
+                    data.stage === "opening_database"
+                  ? "58%"
+                  : "32%";
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, 450));
         res = await fetch("/api/boot-status", { cache: "no-store" });
@@ -708,12 +725,39 @@ async function mount() {
   const spotifyReturn = location.pathname.match(
     /^\/spotify\/connect-result\/([a-f0-9]{64})$/,
   );
+  if (spotifyReturn) {
+    createRoot(rootEl).render(
+      <SpotifyConnectReturn attempt={spotifyReturn[1]} />,
+    );
+    return;
+  }
+
+  let initialSession: Session | null = null;
+  let initialPreferences: Preferences | null = null;
+  let initialError = "";
+  try {
+    initialSession = await api.session();
+    setCsrf(initialSession.csrf);
+    if (
+      initialSession.authenticated &&
+      !initialSession.username_setup_required
+    ) {
+      try {
+        initialPreferences = await api.preferences();
+      } catch {
+        // Shell will retry and surface loadError if needed
+      }
+    }
+  } catch (e) {
+    initialError = e instanceof Error ? e.message : String(e);
+  }
+
   createRoot(rootEl).render(
-    spotifyReturn ? (
-      <SpotifyConnectReturn attempt={spotifyReturn[1]} />
-    ) : (
-      <App />
-    ),
+    <App
+      initialSession={initialSession}
+      initialPreferences={initialPreferences}
+      initialError={initialError}
+    />,
   );
 }
 

@@ -297,7 +297,8 @@ export function Select({
               </p>
             )}
           </div>,
-          document.body,
+          (input.current || trigger.current)?.closest("dialog[open]") ??
+            document.body,
         )}
     </span>
   );

@@ -59,13 +59,20 @@ export function NowPlayingProvider({
   statusError: string;
   children: ReactNode;
 }) {
+  const [artRev, setArtRev] = useState(0);
+  useEffect(() => {
+    const bump = () => setArtRev((v) => v + 1);
+    window.addEventListener("artwork-updated", bump);
+    return () => window.removeEventListener("artwork-updated", bump);
+  }, []);
   const enabled =
     !!status?.connected && (status?.now_playing_seconds ?? 30) > 0;
   const { data, error, loading } = useLoad<NowPlaying | null>(
     api.nowPlaying,
-    `now:${enabled}`,
+    `now:${enabled}:${artRev}`,
     enabled,
     (status?.now_playing_seconds || 30) * 1000,
+    true,
   );
   return (
     <NowContext
@@ -424,7 +431,7 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
 
       {loading && !data && status?.connected ? (
         <div className="now-playing-skeleton">
-          <SkeletonBlock width={72} height={72} borderRadius={6} />
+          <SkeletonBlock width={104} height={104} borderRadius={8} />
           <div className="now-playing-skeleton-meta">
             <SkeletonBlock width="70%" height={16} borderRadius={4} />
             <SkeletonBlock width="45%" height={14} borderRadius={4} />
@@ -805,9 +812,28 @@ export function ImportPage({
 export function LibraryToolsMenu() {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const toast = useToast();
   const close = () => menu.current?.hidePopover();
+
+  useEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = trigger.current?.getBoundingClientRect();
+      const el = menu.current;
+      if (!rect || !el) return;
+      el.style.top = `${Math.round(rect.bottom + 8)}px`;
+      el.style.right = `${Math.max(12, Math.round(innerWidth - rect.right))}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
 
   const handleRefreshArtwork = async () => {
     close();
@@ -825,6 +851,7 @@ export function LibraryToolsMenu() {
   return (
     <div className="library-tools-wrapper">
       <button
+        ref={trigger}
         id="library-tools-trigger"
         className="icon-button library-tools-trigger"
         aria-label="Library tools"

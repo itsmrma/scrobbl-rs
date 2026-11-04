@@ -40,7 +40,7 @@ export function LifecycleScreen({
   );
   const [statusMessage, setStatusMessage] = useState(
     action === "restart"
-      ? "Restarting scrobbl.rs..."
+      ? "Restarting scrobbl.rs…"
       : "Application stopped. The archive has been closed safely. Restart the container from Docker when you are ready.",
   );
   const [details, setDetails] = useState("");
@@ -88,7 +88,7 @@ export function LifecycleScreen({
     try {
       const data = await fetchBootStatus();
       if (data?.ready) {
-        setCheckFeedback("Server is ready! Reconnecting...");
+        setCheckFeedback("Server is ready! Reconnecting…");
         setTimeout(() => {
           if (onReconnect) onReconnect();
           else window.location.reload();
@@ -119,18 +119,18 @@ export function LifecycleScreen({
       <div className="startup-card lifecycle-card">
         <div className="startup-header">
           <div className="lifecycle-brand startup-brand">
-            <img src="/favicon.svg" alt="" width="34" height="34" />
+            <img src="/favicon.svg" alt="" width="30" height="30" />
             <Wordmark />
           </div>
           {action === "restart" && phase !== "ready" && (
-            <div className="lifecycle-loader startup-pill" aria-hidden="true">
-              <div className="lifecycle-dot startup-dot" />
+            <div className="lifecycle-loader startup-badge" aria-hidden="true">
+              <Icon>sync</Icon>
               <span>Restarting</span>
             </div>
           )}
           {action === "restart" && phase === "ready" && (
             <div
-              className="lifecycle-icon-success startup-pill is-ready"
+              className="lifecycle-icon-success startup-badge is-ready"
               aria-hidden="true"
             >
               <Icon>check_circle</Icon>
@@ -139,7 +139,7 @@ export function LifecycleScreen({
           )}
           {action === "stop" && (
             <div
-              className="lifecycle-icon-stopped startup-pill"
+              className="lifecycle-icon-stopped startup-badge"
               aria-hidden="true"
             >
               <Icon>power_settings_new</Icon>
@@ -147,6 +147,15 @@ export function LifecycleScreen({
             </div>
           )}
         </div>
+
+        {action === "restart" && (
+          <div className="startup-progress-track" aria-hidden="true">
+            <div
+              className="startup-progress-fill"
+              style={{ width: phase === "ready" ? "100%" : "60%" }}
+            />
+          </div>
+        )}
 
         <p className="lifecycle-status" role="status">
           {statusMessage}
@@ -167,7 +176,7 @@ export function LifecycleScreen({
                 onClick={() => void checkStatus()}
               >
                 <Icon>refresh</Icon>
-                {checking ? "Checking..." : "Check availability / Reconnect"}
+                {checking ? "Checking…" : "Check availability / Reconnect"}
               </button>
             </div>
             {checkFeedback && (

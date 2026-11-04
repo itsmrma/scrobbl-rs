@@ -84,6 +84,7 @@
   height: 100%;
   background: var(--accent);
   border-radius: 2px;
+  transition: width var(--motion-bar) var(--ease-out);
 }
 
 .pattern-row strong {
@@ -97,7 +98,7 @@
   display: block;
   color: var(--muted);
   font-weight: 400;
-  font-size: 10.5px;
+  font-size: 11px;
 }
 
 .pattern-temporal {
@@ -135,12 +136,13 @@
   width: 100%;
   background: var(--accent);
   border-radius: 3px 3px 0 0;
+  transition: height var(--motion-bar) var(--ease-out);
 }
 
 .pattern-temporal .pattern-label {
   order: 1;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }

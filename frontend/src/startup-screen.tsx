@@ -20,33 +20,28 @@ export interface StartupScreenProps {
 
 const STAGES: {
   key: BootStageId;
-  index: string;
   title: string;
   detail: string;
 }[] = [
   {
     key: "server",
-    index: "01",
-    title: "HTTP Listener",
-    detail: "Local endpoint bound",
+    title: "Local HTTP listener",
+    detail: "Bound and accepting connections",
   },
   {
     key: "database",
-    index: "02",
-    title: "SQLite WAL Archive",
-    detail: "Schema & snapshots verified",
+    title: "SQLite WAL archive",
+    detail: "Schema and snapshots verified",
   },
   {
     key: "session",
-    index: "03",
-    title: "Access & CSRF",
-    detail: "Owner session checked",
+    title: "Owner session",
+    detail: "Authentication and CSRF checked",
   },
   {
     key: "preferences",
-    index: "04",
-    title: "Atelier Workspace",
-    detail: "Calendar & theme loaded",
+    title: "Library preferences",
+    detail: "Timezone calendar and theme loaded",
   },
 ];
 
@@ -74,7 +69,7 @@ export function StartupScreen({
   const dismiss = onDismiss || onDismissPreview;
   const retry = onReload || onRetry;
   const headline = error
-    ? "Archive startup needs attention"
+    ? "Archive startup needs attention."
     : detail ||
       statusText ||
       (stage === "server"
@@ -100,25 +95,23 @@ export function StartupScreen({
       <div className="startup-card">
         <div className="startup-header">
           <div className="startup-brand">
-            <img src="/favicon.svg" alt="" width="34" height="34" />
-            <Wordmark />
+            <img src="/favicon.svg" alt="" width="30" height="30" />
+            <Wordmark name={instanceName} />
           </div>
-          <span className={`startup-badge ${error ? "is-error" : ""}`}>
-            <span className="startup-dot" aria-hidden="true" />
+          <span
+            className={`startup-badge ${error ? "is-error" : stage === "ready" ? "is-ready" : ""}`}
+          >
             <span>
               {error
                 ? "Startup error"
                 : stage === "ready"
                   ? "Ready"
-                  : "Booting"}
+                  : "Starting"}
             </span>
           </span>
         </div>
 
         <div className="startup-hero">
-          <p className="eyebrow">
-            {instanceName || "PRECISION LISTENING ARCHIVE"}
-          </p>
           <h1>
             {stage === "ready" ? "Archive ready" : "Opening your archive"}
             <span className="accent">.</span>
@@ -133,7 +126,7 @@ export function StartupScreen({
           />
         </div>
 
-        <ol className="startup-stage-grid">
+        <ol className="startup-stage-list">
           {STAGES.map((item, idx) => {
             const done = !error && currentIdx > idx;
             const active = !error && currentIdx === idx;
@@ -142,20 +135,19 @@ export function StartupScreen({
                 key={item.key}
                 className={`startup-stage ${done ? "done" : ""} ${active ? "active" : ""}`}
               >
-                <span className="startup-stage-index">{item.index}</span>
-                <div className="startup-stage-copy">
-                  <strong>{item.title}</strong>
-                  <small>{item.detail}</small>
-                </div>
                 <span className="startup-stage-icon" aria-hidden="true">
                   <Icon>
                     {done
                       ? "check_circle"
                       : active
-                        ? "pending"
+                        ? "schedule"
                         : "radio_button_unchecked"}
                   </Icon>
                 </span>
+                <div className="startup-stage-copy">
+                  <strong>{item.title}</strong>
+                  <small>{item.detail}</small>
+                </div>
               </li>
             );
           })}
@@ -183,8 +175,8 @@ export function StartupScreen({
         <div className="startup-footer">
           <span>
             {preview
-              ? "Startup sequence preview · Self-hosted SQLite WAL"
-              : "Self-hosted listening archive · Local-first"}
+              ? "Startup sequence preview · SQLite WAL"
+              : "Self-hosted listening archive"}
           </span>
           {dismiss && (
             <button

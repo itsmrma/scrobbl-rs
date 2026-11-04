@@ -3755,17 +3755,12 @@ export function MusicPage({
         ? "Personalizza template album"
         : "Personalizza template artista";
 
-  const displayCoverUrl =
-    result.data?.cover_url && artVersion > 0
-      ? `${result.data.cover_url}${result.data.cover_url.includes("?") ? "&" : "?"}v=${artVersion}`
-      : result.data?.cover_url || null;
-
   return (
     <>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <div className="music-heading">
-          <Cover url={displayCoverUrl} large>
+          <Cover url={result.data.cover_url} large>
             <ArtworkCredits url={result.data.cover_url} />
             {!isPreview && (
               <button
@@ -3811,6 +3806,30 @@ export function MusicPage({
               />
             </div>
             {!isPreview && <MusicActions kind={kind} id={id} />}
+            {!layoutEditor.editing && (
+              <div className="music-template-toolbar">
+                {!isPreview && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary button secondary change-artwork-button"
+                    onClick={() => setPickerOpen(true)}
+                  >
+                    <Icon>photo_library</Icon>{" "}
+                    {kind === "tracks"
+                      ? "Change release artwork"
+                      : "Change artwork"}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary button secondary customize-template-button"
+                  aria-label={customizeAriaLabel}
+                  onClick={() => layoutEditor.handleStartEditing()}
+                >
+                  <Icon>tune</Icon> {customizeAriaLabel}
+                </button>
+              </div>
+            )}
             <div className="music-period">
               <PeriodFilters selection={selection} />
             </div>
@@ -3818,29 +3837,6 @@ export function MusicPage({
         </div>
       ) : (
         !result.error && <MusicPageSkeleton />
-      )}
-
-      {!layoutEditor.editing && (
-        <div className="music-template-toolbar">
-          {!isPreview && result.data && (
-            <button
-              type="button"
-              className="btn btn-secondary button secondary change-artwork-button"
-              onClick={() => setPickerOpen(true)}
-            >
-              <Icon>photo_library</Icon>{" "}
-              {kind === "tracks" ? "Change release artwork" : "Change artwork"}
-            </button>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary button secondary customize-template-button"
-            aria-label={customizeAriaLabel}
-            onClick={() => layoutEditor.handleStartEditing()}
-          >
-            <Icon>tune</Icon> {customizeAriaLabel}
-          </button>
-        </div>
       )}
 
       {pickerOpen && result.data && !isPreview && (
