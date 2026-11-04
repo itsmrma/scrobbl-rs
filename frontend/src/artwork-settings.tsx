@@ -227,12 +227,18 @@ function ProviderForm({
               {providers[inspectingProvider].coverage}
             </p>
             <dl className="diagnostics">
-              <dt>Access</dt>
-              <dd>{providers[inspectingProvider].access}</dd>
-              <dt>Limits &amp; retention</dt>
-              <dd>{providers[inspectingProvider].limits}</dd>
-              <dt>Reuse &amp; attribution</dt>
-              <dd>{providers[inspectingProvider].rights}</dd>
+              <div>
+                <dt>Access</dt>
+                <dd>{providers[inspectingProvider].access}</dd>
+              </div>
+              <div>
+                <dt>Limits &amp; retention</dt>
+                <dd>{providers[inspectingProvider].limits}</dd>
+              </div>
+              <div>
+                <dt>Reuse &amp; attribution</dt>
+                <dd>{providers[inspectingProvider].rights}</dd>
+              </div>
             </dl>
             <div className="artwork-provider-links">
               {providers[inspectingProvider].sources.map(([title, href]) => (

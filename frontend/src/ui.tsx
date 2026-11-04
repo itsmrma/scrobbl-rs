@@ -1,4 +1,4 @@
-import { queueArtwork } from "./artwork-activity";
+import { queueArtwork, useArtworkRevision } from "./artwork-activity";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
 import type { Preferences } from "./generated";
@@ -123,10 +123,13 @@ export function Cover({
   children?: ReactNode;
 }) {
   const [failed, setFailed] = useState(false);
-  const [revision, setRevision] = useState(0);
+  const globalRevision = useArtworkRevision(url);
+  const [localRevision, setLocalRevision] = useState(0);
+  const revision = globalRevision + localRevision;
   const [ready, setReady] = useState<{ source: string; src: string } | null>(
     null,
   );
+  const [loaded, setLoaded] = useState(false);
   const [cacheMiss, setCacheMiss] = useState("");
   const [zoomed, setZoomed] = useState(false);
   const marker = useRef<HTMLElement | null>(null);
@@ -142,12 +145,12 @@ export function Cover({
     };
   }, [zoomed]);
 
-  const local = !!url?.startsWith("/api/v1/artwork/");
-  const source = local
-    ? `${url}${url!.includes("?") ? "&" : "?"}image_revision=${revision}`
-    : "";
+  const cleanUrl = url?.split("?")[0] ?? "";
+  const local = cleanUrl.startsWith("/api/v1/artwork/");
+  const source = local ? `${cleanUrl}?image_revision=${revision}` : "";
 
   useEffect(() => {
+    setLoaded(false);
     const src = ready?.src;
     return () => {
       if (src?.startsWith("blob:")) URL.revokeObjectURL(src);
@@ -183,9 +186,9 @@ export function Cover({
       current = false;
       observer.disconnect();
     };
-  }, [local, source, cacheMiss, url]);
+  }, [local, source, cacheMiss, cleanUrl]);
 
-  useEffect(() => setFailed(false), [url]);
+  useEffect(() => setFailed(false), [cleanUrl, globalRevision]);
 
   useEffect(() => {
     if (!failed || !local) return;
@@ -193,7 +196,7 @@ export function Cover({
     const retry = () => {
       if (!document.hidden && Date.now() >= due) {
         setFailed(false);
-        setRevision((v) => v + 1);
+        setLocalRevision((v) => v + 1);
       }
     };
     const timer = setTimeout(retry, 60_000);
@@ -206,36 +209,16 @@ export function Cover({
     };
   }, [failed, local]);
 
-  useEffect(() => {
-    if (!failed || !local) return;
-    const changed = () => {
-      setFailed(false);
-      setRevision((v) => v + 1);
-    };
-    window.addEventListener("artwork-cache-changed", changed);
-    return () => window.removeEventListener("artwork-cache-changed", changed);
-  }, [failed, local]);
-
-  useEffect(() => {
-    const changed = (event: Event) => {
-      const { kind, id } = (event as CustomEvent<{ kind: string; id: string }>)
-        .detail;
-      if (url?.split("?")[0] === `/api/v1/artwork/${kind}/${id}`) {
-        setFailed(false);
-        setRevision((v) => v + 1);
-      }
-    };
-    window.addEventListener("artwork-updated", changed);
-    return () => window.removeEventListener("artwork-updated", changed);
-  }, [url]);
-
   return local && !failed && ready?.source === source ? (
     <span className={`cover image-frame ${large ? "large" : ""}`}>
       <img
         ref={(node) => {
           marker.current = node;
+          if (node?.complete && node.naturalWidth > 0 && !loaded) {
+            setLoaded(true);
+          }
         }}
-        className={`cover-image ${large ? "zoomable" : ""}`}
+        className={`cover-image ${large ? "zoomable" : ""} ${loaded ? "is-loaded" : ""}`}
         src={ready.src}
         alt=""
         loading="eager"
@@ -254,6 +237,7 @@ export function Cover({
               }
             : undefined
         }
+        onLoad={() => setLoaded(true)}
         onError={() => {
           if (ready.src.endsWith("&cached=true")) {
             setReady(null);

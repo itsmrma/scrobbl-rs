@@ -57,14 +57,33 @@ function Avatar({
 
 export function AccountMenu({ logout }: { logout: () => void }) {
   const profile = useAccount();
+  const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<"restart" | "stop" | null>(null);
   const toast = useToast();
   const close = () => menu.current?.hidePopover();
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const rect = trigger.current?.getBoundingClientRect();
+      const el = menu.current;
+      if (!rect || !el) return;
+      el.style.top = `${Math.round(rect.bottom + 8)}px`;
+      el.style.right = `${Math.max(12, Math.round(innerWidth - rect.right))}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open]);
   return (
     <>
       <button
+        ref={trigger}
         className="icon-button account-trigger"
         aria-label="Account menu"
         popoverTarget="account-menu"

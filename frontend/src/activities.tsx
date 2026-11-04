@@ -580,7 +580,6 @@ export function Activities({
             <article className="panel padded activity-detail">
               <header className="activity-detail-heading">
                 <div>
-                  <p className="eyebrow">ACTIVITY REPORT</p>
                   <div className="activity-report-title">
                     <h1>{activityName(job)}</h1>
                     <span role="status">

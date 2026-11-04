@@ -36,6 +36,7 @@ export function Select({
   const input = useRef<HTMLInputElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const search = useRef({ text: "", at: 0 });
+  const pointer = useRef<{ x: number; y: number } | null>(null);
   const values = useMemo(
     () =>
       Children.toArray(children).flatMap((child) => {
@@ -81,6 +82,7 @@ export function Select({
     maxHeight: 320,
   });
   function reveal() {
+    pointer.current = null;
     setActive(selected < 0 ? 0 : selected);
     setOpen(true);
   }
@@ -284,7 +286,20 @@ export function Select({
                 aria-disabled={option.disabled || undefined}
                 data-value={option.value}
                 className={index === active ? "active" : ""}
-                onPointerMove={() => !option.disabled && setActive(index)}
+                onPointerMove={(event) => {
+                  const previous = pointer.current;
+                  pointer.current = { x: event.clientX, y: event.clientY };
+                  // Some engines re-emit pointermove when the popup appears
+                  // under a resting cursor. Only genuine movement may override
+                  // keyboard navigation.
+                  if (
+                    !previous ||
+                    (previous.x === event.clientX &&
+                      previous.y === event.clientY)
+                  )
+                    return;
+                  if (!option.disabled) setActive(index);
+                }}
                 onClick={() => choose(index)}
               >
                 <span>{option.label}</span>
@@ -297,7 +312,8 @@ export function Select({
               </p>
             )}
           </div>,
-          document.body,
+          (input.current || trigger.current)?.closest("dialog[open]") ??
+            document.body,
         )}
     </span>
   );

@@ -34,6 +34,52 @@ const browseQueue: (() => Promise<void>)[] = [];
 const requests = new Map<string, Promise<Blob>>();
 let busy = false;
 
+const artworkRevisions = new Map<string, number>();
+let globalArtworkRevision = 0;
+const revisionListeners = new Set<() => void>();
+
+function notifyRevisionListeners() {
+  revisionListeners.forEach((listener) => listener());
+}
+
+export function bumpArtworkRevision(kind?: string, id?: string) {
+  if (kind && id) {
+    const basePath = `/api/v1/artwork/${kind}/${id}`;
+    requests.delete(basePath);
+    artworkRevisions.set(basePath, (artworkRevisions.get(basePath) ?? 0) + 1);
+  } else {
+    globalArtworkRevision += 1;
+  }
+  notifyRevisionListeners();
+}
+
+export function getArtworkRevision(url?: string | null): number {
+  if (!url) return globalArtworkRevision;
+  const basePath = url.split("?")[0];
+  return globalArtworkRevision + (artworkRevisions.get(basePath) ?? 0);
+}
+
+export function useArtworkRevision(url?: string | null): number {
+  return useSyncExternalStore(
+    (listener) => {
+      revisionListeners.add(listener);
+      return () => revisionListeners.delete(listener);
+    },
+    () => getArtworkRevision(url),
+  );
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("artwork-updated", (event: Event) => {
+    const detail = (event as CustomEvent<{ kind?: string; id?: string }>)
+      .detail;
+    bumpArtworkRevision(detail?.kind, detail?.id);
+  });
+  window.addEventListener("artwork-cache-changed", () => {
+    bumpArtworkRevision();
+  });
+}
+
 function publish(next: ArtworkActivity) {
   snapshot = next;
   listeners.forEach((listener) => listener());

@@ -6,37 +6,22 @@
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>scrobbl.rs</title>
-    <style>:root{--lightningcss-light:initial;--lightningcss-dark: ;color-scheme:light dark;--splash-bg:#0d0f13;--splash-surface:#151921;--splash-surface-raised:#1e2430;--splash-border:#ffffff1a;--splash-text:#f3f5f8;--splash-muted:#9aa3b2;--splash-accent:#c9ee8b}@media (prefers-color-scheme:dark){:root{--lightningcss-light: ;--lightningcss-dark:initial}}@media (prefers-color-scheme:light){:root{--splash-bg:#f4f6f9;--splash-surface:#fff;--splash-surface-raised:#eef1f6;--splash-border:#141c2824;--splash-text:#141b24;--splash-muted:#4b5668}}*{box-sizing:border-box}html,body{background:radial-gradient(circle at 50% 0%, #c9ee8b14, transparent 55%), var(--splash-bg);min-height:100vh;color:var(--splash-text);margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.pre-splash-container{place-items:center;min-height:100vh;padding:24px;display:grid}.pre-splash-card{background:var(--splash-surface);border:1px solid var(--splash-border);border-radius:16px;width:min(560px,100%);padding:36px 32px;box-shadow:0 24px 64px #00000052}.pre-splash-top{justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px;display:flex}.pre-splash-brand{letter-spacing:-.04em;-webkit-user-select:none;user-select:none;font-size:30px;font-weight:800;line-height:1}.pre-splash-brand .accent{color:var(--splash-accent)}.pre-splash-pill{letter-spacing:.03em;text-transform:uppercase;background:var(--splash-surface-raised);border:1px solid var(--splash-border);color:var(--splash-muted);border-radius:999px;align-items:center;gap:8px;padding:6px 12px;font-size:12px;font-weight:600;display:inline-flex}.pre-splash-dot{background-color:var(--splash-accent);width:8px;height:8px;box-shadow:0 0 10px var(--splash-accent);border-radius:50%;animation:1.3s ease-in-out infinite pre-splash-pulse}@keyframes pre-splash-pulse{0%,to{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}@media (prefers-reduced-motion:reduce){.pre-splash-dot{opacity:1;animation:none}}.pre-splash-status{color:var(--splash-text);margin:0 0 20px;font-size:15px;font-weight:500;line-height:1.5}.pre-splash-stages{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;display:grid}.pre-splash-stage{background:var(--splash-surface-raised);border:1px solid var(--splash-border);border-radius:10px;padding:12px}.pre-splash-stage small{color:var(--splash-muted);margin-bottom:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;display:block}.pre-splash-stage strong{font-size:13px;font-weight:600;display:block}@media (max-width:560px){.pre-splash-card{padding:24px 20px}.pre-splash-stages{grid-template-columns:1fr}}</style>
+    <style>:root{--lightningcss-light: ;--lightningcss-dark:initial;color-scheme:dark;--splash-bg:#13151b;--splash-surface-raised:#292d38;--splash-text:#f2f3f7;--splash-muted:#bac0cc;--splash-accent:#c9ee8b}*{box-sizing:border-box}html,body{background:var(--splash-bg);min-height:100vh;color:var(--splash-text);margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}.pre-splash-container{place-items:center;min-height:100vh;padding:24px;display:grid}.pre-splash-frame{opacity:0;gap:12px;width:min(320px,100%);animation:.18s cubic-bezier(.16,1,.3,1) .18s forwards pre-splash-reveal;display:grid}.pre-splash-top{justify-content:space-between;align-items:baseline;gap:12px;display:flex}.pre-splash-brand{letter-spacing:-.035em;-webkit-user-select:none;user-select:none;font-size:20px;font-weight:600;line-height:1.2}.pre-splash-brand .accent{color:var(--splash-accent)}.pre-splash-status{color:var(--splash-muted);margin:0;font-size:12px;line-height:1.4}.pre-splash-track{background:var(--splash-surface-raised);border-radius:3px;width:100%;height:3px;overflow:hidden}.pre-splash-bar{background:var(--splash-accent);border-radius:3px;width:42%;height:100%;transition:width .24s cubic-bezier(.16,1,.3,1)}@keyframes pre-splash-reveal{0%{opacity:0}to{opacity:1}}@media (prefers-reduced-motion:reduce){.pre-splash-frame{opacity:1;animation:none}.pre-splash-bar{transition:none}}</style>
     <script type="module" crossorigin src="/app.js"></script>
     <link rel="stylesheet" crossorigin href="/style.css">
   </head>
   <body>
     <div id="root">
       <div class="pre-splash-container">
-        <div class="pre-splash-card">
+        <div class="pre-splash-frame">
           <div class="pre-splash-top">
             <div class="pre-splash-brand">
               scrobbl<span class="accent">.</span>rs
             </div>
-            <div class="pre-splash-pill">
-              <span class="pre-splash-dot"></span>
-              <span>Starting</span>
-            </div>
+            <p class="pre-splash-status">Opening archive…</p>
           </div>
-          <p class="pre-splash-status">Initializing local listening archive…</p>
-          <div class="pre-splash-stages">
-            <div class="pre-splash-stage">
-              <small>01 · SERVER</small>
-              <strong>Connected</strong>
-            </div>
-            <div class="pre-splash-stage">
-              <small>02 · ARCHIVE</small>
-              <strong>SQLite WAL</strong>
-            </div>
-            <div class="pre-splash-stage">
-              <small>03 · INTERFACE</small>
-              <strong>Hydrating</strong>
-            </div>
+          <div class="pre-splash-track" aria-hidden="true">
+            <div class="pre-splash-bar"></div>
           </div>
         </div>
       </div>

@@ -125,7 +125,6 @@ export function UsernameSetup({ done }: { done: () => Promise<void> }) {
           <img src="/favicon.svg" alt="" width="34" height="34" />
           <Wordmark />
         </div>
-        <p className="eyebrow">ACCOUNT UPGRADE</p>
         <h1>
           Claim your owner identity<span className="accent">.</span>
         </h1>
@@ -196,7 +195,6 @@ export function Auth({
           <img src="/favicon.svg" alt="" width="34" height="34" />
           <Wordmark />
         </a>
-        <p className="eyebrow">YOUR MUSIC, REMEMBERED.</p>
         <h1>
           A little archive<span className="accent">.</span>
           <br />A lifetime of listening<span className="accent">.</span>
@@ -206,32 +204,11 @@ export function Auth({
           coming back to. Preserved in an immutable, local-first ledger on your
           own server.
         </p>
-        <div className="auth-feature-grid">
-          <div className="auth-feature-item">
-            <Icon>verified_user</Icon>
-            <div>
-              <strong>Private by default</strong>
-              <small>Zero third-party CDNs or telemetry</small>
-            </div>
-          </div>
-          <div className="auth-feature-item">
-            <Icon>storage</Icon>
-            <div>
-              <strong>Local SQLite WAL</strong>
-              <small>Instant rankings, backups &amp; provenance</small>
-            </div>
-          </div>
-          <div className="auth-feature-item">
-            <Icon>library_music</Icon>
-            <div>
-              <strong>Multi-source sync</strong>
-              <small>Spotify live collection &amp; ListenBrainz</small>
-            </div>
-          </div>
-        </div>
-        <span className="local-label">
-          <Icon>lock</Icon> Private by default · Stored locally
-        </span>
+        <ul className="auth-highlights">
+          <li>Private by default with zero third-party CDNs or telemetry</li>
+          <li>Local SQLite WAL archive with instant rankings and provenance</li>
+          <li>Live Spotify collection and ListenBrainz import</li>
+        </ul>
       </div>
       <main className="auth-card">
         <h2>

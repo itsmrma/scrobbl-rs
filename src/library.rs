@@ -588,7 +588,14 @@ pub async fn artwork(
         let bytes = bytes.ok_or(AppError::NotFound)?;
         // A restored database is untrusted input too: derive the response type
         // from the image bytes, never from an editable MIME string in SQLite.
-        return Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response());
+        return Ok((
+            [
+                (header::CONTENT_TYPE, image_type(&bytes)?),
+                (header::CACHE_CONTROL, "private, no-cache"),
+            ],
+            bytes,
+        )
+            .into_response());
     }
     // A fast cache lookup must never wait for a cold provider download.
     if query.cached {
@@ -609,7 +616,14 @@ pub async fn artwork(
             .bind(&id)
             .fetch_one(&state.read_db)
             .await?;
-            Ok(([(header::CONTENT_TYPE, image_type(&bytes)?)], bytes).into_response())
+            Ok((
+                [
+                    (header::CONTENT_TYPE, image_type(&bytes)?),
+                    (header::CACHE_CONTROL, "private, no-cache"),
+                ],
+                bytes,
+            )
+                .into_response())
         }
         Err(AppError::ArtworkWait { retry_at_ms }) => Ok(unavailable(
             ((retry_at_ms.saturating_sub(auth::now_ms()) + 999) / 1000).max(1),

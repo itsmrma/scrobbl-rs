@@ -824,13 +824,13 @@ export function SpotifyConnectedCard({
     }[status.collection] || status.collection;
 
   return (
-    <article className="panel padded spotify-card spotify-operational-card">
+    <div className="spotify-card spotify-operational-card">
       <header className="connection-card-header">
         <div className="connection-identity">
           <span className="connection-provider-icon">
             <Icon>headphones</Icon>
           </span>
-          <div>
+          <div className="connection-identity-copy">
             <strong className="connection-title">Spotify</strong>
             <span className="connection-collection">{collection}</span>
           </div>
@@ -846,7 +846,7 @@ export function SpotifyConnectedCard({
                 ? "error_outline"
                 : "link"}
           </Icon>
-          <span>
+          <span className="connection-badge-copy">
             {status.connection === "verified" ? (
               <>
                 <strong>Connected</strong>
@@ -924,55 +924,69 @@ export function SpotifyConnectedCard({
             not a continuous health check.
           </p>
           <dl className="diagnostics">
-            <dt>Authorization last verified</dt>
-            <dd>{date(status.verified_at_ms, preferences)}</dd>
-            <dt>Last collection attempt</dt>
-            <dd>{date(status.last_attempt_ms, preferences)}</dd>
-            <dt>Last successful collection</dt>
-            <dd>{date(status.last_sync_ms, preferences)}</dd>
-            <dt>New listens in last successful collection</dt>
-            <dd>
-              {status.last_added === null
-                ? "Not yet known"
-                : status.last_added === 0
-                  ? "0 — successful, no new listens"
-                  : status.last_added}
-            </dd>
-            <dt>Collection interval</dt>
-            <dd>Every {status.sync_seconds} seconds</dd>
-            <dt>Rate limit &amp; cooldown status</dt>
-            <dd>
-              {waiting ? (
-                <span>
-                  {isQuota
-                    ? "Developer quota exceeded"
-                    : "Request rate limit active"}
-                  {" — retry at "}
-                  {date(status.retry_at_ms, preferences)}
-                  {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
-                </span>
-              ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
-                "Developer quota exceeded — retry requested; waiting for Spotify’s response"
-              ) : status.rate_limit_reason ? (
-                "Request rate limit — retry requested; waiting for Spotify’s response"
-              ) : (
-                "Normal — no cooldown active"
-              )}
-            </dd>
-            <dt>Next attempt / request limit</dt>
-            <dd>
-              {status.retry_at_ms && status.retry_at_ms > Date.now()
-                ? date(status.retry_at_ms, preferences)
-                : status.connected && status.last_attempt_ms
-                  ? date(
-                      Math.max(
-                        Date.now(),
-                        status.last_attempt_ms + status.sync_seconds * 1000,
-                      ),
-                      preferences,
-                    )
-                  : "After authorization"}
-            </dd>
+            <div>
+              <dt>Authorization last verified</dt>
+              <dd>{date(status.verified_at_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>Last collection attempt</dt>
+              <dd>{date(status.last_attempt_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>Last successful collection</dt>
+              <dd>{date(status.last_sync_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>New listens in last successful collection</dt>
+              <dd>
+                {status.last_added === null
+                  ? "Not yet known"
+                  : status.last_added === 0
+                    ? "0 — successful, no new listens"
+                    : status.last_added}
+              </dd>
+            </div>
+            <div>
+              <dt>Collection interval</dt>
+              <dd>Every {status.sync_seconds} seconds</dd>
+            </div>
+            <div>
+              <dt>Rate limit &amp; cooldown status</dt>
+              <dd>
+                {waiting ? (
+                  <span>
+                    {isQuota
+                      ? "Developer quota exceeded"
+                      : "Request rate limit active"}
+                    {" — retry at "}
+                    {date(status.retry_at_ms, preferences)}
+                    {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
+                  </span>
+                ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
+                  "Developer quota exceeded — retry requested; waiting for Spotify’s response"
+                ) : status.rate_limit_reason ? (
+                  "Request rate limit — retry requested; waiting for Spotify’s response"
+                ) : (
+                  "Normal — no cooldown active"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Next attempt / request limit</dt>
+              <dd>
+                {status.retry_at_ms && status.retry_at_ms > Date.now()
+                  ? date(status.retry_at_ms, preferences)
+                  : status.connected && status.last_attempt_ms
+                    ? date(
+                        Math.max(
+                          Date.now(),
+                          status.last_attempt_ms + status.sync_seconds * 1000,
+                        ),
+                        preferences,
+                      )
+                    : "After authorization"}
+              </dd>
+            </div>
           </dl>
           {status.now_playing_timing && (
             <details>
@@ -1052,7 +1066,7 @@ export function SpotifyConnectedCard({
         </div>
 
         {reconfigureApp && (
-          <div className="spotify-credentials-edit panel padded">
+          <div className="spotify-credentials-edit">
             {status.credentials_from_env ? (
               <p>
                 Spotify app credentials are managed by the server environment.
@@ -1105,7 +1119,7 @@ export function SpotifyConnectedCard({
           Disconnecting keeps the listening archive.
         </p>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -1160,13 +1174,13 @@ export function SpotifySetupWizard({
     }[status.collection] || status.collection;
 
   return (
-    <article className="panel padded spotify-card spotify-setup-card">
+    <div className="spotify-card spotify-setup-card">
       <header className="connection-card-header">
         <div className="connection-identity">
           <span className="connection-provider-icon">
             <Icon>headphones</Icon>
           </span>
-          <div>
+          <div className="connection-identity-copy">
             <strong className="connection-title">Spotify</strong>
             <span className="connection-collection">{collection}</span>
           </div>
@@ -1336,55 +1350,69 @@ export function SpotifySetupWizard({
             not a continuous health check.
           </p>
           <dl className="diagnostics">
-            <dt>Authorization last verified</dt>
-            <dd>{date(status.verified_at_ms, preferences)}</dd>
-            <dt>Last collection attempt</dt>
-            <dd>{date(status.last_attempt_ms, preferences)}</dd>
-            <dt>Last successful collection</dt>
-            <dd>{date(status.last_sync_ms, preferences)}</dd>
-            <dt>New listens in last successful collection</dt>
-            <dd>
-              {status.last_added === null
-                ? "Not yet known"
-                : status.last_added === 0
-                  ? "0 — successful, no new listens"
-                  : status.last_added}
-            </dd>
-            <dt>Collection interval</dt>
-            <dd>Every {status.sync_seconds} seconds</dd>
-            <dt>Rate limit &amp; cooldown status</dt>
-            <dd>
-              {waiting ? (
-                <span>
-                  {isQuota
-                    ? "Developer quota exceeded"
-                    : "Request rate limit active"}
-                  {" — retry at "}
-                  {date(status.retry_at_ms, preferences)}
-                  {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
-                </span>
-              ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
-                "Developer quota exceeded — retry requested; waiting for Spotify’s response"
-              ) : status.rate_limit_reason ? (
-                "Request rate limit — retry requested; waiting for Spotify’s response"
-              ) : (
-                "Normal — no cooldown active"
-              )}
-            </dd>
-            <dt>Next attempt / request limit</dt>
-            <dd>
-              {status.retry_at_ms && status.retry_at_ms > Date.now()
-                ? date(status.retry_at_ms, preferences)
-                : status.connected && status.last_attempt_ms
-                  ? date(
-                      Math.max(
-                        Date.now(),
-                        status.last_attempt_ms + status.sync_seconds * 1000,
-                      ),
-                      preferences,
-                    )
-                  : "After authorization"}
-            </dd>
+            <div>
+              <dt>Authorization last verified</dt>
+              <dd>{date(status.verified_at_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>Last collection attempt</dt>
+              <dd>{date(status.last_attempt_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>Last successful collection</dt>
+              <dd>{date(status.last_sync_ms, preferences)}</dd>
+            </div>
+            <div>
+              <dt>New listens in last successful collection</dt>
+              <dd>
+                {status.last_added === null
+                  ? "Not yet known"
+                  : status.last_added === 0
+                    ? "0 — successful, no new listens"
+                    : status.last_added}
+              </dd>
+            </div>
+            <div>
+              <dt>Collection interval</dt>
+              <dd>Every {status.sync_seconds} seconds</dd>
+            </div>
+            <div>
+              <dt>Rate limit &amp; cooldown status</dt>
+              <dd>
+                {waiting ? (
+                  <span>
+                    {isQuota
+                      ? "Developer quota exceeded"
+                      : "Request rate limit active"}
+                    {" — retry at "}
+                    {date(status.retry_at_ms, preferences)}
+                    {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
+                  </span>
+                ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
+                  "Developer quota exceeded — retry requested; waiting for Spotify’s response"
+                ) : status.rate_limit_reason ? (
+                  "Request rate limit — retry requested; waiting for Spotify’s response"
+                ) : (
+                  "Normal — no cooldown active"
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Next attempt / request limit</dt>
+              <dd>
+                {status.retry_at_ms && status.retry_at_ms > Date.now()
+                  ? date(status.retry_at_ms, preferences)
+                  : status.connected && status.last_attempt_ms
+                    ? date(
+                        Math.max(
+                          Date.now(),
+                          status.last_attempt_ms + status.sync_seconds * 1000,
+                        ),
+                        preferences,
+                      )
+                    : "After authorization"}
+              </dd>
+            </div>
           </dl>
           {status.now_playing_timing && (
             <details>
@@ -1429,7 +1457,7 @@ export function SpotifySetupWizard({
           Disconnecting keeps the listening archive.
         </p>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -1475,7 +1503,7 @@ export function Connections({
     );
 
   return (
-    <article className="panel padded">
+    <article className="panel padded connections-panel">
       <h2>Connections</h2>
       <p>
         Collection runs while scrobbl.rs is running, even with the browser

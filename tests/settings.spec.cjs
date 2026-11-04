@@ -435,9 +435,9 @@ test("restart application triggers full-screen transition, polls boot-status and
 
   const lifecycle = page.locator(".lifecycle-screen");
   await expect(lifecycle).toBeVisible();
-  await expect(lifecycle).toContainText("Restarting scrobbl.rs...");
+  await expect(lifecycle).toContainText("Restarting scrobbl.rs");
   await expect(lifecycle.locator(".lifecycle-brand")).toBeVisible();
-  await expect(lifecycle.locator(".lifecycle-dot")).toBeVisible();
+  await expect(lifecycle.locator(".lifecycle-loader")).toBeVisible();
 
   await expect.poll(() => bootStatusCalls).toBeGreaterThan(0);
 

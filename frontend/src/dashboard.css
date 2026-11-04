@@ -174,7 +174,7 @@
   background: var(--row-bg);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -229,7 +229,7 @@
   min-width: 44px;
   min-height: 44px;
   padding: 6px 10px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .widget-period-badge {
@@ -348,7 +348,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -359,10 +359,10 @@
   width: 100%;
   min-height: 38px;
   font-family: var(--font-display);
-  font-size: clamp(24px, 2.2vw, 32px);
-  font-weight: 700;
+  font-size: 38px;
+  font-weight: 600;
   line-height: 1.15;
-  letter-spacing: -0.025em;
+  letter-spacing: -0.04em;
   font-variant-numeric: tabular-nums;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -371,7 +371,7 @@
 .time-composition {
   display: block;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -418,7 +418,7 @@
 
 .overview-ranking-panel .panel-title a,
 .widget-recent-listens .panel-title a {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--muted);
   text-decoration: none;
@@ -493,20 +493,20 @@
   text-align: left;
   justify-items: start;
   overflow: hidden;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .dashboard-widget .overview-rankings .rank-metrics {
   justify-content: flex-start;
   flex-wrap: nowrap;
   white-space: nowrap;
-  font-size: 11.5px;
+  font-size: 12px;
   min-width: 0;
 }
 
 .dashboard-widget .overview-rankings .time-composition {
   display: block;
-  font-size: 10.5px;
+  font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -704,7 +704,7 @@
   background: var(--surface-raised);
   border: 1px solid var(--border-strong);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
@@ -831,7 +831,7 @@
 
 .chart-segment > small.chart-bar-value {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--text);
 }
 
@@ -864,7 +864,7 @@
   background: var(--row-bg);
   border: 1px solid var(--row-border);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   max-width: 100%;
 }
@@ -886,7 +886,6 @@
 
 .sync-status-badge.status-active .sync-status-dot {
   background: var(--success);
-  box-shadow: 0 0 8px var(--success);
 }
 
 .sync-status-badge.status-syncing .sync-status-dot {
@@ -905,7 +904,7 @@
 .now-playing-active,
 .now-playing-skeleton {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
+  grid-template-columns: 104px minmax(0, 1fr);
   gap: 12px 16px;
   align-items: center;
   padding: 12px 14px;
@@ -915,9 +914,13 @@
   min-width: 0;
 }
 
+.now-playing-cover-wrap {
+  grid-row: 1 / 3;
+}
+
 .now-playing-cover-wrap > .cover.large {
-  width: 72px;
-  height: 72px;
+  width: 104px;
+  height: 104px;
   border-radius: var(--radius-control);
 }
 
@@ -931,7 +934,7 @@
 .now-playing-title {
   font-family: var(--font-display);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -951,7 +954,7 @@
 }
 
 .now-playing-artists {
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -959,7 +962,7 @@
 }
 
 .now-playing-album {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -967,7 +970,7 @@
 }
 
 .now-playing-progress-wrap {
-  grid-column: 1 / -1;
+  grid-column: 2;
   display: grid;
   gap: 5px;
 }
@@ -977,7 +980,7 @@
   align-items: center;
   justify-content: space-between;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1013,12 +1016,12 @@
 }
 
 .now-playing-resting-title {
-  font-weight: 650;
-  font-size: 13.5px;
+  font-weight: 600;
+  font-size: 14px;
 }
 
 .now-playing-resting-subtitle {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--muted);
 }
 
@@ -1052,9 +1055,10 @@
 
 .stat-number {
   font-family: var(--font-display);
-  font-size: clamp(26px, 2.4vw, 34px);
-  font-weight: 700;
+  font-size: 38px;
+  font-weight: 600;
   line-height: 1;
+  letter-spacing: -0.04em;
   color: var(--text);
 }
 
@@ -1098,7 +1102,7 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 16px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .discovery-legend-item {
@@ -1179,7 +1183,7 @@
   width: 12px;
   height: 12px;
   border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--row-border);
 }
 
 .calendar-cell.level-0 {
@@ -1207,7 +1211,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* --------------------------------------------------------------------------
@@ -1276,7 +1280,7 @@
   border-radius: var(--radius-control);
   background: var(--row-bg);
   border: 1px solid var(--row-border);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .threshold-count {
