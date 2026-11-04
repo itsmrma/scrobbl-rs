@@ -5903,11 +5903,15 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
 
   // Desktop hover effect on .listen-row
   await listenRows.nth(0).hover();
+  await expect
+    .poll(async () =>
+      listenRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe(listenStyle.bg);
   const listenHoverBg = await listenRows
     .nth(0)
     .evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(listenHoverBg).not.toBe("rgba(0, 0, 0, 0)");
-  expect(listenHoverBg).not.toBe(listenStyle.bg);
 
   // 3. Check Rankings rows (.ranking-row)
   await page.goto("/rankings/artists?period=all");
@@ -5946,10 +5950,11 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
 
   // Desktop hover effect on .ranking-row
   await rankingRows.nth(0).hover();
-  const rankHoverBg = await rankingRows
-    .nth(0)
-    .evaluate((el) => getComputedStyle(el).backgroundColor);
-  expect(rankHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+  await expect
+    .poll(async () =>
+      rankingRows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor),
+    )
+    .not.toBe("rgba(0, 0, 0, 0)");
 
   // 4. Check Activities rows (.activity-row)
   await page.goto("/activities");
@@ -5978,10 +5983,13 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
     expect(actStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
 
     await activityRows.nth(0).hover();
-    const actHoverBg = await activityRows
-      .nth(0)
-      .evaluate((el) => getComputedStyle(el).backgroundColor);
-    expect(actHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+    await expect
+      .poll(async () =>
+        activityRows
+          .nth(0)
+          .evaluate((el) => getComputedStyle(el).backgroundColor),
+      )
+      .not.toBe("rgba(0, 0, 0, 0)");
   }
 
   // 5. Check micro-animations & transitions (150-180ms)
