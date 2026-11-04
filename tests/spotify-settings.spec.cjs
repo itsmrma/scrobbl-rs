@@ -6,14 +6,20 @@ async function openSpotify(page) {
   const card = page.locator(".spotify-card");
   await expect(card).toBeVisible();
   const summary = card.locator("summary").first();
-  if ((await summary.count()) > 0 && !(await card.evaluate((element) => element.open)))
+  if (
+    (await summary.count()) > 0 &&
+    !(await card.evaluate((element) => element.open))
+  )
     await summary.click();
   const intervals = card.locator(".connection-monitor").filter({
     has: page
       .locator("summary > span")
       .filter({ hasText: /^Refresh intervals$/ }),
   });
-  if ((await intervals.count()) > 0 && !(await intervals.evaluate((element) => element.open)))
+  if (
+    (await intervals.count()) > 0 &&
+    !(await intervals.evaluate((element) => element.open))
+  )
     await intervals.locator("summary").click();
   await settleDisclosure(card);
 }

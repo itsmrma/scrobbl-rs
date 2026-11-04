@@ -1395,6 +1395,49 @@ progress::-moz-progress-bar {
   min-height: 44px;
 }
 
+.password-control {
+  display: grid;
+  gap: 6px;
+}
+
+.password-field {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.password-field:has(input:focus-visible) {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--focus) 28%, transparent);
+}
+
+.password-field input {
+  flex: 1;
+  width: 0;
+  min-width: 0;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.password-field input:focus-visible {
+  outline: none;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.password-field .icon-button {
+  flex: 0 0 44px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+}
+
 .password-checks {
   list-style: none;
   margin: 0;
@@ -2105,10 +2148,9 @@ dialog.cover-lightbox {
 .listen-main {
   position: relative;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1.5fr) minmax(0, 1fr) minmax(
-      130px,
-      0.9fr
-    ) 92px;
+  grid-template-columns:
+    44px minmax(0, 1.5fr) minmax(0, 1fr) minmax(130px, 0.9fr)
+    92px;
   gap: 8px 14px;
   align-items: center;
   min-width: 0;

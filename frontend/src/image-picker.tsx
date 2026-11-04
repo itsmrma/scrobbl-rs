@@ -6,6 +6,12 @@ import { ErrorText, Icon, Modal, SegmentedControl, useToast } from "./ui";
 
 type PickerTab = "search" | "upload" | "url";
 
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+function isSafeImageFile(f: File): boolean {
+  return ALLOWED_IMAGE_TYPES.has(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+}
+
 export interface ImagePickerModalProps {
   kind: Kind;
   id: string;
@@ -67,10 +73,14 @@ export function ImagePickerModal({
   }, [kind, id]);
 
   useEffect(() => {
-    const objectUrl = file ? URL.createObjectURL(file) : "";
+    if (!file || !isSafeImageFile(file)) {
+      setFilePreview("");
+      return;
+    }
+    const objectUrl = URL.createObjectURL(file);
     setFilePreview(objectUrl);
     return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      URL.revokeObjectURL(objectUrl);
     };
   }, [file]);
 
@@ -326,9 +336,13 @@ export function ImagePickerModal({
                 disabled={busy}
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
               />
-              {filePreview ? (
+              {filePreview && filePreview.startsWith("blob:") ? (
                 <div className="image-upload-preview">
-                  <img src={filePreview} alt="Selected image preview" />
+                  <img
+                    // codeql[js/xss-through-dom] File -> URL.createObjectURL -> img.src is an opaque browser-generated blob URL
+                    src={filePreview}
+                    alt="Selected image preview"
+                  />
                   <div>
                     <strong>{file?.name}</strong>
                     <small>
