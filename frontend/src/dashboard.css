@@ -312,6 +312,37 @@
   border-color: var(--border);
 }
 
+.dashboard-widget .stats-grid .stat {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  margin: 0;
+  min-height: 120px;
+  gap: 8px;
+}
+
+.dashboard-widget .stats-grid .stat > strong {
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-widget .widget-totals .stats-grid .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  text-align: left;
+  min-height: 112px;
+}
+
+.dashboard-widget .widget-totals .stats-grid .stat > span,
+.dashboard-widget .widget-totals .stats-grid .stat > strong,
+.dashboard-widget .widget-totals .stats-grid .stat > small {
+  text-align: left;
+  align-self: stretch;
+}
+
 .stat > span {
   display: inline-flex;
   align-items: center;
@@ -1310,8 +1341,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .dashboard-widget .widget-totals .stat {
+  .dashboard-widget .widget-totals .stat,
+  .dashboard-widget .widget-totals .stats-grid .stat {
     min-height: 0;
+    align-items: flex-start;
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .dashboard-widget .widget-totals .time-composition {

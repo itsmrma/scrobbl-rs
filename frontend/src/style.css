@@ -1780,6 +1780,7 @@ progress::-moz-progress-bar {
 .page-heading p {
   color: var(--muted);
   font-size: 14px;
+  overflow-wrap: anywhere;
 }
 
 .page-heading p:empty {
@@ -2229,7 +2230,17 @@ dialog.cover-lightbox {
 }
 
 .listen-context .listen-main {
+  position: relative;
   grid-template-columns: var(--listen-columns);
+}
+
+.listen-context .listen-main::after {
+  content: "";
+  position: absolute;
+  bottom: -10px;
+  left: -16px;
+  right: -52px;
+  border-top: 1px solid var(--border);
 }
 
 .listen-context-artists {
@@ -2743,6 +2754,11 @@ dialog.cover-lightbox {
   font-size: var(--music-h1-size);
   line-height: 1.08;
   margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.music-heading .page-heading p {
+  overflow-wrap: anywhere;
 }
 
 .music-personal {
@@ -2751,6 +2767,10 @@ dialog.cover-lightbox {
   align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+.music-personal > a {
+  overflow-wrap: anywhere;
 }
 
 .music-personal .rating-control {
@@ -2854,17 +2874,32 @@ dialog.cover-lightbox {
 }
 
 .details-editor,
-.artwork-editor,
 .name-group-editor {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
+.artwork-editor {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-content: start;
+  gap: 16px 24px;
+}
+
+.artwork-editor > .panel-title,
+.artwork-editor > h2,
+.artwork-editor > p,
+.artwork-editor > .notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .details-form,
 .artwork-editor form {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .source-name {
@@ -2877,11 +2912,39 @@ dialog.cover-lightbox {
   border-radius: var(--radius-control);
   background: var(--row-bg);
   border: 1px solid var(--row-border);
+  overflow-wrap: anywhere;
+}
+
+.original-value {
+  overflow-wrap: anywhere;
+  font-size: 13px;
 }
 
 .artwork-visual {
   position: relative;
-  width: min(220px, 100%);
+  align-self: start;
+  width: 120px;
+}
+
+.artwork-visual > .cover.large,
+.artwork-visual > .artwork-preview {
+  width: 120px;
+  height: 120px;
+  margin: 0;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+  display: block;
+}
+
+.artwork-visual > .image-credit-trigger {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px;
+  background: var(--surface);
 }
 
 .artwork-preview {
@@ -3639,6 +3702,101 @@ dialog.cover-lightbox {
   gap: 10px;
 }
 
+.review-controls {
+  justify-content: flex-start;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.review-controls > a.button {
+  min-height: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.review-views {
+  position: relative;
+  isolation: isolate;
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
+  gap: 0;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+
+.review-views::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 3px auto 3px 3px;
+  width: calc((100% - 6px) / 2);
+  border-radius: calc(var(--radius-md) - 3px);
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.review-views[data-view="trash"]::before {
+  transform: translateX(100%);
+}
+
+.review-views button,
+.review-views .segmented-option {
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: transparent;
+  color: var(--muted);
+  outline: none;
+}
+
+.review-views button[aria-pressed="true"],
+.review-views .segmented-option[aria-pressed="true"] {
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  outline: none;
+}
+
+.review-views button:enabled:hover,
+.review-views .segmented-option:enabled:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  color: var(--text);
+  box-shadow: none;
+  filter: none;
+}
+
+.review-view-content {
+  animation: review-view-enter 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes review-view-enter {
+  from {
+    opacity: 0.65;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-views::before {
+    transition: none;
+  }
+  .review-view-content {
+    animation: none;
+  }
+}
+
 .review-comparison {
   padding: 16px 18px;
   display: grid;
@@ -4317,6 +4475,38 @@ dialog.cover-lightbox {
     grid-column: 2 / -1;
   }
 
+  .listen-context-artists {
+    --listen-columns: 40px minmax(0, 1fr) auto;
+  }
+  .listen-context-artists .listen-album {
+    display: none !important;
+  }
+  .listen-context-artists .listen-date {
+    grid-column: 2 / -1;
+  }
+
+  .listen-context .listen-main::after {
+    left: -12px;
+    right: -12px;
+    bottom: -10px;
+  }
+
+  .ranking-toolbar .search-inline {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    width: 100%;
+    max-width: none;
+    flex-basis: 100%;
+    align-items: stretch;
+  }
+
+  .ranking-toolbar .view-toggle {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
   .ranking-row,
   .ranking-row:has(.ranking-meter) {
     grid-template-columns: 2.5ch 38px minmax(0, 1fr);
@@ -4357,6 +4547,10 @@ dialog.cover-lightbox {
 
   .activity-symbol {
     display: none;
+  }
+
+  .artwork-editor {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .application-action,

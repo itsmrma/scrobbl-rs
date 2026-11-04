@@ -346,18 +346,13 @@ export function Auth({
           <button
             type="submit"
             className="btn btn-primary primary"
+            aria-busy={busy}
             disabled={
               busy ||
               (setup && (!valid || !confirmation || password !== confirmation))
             }
           >
-            {busy
-              ? setup
-                ? "Creating archive…"
-                : "Signing in…"
-              : setup
-                ? "Create your archive"
-                : "Sign in"}
+            {setup ? "Create your archive" : "Sign in"}
           </button>
         </form>
       </main>
