@@ -25,7 +25,7 @@ async function fetchBootStatus(
       return (await response.json()) as BootStatusResponse;
     }
   } catch {
-    // Network errors expected during server restart/shutdown
+    // Expected during restart/shutdown
   }
   return null;
 }
@@ -68,7 +68,7 @@ export function LifecycleScreen({
         return;
       }
       if (data?.stage) {
-        setDetails(`Startup status: ${data.stage}`);
+        setDetails(`Startup stage: ${data.stage}`);
       }
       if (!controller.signal.aborted) {
         timer = setTimeout(poll, 1000);
@@ -116,59 +116,79 @@ export function LifecycleScreen({
         action === "restart" ? "Restart in progress" : "Application stopped"
       }
     >
-      <div className="lifecycle-brand">
-        <Wordmark />
-      </div>
-      {action === "restart" && phase !== "ready" && (
-        <div className="lifecycle-loader" aria-hidden="true">
-          <div className="lifecycle-dot" />
+      <div className="startup-card lifecycle-card">
+        <div className="startup-header">
+          <div className="lifecycle-brand startup-brand">
+            <img src="/favicon.svg" alt="" width="34" height="34" />
+            <Wordmark />
+          </div>
+          {action === "restart" && phase !== "ready" && (
+            <div className="lifecycle-loader startup-pill" aria-hidden="true">
+              <div className="lifecycle-dot startup-dot" />
+              <span>Restarting</span>
+            </div>
+          )}
+          {action === "restart" && phase === "ready" && (
+            <div
+              className="lifecycle-icon-success startup-pill is-ready"
+              aria-hidden="true"
+            >
+              <Icon>check_circle</Icon>
+              <span>Ready</span>
+            </div>
+          )}
+          {action === "stop" && (
+            <div
+              className="lifecycle-icon-stopped startup-pill"
+              aria-hidden="true"
+            >
+              <Icon>power_settings_new</Icon>
+              <span>Offline</span>
+            </div>
+          )}
         </div>
-      )}
-      {action === "restart" && phase === "ready" && (
-        <div className="lifecycle-icon-success" aria-hidden="true">
-          <Icon>check_circle</Icon>
-        </div>
-      )}
-      {action === "stop" && (
-        <div className="lifecycle-icon-stopped" aria-hidden="true">
-          <Icon>power_settings_new</Icon>
-        </div>
-      )}
-      <p className="lifecycle-status" role="status">
-        {statusMessage}
-      </p>
-      {details && <p className="lifecycle-details">{details}</p>}
-      {action === "stop" && (
-        <>
-          <small className="lifecycle-subtext">
-            Stop accepted. Start scrobbl.rs from Docker or your process manager
-            when you are ready.
-          </small>
+
+        <p className="lifecycle-status" role="status">
+          {statusMessage}
+        </p>
+        {details && <p className="lifecycle-details">{details}</p>}
+
+        {action === "stop" && (
+          <>
+            <small className="lifecycle-subtext">
+              Stop accepted. Start scrobbl.rs from Docker or your process
+              manager when you are ready.
+            </small>
+            <div className="lifecycle-actions">
+              <button
+                type="button"
+                className="btn btn-primary primary"
+                disabled={checking}
+                onClick={() => void checkStatus()}
+              >
+                <Icon>refresh</Icon>
+                {checking ? "Checking..." : "Check availability / Reconnect"}
+              </button>
+            </div>
+            {checkFeedback && (
+              <p className="lifecycle-feedback" role="alert">
+                {checkFeedback}
+              </p>
+            )}
+          </>
+        )}
+        {phase === "ready" && onDismiss && (
           <div className="lifecycle-actions">
             <button
               type="button"
-              className="primary"
-              disabled={checking}
-              onClick={() => void checkStatus()}
+              className="btn btn-secondary secondary"
+              onClick={onDismiss}
             >
-              <Icon>refresh</Icon>
-              {checking ? "Checking..." : "Check availability / Reconnect"}
+              Close
             </button>
           </div>
-          {checkFeedback && (
-            <p className="lifecycle-feedback" role="alert">
-              {checkFeedback}
-            </p>
-          )}
-        </>
-      )}
-      {phase === "ready" && onDismiss && (
-        <div className="lifecycle-actions">
-          <button type="button" className="secondary" onClick={onDismiss}>
-            Close
-          </button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

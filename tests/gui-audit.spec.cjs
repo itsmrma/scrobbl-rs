@@ -5646,7 +5646,7 @@ test("segmented controls use recessed container, solid active surface, touch tar
   await expect(fetchBtn).toHaveCSS("outline-style", "none");
 });
 
-test("layout tokens: .page-container centered max-width 1200px on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
+test("layout tokens: .page-container uses fluid full-width workspace on desktop, 14px padding and 12px gap full-width mobile (#162)", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -5674,7 +5674,10 @@ test("layout tokens: .page-container centered max-width 1200px on desktop, 14px 
 
     const box = await container.boundingBox();
     expect(box).not.toBeNull();
-    expect(box.width).toBeLessThanOrEqual(1200.5);
+    const parentWidth = await container.evaluate(
+      (el) => el.parentElement.getBoundingClientRect().width,
+    );
+    expect(Math.abs(box.width - parentWidth)).toBeLessThanOrEqual(2);
 
     const styles = await container.evaluate((el) => {
       const cs = getComputedStyle(el);
@@ -5865,18 +5868,21 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
   expect(Math.abs(listenSeparation - 4)).toBeLessThanOrEqual(1.5);
   expect(listenBox1.y).toBeGreaterThanOrEqual(listenBox0.y + listenBox0.height);
 
-  // Border-radius 4px or 6px, and dedicated surface background
+  // Border-radius 4px or 6px, and dedicated surface background distinct from parent panel
   const listenStyle = await listenRows.nth(0).evaluate((el) => {
     const cs = getComputedStyle(el);
+    const panel = el.closest(".panel");
     return {
       borderRadius: parseFloat(cs.borderRadius),
       bg: cs.backgroundColor,
+      panelBg: panel ? getComputedStyle(panel).backgroundColor : "",
       hasTabularNums: cs.fontVariantNumeric.includes("tabular-nums"),
     };
   });
   expect(listenStyle.borderRadius).toBeGreaterThanOrEqual(4);
   expect(listenStyle.borderRadius).toBeLessThanOrEqual(6.5);
   expect(listenStyle.bg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(listenStyle.bg).not.toBe(listenStyle.panelBg);
   expect(listenStyle.hasTabularNums).toBeTruthy();
 
   // Column alignment: secondary column .listen-duration has tabular nums and crisp right alignment
@@ -5898,6 +5904,7 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
     .nth(0)
     .evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(listenHoverBg).not.toBe("rgba(0, 0, 0, 0)");
+  expect(listenHoverBg).not.toBe(listenStyle.bg);
 
   // 3. Check Rankings rows (.ranking-row)
   await page.goto("/rankings/artists?period=all");
@@ -6054,4 +6061,47 @@ test("list rows and micro-transitions: vertical separation, dedicated surface, d
   expect(
     parseMs(reducedMotionValues.sidebarTransitionDuration),
   ).toBeLessThanOrEqual(1);
+});
+
+test("startup screen (#158), interactive image picker modal (#155), and signature Name. header", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await login(page);
+
+  // 1. Startup screen preview (#158) fills viewport with 4 boot stages
+  await page.goto("/dashboard?boot=preview");
+  const startup = page.getByTestId("startup-screen");
+  await expect(startup).toBeVisible();
+  await expect(startup.locator(".startup-stage")).toHaveCount(4);
+  const startupBox = await startup.boundingBox();
+  expect(startupBox.height).toBeGreaterThanOrEqual(798);
+  await startup.getByRole("button", { name: "Continue to archive" }).click();
+  await expect(startup).toBeHidden();
+
+  // 2. Entity page has signature Name. accent dot and interactive Image Picker (#155)
+  await page.goto("/rankings/artists?period=all");
+  await page.locator(".ranking-row .music-item-link").first().click();
+  await expect(page.locator(".music-heading h1 .accent")).toHaveText(".");
+
+  const changeArtwork = page.locator(".change-artwork-button");
+  await expect(changeArtwork).toBeVisible();
+  await changeArtwork.click();
+
+  const picker = page.locator("dialog.image-picker-dialog[open]");
+  await expect(picker).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Search providers/i }),
+  ).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Upload file/i }),
+  ).toBeVisible();
+  await expect(
+    picker.getByRole("button", { name: /Image URL/i }),
+  ).toBeVisible();
+
+  await picker.getByRole("button", { name: /Image URL/i }).click();
+  await expect(picker.getByLabel(/Direct HTTPS image URL/i)).toBeVisible();
+  await picker.getByRole("button", { name: "Cancel" }).click();
+  await expect(picker).toBeHidden();
 });

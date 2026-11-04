@@ -328,13 +328,34 @@ export function ApplicationSettings() {
       <p>Manage scrobbl.rs without restarting or shutting down your host.</p>
       <div className="application-action">
         <div>
+          <h3>Startup screen</h3>
+          <p>
+            Inspect the scrobbl.rs boot and archive verification screen at any
+            time.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn-secondary secondary"
+          onClick={() =>
+            window.dispatchEvent(new Event("preview-startup-screen"))
+          }
+        >
+          <Icon>bolt</Icon>Preview startup screen
+        </button>
+      </div>
+      <div className="application-action">
+        <div>
           <h3>Restart application</h3>
           <p>
             Close the archive safely and start scrobbl.rs again. Saved data and
             account access are retained.
           </p>
         </div>
-        <button className="secondary" onClick={() => setAction("restart")}>
+        <button
+          className="btn btn-secondary secondary"
+          onClick={() => setAction("restart")}
+        >
           <Icon>restart_alt</Icon>Restart application
         </button>
       </div>
@@ -346,7 +367,10 @@ export function ApplicationSettings() {
             from Docker or your process manager.
           </p>
         </div>
-        <button className="secondary" onClick={() => setAction("stop")}>
+        <button
+          className="btn btn-danger secondary danger"
+          onClick={() => setAction("stop")}
+        >
           <Icon>power_settings_new</Icon>Stop application
         </button>
       </div>

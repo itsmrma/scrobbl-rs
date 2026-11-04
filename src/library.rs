@@ -431,19 +431,21 @@ async fn save_image(
     id: &str,
     source: &str,
     data: &[u8],
+    provenance_json: Option<&str>,
 ) -> Result<()> {
     writable(state).await?;
     let mime = image_type(data)?;
     let now = auth::now_ms();
     let mut tx = state.db.begin().await?;
     sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision").fetch_optional(&mut *tx).await?.ok_or_else(||AppError::Conflict("Archive is in maintenance.".into()))?;
-    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms) VALUES(?,?,?,?,?,?,NULL) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=NULL")
+    sqlx::query("INSERT INTO artwork(kind,entity_id,source,bytes,mime,checked_at_ms,expires_at_ms,provenance_json) VALUES(?,?,?,?,?,?,NULL,?) ON CONFLICT(kind,entity_id,source) DO UPDATE SET bytes=excluded.bytes,mime=excluded.mime,checked_at_ms=excluded.checked_at_ms,expires_at_ms=NULL,provenance_json=excluded.provenance_json")
         .bind(kind)
         .bind(id)
         .bind(source)
         .bind(data)
         .bind(mime)
         .bind(now)
+        .bind(provenance_json)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -464,13 +466,15 @@ pub async fn upload_image(
         ));
     }
     exists(&state, &kind, &id).await?;
-    save_image(&state, &kind, &id, "custom", &data).await?;
+    save_image(&state, &kind, &id, "custom", &data, None).await?;
     Ok(Json(serde_json::json!({"saved":true})))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageUrl {
     pub url: Option<String>,
+    #[serde(default)]
+    pub credit: Option<crate::artwork_sources::ImageCredit>,
 }
 pub async fn image_url(
     State(state): State<AppState>,
@@ -490,7 +494,20 @@ pub async fn image_url(
     exists(&state, &kind, &id).await?;
     if let Some(url) = form.url {
         let bytes = download(&url, None).await?;
-        save_image(&state, &kind, &id, "custom", &bytes).await?;
+        let provenance = match form.credit {
+            Some(mut credit) => {
+                credit.source_url = crate::artwork_sources::secure_url(&credit.source_url)
+                    .ok_or_else(|| AppError::BadRequest("Invalid credit source URL.".into()))?;
+                credit.image_url = crate::artwork_sources::secure_url(&credit.image_url)
+                    .ok_or_else(|| AppError::BadRequest("Invalid credit image URL.".into()))?;
+                credit.license_url = credit
+                    .license_url
+                    .and_then(|u| crate::artwork_sources::secure_url(&u));
+                Some(serde_json::to_string(&credit).map_err(|_| AppError::Internal)?)
+            }
+            None => None,
+        };
+        save_image(&state, &kind, &id, "custom", &bytes, provenance.as_deref()).await?;
     } else {
         sqlx::query("DELETE FROM artwork WHERE kind=? AND entity_id=? AND source='custom'")
             .bind(&kind)
@@ -499,6 +516,22 @@ pub async fn image_url(
             .await?;
     }
     Ok(Json(serde_json::json!({"saved":true})))
+}
+
+#[derive(Deserialize)]
+pub struct PreviewQuery {
+    pub url: String,
+}
+
+pub async fn artwork_preview(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<PreviewQuery>,
+) -> Result<Response> {
+    auth::session(&state, &headers).await?;
+    let bytes = download(&query.url, None).await?;
+    let mime = image_type(&bytes)?;
+    Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
 #[derive(Default, Deserialize)]
 pub struct ArtworkQuery {
@@ -775,7 +808,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cached, 0, "a busy provider must not cache a missing image");
-        save_image(&state, "artists", &id, "custom", b"\x89PNG\r\n\x1a\n")
+        save_image(&state, "artists", &id, "custom", b"\x89PNG\r\n\x1a\n", None)
             .await
             .unwrap();
         let cached = tokio::time::timeout(

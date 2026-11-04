@@ -399,7 +399,7 @@ pub(crate) fn caa_front_image_url(data: &Value) -> Result<Option<String>> {
     };
     Ok(Some(image_url))
 }
-fn secure_url(value: &str) -> Option<String> {
+pub(crate) fn secure_url(value: &str) -> Option<String> {
     let url = library::archive_https(url::Url::parse(value).ok()?);
     (url.scheme() == "https" && url.username().is_empty() && url.password().is_none())
         .then(|| url.into())
@@ -898,6 +898,453 @@ pub(crate) async fn credit_in(
     credit.image_url = secure_url(&credit.image_url).ok_or(AppError::Internal)?;
     credit.license_url = credit.license_url.and_then(|v| secure_url(&v));
     Ok(Some(credit))
+}
+
+#[derive(Default, Deserialize)]
+pub struct CandidateQuery {
+    pub q: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtworkCandidate {
+    pub id: String,
+    pub title: String,
+    pub subtitle: String,
+    pub provider: String,
+    pub provider_label: String,
+    pub preview_url: String,
+    pub image_url: String,
+    pub source_url: String,
+    pub credit: ImageCredit,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtworkCandidatesResponse {
+    pub target_kind: String,
+    pub target_id: String,
+    pub target_name: String,
+    pub default_query: String,
+    pub query: String,
+    pub candidates: Vec<ArtworkCandidate>,
+    pub warnings: Vec<String>,
+}
+
+pub async fn candidates(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path((kind, id)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(params): axum::extract::Query<CandidateQuery>,
+) -> Result<axum::Json<ArtworkCandidatesResponse>> {
+    auth::session(&state, &headers).await?;
+    let mut conn = state.read_db.acquire().await?;
+
+    let (target_kind, target_id, target_name, default_query) = match kind.as_str() {
+        "artists" => {
+            let cid = crate::name_groups::canonical(&mut conn, "artists", &id).await?;
+            let name: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "{} SELECT name FROM artists WHERE id=?",
+                library::METADATA
+            )))
+            .bind(&cid)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or(AppError::NotFound)?;
+            ("artists".to_string(), cid, name.clone(), name)
+        }
+        "albums" => {
+            let cid = crate::name_groups::canonical(&mut conn, "albums", &id).await?;
+            let name: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "{} SELECT name FROM albums WHERE id=?",
+                library::METADATA
+            )))
+            .bind(&cid)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or(AppError::NotFound)?;
+            let first_artist: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "{} SELECT a.name FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists a ON a.id=ta.artist_id WHERE t.album_id=? ORDER BY ta.ordinal LIMIT 1",
+                library::METADATA
+            )))
+            .bind(&cid)
+            .fetch_optional(&mut *conn)
+            .await?;
+            let clean = normalize_album_title(&name);
+            let dq = match first_artist {
+                Some(a) if !a.trim().is_empty() => format!("{clean} {a}"),
+                _ => clean,
+            };
+            ("albums".to_string(), cid, name, dq)
+        }
+        "tracks" => {
+            let row = sqlx::query(sqlx::AssertSqlSafe(format!(
+                "{} SELECT t.id, t.title, t.album_id, a.name AS album FROM tracks t LEFT JOIN albums a ON a.id=t.album_id WHERE t.id=?",
+                library::METADATA
+            )))
+            .bind(&id)
+            .fetch_optional(&mut *conn)
+            .await?
+            .ok_or(AppError::NotFound)?;
+            let title: String = row.get("title");
+            let album_id: Option<String> = row.get("album_id");
+            let album_name: Option<String> = row.get("album");
+            let first_artist: Option<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "{} SELECT a.id, a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.ordinal LIMIT 1",
+                library::METADATA
+            )))
+            .bind(&id)
+            .fetch_optional(&mut *conn)
+            .await?;
+            if let Some(aid) = album_id {
+                let aname = album_name.unwrap_or_else(|| title.clone());
+                let clean = normalize_album_title(&aname);
+                let dq = match &first_artist {
+                    Some((_, a)) if !a.trim().is_empty() => format!("{clean} {a}"),
+                    _ => clean,
+                };
+                ("albums".to_string(), aid, aname, dq)
+            } else if let Some((art_id, art_name)) = first_artist {
+                ("artists".to_string(), art_id, art_name.clone(), art_name)
+            } else {
+                return Err(AppError::BadRequest(
+                    "This track is not linked to an album or artist for artwork storage.".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(AppError::BadRequest(
+                "Choose artists, albums or tracks.".into(),
+            ));
+        }
+    };
+
+    let settings = artwork_settings::read(&mut conn).await?;
+    drop(conn);
+
+    let query = params
+        .q
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(200).collect::<String>())
+        .unwrap_or_else(|| default_query.clone());
+
+    let mut candidates = Vec::new();
+    let mut warnings = Vec::new();
+    let mut seen_urls = std::collections::BTreeSet::new();
+    let enabled: Vec<ImageProvider> = settings.enabled(&target_kind).collect();
+
+    if enabled.is_empty() {
+        warnings
+            .push("All public image providers are currently disabled in Settings → Images.".into());
+    }
+
+    let mut commons_queried = false;
+    for provider in enabled {
+        match (target_kind.as_str(), provider) {
+            ("albums", ImageProvider::Itunes) => {
+                let target = url(
+                    "https://itunes.apple.com/search",
+                    &[("term", &query), ("entity", "album"), ("limit", "12")],
+                );
+                match json(&state, &target).await {
+                    Ok(Some(data)) => {
+                        if let Some(results) = data["results"].as_array() {
+                            for (idx, item) in results.iter().enumerate() {
+                                let Some(raw_art) = item["artworkUrl100"].as_str() else {
+                                    continue;
+                                };
+                                let full = upgrade_itunes_artwork_url(raw_art);
+                                let preview_raw = raw_art.replace("/100x100bb.", "/300x300bb.");
+                                let Some(image_url) = secure_url(&full) else {
+                                    continue;
+                                };
+                                if !seen_urls.insert(image_url.clone()) {
+                                    continue;
+                                }
+                                let preview_url =
+                                    secure_url(&preview_raw).unwrap_or_else(|| image_url.clone());
+                                let title = item["collectionName"]
+                                    .as_str()
+                                    .unwrap_or(&target_name)
+                                    .to_string();
+                                let artist_name =
+                                    item["artistName"].as_str().unwrap_or("Unknown artist");
+                                let year = item["releaseDate"]
+                                    .as_str()
+                                    .and_then(|d| d.get(..4))
+                                    .unwrap_or("");
+                                let subtitle = if year.is_empty() {
+                                    artist_name.to_string()
+                                } else {
+                                    format!("{artist_name} · {year}")
+                                };
+                                let source_url = item["collectionViewUrl"]
+                                    .as_str()
+                                    .and_then(secure_url)
+                                    .unwrap_or_else(|| image_url.clone());
+                                candidates.push(ArtworkCandidate {
+                                    id: format!("itunes-album-{idx}"),
+                                    title,
+                                    subtitle,
+                                    provider: provider.key().into(),
+                                    provider_label: "Apple iTunes".into(),
+                                    preview_url,
+                                    image_url: image_url.clone(),
+                                    source_url: source_url.clone(),
+                                    credit: ImageCredit {
+                                        provider: provider.key().into(),
+                                        source_url,
+                                        image_url,
+                                        author: None,
+                                        license: Some("Cover artwork may be copyrighted.".into()),
+                                        license_url: None,
+                                        credit: Some("Apple iTunes".into()),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => warnings.push("Apple iTunes is temporarily unavailable.".into()),
+                }
+            }
+            ("albums", ImageProvider::CoverArtArchive) => {
+                let target = url(
+                    "https://musicbrainz.org/ws/2/release-group/",
+                    &[("query", &query), ("limit", "5"), ("fmt", "json")],
+                );
+                match json(&state, &target).await {
+                    Ok(Some(data)) => {
+                        if let Some(groups) = data["release-groups"].as_array() {
+                            for (idx, group) in groups.iter().take(4).enumerate() {
+                                let Some(rg_id) = group["id"].as_str().filter(|v| mbid(v)) else {
+                                    continue;
+                                };
+                                let caa_url =
+                                    format!("https://coverartarchive.org/release-group/{rg_id}");
+                                let Ok(Some(caa_data)) = json(&state, &caa_url).await else {
+                                    continue;
+                                };
+                                let Ok(Some(image_url)) = caa_front_image_url(&caa_data) else {
+                                    continue;
+                                };
+                                if !seen_urls.insert(image_url.clone()) {
+                                    continue;
+                                }
+                                let title =
+                                    group["title"].as_str().unwrap_or(&target_name).to_string();
+                                let artist_credit = group["artist-credit"]
+                                    .as_array()
+                                    .and_then(|arr| arr.first())
+                                    .and_then(|c| {
+                                        c["name"].as_str().or_else(|| c["artist"]["name"].as_str())
+                                    })
+                                    .unwrap_or("MusicBrainz");
+                                let primary_type =
+                                    group["primary-type"].as_str().unwrap_or("Release");
+                                let source_url =
+                                    format!("https://musicbrainz.org/release-group/{rg_id}");
+                                candidates.push(ArtworkCandidate {
+                                    id: format!("caa-{idx}-{rg_id}"),
+                                    title,
+                                    subtitle: format!("{artist_credit} · {primary_type}"),
+                                    provider: provider.key().into(),
+                                    provider_label: "Cover Art Archive".into(),
+                                    preview_url: image_url.clone(),
+                                    image_url: image_url.clone(),
+                                    source_url: source_url.clone(),
+                                    credit: ImageCredit {
+                                        provider: provider.key().into(),
+                                        source_url,
+                                        image_url,
+                                        author: None,
+                                        license: Some(
+                                            "Cover artwork may be copyrighted; metadata licensing does not license the image."
+                                                .into(),
+                                        ),
+                                        license_url: Some(
+                                            "https://musicbrainz.org/doc/Copyright_and_DMCA_Compliance"
+                                                .into(),
+                                        ),
+                                        credit: Some("Cover Art Archive / MusicBrainz".into()),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        warnings.push("Cover Art Archive / MusicBrainz is cooling down.".into())
+                    }
+                }
+            }
+            ("artists", ImageProvider::Itunes) => {
+                let target = url(
+                    "https://api.deezer.com/search/artist",
+                    &[("q", &query), ("limit", "12")],
+                );
+                match json(&state, &target).await {
+                    Ok(Some(data)) => {
+                        if let Some(results) = data["data"].as_array() {
+                            for (idx, item) in results.iter().enumerate() {
+                                let Some(raw_img) = item["picture_xl"]
+                                    .as_str()
+                                    .or_else(|| item["picture_big"].as_str())
+                                    .or_else(|| item["picture_medium"].as_str())
+                                else {
+                                    continue;
+                                };
+                                let Some(image_url) = secure_url(raw_img) else {
+                                    continue;
+                                };
+                                if !seen_urls.insert(image_url.clone()) {
+                                    continue;
+                                }
+                                let preview_url = item["picture_medium"]
+                                    .as_str()
+                                    .and_then(secure_url)
+                                    .unwrap_or_else(|| image_url.clone());
+                                let title =
+                                    item["name"].as_str().unwrap_or(&target_name).to_string();
+                                let albums_count = item["nb_album"].as_u64().unwrap_or(0);
+                                let subtitle = if albums_count > 0 {
+                                    format!("{albums_count} releases")
+                                } else {
+                                    "Artist portrait".into()
+                                };
+                                let source_url = item["link"]
+                                    .as_str()
+                                    .and_then(secure_url)
+                                    .unwrap_or_else(|| image_url.clone());
+                                candidates.push(ArtworkCandidate {
+                                    id: format!("deezer-artist-{idx}"),
+                                    title,
+                                    subtitle,
+                                    provider: provider.key().into(),
+                                    provider_label: "Deezer".into(),
+                                    preview_url,
+                                    image_url: image_url.clone(),
+                                    source_url: source_url.clone(),
+                                    credit: ImageCredit {
+                                        provider: provider.key().into(),
+                                        source_url,
+                                        image_url,
+                                        author: None,
+                                        license: Some("Artist image may be copyrighted.".into()),
+                                        license_url: None,
+                                        credit: Some("Deezer".into()),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        warnings.push("Deezer artist search is temporarily unavailable.".into())
+                    }
+                }
+            }
+            ("artists", ImageProvider::MusicbrainzImage | ImageProvider::Wikidata) => {
+                if commons_queried {
+                    continue;
+                }
+                commons_queried = true;
+                let target = url(
+                    "https://commons.wikimedia.org/w/api.php",
+                    &[
+                        ("action", "query"),
+                        ("format", "json"),
+                        ("generator", "search"),
+                        ("gsrnamespace", "6"),
+                        ("gsrsearch", &query),
+                        ("gsrlimit", "8"),
+                        ("prop", "imageinfo"),
+                        ("iiprop", "url|mime|extmetadata"),
+                        ("iiurlwidth", "500"),
+                        ("maxlag", "5"),
+                    ],
+                );
+                match json(&state, &target).await {
+                    Ok(Some(data)) => {
+                        if let Some(pages) = data["query"]["pages"].as_object() {
+                            for (page_id, page) in pages {
+                                let Some(info) =
+                                    page["imageinfo"].as_array().and_then(|i| i.first())
+                                else {
+                                    continue;
+                                };
+                                let mime = info["mime"].as_str().unwrap_or("");
+                                if !matches!(mime, "image/jpeg" | "image/png" | "image/webp") {
+                                    continue;
+                                }
+                                let meta = &info["extmetadata"];
+                                let Some(author) = text(meta, "Artist") else {
+                                    continue;
+                                };
+                                let Some(license) = text(meta, "LicenseShortName") else {
+                                    continue;
+                                };
+                                let Some(source_url) =
+                                    info["descriptionurl"].as_str().and_then(secure_url)
+                                else {
+                                    continue;
+                                };
+                                let Some(image_url) = info["thumburl"]
+                                    .as_str()
+                                    .or_else(|| info["url"].as_str())
+                                    .and_then(secure_url)
+                                else {
+                                    continue;
+                                };
+                                if !seen_urls.insert(image_url.clone()) {
+                                    continue;
+                                }
+                                let raw_title = page["title"]
+                                    .as_str()
+                                    .unwrap_or("Commons image")
+                                    .trim_start_matches("File:");
+                                candidates.push(ArtworkCandidate {
+                                    id: format!("commons-{page_id}"),
+                                    title: raw_title.to_string(),
+                                    subtitle: license.clone(),
+                                    provider: provider.key().into(),
+                                    provider_label: "Wikimedia Commons".into(),
+                                    preview_url: image_url.clone(),
+                                    image_url: image_url.clone(),
+                                    source_url: source_url.clone(),
+                                    credit: ImageCredit {
+                                        provider: provider.key().into(),
+                                        source_url,
+                                        image_url,
+                                        author: Some(author),
+                                        license: Some(license),
+                                        license_url: text(meta, "LicenseUrl")
+                                            .and_then(|v| secure_url(&v)),
+                                        credit: text(meta, "Credit"),
+                                    },
+                                });
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        warnings.push("Wikimedia Commons search is temporarily unavailable.".into())
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(axum::Json(ArtworkCandidatesResponse {
+        target_kind,
+        target_id,
+        target_name,
+        default_query,
+        query,
+        candidates,
+        warnings,
+    }))
 }
 
 #[cfg(test)]

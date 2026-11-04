@@ -41,6 +41,7 @@ export function setCsrf(value: string | null) {
   csrf = value;
   if (value === null) window.dispatchEvent(new Event("read-cache-cleared"));
 }
+
 // Explicit cancellation before document teardown avoids WebKit reporting pending
 // same-origin reads as access-control errors when the old document disappears.
 const pendingRequests = new Set<AbortController>();
@@ -54,6 +55,7 @@ window.addEventListener("pagehide", leaveDocument);
 window.addEventListener("pageshow", () => {
   leavingDocument = false;
 });
+
 // Artwork downloads survive SPA navigation but must be cancelled before the
 // document disappears, just like the JSON reads below (not left to WebKit).
 export class ArtworkRetry extends Error {
@@ -61,6 +63,7 @@ export class ArtworkRetry extends Error {
     super("Artwork temporarily unavailable");
   }
 }
+
 export async function downloadArtwork(path: string): Promise<Blob> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
@@ -87,6 +90,7 @@ export async function downloadArtwork(path: string): Promise<Blob> {
     pendingRequests.delete(controller);
   }
 }
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (leavingDocument)
     throw new DOMException("The page is being left.", "AbortError");
@@ -129,12 +133,14 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     options.signal?.removeEventListener("abort", cancel);
   }
 }
+
 const post = <T>(path: string, body: unknown = {}, signal?: AbortSignal) =>
   request<T>(path, {
     method: "POST",
     signal,
     body: body instanceof FormData ? body : JSON.stringify(body),
   });
+
 export type Session = {
   authenticated: boolean;
   setup_required: boolean;
@@ -143,15 +149,18 @@ export type Session = {
   username_setup_required?: boolean;
   username?: string;
 };
+
 export type AccountProfile = {
   username: string | null;
   name: string;
   avatar_url: string | null;
 };
+
 export type ConnectOutcome = {
   outcome: "pending" | "processing" | "connected" | "error";
   message: string | null;
 };
+
 export type ReviewPage = {
   total: number;
   page: number;
@@ -159,6 +168,7 @@ export type ReviewPage = {
   groups: { id: string; items: (Listen & { revision: number })[] }[];
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
+
 export type ListenBrainzOriginalsPage = {
   total: number;
   files: { file_id: string; name: string }[];
@@ -170,6 +180,33 @@ export type ListenBrainzOriginalsPage = {
     raw: unknown;
   }[];
 };
+
+export type ArtworkCandidate = {
+  id: string;
+  title: string;
+  subtitle: string;
+  provider: string;
+  provider_label: string;
+  preview_url: string;
+  image_url: string;
+  source_url: string;
+  credit: ImageCredit;
+};
+
+export type ArtworkCandidatesResponse = {
+  target_kind: string;
+  target_id: string;
+  target_name: string;
+  default_query: string;
+  query: string;
+  candidates: ArtworkCandidate[];
+  warnings: string[];
+};
+
+export function artworkPreviewUrl(url: string): string {
+  return `/api/v1/artwork-preview?${new URLSearchParams({ url })}`;
+}
+
 export const api = {
   account: () => request<AccountProfile>("/api/v1/account"),
   saveAccount: (name: string) =>
@@ -253,6 +290,12 @@ export const api = {
       body: file,
       headers: { "Content-Type": file.type || "application/octet-stream" },
     }),
+  artworkCandidates: (kind: string, id: string, q?: string) => {
+    const qs = q?.trim() ? `?${new URLSearchParams({ q: q.trim() })}` : "";
+    return request<ArtworkCandidatesResponse>(
+      `/api/v1/artwork/${kind}/${encodeURIComponent(id)}/candidates${qs}`,
+    );
+  },
   artworkSettings: () => request<ArtworkSettings>("/api/v1/artwork-providers"),
   artworkCredit: (url: string) =>
     request<ImageCredit | null>(url.split("?")[0] + "/credit"),
@@ -265,8 +308,16 @@ export const api = {
       queued_albums: number;
       queued_artists: number;
     }>("/api/v1/artwork/backfill"),
-  artworkUrl: (kind: string, id: string, url: string | null) =>
-    post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, { url }),
+  artworkUrl: (
+    kind: string,
+    id: string,
+    url: string | null,
+    credit?: ImageCredit | null,
+  ) =>
+    post(`/api/v1/artwork/${kind}/${encodeURIComponent(id)}`, {
+      url,
+      ...(credit ? { credit } : {}),
+    }),
   apiKeys: () => request<ApiKeySettings>("/api/v1/api-keys"),
   createApiKey: (form: CreateApiKey) =>
     post<CreatedApiKey>("/api/v1/api-keys", form),

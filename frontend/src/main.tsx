@@ -1,4 +1,4 @@
-import { useArtworkActivity } from "./artwork-activity";
+import { syncServerArtworkJobs, useArtworkActivity } from "./artwork-activity";
 import { useDisclosureMotion } from "./disclosure";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -16,7 +16,7 @@ import {
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
-import { Link, navigate, useLocation } from "./navigation";
+import { Link, navigate, useLocation, useSearch } from "./navigation";
 import {
   isBool,
   isWidth,
@@ -27,19 +27,32 @@ import { Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
-import { Heading, Icon, Toasts, Wordmark } from "./ui";
+import { Heading, Icon, number, Toasts, Wordmark } from "./ui";
 import type { Style } from "./ui";
 import "./style.css";
 import "./dashboard.css";
 import { Auth, UsernameSetup } from "./account";
 import { AccountMenu } from "./account-settings";
 import { SearchPage } from "./search";
-import { AppShellSkeleton } from "./skeleton";
+import { StartupScreen } from "./startup-screen";
+import type { BootStageId } from "./startup-screen";
+
+function shouldAnimateStartup(): boolean {
+  if (typeof navigator !== "undefined" && navigator.webdriver) return false;
+  if (
+    typeof matchMedia === "function" &&
+    matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return false;
+  }
+  return true;
+}
 
 function Shell({ logout }: { logout: () => void }) {
   useDisclosureMotion();
   const artworkWork = useArtworkActivity();
   const path = useLocation(),
+    search = useSearch(),
     appearance = useAppearance();
   const [preferences, setPreferences] = useState<Preferences | null>(null),
     [loadError, setLoadError] = useState("");
@@ -48,6 +61,9 @@ function Shell({ logout }: { logout: () => void }) {
   const [jobs, setJobs] = useState<Activity[]>([]),
     [jobsError, setJobsError] = useState("");
   const [jobsLoading, setJobsLoading] = useState(true);
+  const [previewBoot, setPreviewBoot] = useState(
+    () => new URLSearchParams(location.search).get("boot") === "preview",
+  );
   const [collapsed, setCollapsed] = useBrowserPreference(
       "sidebar-collapsed",
       false,
@@ -61,12 +77,28 @@ function Shell({ logout }: { logout: () => void }) {
   );
   const sidebar = useRef<HTMLElement>(null);
   const menu = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    if (params.get("boot") === "preview") {
+      setPreviewBoot(true);
+    }
+  }, [search]);
+
+  useEffect(() => {
+    const openPreview = () => setPreviewBoot(true);
+    window.addEventListener("preview-startup-screen", openPreview);
+    return () =>
+      window.removeEventListener("preview-startup-screen", openPreview);
+  }, []);
+
   useEffect(() => {
     const query = matchMedia("(max-width: 900px)");
     const change = () => setMobile(query.matches);
     query.addEventListener("change", change);
     return () => query.removeEventListener("change", change);
   }, []);
+
   useEffect(() => {
     if (!mobile || !mobileOpen) return;
     const prior = document.activeElement;
@@ -98,15 +130,15 @@ function Shell({ logout }: { logout: () => void }) {
     document.addEventListener("keydown", key);
     return () => {
       document.removeEventListener("keydown", key);
-      // WebKit does not focus a button on pointer activation. Return explicitly
-      // to the drawer trigger rather than whichever control happened to precede it.
       if (menu.current?.getClientRects().length) menu.current.focus();
       else if (prior instanceof HTMLElement) prior.focus();
     };
   }, [mobileOpen, mobile]);
+
   const alive = useRef(true);
   const lastCalendar = useRef<string | null>(null);
   const lastArtwork = useRef("");
+
   async function refresh() {
     await Promise.all([
       api
@@ -127,6 +159,7 @@ function Shell({ logout }: { logout: () => void }) {
           setJobs(data);
           setJobsLoading(false);
           setJobsError("");
+          syncServerArtworkJobs(data);
           const artwork = JSON.stringify(
             data
               .filter((job) => job.kind === "artwork")
@@ -157,6 +190,7 @@ function Shell({ logout }: { logout: () => void }) {
         }),
     ]);
   }
+
   useEffect(() => {
     alive.current = true;
     void api
@@ -191,10 +225,12 @@ function Shell({ logout }: { logout: () => void }) {
       document.removeEventListener("visibilitychange", wake);
     };
   }, []);
+
   useEffect(() => {
     setMobileOpen(false);
     window.scrollTo(0, 0);
   }, [path]);
+
   const page =
     path === "/" || path === "/dashboard" ? "dashboard" : path.split("/")[1];
   const settingsSection = [
@@ -223,17 +259,42 @@ function Shell({ logout }: { logout: () => void }) {
         music: "Music",
       } as Record<string, string>
     )[page] || "Page not found";
+
   useEffect(() => {
     document.title = `${title} · ${preferences?.name || "scrobbl.rs"}`;
   }, [title, preferences?.name]);
-  if (!preferences)
+
+  if (!preferences) {
     return (
-      <AppShellSkeleton
-        label="Opening your archive…"
-        error={loadError}
+      <StartupScreen
+        stage="preferences"
+        detail="Loading instance preferences, timezone calendar, and custom layout…"
+        error={loadError || undefined}
         onReload={() => location.reload()}
       />
     );
+  }
+
+  if (previewBoot) {
+    return (
+      <StartupScreen
+        stage="ready"
+        instanceName={preferences.name}
+        preview
+        onDismiss={() => {
+          setPreviewBoot(false);
+          const next = new URLSearchParams(location.search);
+          if (next.has("boot")) {
+            next.delete("boot");
+            navigate(
+              `${location.pathname}${next.size ? `?${next.toString()}` : ""}`,
+            );
+          }
+        }}
+      />
+    );
+  }
+
   const nav = [
     ["/dashboard", "dashboard", "Overview", "space_dashboard"],
     ["/search", "search", "Search", "search"],
@@ -242,6 +303,10 @@ function Shell({ logout }: { logout: () => void }) {
     ["/import", "import", "Import history", "file_upload"],
     ["/settings/general", "settings", "Settings", "settings"],
   ];
+
+  const serverArtworkSync = artworkWork.serverSync;
+  const showArtworkPill = !!serverArtworkSync || artworkWork.pending > 0;
+
   return (
     <NowPlayingProvider status={status} statusError={statusError}>
       <div
@@ -272,7 +337,7 @@ function Shell({ logout }: { logout: () => void }) {
               </span>
             </Link>
             <button
-              className="icon-button desktop-collapse"
+              className="btn btn-icon icon-button desktop-collapse"
               aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
               aria-expanded={!collapsed}
               onClick={() => setCollapsed(!collapsed)}
@@ -280,7 +345,7 @@ function Shell({ logout }: { logout: () => void }) {
               <Icon>{collapsed ? "chevron_right" : "chevron_left"}</Icon>
             </button>
             <button
-              className="icon-button mobile-close"
+              className="btn btn-icon icon-button mobile-close"
               aria-label="Close navigation"
               onClick={() => setMobileOpen(false)}
             >
@@ -375,7 +440,7 @@ function Shell({ logout }: { logout: () => void }) {
           <header className="topbar">
             <button
               ref={menu}
-              className="icon-button mobile-menu"
+              className="btn btn-icon icon-button mobile-menu"
               aria-label="Open navigation"
               aria-expanded={mobileOpen}
               aria-controls="navigation-panel"
@@ -383,8 +448,28 @@ function Shell({ logout }: { logout: () => void }) {
             >
               <Icon>menu</Icon>
             </button>
-            <span>Your library / {title}</span>
+            <span className="topbar-breadcrumb">Your library / {title}</span>
             <div className="topbar-actions">
+              {showArtworkPill && (
+                <Link
+                  to="/activities"
+                  className={`artwork-sync-pill ${serverArtworkSync?.paused ? "is-paused" : ""}`}
+                  title="Open artwork sync activity"
+                >
+                  <Icon>
+                    {serverArtworkSync?.paused ? "pause_circle" : "downloading"}
+                  </Icon>
+                  <span className="artwork-sync-pill-text">
+                    {serverArtworkSync
+                      ? serverArtworkSync.paused
+                        ? "Artwork paused"
+                        : serverArtworkSync.expected
+                          ? `Artwork ${number.format(serverArtworkSync.processed)}/${number.format(serverArtworkSync.expected)}`
+                          : "Syncing artwork"
+                      : `Artwork (${number.format(artworkWork.pending)})`}
+                  </span>
+                </Link>
+              )}
               <LibraryToolsMenu />
               <ActivityMenu
                 jobs={jobs}
@@ -498,7 +583,9 @@ function Shell({ logout }: { logout: () => void }) {
             ].includes(page) && (
               <section className="page-container">
                 <Heading title="Page not found" />
-                <Link to="/dashboard">Back to overview</Link>
+                <Link to="/dashboard" className="btn btn-secondary secondary">
+                  Back to overview
+                </Link>
               </section>
             )}
           </main>
@@ -519,9 +606,24 @@ function Shell({ logout }: { logout: () => void }) {
     </NowPlayingProvider>
   );
 }
+
 function App() {
   const [session, setSession] = useState<Session | null>(null),
     [error, setError] = useState("");
+  const [bootHoldStage, setBootHoldStage] = useState<BootStageId | null>(() =>
+    shouldAnimateStartup() ? "database" : null,
+  );
+
+  useEffect(() => {
+    if (!bootHoldStage) return;
+    const t1 = setTimeout(() => setBootHoldStage("session"), 180);
+    const t2 = setTimeout(() => setBootHoldStage(null), 380);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, []);
+
   useEffect(() => {
     void api
       .session()
@@ -541,38 +643,43 @@ function App() {
     window.addEventListener("session-expired", expired);
     return () => window.removeEventListener("session-expired", expired);
   }, []);
+
   async function reloadSession() {
     const data = await api.session();
     setCsrf(data.csrf);
     setSession(data);
   }
+
   return (
     <Toasts>
-      {session ? (
-        session.authenticated ? (
-          session.username_setup_required ? (
-            <UsernameSetup done={reloadSession} />
-          ) : (
-            <Shell
-              logout={() => {
-                navigate("/dashboard");
-                void reloadSession();
-              }}
-            />
-          )
+      {!session || bootHoldStage ? (
+        <StartupScreen
+          stage={bootHoldStage || "session"}
+          error={error || undefined}
+          onReload={() => location.reload()}
+        />
+      ) : session.authenticated ? (
+        session.username_setup_required ? (
+          <UsernameSetup done={reloadSession} />
         ) : (
-          <Auth
-            setup={session.setup_required}
-            usernameRequired={!!session.username_required}
-            done={reloadSession}
+          <Shell
+            logout={() => {
+              navigate("/dashboard");
+              void reloadSession();
+            }}
           />
         )
       ) : (
-        <AppShellSkeleton label="Opening your archive…" error={error} />
+        <Auth
+          setup={session.setup_required}
+          usernameRequired={!!session.username_required}
+          done={reloadSession}
+        />
       )}
     </Toasts>
   );
 }
+
 async function mount() {
   const rootEl = document.getElementById("root")!;
   const statusEl = rootEl.querySelector(".pre-splash-status");
@@ -581,19 +688,21 @@ async function mount() {
     let res = await fetch("/api/boot-status", { cache: "no-store" });
     if (res.ok) {
       let data = (await res.json()) as { ready?: boolean; stage?: string };
-      while (!data.ready) {
+      while (data.ready === false) {
         if (data.stage && statusEl) {
           statusEl.textContent = `Starting scrobbl.rs (${data.stage})...`;
         }
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        await new Promise((resolve) => setTimeout(resolve, 450));
         res = await fetch("/api/boot-status", { cache: "no-store" });
         if (res.ok) {
           data = (await res.json()) as { ready?: boolean; stage?: string };
+        } else {
+          break;
         }
       }
     }
   } catch {
-    // Proceed to mount so React or error boundary handles connectivity
+    // Proceed to mount so React handles connectivity or error states
   }
 
   const spotifyReturn = location.pathname.match(

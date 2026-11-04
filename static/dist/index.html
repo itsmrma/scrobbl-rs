@@ -6,45 +6,40 @@
     <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>scrobbl.rs</title>
-    <style>:root{--lightningcss-light:initial;--lightningcss-dark: ;color-scheme:light dark;--splash-bg:#13151b;--splash-text:#f2f3f7;--splash-muted:#bac0cc;--splash-accent:#c9ee8b}@media (prefers-color-scheme:dark){:root{--lightningcss-light: ;--lightningcss-dark:initial}}@media (prefers-color-scheme:light){:root{--splash-bg:#f5f6fa;--splash-text:#18212d;--splash-muted:#425065}}*{box-sizing:border-box}body{background-color:var(--splash-bg);color:var(--splash-text);margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.pre-splash-container{text-align:center;flex-direction:column;justify-content:center;align-items:center;min-height:100vh;padding:24px;display:flex}.pre-splash-brand{letter-spacing:-.04em;color:var(--splash-text);-webkit-user-select:none;user-select:none;margin-bottom:24px;font-size:32px;font-weight:700}.pre-splash-brand .accent{color:var(--splash-accent)}.pre-splash-loader{justify-content:center;align-items:center;height:24px;margin-bottom:16px;display:flex}.pre-splash-dot{background-color:var(--splash-accent);width:10px;height:10px;box-shadow:0 0 12px var(--splash-accent);border-radius:50%;animation:1.4s ease-in-out infinite pre-splash-pulse}@keyframes pre-splash-pulse{0%,to{opacity:.4;transform:scale(.75)}50%{opacity:1;transform:scale(1.25)}}@media (prefers-reduced-motion:reduce){.pre-splash-dot{opacity:.9;animation:none}}.pre-splash-status{color:var(--splash-muted);max-width:360px;margin:0;font-size:14px;line-height:1.5}</style>
+    <style>:root{--lightningcss-light:initial;--lightningcss-dark: ;color-scheme:light dark;--splash-bg:#0d0f13;--splash-surface:#151921;--splash-surface-raised:#1e2430;--splash-border:#ffffff1a;--splash-text:#f3f5f8;--splash-muted:#9aa3b2;--splash-accent:#c9ee8b}@media (prefers-color-scheme:dark){:root{--lightningcss-light: ;--lightningcss-dark:initial}}@media (prefers-color-scheme:light){:root{--splash-bg:#f4f6f9;--splash-surface:#fff;--splash-surface-raised:#eef1f6;--splash-border:#141c2824;--splash-text:#141b24;--splash-muted:#4b5668}}*{box-sizing:border-box}html,body{background:radial-gradient(circle at 50% 0%, #c9ee8b14, transparent 55%), var(--splash-bg);min-height:100vh;color:var(--splash-text);margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif}.pre-splash-container{place-items:center;min-height:100vh;padding:24px;display:grid}.pre-splash-card{background:var(--splash-surface);border:1px solid var(--splash-border);border-radius:16px;width:min(560px,100%);padding:36px 32px;box-shadow:0 24px 64px #00000052}.pre-splash-top{justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px;display:flex}.pre-splash-brand{letter-spacing:-.04em;-webkit-user-select:none;user-select:none;font-size:30px;font-weight:800;line-height:1}.pre-splash-brand .accent{color:var(--splash-accent)}.pre-splash-pill{letter-spacing:.03em;text-transform:uppercase;background:var(--splash-surface-raised);border:1px solid var(--splash-border);color:var(--splash-muted);border-radius:999px;align-items:center;gap:8px;padding:6px 12px;font-size:12px;font-weight:600;display:inline-flex}.pre-splash-dot{background-color:var(--splash-accent);width:8px;height:8px;box-shadow:0 0 10px var(--splash-accent);border-radius:50%;animation:1.3s ease-in-out infinite pre-splash-pulse}@keyframes pre-splash-pulse{0%,to{opacity:.45;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}@media (prefers-reduced-motion:reduce){.pre-splash-dot{opacity:1;animation:none}}.pre-splash-status{color:var(--splash-text);margin:0 0 20px;font-size:15px;font-weight:500;line-height:1.5}.pre-splash-stages{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;display:grid}.pre-splash-stage{background:var(--splash-surface-raised);border:1px solid var(--splash-border);border-radius:10px;padding:12px}.pre-splash-stage small{color:var(--splash-muted);margin-bottom:4px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;display:block}.pre-splash-stage strong{font-size:13px;font-weight:600;display:block}@media (max-width:560px){.pre-splash-card{padding:24px 20px}.pre-splash-stages{grid-template-columns:1fr}}</style>
     <script type="module" crossorigin src="/app.js"></script>
     <link rel="stylesheet" crossorigin href="/style.css">
   </head>
   <body>
     <div id="root">
       <div class="pre-splash-container">
-        <div class="pre-splash-brand">
-          scrobbl<span class="accent">.</span>rs
+        <div class="pre-splash-card">
+          <div class="pre-splash-top">
+            <div class="pre-splash-brand">
+              scrobbl<span class="accent">.</span>rs
+            </div>
+            <div class="pre-splash-pill">
+              <span class="pre-splash-dot"></span>
+              <span>Starting</span>
+            </div>
+          </div>
+          <p class="pre-splash-status">Initializing local listening archive…</p>
+          <div class="pre-splash-stages">
+            <div class="pre-splash-stage">
+              <small>01 · SERVER</small>
+              <strong>Connected</strong>
+            </div>
+            <div class="pre-splash-stage">
+              <small>02 · ARCHIVE</small>
+              <strong>SQLite WAL</strong>
+            </div>
+            <div class="pre-splash-stage">
+              <small>03 · INTERFACE</small>
+              <strong>Hydrating</strong>
+            </div>
+          </div>
         </div>
-        <div class="pre-splash-loader">
-          <div class="pre-splash-dot"></div>
-        </div>
-        <p class="pre-splash-status">Starting scrobbl.rs...</p>
       </div>
     </div>
-    <script>
-      (function () {
-        var statusEl = document.querySelector(".pre-splash-status");
-        function check() {
-          fetch("/api/boot-status", { cache: "no-store" })
-            .then(function (r) {
-              return r.json();
-            })
-            .then(function (data) {
-              if (data && !data.ready) {
-                if (data.stage && statusEl) {
-                  statusEl.textContent =
-                    "Starting scrobbl.rs (" + data.stage + ")...";
-                }
-                setTimeout(check, 800);
-              }
-            })
-            .catch(function () {
-              setTimeout(check, 1000);
-            });
-        }
-        check();
-      })();
-    </script>
   </body>
 </html>

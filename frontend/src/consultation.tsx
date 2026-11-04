@@ -24,6 +24,7 @@ import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Collage } from "./collage";
 import { ArtworkCredits } from "./image-credit";
+import { ImagePickerModal } from "./image-picker";
 import { compactBuckets } from "./chart-buckets";
 import { MusicActions } from "./music-edit";
 import {
@@ -32,7 +33,16 @@ import {
 } from "./listening-patterns";
 import { NowPlayingWidget } from "./library";
 import { BackButton, Link, navigate, useSearch } from "./navigation";
-import { Cover, date, duration, ErrorText, Heading, Icon, number, SegmentedControl } from "./ui";
+import {
+  Cover,
+  date,
+  duration,
+  ErrorText,
+  Heading,
+  Icon,
+  number,
+  SegmentedControl,
+} from "./ui";
 import type { Style } from "./ui";
 import {
   ChartSkeleton,
@@ -3481,9 +3491,28 @@ export function MusicPage({
     return p;
   }, [params, needsTotals]);
 
+  const [artVersion, setArtVersion] = useState(0);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    const bump = () => setArtVersion((v) => v + 1);
+    window.addEventListener("artwork-updated", bump);
+    return () => {
+      window.removeEventListener("artwork-updated", bump);
+    };
+  }, []);
+
   const apiResult = useLoad(
     () => api.music(kind, id, musicParams),
-    `music:${kind}:${id}:${musicParams}:${preferences.version}`,
+    `music:${kind}:${id}:${musicParams}:${preferences.version}:${artVersion}`,
+    !isPreview,
+    undefined,
+    true,
+  );
+
+  const entityDetails = useLoad(
+    () => api.libraryDetails(kind, id),
+    `music-details:${kind}:${id}:${artVersion}`,
     !isPreview,
     undefined,
     true,
@@ -3668,7 +3697,7 @@ export function MusicPage({
             aria-label="Listening history"
           >
             <div className="panel-title">
-              <h2 className="panel-title">Listening history</h2>
+              <h2>Listening history</h2>
             </div>
             <HistoryPage
               preferences={preferences}
@@ -3725,13 +3754,29 @@ export function MusicPage({
         ? "Personalizza template album"
         : "Personalizza template artista";
 
+  const displayCoverUrl =
+    result.data?.cover_url && artVersion > 0
+      ? `${result.data.cover_url}${result.data.cover_url.includes("?") ? "&" : "?"}v=${artVersion}`
+      : result.data?.cover_url || null;
+
   return (
     <>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <div className="music-heading">
-          <Cover url={result.data.cover_url} large>
+          <Cover url={displayCoverUrl} large>
             <ArtworkCredits url={result.data.cover_url} />
+            {!isPreview && (
+              <button
+                type="button"
+                className="btn btn-icon icon-button cover-picker-trigger"
+                aria-label="Change artwork"
+                title="Change artwork"
+                onClick={() => setPickerOpen(true)}
+              >
+                <Icon>photo_camera</Icon>
+              </button>
+            )}
           </Cover>
           <div className="music-header-content" ref={introduction}>
             <div className="music-title-row">
@@ -3776,15 +3821,36 @@ export function MusicPage({
 
       {!layoutEditor.editing && (
         <div className="music-template-toolbar">
+          {!isPreview && result.data && (
+            <button
+              type="button"
+              className="btn btn-secondary button secondary change-artwork-button"
+              onClick={() => setPickerOpen(true)}
+            >
+              <Icon>photo_library</Icon>{" "}
+              {kind === "tracks" ? "Change release artwork" : "Change artwork"}
+            </button>
+          )}
           <button
             type="button"
-            className="button secondary customize-template-button"
+            className="btn btn-secondary button secondary customize-template-button"
             aria-label={customizeAriaLabel}
             onClick={() => layoutEditor.handleStartEditing()}
           >
             <Icon>tune</Icon> {customizeAriaLabel}
           </button>
         </div>
+      )}
+
+      {pickerOpen && result.data && !isPreview && (
+        <ImagePickerModal
+          kind={kind}
+          id={id}
+          entityName={result.data.name}
+          customImage={Boolean(entityDetails.data?.custom_image)}
+          onClose={() => setPickerOpen(false)}
+          onSaved={() => setArtVersion((v) => v + 1)}
+        />
       )}
 
       {layoutEditor.editing && (

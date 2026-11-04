@@ -110,6 +110,14 @@ pub fn router(state: AppState) -> Router {
             get(crate::library::artwork_credit),
         )
         .route(
+            "/api/v1/artwork/{kind}/{id}/candidates",
+            get(crate::artwork_sources::candidates),
+        )
+        .route(
+            "/api/v1/artwork-preview",
+            get(crate::library::artwork_preview),
+        )
+        .route(
             "/api/v1/library/{kind}/{id}/group",
             get(crate::name_groups::members).post(crate::name_groups::change),
         )

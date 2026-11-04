@@ -92,6 +92,7 @@ export function Link({
   back?: boolean;
   children: ReactNode;
   className?: string;
+  title?: string;
   style?: CSSProperties;
   "aria-label"?: string;
   "aria-describedby"?: string;
