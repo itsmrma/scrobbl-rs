@@ -5275,6 +5275,75 @@ dialog.artwork-lightbox {
   font-size: 13px;
 }
 
+.ask-chart {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ask-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ask-table-wrap:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ask-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.ask-table th,
+.ask-table td {
+  padding: 11px 10px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.ask-table thead th {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ask-table tbody tr + tr {
+  border-top: 1px solid var(--border);
+}
+
+.ask-table tbody th {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ask-table tbody th a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  text-underline-offset: 3px;
+}
+
+.ask-table-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.ask-table-time {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .ask-candidates {
   display: grid;
   gap: 8px;
@@ -5340,6 +5409,15 @@ dialog.artwork-lightbox {
 
   .ask-result-headline {
     font-size: 18px;
+  }
+
+  .ask-table th,
+  .ask-table td {
+    padding: 12px 8px;
+  }
+
+  .ask-table-time {
+    white-space: normal;
   }
 }
 

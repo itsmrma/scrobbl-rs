@@ -2,13 +2,14 @@
 //!
 //! Filters, assigned calendars and timezone boundaries come from
 //! `crate::consultation::selection_at`, so Ask can never drift from the listening
-//! pages. Only plays, first play and last play run in this slice; the other
-//! metrics are rejected explicitly by the handler.
+//! pages. Plays, listening time, distinct counts, first/last play, streaks and
+//! milestones execute here or in their owning module. Grouping applies to plays
+//! and the distinct metrics; grouping other metrics is not implemented.
 use crate::{
     ask::{
         AskResult, ListenPoint, ResultLink,
         dsl::{EntityKind, Metric, Period, Query, Weekday},
-        time,
+        grouping, time,
     },
     consultation::{Filters, selection_at},
     error::{AppError, Result},
@@ -27,6 +28,9 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
         query.metric,
         Metric::Plays
             | Metric::TimeListened
+            | Metric::DistinctTracks
+            | Metric::DistinctArtists
+            | Metric::DistinctAlbums
             | Metric::FirstPlay
             | Metric::LastPlay
             | Metric::Streak
@@ -35,6 +39,11 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
     let filters = filters_for(query)?;
+    if grouping::handles(query) {
+        return Ok(Outcome::Result(Box::new(
+            grouping::execute(conn, query, &filters, now).await?,
+        )));
+    }
     if matches!(query.metric, Metric::Streak | Metric::Milestones) {
         // Streaks and milestones always read the entity's whole history, so the
         // requested hour never narrows them and the Rust hour pass is skipped.
@@ -246,7 +255,7 @@ fn weekday_key(weekday: Weekday) -> &'static str {
 }
 
 pub fn unsupported_metric_message() -> String {
-    "I can currently answer only play counts, listening time, listening streaks, milestones, first play and last play (metrics: plays, time_listened, streak, milestones, first_play, last_play).".into()
+    "I can answer play counts, listening time, distinct tracks/artists/albums, first play, last play, streaks and milestones (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones).".into()
 }
 
 pub(crate) fn entity_links(query: &Query) -> Vec<ResultLink> {

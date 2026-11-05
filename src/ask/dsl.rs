@@ -1,9 +1,10 @@
 //! Shared Ask query DSL. Rust validates and executes it; the model only emits it.
 //!
 //! The full surface is declared here so later tickets can add execution without
-//! changing the wire contract. Play counts, listening time, first play, last
-//! play, streaks and milestones are executable; distinct counts and grouped
-//! rankings are valid DSL but return an explicit `unsupported` response.
+//! changing the wire contract. Play counts, listening time, distinct
+//! tracks/artists/albums, first/last play, streaks and milestones are executable.
+//! Plays and the distinct metrics can be grouped, sorted and limited; grouping
+//! any other metric is not implemented.
 use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
