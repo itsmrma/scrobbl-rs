@@ -27,8 +27,15 @@ jobs:
           build-args: |
             VCS_REF=${{ github.sha }}
             VERSION=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=amd64
+          cache-to: type=gha,mode=max,scope=amd64
+      - name: Check distribution budget
+        run: |
+          mkdir -p ci-logs
+          python3 scripts/measure-image-size.py \
+            --image "scrobbl-ci:$GITHUB_SHA" \
+            --baseline "debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8" \
+            --json-out ci-logs/image-size.json 2>&1 | tee ci-logs/image-size.log
       - name: Check generic Compose, linked SQLite and image persistence
         run: |
           mkdir -p ci-logs
@@ -60,3 +67,40 @@ jobs:
           name: docker-diagnostics-${{ github.run_attempt }}
           path: ci-logs/
           retention-days: 7
+
+  # Build-only architecture regression signal. PRs skip this to keep the required
+  # amd64 smoke fast; trusted main/tag pushes exercise the arm64 CPU-only build
+  # (including llama.cpp under QEMU). It is deliberately not published: the
+  # publish job reuses the exact smoke-tested amd64 tar and would otherwise push
+  # arm64 bytes that no verification run exercised. `continue-on-error` keeps the
+  # failure visible as a red job without failing the required amd64 check or
+  # blocking publication of the image that was actually smoke-tested.
+  image-arm64:
+    name: linux/arm64
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - name: Build linux/arm64 with the same locked inputs
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          platforms: linux/arm64
+          load: false
+          push: false
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=arm64
+          cache-to: type=gha,mode=max,scope=arm64
