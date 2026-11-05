@@ -91,6 +91,27 @@ impl std::fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+/// One generation with wall-clock timings.
+///
+/// The production worker only needs [`Generation::text`], but offline tools
+/// (the Ask eval harness) need latency and throughput without reimplementing
+/// the llama.cpp decode loop. [`Engine::generate_timed`] is the shared entry
+/// point; the default implementation keeps mock engines trivial.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Generation {
+    pub text: String,
+    /// Prompt tokens after tokenization.
+    pub prompt_tokens: i32,
+    /// Tokens emitted, excluding the end-of-generation token.
+    pub generated_tokens: i32,
+    /// Time until the first sampled token, prompt decode included.
+    pub ttft_ms: f64,
+    /// Decode time after the first token.
+    pub decode_ms: f64,
+    /// Wall-clock time for the whole call.
+    pub total_ms: f64,
+}
+
 /// Cancellation and deadline shared with the inference engine. The engine
 /// checks it between sampled tokens, so a timed-out request never leaves a
 /// half-decoded context behind.
@@ -143,6 +164,18 @@ pub trait Engine: Send {
     fn load(&mut self, spec: &ModelSpec) -> Result<(), String>;
     fn unload(&mut self);
     fn generate(&mut self, prompt: &str, cancel: &CancelToken) -> Result<String, InferenceError>;
+    /// One generation with timings. Adapters with real measurements override
+    /// this; the default keeps simple engines (and tests) working unchanged.
+    fn generate_timed(
+        &mut self,
+        prompt: &str,
+        cancel: &CancelToken,
+    ) -> Result<Generation, InferenceError> {
+        self.generate(prompt, cancel).map(|text| Generation {
+            text,
+            ..Generation::default()
+        })
+    }
     /// Called after a timeout, cancellation or failure. A fresh context is
     /// created for every request, so this is a safety net for future engines.
     fn reset(&mut self) {}
@@ -500,6 +533,16 @@ mod llama {
             prompt: &str,
             cancel: &CancelToken,
         ) -> Result<String, InferenceError> {
+            self.generate_timed(prompt, cancel)
+                .map(|generation| generation.text)
+        }
+
+        fn generate_timed(
+            &mut self,
+            prompt: &str,
+            cancel: &CancelToken,
+        ) -> Result<Generation, InferenceError> {
+            let started = Instant::now();
             if cancel.should_stop() {
                 return Err(cancel.error());
             }
@@ -570,6 +613,7 @@ mod llama {
             let mut output: Vec<u8> = Vec::new();
             let mut generated = 0_i32;
             let mut position = tokens.len() as i32;
+            let mut first_token_at: Option<Instant> = None;
             loop {
                 if cancel.should_stop() {
                     return Err(cancel.error());
@@ -579,6 +623,9 @@ mod llama {
                 // `accept` again advances the grammar twice and panics
                 // (utilityai/llama-cpp-rs#1007).
                 let token = sampler.sample(&context, batch.n_tokens() - 1);
+                if first_token_at.is_none() {
+                    first_token_at = Some(Instant::now());
+                }
                 if vocab.is_eog(token) {
                     break;
                 }
@@ -617,15 +664,80 @@ mod llama {
                 );
             }
 
-            String::from_utf8(output).map_err(|_| {
+            let text = String::from_utf8(output).map_err(|_| {
                 InferenceError::Failed("The model produced invalid UTF-8 output.".to_string())
+            })?;
+            let total_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let ttft_ms = first_token_at
+                .map(|at| at.saturating_duration_since(started).as_secs_f64() * 1000.0)
+                .unwrap_or(total_ms);
+            Ok(Generation {
+                text,
+                prompt_tokens: i32::try_from(tokens.len()).unwrap_or(i32::MAX),
+                generated_tokens: generated,
+                ttft_ms,
+                decode_ms: (total_ms - ttft_ms).max(0.0),
+                total_ms,
             })
         }
     }
 }
 
 #[cfg(feature = "llama")]
-pub use llama::LlamaEngine;
+pub use llama::{CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS};
+
+/// A loaded engine reused for many prompts. Offline tools (the eval harness)
+/// use it to measure one model across a corpus without reloading the weights;
+/// production keeps the dedicated worker and its queue.
+#[cfg(feature = "llama")]
+pub struct Session {
+    engine: LlamaEngine,
+    spec: ModelSpec,
+    timeout: Duration,
+    loaded: bool,
+}
+
+#[cfg(feature = "llama")]
+impl Session {
+    /// Load the model immediately. A missing or corrupt file is an explicit
+    /// error, never a panic.
+    pub fn open(spec: ModelSpec, timeout: Duration) -> Result<Self, RuntimeError> {
+        let mut engine = LlamaEngine::new();
+        engine.load(&spec).map_err(RuntimeError::Failed)?;
+        Ok(Self {
+            engine,
+            spec,
+            timeout,
+            loaded: true,
+        })
+    }
+
+    /// Run one prompt against the loaded model with the production prompt,
+    /// grammar and greedy sampling.
+    pub fn run(&mut self, prompt: &str) -> Result<Generation, RuntimeError> {
+        if !self.loaded {
+            self.engine.load(&self.spec).map_err(RuntimeError::Failed)?;
+            self.loaded = true;
+        }
+        let cancel = CancelToken::new(self.timeout);
+        let result = self.engine.generate_timed(prompt, &cancel);
+        if result.is_err() {
+            self.engine.reset();
+        }
+        result.map_err(|error| match error {
+            InferenceError::Timeout => RuntimeError::Timeout,
+            InferenceError::Cancelled => RuntimeError::Cancelled,
+            InferenceError::Failed(message) => RuntimeError::Failed(message),
+        })
+    }
+}
+
+#[cfg(feature = "llama")]
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.engine.unload();
+    }
+}
 
 #[cfg(test)]
 mod tests {
