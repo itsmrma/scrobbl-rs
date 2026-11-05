@@ -5216,6 +5216,11 @@ dialog.artwork-lightbox {
   font-variant-numeric: tabular-nums;
 }
 
+.ask-time {
+  display: grid;
+  gap: 5px;
+}
+
 .ask-listen {
   display: grid;
   gap: 3px;

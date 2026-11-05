@@ -8,6 +8,7 @@ use crate::{
     ask::{
         AskResult, ListenPoint, ResultLink,
         dsl::{EntityKind, Metric, Period, Query, Weekday},
+        time,
     },
     consultation::{Filters, selection_at},
     error::{AppError, Result},
@@ -24,7 +25,7 @@ pub enum Outcome {
 pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Result<Outcome> {
     if !matches!(
         query.metric,
-        Metric::Plays | Metric::FirstPlay | Metric::LastPlay
+        Metric::Plays | Metric::TimeListened | Metric::FirstPlay | Metric::LastPlay
     ) {
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
@@ -55,6 +56,9 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
                 links: entity_links(query),
             })))
         }
+        Metric::TimeListened => Ok(Outcome::Result(Box::new(
+            time::execute(conn, query, &filters, now).await?,
+        ))),
         Metric::FirstPlay | Metric::LastPlay => {
             let point = point_query(conn, &filters, query.metric, now).await?;
             Ok(Outcome::Result(Box::new(point_result(query, point))))
@@ -71,7 +75,7 @@ async fn execute_with_hour(
 ) -> Result<AskResult> {
     let mut rows_query = selection_at(conn, filters, true, now).await?;
     rows_query.push(
-        "SELECT s.played_at_ms,s.track_id,s.title,s.album,s.counted,s.local_date,(SELECT timezone FROM calendars WHERE id=s.calendar_id) AS timezone,(SELECT group_concat(name, ', ') FROM (SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artist FROM selected s ORDER BY s.played_at_ms,s.id",
+        "SELECT s.played_at_ms,s.track_id,s.title,s.album,s.counted,s.listened_ms,s.duration_kind,s.local_date,(SELECT timezone FROM calendars WHERE id=s.calendar_id) AS timezone,(SELECT group_concat(name, ', ') FROM (SELECT ar.name FROM track_artists ta JOIN artists ar ON ar.id=ta.artist_id WHERE ta.track_id=s.track_id ORDER BY ta.ordinal)) AS artist FROM selected s ORDER BY s.played_at_ms,s.id",
     );
     let rows: Vec<RawPoint> = rows_query.build_query_as().fetch_all(&mut *conn).await?;
     let hour = u32::from(query.hour.ok_or(AppError::Internal)?);
@@ -102,6 +106,13 @@ async fn execute_with_hour(
                 total: plays,
                 links: entity_links(query),
             })
+        }
+        Metric::TimeListened => {
+            let mut sums = time::TimeSums::default();
+            for row in counted() {
+                sums.add(row.counted, row.listened_ms, &row.duration_kind);
+            }
+            Ok(time::result(query, sums))
         }
         Metric::FirstPlay | Metric::LastPlay => {
             let row = if query.metric == Metric::FirstPlay {
@@ -223,10 +234,10 @@ fn weekday_key(weekday: Weekday) -> &'static str {
 }
 
 pub fn unsupported_metric_message() -> String {
-    "I can currently answer only play counts, first play and last play (metrics: plays, first_play, last_play).".into()
+    "I can currently answer only play counts, listening time, first play and last play (metrics: plays, time_listened, first_play, last_play).".into()
 }
 
-fn entity_links(query: &Query) -> Vec<ResultLink> {
+pub(crate) fn entity_links(query: &Query) -> Vec<ResultLink> {
     let Some(entity) = &query.entity else {
         return Vec::new();
     };
@@ -251,6 +262,8 @@ struct RawPoint {
     title: String,
     album: Option<String>,
     counted: bool,
+    listened_ms: Option<i64>,
+    duration_kind: String,
     local_date: String,
     timezone: String,
     artist: Option<String>,
