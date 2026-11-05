@@ -93,11 +93,11 @@ pub struct ModelReadiness {
     pub selected_available: bool,
 }
 
-pub async fn selected_model_readiness(
+pub async fn selected_model_state(
     state: &AppState,
     stored: &StoredSettings,
-) -> Result<ModelReadiness> {
-    let (_, scanned) = active_scan(state, stored.active_model.as_deref()).await?;
+) -> Result<(PathBuf, ModelReadiness)> {
+    let (root, scanned) = active_scan(state, stored.active_model.as_deref()).await?;
     let catalog_model = stored.active_model.as_deref().and_then(catalog::find);
     let installed = scanned.as_ref().is_some_and(models::ScannedModel::usable)
         && catalog_model.as_ref().is_some_and(|model| {
@@ -107,10 +107,20 @@ pub async fn selected_model_readiness(
     let selected_available = catalog_model
         .as_ref()
         .is_some_and(catalog::CatalogModel::is_available);
-    Ok(ModelReadiness {
-        installed,
-        selected_available,
-    })
+    Ok((
+        root,
+        ModelReadiness {
+            installed,
+            selected_available,
+        },
+    ))
+}
+
+pub async fn selected_model_readiness(
+    state: &AppState,
+    stored: &StoredSettings,
+) -> Result<ModelReadiness> {
+    Ok(selected_model_state(state, stored).await?.1)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -318,8 +328,7 @@ fn settings_message(
 }
 
 async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<AiSettings> {
-    let (root, _) = active_scan(state, stored.active_model.as_deref()).await?;
-    let readiness = selected_model_readiness(state, &stored).await?;
+    let (root, readiness) = selected_model_state(state, &stored).await?;
     let installed = readiness.installed;
     let selected_available = readiness.selected_available;
     let ready = stored.enabled && installed && selected_available;
