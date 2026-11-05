@@ -18,6 +18,23 @@ report vive in [`docs/spikes/172-runtime-and-model.md`](../../docs/spikes/172-ru
 Il corpus e lo schema sono **di prova**: il DSL vero arriva con #173 e
 l'adapter con #178. Qui servono solo a mettere sotto stress runtime e modello.
 
+## Sequenza delle misure
+
+1. **Fase desktop (questa):** matrice completa su Windows/Linux nativo. Decide
+   runtime, famiglia di modelli, dimensione default e classe di latenza
+   provvisoria.
+2. **Fase NAS/Mac (dopo l'integrazione UI):** build Linux/arm64, immagine
+   Docker, read-only + `/data` e conferma della latenza sul target, insieme a
+   #182. In questa fase si rifà anche il budget immagine sull'immagine
+   ufficiale (#180).
+
+Docker e WSL non sono richiesti per la fase desktop: bastano Rust, CMake e un
+toolchain C++.
+
+La fase A è già stata eseguita sul desktop Ryzen 7 5700X: risultati e decisione
+provvisoria sono in
+[`docs/spikes/172-runtime-and-model.md`](../../docs/spikes/172-runtime-and-model.md).
+
 ## Prerequisiti
 
 - Rust 1.99.1 (il repo usa questa versione) e toolchain C++.
@@ -26,7 +43,7 @@ l'adapter con #178. Qui servono solo a mettere sotto stress runtime e modello.
 - macOS arm64: Xcode Command Line Tools e `cmake` (`brew install cmake`).
 - Docker su NAS e, per `linux/arm64`, Docker Desktop sul Mac.
 
-### Trasferire l'harness sul NAS
+### Trasferire l'harness sul NAS (fase finale)
 
 TrueNAS SCALE non è un ambiente di sviluppo: copia solo questa directory (senza
 `models/` e `target/`) su un dataset, per esempio:
@@ -105,6 +122,22 @@ obbligato a `{`, quindi il thinking non può comparire in nessun caso e il
 confronto non direbbe nulla. Cerca ` thinking` nell'output del run 3: se manca
 anche lì, il modello non sta pensando; se compare nel 3 ma non nel 3b, il
 prefisso vuoto del non-thinking funziona.
+
+La matrice si lancia anche in blocco:
+
+```bash
+python3 scripts/run-matrix.py --threads 8 --label windows-desktop
+```
+
+Salta i modelli non ancora scaricati e scrive `results/<label>-<run>.json|md`.
+Per il riepilogo e l'elenco dei mismatch:
+
+```bash
+python3 scripts/summarize.py results/<label>-*.json \
+  --output results/<label>-summary.md
+python3 scripts/analyze-results.py results/<label>-*.json \
+  --output results/<label>-failures.md
+```
 
 Se il run 3 produce sempre JSON valido quanto il run 1, la grammatica sta
 sopprimendo l'output di thinking; se la qualità peggiora, il default resta

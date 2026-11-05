@@ -50,9 +50,26 @@ impl Expected {
             return true;
         }
 
+        let actual_name = object.get("name").and_then(Value::as_str);
+        if self.target.as_deref() == Some("none") {
+            // The trial schema forces a `target` field even when the real DSL
+            // would have no entity filter. A model that says "artist" with an
+            // empty name is semantically the same as "none".
+            if actual_name != Some("") {
+                return false;
+            }
+        } else {
+            if object.get("target").and_then(Value::as_str) != self.target.as_deref() {
+                return false;
+            }
+            if let Some(expected) = self.name.as_deref()
+                && actual_name != Some(expected)
+            {
+                return false;
+            }
+        }
+
         let checks = [
-            ("target", self.target.as_deref()),
-            ("name", self.name.as_deref()),
             ("period", self.period.as_deref()),
             ("weekday", self.weekday.as_deref()),
             ("limit", self.limit.as_deref()),
@@ -132,6 +149,25 @@ mod tests {
         let case = cases.iter().find(|case| case.id == "en-015").unwrap();
         assert!(case.expected.matches(&json!({"intent": "unsupported"})));
         assert!(!case.expected.matches(&json!({"intent": "count_plays"})));
+    }
+
+    #[test]
+    fn entity_none_requires_an_empty_name_but_accepts_any_target() {
+        let cases = parse(CORPUS).unwrap();
+        let case = cases.iter().find(|case| case.id == "en-004").unwrap();
+        let base = json!({
+            "intent": "count_plays",
+            "target": "album",
+            "name": "",
+            "period": "last_month",
+            "weekday": "any",
+            "limit": "1"
+        });
+        assert!(case.expected.matches(&base));
+
+        let mut with_name = base;
+        with_name["name"] = json!("last_month");
+        assert!(!case.expected.matches(&with_name));
     }
 
     #[test]

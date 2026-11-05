@@ -1,8 +1,9 @@
 # Spike #172 — Runtime e modello AI sul NAS
 
-**Stato:** harness pronto; misure da eseguire sull'hardware. Nessun codice di
-produzione. Harness usa-e-getta in `spike/172-llama-runtime/`, branch
-`spike/172-llama-runtime`, non in `main`.
+**Stato:** fase A (desktop) completata. Fase B (NAS e Mac) rimandata a dopo
+l'integrazione UI, insieme a #180/#182. Nessun codice di produzione. Harness
+usa-e-getta in `spike/172-llama-runtime/`, branch `spike/172-llama-runtime`, non
+in `main`.
 
 Il ticket decide il runtime e il modello della v1 CPU-only. Non riapre le
 decisioni di prodotto di #171: sceglie solo quello che le misure reali
@@ -12,44 +13,129 @@ permettono di sostenere.
 
 | ambiente | CPU | arch | RAM | note |
 | --- | --- | --- | --- | --- |
-| NAS TrueNAS SCALE | Intel i5-10500 (6C/12T, 3.1–4.5 GHz) | x86_64 | 32 GB | target delle misure di latenza |
-| Mac | da compilare | arm64 | da compilare | build nativa macOS + Docker linux/arm64 |
-| fisso | Windows + MSVC | x86_64 | da compilare | solo compile check locale, non è target |
+| fisso Windows | AMD Ryzen 7 5700X (8C/16T, 3.4 GHz) | x86_64 | 24 GB | fase A: matrice modelli |
+| NAS TrueNAS SCALE | Intel i5-10500 (6C/12T, 3.1–4.5 GHz) | x86_64 | 32 GB | fase B: latenza e packaging |
+| Mac | da compilare | arm64 | da compilare | fase B: build nativa macOS + Docker arm64 |
 
-La build locale Windows è già passata con Rust 1.99.1, CMake 4.3.1 e MSVC:
+La build Windows è passata con Rust 1.99.1, CMake 4.3.1 e MSVC:
 `llama-cpp-sys-2` 0.1.161 compila. Non sostituisce le build Linux/macOS, ma
 esclude errori di API nel harness.
 
+## Sequenza delle misure
+
+- **Fase A — desktop:** matrice completa su Windows nativo. Produce la decisione
+  su runtime, famiglia, dimensione default e classe di latenza provvisoria.
+  Docker/WSL non servono.
+- **Fase B — NAS e Mac, dopo l'integrazione UI:** build Linux x86_64/arm64 e
+  macOS arm64, immagine Docker, rootfs read-only + `/data`, latenza definitiva e
+  budget immagine sull'immagine ufficiale (#180/#182).
+
 ## Metodo
 
-- `llama-cpp-2 = "=0.1.161"`, `default-features = false`; variante OpenMP
-  misurata a parte.
+- `llama-cpp-2 = "=0.1.161"`, `default-features = false`; variante OpenMP da
+  misurare in fase B.
 - Contesto 2048, greedy, grammatica GBNF generata da
   `spike/172-llama-runtime/schema/ask.schema.json`.
 - Schema di prova con tutte le proprietà obbligatorie; il DSL reale è di #173.
+- Prompt compatto in inglese con quattro esempi (EN/IT), mappatura esplicita dei
+  periodi e regola "most played = limit 1". `target: none` accetta qualunque
+  target con `name` vuoto, perché lo schema di prova richiede un campo che il
+  DSL reale avrebbe opzionale.
 - 30 domande (15 EN, 15 IT), 3 di warm-up non conteggiate, KV cache azzerata a
   ogni caso, `reset_timings()` prima di ogni prefill.
 - Metriche per caso: token di prompt, token generati, prefill ms, TTFT, decode
   ms, end-to-end ms, token/s. p50/p95 con nearest-rank. Le latenze includono
   anche i casi di rifiuto (`unsupported`).
-- Ogni run salva JSON completo e tabella Markdown.
+- Ogni run salva JSON completo e tabella Markdown; il riepilogo è in
+  `spike/172-llama-runtime/results/windows-desktop-summary.md`.
 
-## Smoke del harness (Windows, non è un target)
+## Fase A — risultati desktop
 
-Eseguito sul desktop Windows con Qwen3 0.6B Q4_K_M, 8 thread, 30 casi. Serve
-solo a dimostrare che harness e grammatica funzionano end-to-end: il 0.6B non è
-il default e il desktop non è il NAS.
+4 modelli, 30 casi, 8 thread. Il desktop non è il target: i numeri servono a
+scegliere la famiglia e la dimensione, non a fissare la latenza del NAS.
 
-| lingua | casi | JSON valido | schema valido | match esatto | e2e p50 (ms) | e2e p95 (ms) | TTFT p50 (ms) | prefill tok/s p50 | decode tok/s p50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| EN | 15 | 15/15 | 15/15 | 3/15 | 2213 | 2691 | 518 | 762 | 51.5 |
-| IT | 15 | 15/15 | 15/15 | 5/15 | 2412 | 2797 | 557 | 724 | 49.8 |
-| tutti | 30 | 30/30 | 30/30 | 8/30 | 2306 | 2691 | 534 | 747 | 51.1 |
+| modello | lingua | casi | schema valido | match esatto | e2e p50 (ms) | e2e p95 (ms) | TTFT p50 (ms) | prefill tok/s p50 | decode tok/s p50 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Qwen3 1.7B Q4_K_M | EN | 15 | 15/15 | 13/15 | 4242 | 4808 | 2345 | 296 | 23.0 |
+| Qwen3 1.7B Q4_K_M | IT | 15 | 15/15 | 15/15 | 4138 | 4611 | 2367 | 295 | 23.0 |
+| Qwen3 1.7B Q4_K_M | tutti | 30 | 30/30 | 28/30 | 4138 | 4611 | 2352 | 296 | 23.0 |
+| Qwen3 4B Q4_K_M | EN | 15 | 15/15 | 15/15 | 8850 | 10262 | 5798 | 120 | 10.5 |
+| Qwen3 4B Q4_K_M | IT | 15 | 15/15 | 15/15 | 9231 | 9825 | 5813 | 120 | 10.6 |
+| Qwen3 4B Q4_K_M | tutti | 30 | 30/30 | 30/30 | 8883 | 9825 | 5809 | 120 | 10.6 |
+| Qwen3 0.6B Q4_K_M | EN | 15 | 15/15 | 13/15 | 1904 | 2538 | 910 | 772 | 49.0 |
+| Qwen3 0.6B Q4_K_M | IT | 15 | 15/15 | 10/15 | 2079 | 2316 | 908 | 778 | 48.9 |
+| Qwen3 0.6B Q4_K_M | tutti | 30 | 30/30 | 23/30 | 1904 | 2416 | 909 | 777 | 48.9 |
+| Qwen2.5 1.5B Instruct Q4_K_M | EN | 15 | 15/15 | 15/15 | 3786 | 5147 | 2152 | 322 | 26.9 |
+| Qwen2.5 1.5B Instruct Q4_K_M | IT | 15 | 15/15 | 14/15 | 3869 | 4941 | 2147 | 323 | 26.9 |
+| Qwen2.5 1.5B Instruct Q4_K_M | tutti | 30 | 30/30 | 29/30 | 3860 | 4941 | 2148 | 322 | 26.9 |
 
-I 22 mismatch sono interpretazioni del 0.6B (periodi sbagliati, `track` invece
-di `album`, `limit` inventato), non errori di grammatica o di schema. Il nome
-Unicode `坂本龍一` e `Björk` vengono copiati correttamente da 0.6B già con questa
-configurazione.
+Caricamento modello: 1.0 s (1.7B), 2.0 s (4B), 0.45 s (0.6B), 0.93 s (Qwen2.5
+1.5B). Contesto creato in 11–87 ms.
+
+Lettura:
+
+- **Qwen2.5 1.5B** è il miglior rapporto qualità/velocità: 29/30, p50 3,9 s,
+  27 tok/s, nessun thinking da gestire.
+- **Qwen3 4B** è l'unico 30/30, ma costa 2,3× il tempo di Qwen2.5 e ha TTFT
+  5,8 s: adatto a un tier "quality", non al default su CPU-only.
+- **Qwen3 1.7B** è secondo per qualità (28/30) ma leggermente più lento di
+  Qwen2.5; resta il default della specifica se si vuole mantenere la famiglia
+  Qwen3.
+- **Qwen3 0.6B** è il tier light: 23/30 a 1,9 s. Utile solo per risposte rapide,
+  non per la qualità del parser.
+
+## Thinking mode
+
+La grammatica obbliga il primo token a `{`, quindi il thinking **non può
+comparire** nell'output: con GBNF il confronto non dice se il thinking è
+disattivabile. I due run **senza grammatica** rispondono alla domanda:
+
+| run | thinking emesso | JSON valido | match esatto | note |
+| --- | ---: | ---: | ---: | --- |
+| `qwen3-think --no-grammar` | 30/30 | 0/30 | 0/30 | il prefisso aperto fa partire ` thinking` |
+| `qwen3-nothink --no-grammar` | 0/30 | 28/30 | 26/30 | il blocco vuoto lo sopprime |
+| `qwen3-think` con grammatica | 0/30 per costruzione | 30/30 | 28/30 | la GBNF forza `{` |
+| `qwen3-nothink` con grammatica | 0/30 per costruzione | 30/30 | 28/30 | default misurato |
+
+Conclusione: **il thinking mode di Qwen3 è disattivabile in modo affidabile**
+con il prefisso `assistant\n<think>\n\n</think>\n\n`; non serve passare a
+Qwen2.5 per questo motivo. Qwen2.5 resta comunque preferibile per qualità e
+semplicità sui dati raccolti.
+
+## Nomi Unicode e caratteri speciali
+
+Casi dedicati: Björk, 坂本龍一, Blink-182, AC/DC, `Don't Stop Me Now`,
+`Sgt. Pepper's Lonely Hearts Club Band`, Simon & Garfunkel, Sigur Rós, Jóga.
+
+| caso | esito |
+| --- | --- |
+| en-001 Björk | nome corretto su tutti i modelli |
+| en-002 坂本龍一 | nome corretto; 0.6B sbaglia solo il periodo |
+| en-008 Don't Stop Me Now | nome corretto; alcuni modelli sbagliano il periodo |
+| en-013 Sgt. Pepper's… | nome corretto; target album corretto su 1.7B/4B/Qwen2.5 |
+| it-013 Sigur Rós | nome e target corretti su tutti i modelli |
+
+Nessun pattern ASCII è applicato: lo slot `name` usa la regola `string` di
+llama.cpp. I mismatch residui sono semantici (periodo o entità), non di
+codifica.
+
+## Failure modes osservati
+
+- **Qwen3 4B:** 0 mismatch.
+- **Qwen2.5 1.5B:** un solo mismatch, `it-010` ("l'ultima volta… Homogenic")
+  interpretato come `last_week` invece di `all_time`.
+- **Qwen3 1.7B:** due mismatch, `en-006` e `en-010`, dove "Fridays" e "today"
+  finiscono in `name` invece che in `weekday`/niente.
+- **Qwen3 0.6B:** sette mismatch, soprattutto mappatura dei periodi
+  (`last_play` → `last_week`, `quest'anno` → `this_week`/`last_year`) e
+  `it-006` classificato `last_play` invece di `count_plays`.
+- **Senza grammatica:** 27–28/30 JSON validi; un'injection (`it-015`) ha
+  prodotto SQL, quindi la GBNF è necessaria anche come barriera di formato.
+- **Grammatica:** con GBNF tutti i 4 modelli hanno prodotto 30/30 JSON validi.
+- La prima versione del generatore GBNF (chiavi senza virgolette) produceva JSON
+  non valido pur rispettando la grammatica; il validatore `schema` l'ha
+  intercettato.
+- `decode_ms` restava 0 finché non è stato impostato `.with_no_perf(false)`.
 
 ## Requisiti emersi dall'harness
 
@@ -65,9 +151,7 @@ nell'adapter di #178:
    `.with_no_perf(false)` i tempi di decode risultano 0 e il decode tok/s non è
    misurabile.
 3. **In GBNF le virgolette JSON fanno parte del literal.** Una chiave va scritta
-   `"\"intent\""`, non `"intent"`; lo stesso per i valori enum. Il primo
-   generatore le ometteva e la grammatica accettava JSON non valido (`intent:`
-   senza virgolette).
+   `"\"intent\""`, non `"intent"`; lo stesso per i valori enum.
 4. **`default-features = false` è sufficiente**: la build senza `common` ha
    prodotto JSON valido; la feature `common` è rimasta solo come confronto.
 5. **Gli output vanno accumulati come byte**, non decodificati token per token:
@@ -78,131 +162,63 @@ nell'adapter di #178:
 
 | target | comando | esito | note |
 | --- | --- | --- | --- |
-| macOS arm64 nativo | `cargo build --release` | da eseguire | |
-| Linux x86_64 (NAS) | `docker build -t scrobbl-spike:1.7b .` | da eseguire | |
-| Linux arm64 | `docker build --platform linux/arm64 ...` dal Mac | da eseguire | |
-| Linux x86_64 + OpenMP | `--build-arg CARGO_FEATURES=openmp` | da eseguire | confronto `libgomp` |
-
-## Latenza
-
-### Qwen3 1.7B Q4_K_M — default candidato
-
-| lingua | casi | JSON valido | schema valido | match esatto | e2e p50 (ms) | e2e p95 (ms) | TTFT p50 (ms) | prefill tok/s p50 | decode tok/s p50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| EN | 15 | | | | | | | | |
-| IT | 15 | | | | | | | | |
-| tutti | 30 | | | | | | | | |
-
-Note:
-
-### Qwen3 4B Q4_K_M
-
-| lingua | casi | JSON valido | schema valido | match esatto | e2e p50 (ms) | e2e p95 (ms) | TTFT p50 (ms) | prefill tok/s p50 | decode tok/s p50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| EN | 15 | | | | | | | | |
-| IT | 15 | | | | | | | | |
-| tutti | 30 | | | | | | | | |
-
-Note:
-
-### Tier opzionali (0.6B, Qwen2.5 1.5B, OpenMP)
-
-| modello | variante | e2e p50 (ms) | e2e p95 (ms) | decode tok/s p50 | schema valido | match esatto |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Qwen3 0.6B Q4_K_M | CPU, no OpenMP | | | | | |
-| Qwen2.5 1.5B Instruct Q4_K_M | CPU, no OpenMP | | | | | |
-| Qwen3 1.7B Q4_K_M | CPU + OpenMP | | | | | |
-
-## Thinking mode
-
-La grammatica obbliga il primo token a `{`, quindi il thinking **non può
-comparire** nell'output: con GBNF il confronto non dice se il thinking è
-disattivabile. Per verificarlo servono due run **senza grammatica**:
-
-1. `--chat qwen3-think --no-grammar`: cercare ` thinking` nell'output.
-2. `--chat qwen3-nothink --no-grammar`: il prefisso vuoto deve impedirlo.
-
-Se (1) produce thinking e (2) no, la disattivazione via prefisso è affidabile
-per il modello. Se (1) non produce thinking nemmeno senza grammatica, la
-grammatica non serve a sopprimerlo. Con grammatica si misura solo la qualità
-del JSON forzato.
-
-| run | thinking emesso | JSON valido | match esatto | note |
-| --- | --- | --- | --- | --- |
-| `qwen3-think --no-grammar` | | n/a | n/a | |
-| `qwen3-nothink --no-grammar` | | n/a | n/a | |
-| `qwen3-think` con grammatica | no, per costruzione | | | |
-| `qwen3-nothink` con grammatica | no, per costruzione | | | |
-
-Decisione: [ ] thinking disattivabile in modo affidabile con Qwen3 · [ ] serve
-il fallback Qwen2.5
-
-## Nomi Unicode e caratteri speciali
-
-Casi dedicati: Björk, 坂本龍一, Blink-182, AC/DC, `Don't Stop Me Now`,
-`Sgt. Pepper's Lonely Hearts Club Band`, Simon & Garfunkel, Sigur Rós, Jóga.
-
-| caso | output del modello | esito |
-| --- | --- | --- |
-| en-001 Björk | | |
-| en-002 坂本龍一 | | |
-| en-008 Don't Stop Me Now | | |
-| en-013 Sgt. Pepper's… | | |
-| it-013 Sigur Rós | | |
-
-Nessun pattern ASCII è applicato: lo slot `name` usa la regola `string` di
-llama.cpp. Se un nome viene alterato, è un limite del modello, non del
-validatore.
+| Windows x86_64 (fase A) | `cargo build --release` | fatto | 4 modelli, 30/30 JSON validi ciascuno |
+| macOS arm64 nativo (fase B) | `cargo build --release` | da eseguire | |
+| Linux x86_64 (fase B, NAS) | `docker build -t scrobbl-spike:1.7b .` | da eseguire | |
+| Linux arm64 (fase B, Mac) | `docker build --platform linux/arm64 ...` | da eseguire | |
+| Linux x86_64 + OpenMP (fase B) | `--build-arg CARGO_FEATURES=openmp --build-arg INSTALL_LIBGOMP=1` | da eseguire | confronto `libgomp` |
 
 ## Packaging e budget
 
 | voce | valore | budget | esito |
 | --- | ---: | ---: | --- |
-| delta immagine vs `debian:bookworm-slim` | | ≤ 25 MiB | |
-| binario harness (stripped, LTO) | | ≤ 30 MiB | |
-| delta immagine con OpenMP | | ≤ 25 MiB | |
-| build con root filesystem read-only | | deve riuscire | |
-| modello su volume `/data/models` read-only | | deve riuscire | |
-| binario Windows, release (solo sanity check) | 4.6 MiB | ≤ 30 MiB | passa fuori target |
+| binario Windows, release (stripped, LTO) | 4,6 MiB | ≤ 30 MiB | passa fuori target |
+| delta immagine vs `debian:bookworm-slim` | da misurare in fase B | ≤ 25 MiB | |
+| delta immagine con OpenMP | da misurare in fase B | ≤ 25 MiB | |
+| build con root filesystem read-only | da eseguire in fase B | deve riuscire | |
+| modello su volume `/data/models` read-only | da eseguire in fase B | deve riuscire | |
 
 OpenMP richiede **entrambi** gli argomenti:
 `--build-arg CARGO_FEATURES=openmp --build-arg INSTALL_LIBGOMP=1`.
 
-Il delta qui misura il **runtime del modello**, non l'immagine ufficiale
-`scrobbl-rs`: la seconda va rimisurata in #180 dopo aver collegato
-`llama-cpp-2` all'app. Il binario harness è una stima diretta del costo statico
-di llama.cpp in questa configurazione (stripped, LTO, senza OpenMP).
+Il delta immagine va misurato sull'immagine ufficiale `scrobbl-rs` in #180, dopo
+aver collegato `llama-cpp-2` all'app. Il binario harness (4,6 MiB su Windows) è
+una stima diretta del costo statico di llama.cpp in questa configurazione.
 
-## Failure modes osservati
+## Decisione proposta
 
-- Nessuna build fallita su Windows/MSVC; la build Linux/macOS è ancora da
-  eseguire.
-- Con il primo generatore GBNF (chiavi senza virgolette) il modello produceva
-  JSON non valido pur rispettando la grammatica. Corretto; il validatore
-  `schema` ha intercettato il problema.
-- Il mismatch di 0.6B è semantico: ad esempio `all_time` interpretato come
-  `this_week`, `album` come `track`, `limit` inventato. Nessun `name` Unicode è
-  stato corrotto.
-- `decode_ms` restava 0 finché non è stato impostato `.with_no_perf(false)`.
-- Nessun OOM con 0.6B e contesto 2048 sul desktop (RSS non disponibile su
-  Windows).
+Da confermare e riportare su #171. La fase A sostiene questa lettura:
 
-## Decisione
+- **Runtime:** `llama-cpp-2` 0.1.161 con `default-features = false`; la feature
+  `common` non è necessaria. OpenMP e packaging restano da misurare in fase B.
+- **Famiglia:** Qwen3 è utilizzabile (thinking disattivabile in modo affidabile),
+  ma **Qwen2.5 1.5B Instruct** vince sui dati: 29/30 contro 28/30 di Qwen3
+  1.7B, leggermente più veloce e senza thinking da gestire.
+- **Dimensione default:** classe 1,5–1,7B. Qwen3 0.6B è il tier light (23/30);
+  Qwen3 4B è il tier quality (30/30 ma 8,9 s p50, 10,6 tok/s).
+- **Classe di latenza provvisoria (desktop):** Qwen2.5 1.5B p50 3,9 s / p95
+  4,9 s, TTFT 2,1 s, 27 tok/s. Sul NAS ci si aspetta un peggioramento; la classe
+  definitiva si fissa in fase B.
+- **Vincoli:** contesto 2048 sufficiente; nessun OOM con 24 GB; un modello alla
+  volta.
 
-Da compilare e riportare su #171:
-
-- **Runtime:** `llama-cpp-2` 0.1.161, `default-features = false` + OpenMP sì/no.
-- **Famiglia:** Qwen3 oppure Qwen2.5.
-- **Dimensione default:** 0.6B / 1.7B / 4B.
-- **Classe di latenza:** soglie p50/p95 concordate e misurate.
-- **Vincoli scoperti:** RAM, disco, prima domanda a freddo, thread.
+Se #171 preferisce non cambiare famiglia, Qwen3 1.7B è un default accettabile
+(28/30, 4,1 s p50) e Qwen2.5 1.5B resta il fallback già misurato.
 
 ## Checklist di accettazione (#172)
 
+Fase A:
+
+- [x] Qwen3 1.7B carica e produce JSON valido per lo schema di prova.
+- [x] Thinking mode disattivato in modo affidabile; fallback Qwen2.5 misurato.
+- [x] Nomi Unicode accettati dagli slot testuali senza pattern ASCII restrittivi.
+- [x] Latenza p50/p95 misurata sul desktop per 1.7B e 4B.
+- [x] Dimensione del binario misurata (4,6 MiB su Windows).
+- [ ] Decisione registrata su #171.
+
+Fase B, dopo l'integrazione UI:
+
 - [ ] Build riuscita su macOS arm64 e Linux x86_64/arm64.
-- [ ] Qwen3 1.7B carica e produce JSON valido per lo schema di prova.
-- [ ] Thinking mode disattivato, oppure fallback Qwen2.5 provato e documentato.
-- [ ] Nomi Unicode accettati dagli slot testuali senza pattern ASCII restrittivi.
-- [ ] Latenza p50/p95 misurata sul NAS per 1.7B e 4B.
-- [ ] Dimensione di binario e immagine misurata contro il budget.
-- [ ] Report e harness collegati; decisione registrata su #171.
+- [ ] Latenza p50/p95 confermata sul NAS per 1.7B e 4B.
+- [ ] Dimensione immagine misurata contro il budget sull'immagine ufficiale.
+- [ ] Rootfs read-only e volume `/data` verificati.

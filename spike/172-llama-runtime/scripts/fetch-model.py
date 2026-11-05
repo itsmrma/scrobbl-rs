@@ -70,6 +70,7 @@ def download(url: str, destination: Path, expected_size: int, expected_sha: str)
             offset = 0
         mode = "ab" if offset else "wb"
         written = offset
+        last_percent = -1
         with part.open(mode) as output:
             while True:
                 chunk = response.read(CHUNK)
@@ -78,11 +79,14 @@ def download(url: str, destination: Path, expected_size: int, expected_sha: str)
                 output.write(chunk)
                 written += len(chunk)
                 percent = 100.0 * written / expected_size if expected_size else 0.0
-                print(
-                    f"\r{human_bytes(written)} / {human_bytes(expected_size)} ({percent:5.1f}%)",
-                    end="",
-                    flush=True,
-                )
+                whole = int(percent)
+                if whole != last_percent:
+                    print(
+                        f"\r{human_bytes(written)} / {human_bytes(expected_size)} ({percent:5.1f}%)",
+                        end="",
+                        flush=True,
+                    )
+                    last_percent = whole
     print()
 
     actual_size = part.stat().st_size
