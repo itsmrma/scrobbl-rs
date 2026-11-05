@@ -39,6 +39,18 @@ const jobMessage = (code: string) => {
       "ListenBrainz returned a malformed page. Saved rows remain; retry or upload the official ZIP.",
     nonadvancing_or_unsorted_page:
       "ListenBrainz pagination did not advance safely. Saved rows remain; use the official ZIP for complete coverage.",
+    model_disk_full:
+      "Not enough free disk space for this model. Free space on the server and retry the download.",
+    model_checksum_mismatch:
+      "The downloaded file failed SHA-256 verification and was removed. Retry the download.",
+    model_source_rejected:
+      "The model source refused the download. Check server connectivity and retry.",
+    model_download_failed:
+      "The model download failed. Check server storage and connectivity, then retry.",
+    model_download_retry:
+      "The model download was interrupted. It resumes with the bytes already saved.",
+    model_cancelled: "The model download was cancelled.",
+    model_unavailable: "This model is no longer in the curated catalog.",
   };
   return (
     messages[code] ||
@@ -91,6 +103,14 @@ function ArtworkProviderStatus({ params }: { params: unknown }) {
 }
 export const isActive = (job: Activity) =>
   ["queued", "running", "waiting"].includes(job.state);
+const bytes = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value >= 1024 * 1024 * 1024)
+    return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(0)} MB`;
+  if (value >= 1024) return `${(value / 1024).toFixed(0)} KB`;
+  return `${number.format(value)} B`;
+};
 const activityName = (job: Activity) =>
   job.kind === "calendar"
     ? "Recalculate assigned calendar"
@@ -127,6 +147,8 @@ export const phaseLabel = (job: Activity) =>
         finished: "Report saved",
         queued: "Waiting for the server to start",
         artwork: "Saving missing album and artist images",
+        downloading: "Downloading the model file",
+        verifying: "Verifying the model checksum",
       }[job.phase] ||
       job.phase?.replaceAll("_", " ") ||
       "Server activity";
@@ -205,7 +227,9 @@ export function Progress({ job }: { job: Activity }) {
       <small>
         {job.kind === "artwork"
           ? `${number.format(job.processed)} of ${number.format(job.expected_rows || 0)} images checked${eta}`
-          : text}
+          : job.kind === "model_download"
+            ? `${bytes(job.processed)} of ${bytes(job.expected_rows || 0)} downloaded${eta}`
+            : text}
       </small>
     </div>
   );
@@ -699,7 +723,8 @@ export function Activities({
                       {job.error_code === "calendar_recalculation_failed"
                         ? "Calendar recalculation failed. The previous calendar is still active. Check server storage and retry."
                         : job.kind.startsWith("listenbrainz_") ||
-                            job.kind === "artwork"
+                            job.kind === "artwork" ||
+                            job.kind === "model_download"
                           ? jobMessage(job.error_code)
                           : `Activity reported: ${job.error_code}`}
                     </p>
@@ -755,6 +780,7 @@ export function Activities({
                   "listenbrainz_file",
                   "listenbrainz_fetch",
                   "artwork",
+                  "model_download",
                 ].includes(job.kind)) && (
                 <div className="connection-actions">
                   {(isActive(job)
@@ -822,7 +848,9 @@ export function Activities({
                               ? "Resume downloads"
                               : job.kind === "calendar"
                                 ? "Retry recalculation"
-                                : "Retry import"}
+                                : job.kind === "model_download"
+                                  ? "Retry download"
+                                  : "Retry import"}
                     </button>
                   ))}
                   {job.kind === "artwork" && !isActive(job) && (

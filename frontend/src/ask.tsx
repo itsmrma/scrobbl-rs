@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AskResponse,
-  AskStatusResponse,
+  AiAskStatus,
   EntityCandidate,
   Preferences,
   Query,
 } from "./generated";
 import { api } from "./api";
 import { InterpretationChips } from "./ask-chips";
+import { AskTimeCard } from "./ask-time";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
 import { Button, Heading, Icon, Notice, date, number } from "./ui";
@@ -40,6 +41,12 @@ function headline(response: AskResponse, preferences: Preferences): string {
     const plays = value ?? 0;
     return `You listened to ${entity} ${number.format(plays)} ${plays === 1 ? "time" : "times"} ${period}.`;
   }
+  if (query.metric === "time_listened") {
+    const time = result.time;
+    return time && time.unknown_listens > 0
+      ? `Known listening time for ${entity} ${period}, with unknown durations reported separately.`
+      : `Known listening time for ${entity} ${period}.`;
+  }
   if (query.metric === "first_play" || query.metric === "last_play") {
     const which = query.metric === "first_play" ? "first" : "last";
     return value === null
@@ -50,7 +57,7 @@ function headline(response: AskResponse, preferences: Preferences): string {
 }
 
 export function AskPage({ preferences }: { preferences: Preferences }) {
-  const [status, setStatus] = useState<AskStatusResponse | null>(null);
+  const [status, setStatus] = useState<AiAskStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<AskResponse | null>(null);
@@ -196,13 +203,15 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
             {loading ? "Asking…" : "Ask"}
           </Button>
           <span className="field-hint">
-            Only play counts, first plays and last plays are available in this
-            version.
+            Play counts, listening time, first plays and last plays are
+            available in this version.
           </span>
         </div>
       </form>
 
-      {error && <Notice title="The question could not be answered">{error}</Notice>}
+      {error && (
+        <Notice title="The question could not be answered">{error}</Notice>
+      )}
 
       {loading && (
         <article className="panel padded ask-loading" aria-busy="true">
@@ -250,11 +259,14 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
           )}
 
           {response.status === "unsupported" && (
-            <Notice title="That question is outside the current scope" tone="info">
+            <Notice
+              title="That question is outside the current scope"
+              tone="info"
+            >
               {response.message}
               <p className="ask-hint">
                 Try: “How many times did I listen to Björk?” · “When did I first
-                listen to Radiohead?” · “Quante volte ho ascoltato Björk?”
+                listen to Radiohead?” · “How many hours did I listen?”
               </p>
             </Notice>
           )}
@@ -306,18 +318,19 @@ export function ResultCard({
   preferences: Preferences;
 }) {
   const result = response.result!;
-  const point =
-    query.metric === "first_play" ? result.first : result.last;
+  const point = query.metric === "first_play" ? result.first : result.last;
   const isPoint = query.metric === "first_play" || query.metric === "last_play";
+  const isTime = query.metric === "time_listened";
   return (
     <article className="panel padded ask-result">
       <p className="ask-eyebrow">Result</p>
       <p className="ask-result-headline">{headline(response, preferences)}</p>
-      {!isPoint && (
+      {!isPoint && !isTime && (
         <p className="ask-result-value" aria-label="Result value">
           {number.format(result.scalar ?? 0)}
         </p>
       )}
+      {isTime && result.time && <AskTimeCard time={result.time} />}
       {isPoint && point && (
         <div className="ask-listen">
           <p className="ask-listen-title">{point.title}</p>
@@ -325,13 +338,15 @@ export function ResultCard({
             {point.artist}
             {point.album ? ` · ${point.album}` : ""}
           </p>
-          <p className="ask-listen-date">{date(point.played_at_ms, preferences)}</p>
+          <p className="ask-listen-date">
+            {date(point.played_at_ms, preferences)}
+          </p>
         </div>
       )}
       {isPoint && !point && (
         <p className="ask-empty">No matching listen in this selection.</p>
       )}
-      {result.time && (
+      {result.time && !isTime && (
         <p className="ask-coverage">
           Known time {number.format(result.time.known_ms / 60_000)} minutes
           {result.time.unknown_listens > 0

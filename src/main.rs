@@ -117,6 +117,7 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
                 tokio::spawn(scrobbl_rs::recovery::worker(state.storage.clone())),
                 tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone())),
                 tokio::spawn(scrobbl_rs::artwork::worker(state.clone())),
+                tokio::spawn(scrobbl_rs::ai::worker(state.clone())),
             ];
             if let Ok(canon) = config.data_dir.canonicalize() {
                 println!("Data: {}", canon.display());

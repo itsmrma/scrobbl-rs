@@ -1,5 +1,5 @@
 /* ==========================================================================
-   scrobbl.rs — Precision Audio Atelier Design System (Ground-Up Rewrite)
+   scrobbl.rs ΓÇö Precision Audio Atelier Design System (Ground-Up Rewrite)
    ========================================================================== */
 
 @font-face {
@@ -2347,7 +2347,7 @@ dialog.artwork-lightbox {
   font-weight: 400;
 }
 
-/* Contextual Listen Rows (Artist, Album, Track pages — stationary summary) */
+/* Contextual Listen Rows (Artist, Album, Track pages ΓÇö stationary summary) */
 .listen-row.listen-context {
   padding-right: 52px;
 }
@@ -5216,6 +5216,11 @@ dialog.artwork-lightbox {
   font-variant-numeric: tabular-nums;
 }
 
+.ask-time {
+  display: grid;
+  gap: 5px;
+}
+
 .ask-listen {
   display: grid;
   gap: 3px;
@@ -5453,5 +5458,261 @@ dialog.artwork-lightbox {
 
   .ask-context-body {
     padding: 0 16px 16px;
+  }
+}
+
+/* AI settings */
+.ai-settings {
+  display: grid;
+  gap: 16px;
+}
+
+.ai-settings > .panel {
+  margin-bottom: 0;
+}
+
+.ai-settings-form,
+.ai-advanced {
+  display: grid;
+  gap: 14px;
+}
+
+.ai-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.ai-toggle input {
+  width: 20px;
+  height: 20px;
+  min-height: 20px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.ai-toggle span {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-toggle small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+.ai-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.ai-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ai-card-head h3 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.ai-card-head p {
+  margin: 0;
+}
+
+.ai-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ai-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.ai-badge-default,
+.ai-badge-active {
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.ai-badge-muted {
+  color: var(--muted);
+}
+
+.ai-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.ai-facts div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ai-facts dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ai-facts dd {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.ai-installed-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-inline-progress {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-raised);
+  overflow: hidden;
+}
+
+.ai-inline-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 320ms ease;
+}
+
+.ai-progress {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+}
+
+.ai-progress-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ai-progress progress {
+  width: 100%;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-installed-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-installed-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.ai-installed-list li > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ai-path {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .ai-grid,
+  .ai-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ai-card-head,
+  .ai-installed-list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ai-badges {
+    justify-content: flex-start;
+  }
+
+  .ai-actions,
+  .ai-actions button,
+  .ai-actions .btn,
+  .ai-installed-list li > button {
+    width: 100%;
   }
 }

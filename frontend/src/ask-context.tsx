@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AskResponse,
-  AskStatusResponse,
+  AiAskStatus,
   EntityCandidate,
   EntityKind,
   Preferences,
@@ -45,7 +45,7 @@ export function AskContextPanel({
   const titleId = useId();
   const bodyId = useId();
   const [open, setOpen] = useState(false);
-  const [status, setStatus] = useState<AskStatusResponse | null>(null);
+  const [status, setStatus] = useState<AiAskStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<AskResponse | null>(null);
@@ -164,7 +164,7 @@ export function AskContextPanel({
               disabled={disabled || loading || !question.trim()}
             >
               <Icon>send</Icon>
-              {loading ? "Asking…" : "Ask"}
+              {loading ? "Askingâ€¦" : "Ask"}
             </Button>
           </form>
 
@@ -292,7 +292,7 @@ function AvailabilityNotices({
   status,
   statusError,
 }: {
-  status: AskStatusResponse | null;
+  status: AiAskStatus | null;
   statusError: string;
 }) {
   if (statusError) {
