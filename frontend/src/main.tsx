@@ -14,6 +14,7 @@ import {
   LibraryToolsMenu,
 } from "./library";
 import { HistoryPage, Overview, RankingsPage, MusicPage } from "./consultation";
+import { AskPage } from "./ask";
 import { kinds } from "./selection";
 import type { Kind } from "./selection";
 import { Link, navigate, useLocation, useSearch } from "./navigation";
@@ -248,6 +249,7 @@ function Shell({
       {
         dashboard: "Overview",
         search: "Search",
+        ask: "Ask",
         history: "Listening history",
         review: "Review duplicates",
         import: "Import history",
@@ -296,6 +298,7 @@ function Shell({
   const nav = [
     ["/dashboard", "dashboard", "Overview", "space_dashboard"],
     ["/search", "search", "Search", "search"],
+    ["/ask", "ask", "Ask", "forum"],
     ["/history", "history", "Listening history", "history"],
     ["/rankings/artists", "rankings", "Rankings", "leaderboard"],
     ["/import", "import", "Import history", "file_upload"],
@@ -484,6 +487,9 @@ function Shell({
                 <SearchPage />
               </section>
             )}
+            <section className="page-container" hidden={page !== "ask"}>
+              <AskPage preferences={preferences} />
+            </section>
             <section className="page-container" hidden={page !== "dashboard"}>
               <Overview
                 preferences={preferences}
@@ -573,6 +579,7 @@ function Shell({
               "music",
               "dashboard",
               "search",
+              "ask",
               "history",
               "review",
               "import",

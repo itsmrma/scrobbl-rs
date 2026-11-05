@@ -29,6 +29,11 @@ pub struct Filters {
     pub entity_type: Option<String>,
     pub entity_id: Option<String>,
     pub year: Option<i32>,
+    pub month: Option<u8>,
+    pub weekday: Option<String>,
+    /// The assigned-calendar hour cannot be derived with portable SQLite date
+    /// functions (DST), so Ask applies it after the canonical selection.
+    pub hour: Option<u8>,
     pub include_totals: Option<bool>,
 }
 
@@ -108,9 +113,13 @@ pub(crate) async fn selection_at(
         match filters.period.as_deref().unwrap_or("all") {
             "all" => crate::calendar::Period::All,
             "today" => crate::calendar::Period::Today,
+            "yesterday" => crate::calendar::Period::Yesterday,
             "week" => crate::calendar::Period::Week,
+            "last_week" => crate::calendar::Period::LastWeek,
             "month" => crate::calendar::Period::Month,
+            "last_month" => crate::calendar::Period::LastMonth,
             "year" => crate::calendar::Period::Year,
+            "last_year" => crate::calendar::Period::LastYear,
             "7d" => crate::calendar::Period::RollingDays(7),
             "30d" => crate::calendar::Period::RollingDays(30),
             "365d" => crate::calendar::Period::RollingDays(365),
@@ -135,6 +144,30 @@ pub(crate) async fn selection_at(
         b.push(" AND EXISTS(SELECT 1 FROM observations o WHERE o.listen_id=l.id AND o.source=")
             .push_bind(source.to_owned())
             .push(")");
+    }
+    if let Some(month) = filters.month {
+        if !(1..=12).contains(&month) {
+            return Err(AppError::BadRequest(
+                "The month must be between 1 and 12.".into(),
+            ));
+        }
+        b.push(" AND CAST(substr(l.local_date,6,2) AS INTEGER)=")
+            .push_bind(i64::from(month));
+    }
+    if let Some(weekday) = filters.weekday.as_deref() {
+        // SQLite %w is 0=Sunday..6=Saturday; the API names stay stable.
+        let index = match weekday {
+            "sunday" => 0,
+            "monday" => 1,
+            "tuesday" => 2,
+            "wednesday" => 3,
+            "thursday" => 4,
+            "friday" => 5,
+            "saturday" => 6,
+            _ => return Err(AppError::BadRequest("Unknown weekday.".into())),
+        };
+        b.push(" AND CAST(strftime('%w',l.local_date) AS INTEGER)=")
+            .push_bind(index);
     }
     if let Some(grain) = &filters.bucket {
         let start = filters

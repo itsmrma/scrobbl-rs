@@ -43,9 +43,13 @@ impl Calendar {
 pub enum Period {
     All,
     Today,
+    Yesterday,
     Week,
+    LastWeek,
     Month,
+    LastMonth,
     Year,
+    LastYear,
     Dates {
         from: Option<chrono::NaiveDate>,
         through: Option<chrono::NaiveDate>,
@@ -103,6 +107,7 @@ pub async fn filter(
             .date_naive();
         let start = match period {
             Period::Today => today,
+            Period::Yesterday => today - Duration::days(1),
             Period::Week => {
                 today
                     - Duration::days(
@@ -110,10 +115,41 @@ pub async fn filter(
                             .rem_euclid(7),
                     )
             }
+            Period::LastWeek => {
+                let week_start = today
+                    - Duration::days(
+                        (i64::from(today.weekday().num_days_from_monday()) - calendar.week_start)
+                            .rem_euclid(7),
+                    );
+                week_start - Duration::days(7)
+            }
             Period::Month => today.with_day(1).ok_or(AppError::Internal)?,
+            Period::LastMonth => {
+                let first = today.with_day(1).ok_or(AppError::Internal)?;
+                first
+                    .checked_sub_months(Months::new(1))
+                    .ok_or(AppError::Internal)?
+            }
             Period::Year => {
                 chrono::NaiveDate::from_ymd_opt(today.year(), 1, 1).ok_or(AppError::Internal)?
             }
+            Period::LastYear => {
+                chrono::NaiveDate::from_ymd_opt(today.year() - 1, 1, 1).ok_or(AppError::Internal)?
+            }
+            _ => unreachable!(),
+        };
+        let through = match period {
+            Period::Today | Period::Week | Period::Month | Period::Year => today,
+            Period::Yesterday => start,
+            Period::LastWeek => start + Duration::days(6),
+            Period::LastMonth => {
+                let next = start
+                    .checked_add_months(Months::new(1))
+                    .ok_or(AppError::Internal)?;
+                next - Duration::days(1)
+            }
+            Period::LastYear => chrono::NaiveDate::from_ymd_opt(today.year() - 1, 12, 31)
+                .ok_or(AppError::Internal)?,
             _ => unreachable!(),
         };
         if index > 0 {
@@ -125,7 +161,7 @@ pub async fn filter(
             .push(" AND l.local_date>=")
             .push_bind(start.to_string())
             .push(" AND l.local_date<=")
-            .push_bind(today.to_string())
+            .push_bind(through.to_string())
             .push(")");
     }
     if calendars.is_empty() {
