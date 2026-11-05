@@ -5,6 +5,22 @@ selected model id; installed model files are owned by the filesystem. This
 document records the catalog data source and the download/error rules that the
 API and Activities expose.
 
+## Activation and privacy
+
+AI is enabled only in **Settings → AI**. Enabling it downloads nothing and loads
+nothing; the owner must still choose a catalog model and start its download.
+Disabling it cancels active downloads and unloads the model. With AI off there
+is no model load, no inference and no network request related to AI.
+
+The model never sees archive rows. The Rust prompt contains only the question,
+the supported DSL vocabulary and examples; the model emits DSL JSON constrained
+by a grammar. Rust executes that DSL against the canonical consultation
+selection and computes every number. There is no cloud AI call and no
+telemetry. The only additional outbound request is the model file download from
+the pinned catalog URL, started explicitly by the owner. Questions and results
+stay in the instance. Model files are treated as untrusted input, are verified
+by SHA-256 before use and cannot inject SQL.
+
 ## Settings keys
 
 Settings live in the archive `settings` table and are written through the
@@ -67,6 +83,24 @@ Catalog metadata also records license, minimum/recommended RAM, CPU cores,
 optional GPU, 2048-token context, backend, spike speed and language exact-match
 scores. Parser scores remain `null` until the parser evaluation in #181.
 
+## Model choice and memory
+
+The settings page shows the catalog size, minimum and recommended RAM, CPU
+cores and measured speed before a download starts. The v1 CPU-only guidance is:
+
+| Tier | Catalog id | Weights on disk | Typical role |
+| --- | --- | ---: | --- |
+| Light | `qwen3-0.6b-q4_k_m` | ~378 MiB | Low-RAM or slower CPU; fastest load and answers |
+| Default | `qwen3-1.7b-q4_k_m` | ~1.2 GiB | Best balance chosen by the #172 spike |
+| Quality | `qwen3-4b-q4_k_m` | ~2.3 GiB | Higher accuracy, noticeably slower on CPU |
+
+8B and 32B entries remain `gpu_future` and are not selectable in v1. The
+context is 2048 tokens and one model is loaded at a time, so the loaded model
+needs its file size plus roughly 1–2 GiB of working memory; use the catalog's
+minimum/recommended RAM values as the authoritative figures. The downloader
+refuses to start without enough free disk space for the remaining bytes and
+rechecks at every checkpoint.
+
 ## Filesystem layout
 
 ```text
@@ -77,6 +111,15 @@ scores. Parser scores remain `null` until the parser evaluation in #181.
 
 `<data_dir>/models` can be replaced by `ai_model_dir`. The filesystem is the
 source of truth: the database stores no installed-model inventory.
+
+In the official image `SCROBBL_DATA_DIR=/data`, so the default model directory
+is **`/data/models`**. There is no separate `SCROBBL_AI_MODEL_DIR` variable; an
+operator can instead set the absolute `ai_model_dir` setting (for example a
+different mounted folder). Keep models on the same persistent `/data` volume:
+the container root filesystem is read-only and the app never writes model files
+(partial downloads, metadata or temporary files) outside the configured model
+directory. An external `ai_model_dir` must be a separately writable mount. See
+[Docker installation](docker.md).
 
 `metadata.json` is written atomically (temporary file, fsync, rename, directory
 sync) after the checksum passes:
@@ -146,9 +189,39 @@ reported as unavailable. No command pretends inference works.
 
 The official image compiles the runtime; weights are downloaded at runtime from
 the curated catalog and never enter the repository or the image. One model is
-loaded at a time. The Docker build stage installs `cmake`, `clang` and
-`libclang-dev` to build llama.cpp; the runtime stage installs `libstdc++6` for
-the linked C++ runtime. No GPU toolchain is installed.
+loaded at a time. The Docker build stage installs `cmake`, `clang`,
+`libclang-dev` and `python3` to build llama.cpp from the vendored crate sources;
+the runtime stage installs `libstdc++6` for the linked C++ runtime. Because
+`llama-cpp-2` is built with `default-features = false`, its optional OpenMP
+feature is off, `GGML_OPENMP=OFF`, and **no `libgomp1`** is needed. No CUDA,
+Metal, Vulkan, BLAS or GPU toolchain is installed. The image is built for
+linux/amd64 (published and smoke-tested) and linux/arm64 (built on trusted
+main/tag pushes; see [Docker installation](docker.md)).
+
+The release profile strips symbols, which keeps the distributed binary inside
+the 30 MiB budget without enabling LTO (LTO would add link time for no measured
+size need). The Docker workflow also measures the runtime image increment
+against `debian:bookworm-slim`; the corresponding-source/notices bundle is
+reported separately because it is a fixed GPL distribution obligation, not part
+of the AI runtime addition. Budgets: **runtime image delta ≤ 25 MiB**, **binary
+≤ 30 MiB**. CI records both in `ci-logs/image-size.json` and fails the build if
+either is exceeded.
+
+## Licenses and attribution
+
+llama.cpp and ggml are MIT-licensed and are compiled from the pinned
+`llama-cpp-sys-2` sources. The `llama-cpp-2`/`llama-cpp-sys-2` Rust bindings are
+MIT OR Apache-2.0 (Copyright (c) Dial AI); both texts are kept in
+`docs/licenses/upstream/` and copied into the image notices. The full
+attribution and the exact upstream revision are in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+Catalog models are **Apache-2.0** works from the Qwen team (Alibaba Group). The
+catalog response shows the license name and URL before download, and the
+installed `metadata.json` records it. Weights are downloaded by the owner from
+the pinned upstream repository; they are never distributed in the Git
+repository, the container image or the source archive, and they remain under
+their upstream license.
 
 ## Ask parser runtime (#178)
 

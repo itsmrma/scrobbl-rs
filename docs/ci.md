@@ -21,8 +21,15 @@ and requires a PR with **zero** additional approving reviews:
 | `Browser (chromium)` | Locked npm install, TypeScript, Vite, committed assets, browser tests |
 | `Browser (firefox)` | The same frontend checks in Firefox |
 | `Browser (webkit)` | The same frontend checks in WebKit |
-| `Docker / linux/amd64` | Image build, generic Compose startup and persistent-volume smoke |
+| `Docker / linux/amd64` | Image build, distribution budget, generic Compose startup and persistent-volume smoke |
 | `PR checks` | Always runs; requires successful verification for application changes or the explicit documentation-only skip |
+
+The Docker workflow also has a `linux/arm64` build job (buildx + QEMU,
+`load: false`). It runs only on trusted pushes to `main`/`v*` tags, not on pull
+requests, and is not part of the required set or of publication. An arm64 build
+failure is shown as a red job but does not fail the required amd64 check or block
+publication. The publish job continues to push only the exact amd64 image tar
+that passed the smoke test.
 
 A failed or canceled verification cannot make `PR checks` pass. For application
 changes, every verification must succeed; for documentation-only changes, all
@@ -58,6 +65,7 @@ npm run typecheck
 npm run build
 git diff --exit-code -- static/dist
 git ls-files --others --exclude-standard static/dist
+python3 -m unittest discover -s scripts/tests -v
 npx playwright install --with-deps chromium firefox webkit
 cargo build --locked --bin scrobbl-rs
 npm run test:e2e -- --browser=chromium
@@ -74,6 +82,8 @@ On a Linux Docker host, build and run the same disposable Compose smoke:
 
 ```sh
 docker build --platform linux/amd64 --build-arg VCS_REF="$(git rev-parse HEAD)" -t scrobbl-ci:local .
+python3 scripts/measure-image-size.py --image scrobbl-ci:local \
+  --baseline "debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8"
 python3 scripts/verify-docker.py scrobbl-ci:local --revision "$(git rev-parse HEAD)"
 ```
 
