@@ -9,6 +9,9 @@ import type {
 } from "./generated";
 import { api } from "./api";
 import { InterpretationChips } from "./ask-chips";
+import { AskResultRows } from "./ask-table";
+import { AskTimeCard } from "./ask-time";
+import { StreakResultCard } from "./ask-streak";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
 import { Button, Heading, Icon, Notice, date, number } from "./ui";
@@ -25,6 +28,30 @@ const periodCopy: Record<string, string> = {
   last_year: "last year",
 };
 
+const metricCopy: Record<string, string> = {
+  plays: "Plays",
+  time_listened: "Time listened",
+  distinct_tracks: "Distinct tracks",
+  distinct_artists: "Distinct artists",
+  distinct_albums: "Distinct albums",
+  first_play: "First play",
+  last_play: "Last play",
+  streak: "Listening streak",
+  milestones: "Milestones",
+};
+
+const groupCopy: Record<string, string> = {
+  day: "day",
+  week: "week",
+  month: "month",
+  year: "year",
+  hour: "hour",
+  weekday: "weekday",
+  artist: "artist",
+  album: "album",
+  track: "track",
+};
+
 function entityName(query: Query): string {
   return query.entity?.name ?? "your archive";
 }
@@ -36,9 +63,22 @@ function headline(response: AskResponse, preferences: Preferences): string {
   const entity = entityName(query);
   const period = periodCopy[query.period] ?? "in this period";
   const value = result.scalar;
+  if (query.group_by) {
+    return `${metricCopy[query.metric] ?? query.metric} by ${groupCopy[query.group_by] ?? query.group_by}, ${period}.`;
+  }
+  if (query.metric.startsWith("distinct_")) {
+    const noun = query.metric.replace("distinct_", "");
+    return `${number.format(value ?? 0)} distinct ${noun} for ${entity} ${period}.`;
+  }
   if (query.metric === "plays") {
     const plays = value ?? 0;
     return `You listened to ${entity} ${number.format(plays)} ${plays === 1 ? "time" : "times"} ${period}.`;
+  }
+  if (query.metric === "time_listened") {
+    const time = result.time;
+    return time && time.unknown_listens > 0
+      ? `Known listening time for ${entity} ${period}, with unknown durations reported separately.`
+      : `Known listening time for ${entity} ${period}.`;
   }
   if (query.metric === "first_play" || query.metric === "last_play") {
     const which = query.metric === "first_play" ? "first" : "last";
@@ -196,13 +236,17 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
             {loading ? "Asking…" : "Ask"}
           </Button>
           <span className="field-hint">
-            Only play counts, first plays and last plays are available in this
-            version.
+            Play counts, listening time, distinct tracks/artists/albums, first
+            and last plays, streaks, milestones and grouped top lists are
+            available. Grouping covers plays and distinct counts; listening time
+            cannot be grouped yet.
           </span>
         </div>
       </form>
 
-      {error && <Notice title="The question could not be answered">{error}</Notice>}
+      {error && (
+        <Notice title="The question could not be answered">{error}</Notice>
+      )}
 
       {loading && (
         <article className="panel padded ask-loading" aria-busy="true">
@@ -250,11 +294,15 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
           )}
 
           {response.status === "unsupported" && (
-            <Notice title="That question is outside the current scope" tone="info">
+            <Notice
+              title="That question is outside the current scope"
+              tone="info"
+            >
               {response.message}
               <p className="ask-hint">
                 Try: “How many times did I listen to Björk?” · “When did I first
-                listen to Radiohead?” · “Quante volte ho ascoltato Björk?”
+                listen to Radiohead?” · “How many hours did I listen?” · “What is
+                my listening streak?”
               </p>
             </Notice>
           )}
@@ -296,7 +344,7 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
   );
 }
 
-function ResultCard({
+export function ResultCard({
   response,
   query,
   preferences,
@@ -306,18 +354,28 @@ function ResultCard({
   preferences: Preferences;
 }) {
   const result = response.result!;
-  const point =
-    query.metric === "first_play" ? result.first : result.last;
+  if (query.metric === "streak" || query.metric === "milestones") {
+    return (
+      <StreakResultCard
+        query={query}
+        result={result}
+        preferences={preferences}
+      />
+    );
+  }
+  const point = query.metric === "first_play" ? result.first : result.last;
   const isPoint = query.metric === "first_play" || query.metric === "last_play";
+  const isTime = query.metric === "time_listened";
   return (
     <article className="panel padded ask-result">
       <p className="ask-eyebrow">Result</p>
       <p className="ask-result-headline">{headline(response, preferences)}</p>
-      {!isPoint && (
+      {!isPoint && !isTime && !query.group_by && (
         <p className="ask-result-value" aria-label="Result value">
           {number.format(result.scalar ?? 0)}
         </p>
       )}
+      {isTime && result.time && <AskTimeCard time={result.time} />}
       {isPoint && point && (
         <div className="ask-listen">
           <p className="ask-listen-title">{point.title}</p>
@@ -325,13 +383,15 @@ function ResultCard({
             {point.artist}
             {point.album ? ` · ${point.album}` : ""}
           </p>
-          <p className="ask-listen-date">{date(point.played_at_ms, preferences)}</p>
+          <p className="ask-listen-date">
+            {date(point.played_at_ms, preferences)}
+          </p>
         </div>
       )}
       {isPoint && !point && (
         <p className="ask-empty">No matching listen in this selection.</p>
       )}
-      {result.time && (
+      {result.time && !isTime && (
         <p className="ask-coverage">
           Known time {number.format(result.time.known_ms / 60_000)} minutes
           {result.time.unknown_listens > 0
@@ -340,14 +400,7 @@ function ResultCard({
         </p>
       )}
       {result.rows.length > 0 && (
-        <ul className="ask-rows">
-          {result.rows.map((row) => (
-            <li key={row.key}>
-              {row.href ? <Link to={row.href}>{row.label}</Link> : row.label}
-              <span>{number.format(row.plays)}</span>
-            </li>
-          ))}
-        </ul>
+        <AskResultRows result={result} query={query} />
       )}
       {result.links.length > 0 && (
         <div className="ask-result-links">

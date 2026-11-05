@@ -3,11 +3,14 @@
 pub mod dsl;
 pub mod execute;
 pub mod grammar;
+pub mod grouping;
 pub mod names;
 pub mod parser;
 pub mod prompt;
 pub mod runtime;
 pub mod schema;
+pub mod streaks;
+pub mod time;
 
 use crate::{
     AppState, ai,
