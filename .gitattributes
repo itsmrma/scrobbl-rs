@@ -5,3 +5,5 @@ static/dist/*.js text eol=lf
 static/dist/*.css text eol=lf
 static/dist/*.txt text eol=lf
 tests/fixtures/listenbrainz/*.jsonl text eol=lf
+# The Ask schema is compared byte-for-byte with the generated LF text.
+src/ask/schema/*.json text eol=lf
