@@ -26,9 +26,11 @@ esclude errori di API nel harness.
 - **Fase A — desktop:** matrice completa su Windows nativo. Produce la decisione
   su runtime, famiglia, dimensione default e classe di latenza provvisoria.
   Docker/WSL non servono.
-- **Fase B — NAS e Mac, dopo l'integrazione UI:** build Linux x86_64/arm64 e
-  macOS arm64, immagine Docker, rootfs read-only + `/data`, latenza definitiva e
-  budget immagine sull'immagine ufficiale (#180/#182).
+- **Fase B — CI e NAS, dopo l'integrazione UI:** build Linux x86_64/arm64 e
+  macOS arm64 su GitHub Actions (`spike-172.yml`), immagine Docker amd64/arm64,
+  rootfs read-only + `/data` sul NAS, latenza definitiva e budget immagine
+  sull'immagine ufficiale (#180/#182). Il NAS non compila: carica l'artifact
+  `amd64` prodotto dalla CI.
 
 ## Metodo
 
@@ -74,15 +76,14 @@ Caricamento modello: 1.0 s (1.7B), 2.0 s (4B), 0.45 s (0.6B), 0.93 s (Qwen2.5
 
 Lettura:
 
-- **Qwen2.5 1.5B** è il miglior rapporto qualità/velocità: 29/30, p50 3,9 s,
-  27 tok/s, nessun thinking da gestire.
-- **Qwen3 4B** è l'unico 30/30, ma costa 2,3× il tempo di Qwen2.5 e ha TTFT
+- **Qwen3 4B** è l'unico 30/30, ma costa 2,3× il tempo di 1.7B e ha TTFT
   5,8 s: adatto a un tier "quality", non al default su CPU-only.
-- **Qwen3 1.7B** è secondo per qualità (28/30) ma leggermente più lento di
-  Qwen2.5; resta il default della specifica se si vuole mantenere la famiglia
-  Qwen3.
+- **Qwen3 1.7B** è il default della famiglia scelta: 28/30, p50 4,1 s, 23 tok/s.
 - **Qwen3 0.6B** è il tier light: 23/30 a 1,9 s. Utile solo per risposte rapide,
   non per la qualità del parser.
+- **Qwen2.5 1.5B** è stato misurato come confronto (29/30, p50 3,9 s): resta
+  documentato, ma la decisione di prodotto è **solo famiglia Qwen3**, quindi non
+  entra nel catalogo v1.
 
 ## Thinking mode
 
@@ -98,9 +99,8 @@ disattivabile. I due run **senza grammatica** rispondono alla domanda:
 | `qwen3-nothink` con grammatica | 0/30 per costruzione | 30/30 | 28/30 | default misurato |
 
 Conclusione: **il thinking mode di Qwen3 è disattivabile in modo affidabile**
-con il prefisso `assistant\n<think>\n\n</think>\n\n`; non serve passare a
-Qwen2.5 per questo motivo. Qwen2.5 resta comunque preferibile per qualità e
-semplicità sui dati raccolti.
+con il prefisso `assistant\n<think>\n\n</think>\n\n`. La famiglia resta Qwen3;
+Qwen2.5 è stato misurato solo come confronto e non entra nel catalogo v1.
 
 ## Nomi Unicode e caratteri speciali
 
@@ -160,19 +160,26 @@ nell'adapter di #178:
 
 ## Matrice di build
 
-| target | comando | esito | note |
+Le build di fase B girano su GitHub Actions nel workflow `spike-172.yml`, non sul
+NAS né sul Mac: ogni job produce binario, `size.txt` e immagine Docker.
+
+| target | job | esito | note |
 | --- | --- | --- | --- |
-| Windows x86_64 (fase A) | `cargo build --release` | fatto | 4 modelli, 30/30 JSON validi ciascuno |
-| macOS arm64 nativo (fase B) | `cargo build --release` | da eseguire | |
-| Linux x86_64 (fase B, NAS) | `docker build -t scrobbl-spike:1.7b .` | da eseguire | |
-| Linux arm64 (fase B, Mac) | `docker build --platform linux/arm64 ...` | da eseguire | |
-| Linux x86_64 + OpenMP (fase B) | `--build-arg CARGO_FEATURES=openmp --build-arg INSTALL_LIBGOMP=1` | da eseguire | confronto `libgomp` |
+| Windows x86_64 (fase A) | locale | fatto | 4 modelli, 30/30 JSON validi ciascuno |
+| macOS arm64 | `Native macos-arm64` | da eseguire | runner `macos-14` |
+| Linux x86_64 | `Native linux-amd64` | da eseguire | runner `ubuntu-latest` |
+| Linux arm64 | `Native linux-arm64` | da eseguire | runner `ubuntu-24.04-arm` |
+| Docker linux/amd64 | `Docker linux/amd64` | da eseguire | artifact `spike-172-docker-amd64` |
+| Docker linux/arm64 | `Docker linux/arm64` | da eseguire | artifact `spike-172-docker-arm64` |
+
+Il workflow parte su push del branch `spike/172-llama-runtime` o manualmente da
+`workflow_dispatch`. Non carica modelli e non esegue inferenza.
 
 ## Packaging e budget
 
 | voce | valore | budget | esito |
 | --- | ---: | ---: | --- |
-| binario Windows, release (stripped, LTO) | 4,6 MiB | ≤ 30 MiB | passa fuori target |
+| binario Windows, release (stripped, LTO) | 4,4 MiB | ≤ 30 MiB | passa fuori target |
 | delta immagine vs `debian:bookworm-slim` | da misurare in fase B | ≤ 25 MiB | |
 | delta immagine con OpenMP | da misurare in fase B | ≤ 25 MiB | |
 | build con root filesystem read-only | da eseguire in fase B | deve riuscire | |
@@ -182,28 +189,29 @@ OpenMP richiede **entrambi** gli argomenti:
 `--build-arg CARGO_FEATURES=openmp --build-arg INSTALL_LIBGOMP=1`.
 
 Il delta immagine va misurato sull'immagine ufficiale `scrobbl-rs` in #180, dopo
-aver collegato `llama-cpp-2` all'app. Il binario harness (4,6 MiB su Windows) è
+aver collegato `llama-cpp-2` all'app. Il binario harness (4,4 MiB su Windows) è
 una stima diretta del costo statico di llama.cpp in questa configurazione.
 
-## Decisione proposta
+## Decisione
 
-Da confermare e riportare su #171. La fase A sostiene questa lettura:
+Famiglia decisa: **solo Qwen3**. Da registrare su #171.
 
 - **Runtime:** `llama-cpp-2` 0.1.161 con `default-features = false`; la feature
-  `common` non è necessaria. OpenMP e packaging restano da misurare in fase B.
-- **Famiglia:** Qwen3 è utilizzabile (thinking disattivabile in modo affidabile),
-  ma **Qwen2.5 1.5B Instruct** vince sui dati: 29/30 contro 28/30 di Qwen3
-  1.7B, leggermente più veloce e senza thinking da gestire.
-- **Dimensione default:** classe 1,5–1,7B. Qwen3 0.6B è il tier light (23/30);
-  Qwen3 4B è il tier quality (30/30 ma 8,9 s p50, 10,6 tok/s).
-- **Classe di latenza provvisoria (desktop):** Qwen2.5 1.5B p50 3,9 s / p95
-  4,9 s, TTFT 2,1 s, 27 tok/s. Sul NAS ci si aspetta un peggioramento; la classe
-  definitiva si fissa in fase B.
-- **Vincoli:** contesto 2048 sufficiente; nessun OOM con 24 GB; un modello alla
-  volta.
+  `common` non è necessaria. OpenMP e packaging restano fase B.
+- **Default:** Qwen3 1.7B Q4_K_M — 28/30, p50 4,1 s, p95 4,6 s, TTFT 2,35 s,
+  23 tok/s sul desktop.
+- **Light:** Qwen3 0.6B Q4_K_M — 23/30, p50 1,9 s, 49 tok/s.
+- **Quality:** Qwen3 4B Q4_K_M — 30/30, ma p50 8,9 s e TTFT 5,8 s; tier
+  selezionabile, non default CPU-only.
+- **Thinking:** disattivato in modo affidabile dal prefisso vuoto
+  (`qwen3-think` senza grammatica: 30/30 ` thinking`; `qwen3-nothink`: 0/30).
+- **Classe di latenza provvisoria (desktop):** default p50 ~4 s / p95 ~4,6 s,
+  TTFT ~2,4 s. Sul NAS ci si aspetta un peggioramento; la classe definitiva si
+  fissa in fase B.
+- **Qwen2.5 1.5B:** misurato come confronto (29/30, p50 3,9 s) ma escluso dalla
+  decisione di famiglia; resta nel report come alternativa documentata.
 
-Se #171 preferisce non cambiare famiglia, Qwen3 1.7B è un default accettabile
-(28/30, 4,1 s p50) e Qwen2.5 1.5B resta il fallback già misurato.
+Vincoli: contesto 2048 sufficiente; nessun OOM con 24 GB; un modello alla volta.
 
 ## Checklist di accettazione (#172)
 
@@ -213,12 +221,12 @@ Fase A:
 - [x] Thinking mode disattivato in modo affidabile; fallback Qwen2.5 misurato.
 - [x] Nomi Unicode accettati dagli slot testuali senza pattern ASCII restrittivi.
 - [x] Latenza p50/p95 misurata sul desktop per 1.7B e 4B.
-- [x] Dimensione del binario misurata (4,6 MiB su Windows).
+- [x] Dimensione del binario misurata (4,4 MiB su Windows).
 - [ ] Decisione registrata su #171.
 
 Fase B, dopo l'integrazione UI:
 
-- [ ] Build riuscita su macOS arm64 e Linux x86_64/arm64.
+- [ ] Build riuscita su macOS arm64 e Linux x86_64/arm64 via GitHub Actions.
 - [ ] Latenza p50/p95 confermata sul NAS per 1.7B e 4B.
 - [ ] Dimensione immagine misurata contro il budget sull'immagine ufficiale.
 - [ ] Rootfs read-only e volume `/data` verificati.

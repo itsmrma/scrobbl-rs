@@ -37,6 +37,7 @@ MATRIX = [
         "model": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
         "chat": "qwen25",
         "grammar": True,
+        # Comparison only: the v1 catalog decision is Qwen3-only.
     },
     {
         "id": "1.7b-think-nogrammar",

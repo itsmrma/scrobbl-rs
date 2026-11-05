@@ -37,7 +37,7 @@
     },
     {
       "id": "qwen2.5-1.5b-instruct-q4_k_m",
-      "label": "Qwen2.5 1.5B Instruct Q4_K_M (non-thinking fallback)",
+      "label": "Qwen2.5 1.5B Instruct Q4_K_M (comparison only; v1 stays on Qwen3)",
       "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
       "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
       "file": "qwen2.5-1.5b-instruct-q4_k_m.gguf",

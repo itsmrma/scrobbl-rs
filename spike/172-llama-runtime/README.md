@@ -43,22 +43,28 @@ provvisoria sono in
 - macOS arm64: Xcode Command Line Tools e `cmake` (`brew install cmake`).
 - Docker su NAS e, per `linux/arm64`, Docker Desktop sul Mac.
 
-### Trasferire l'harness sul NAS (fase finale)
+### Build e trasferimento sul NAS (fase finale)
 
-TrueNAS SCALE non è un ambiente di sviluppo: copia solo questa directory (senza
-`models/` e `target/`) su un dataset, per esempio:
+Le build non si fanno sul NAS: il workflow **Spike 172 runtime builds** produce
+gli artifact `spike-172-docker-amd64` e `spike-172-docker-arm64`, con immagine,
+`size.json` e binario. Sul NAS (shell root) scarica l'artifact `amd64`,
+caricalo e usa lo stesso dataset per modelli e risultati:
+
+```bash
+cd /mnt/tank/apps/scrobbl-spike
+gh run download -R itsmrma/scrobbl-rs -n spike-172-docker-amd64 -D artifact
+docker load -i artifact/scrobbl-spike-amd64.tar
+python3 scripts/fetch-model.py --id qwen3-1.7b-q4_k_m --dir models
+```
+
+`gh` sul NAS è opzionale: puoi scaricare l'artifact dal browser e copiarlo con
+`scp`. Il `docker build` locale resta solo come fallback.
+
+TrueNAS SCALE non è un ambiente di sviluppo: per gli script copia solo questa
+directory (senza `models/` e `target/`) su un dataset, per esempio:
 
 ```bash
 scp -r spike/172-llama-runtime admin@nas:/mnt/tank/apps/scrobbl-spike/harness
-```
-
-Poi entra in una shell root (`sudo -i`) perché i comandi Docker di TrueNAS
-girano come root. Modelli e risultati stanno sullo stesso dataset:
-
-```bash
-cd /mnt/tank/apps/scrobbl-spike/harness
-python3 scripts/fetch-model.py --id qwen3-1.7b-q4_k_m --dir models
-docker build -t scrobbl-spike:1.7b .
 ```
 
 ## 1. Scaricare i modelli
@@ -115,7 +121,7 @@ Matrice minima da eseguire sul NAS:
 | 3 | Qwen3 1.7B Q4_K_M | `qwen3-think --no-grammar` | thinking emesso? |
 | 3b | Qwen3 1.7B Q4_K_M | `qwen3-nothink --no-grammar` | thinking soppresso? |
 | 4 | Qwen3 0.6B Q4_K_M | `qwen3-nothink` | tier light |
-| 5 | Qwen2.5 1.5B Instruct Q4_K_M | `qwen25` | fallback non-thinking |
+| 5 | Qwen2.5 1.5B Instruct Q4_K_M | `qwen25` | confronto, escluso dalla v1 |
 
 I run 3/3b sono **senza grammatica** di proposito: con GBNF il primo token è
 obbligato a `{`, quindi il thinking non può comparire in nessun caso e il
