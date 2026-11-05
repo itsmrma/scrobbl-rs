@@ -296,7 +296,7 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
   );
 }
 
-function ResultCard({
+export function ResultCard({
   response,
   query,
   preferences,
