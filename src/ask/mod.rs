@@ -2,14 +2,18 @@
 //! canonical listening selection. The model (later) only produces DSL.
 pub mod dsl;
 pub mod execute;
+pub mod grammar;
 pub mod grouping;
 pub mod names;
 pub mod parser;
+pub mod prompt;
+pub mod runtime;
+pub mod schema;
 pub mod streaks;
 pub mod time;
 
 use crate::{
-    AppState,
+    AppState, ai,
     ask::{
         dsl::{Chip, Entity, EntityKind, Metric, Query},
         parser::{ParsedQuestion, QueryParser, StubParser, UnavailableParser},
@@ -19,7 +23,7 @@ use crate::{
 };
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use ts_rs::TS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -139,15 +143,18 @@ pub struct AskQueryRequest {
     pub query: Query,
 }
 
-/// The Ask service seam. `AppState::new` installs the unavailable parser; tests
-/// and the current development page install `Ask::stub()`. #178 can replace the
-/// parser with the model-backed adapter without touching the HTTP handlers.
+/// The Ask service seam. `AppState::new` installs the local model parser when
+/// the `llama` feature is compiled in; tests install `Ask::stub()` and a
+/// feature-off build keeps `Ask::unavailable()`.
 #[derive(Clone)]
 pub struct Ask {
     parser: Arc<dyn QueryParser>,
     pub runtime_available: bool,
+    /// Whether the parser can attempt a question. For the local parser this is
+    /// true and the gate checks the selected installed model separately.
     pub model_ready: bool,
-    pub model_loading: bool,
+    /// True when this Ask is backed by the real runtime rather than a stub.
+    pub local: bool,
 }
 
 impl Default for Ask {
@@ -162,7 +169,27 @@ impl Ask {
             parser: Arc::new(UnavailableParser),
             runtime_available: false,
             model_ready: false,
-            model_loading: false,
+            local: false,
+        }
+    }
+
+    /// Installed at `AppState::new`: the real runtime with the `llama` feature,
+    /// or the unavailable parser in a `--no-default-features` build. No model
+    /// is loaded here.
+    pub fn installed(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
+        #[cfg(feature = "llama")]
+        {
+            Self {
+                parser: Arc::new(parser::ModelParser::local(db, data_dir)),
+                runtime_available: true,
+                model_ready: true,
+                local: true,
+            }
+        }
+        #[cfg(not(feature = "llama"))]
+        {
+            let _ = (db, data_dir);
+            Self::unavailable()
         }
     }
 
@@ -171,12 +198,17 @@ impl Ask {
             parser: Arc::new(StubParser),
             runtime_available: true,
             model_ready: true,
-            model_loading: false,
+            local: false,
         }
     }
 
     pub fn available(&self) -> bool {
-        self.runtime_available && self.model_ready && !self.model_loading
+        self.runtime_available && self.model_ready && !self.model_loading()
+    }
+
+    /// Live model-loading state from the worker. Stubs never load a model.
+    pub fn model_loading(&self) -> bool {
+        self.parser.model_loading()
     }
 
     pub async fn parse(&self, question: &str) -> Result<ParsedQuestion> {
@@ -227,7 +259,8 @@ pub async fn query(
 }
 
 async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
-    if !enabled(state).await? {
+    let stored = ai::read_settings(state).await?;
+    if !stored.enabled {
         return Ok(Some(refusal(
             state,
             AskStatus::ModelUnavailable,
@@ -241,18 +274,27 @@ async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
             "The AI runtime is not available in this build.",
         )));
     }
-    if !state.ask.model_ready {
-        return Ok(Some(refusal(
-            state,
-            AskStatus::ModelMissing,
-            "Download and select an AI model in Settings before asking questions.",
-        )));
-    }
-    if state.ask.model_loading {
+    if state.ask.model_loading() {
         return Ok(Some(refusal(
             state,
             AskStatus::ModelUnavailable,
             "The AI model is loading. Try again in a moment.",
+        )));
+    }
+    if state.ask.local {
+        let readiness = ai::selected_model_readiness(state, &stored).await?;
+        if !(readiness.installed && readiness.selected_available) {
+            return Ok(Some(refusal(
+                state,
+                AskStatus::ModelMissing,
+                "Download and select an AI model in Settings before asking questions.",
+            )));
+        }
+    } else if !state.ask.model_ready {
+        return Ok(Some(refusal(
+            state,
+            AskStatus::ModelMissing,
+            "Download and select an AI model in Settings before asking questions.",
         )));
     }
     Ok(None)
@@ -269,13 +311,6 @@ fn refusal(state: &AppState, status: AskStatus, message: &str) -> AskResponse {
         candidates: Vec::new(),
         runtime_available: state.ask.runtime_available,
     }
-}
-
-async fn enabled(state: &AppState) -> Result<bool> {
-    Ok(crate::db::setting(&state.db, "ai_enabled")
-        .await?
-        .as_deref()
-        == Some("1"))
 }
 
 async fn run(

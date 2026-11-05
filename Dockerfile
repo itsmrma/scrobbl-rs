@@ -9,7 +9,10 @@ COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
 FROM rust:1.99.1-bookworm@sha256:5c1a1732ac3f77635b24d397ceb67b4d9ea61de348f68c0aa54a79fd01e65c69 AS build
-RUN apt-get update && apt-get install -y --no-install-recommends python3 \
+# cmake, clang and libclang-dev build the CPU-only llama.cpp runtime behind the
+# default `llama` feature. No GPU toolchain is installed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 cmake clang libclang-dev \
     && rm -rf /var/lib/apt/lists/* && rustup component add rust-docs
 WORKDIR /work
 COPY . .
@@ -29,7 +32,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home scrobbl \
     && install -d -o 10001 -g 10001 -m 0700 /data

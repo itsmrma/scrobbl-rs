@@ -4,10 +4,14 @@
 //! object-safe `QueryParser` trait and return only DSL, never SQL, rows or IDs.
 //! CI and the current app use `StubParser`, a deterministic phrase map.
 use crate::{
-    ask::dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
-    error::Result,
+    ask::{
+        dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
+        runtime::{ModelSpec, Runtime, RuntimeError},
+        schema::ModelOutput,
+    },
+    error::{AppError, Result},
 };
-use std::{future::Future, pin::Pin};
+use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
 pub type ParseFuture<'a> = Pin<Box<dyn Future<Output = Result<ParsedQuestion>> + Send + 'a>>;
 
@@ -19,6 +23,12 @@ pub enum ParsedQuestion {
 
 pub trait QueryParser: Send + Sync {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a>;
+
+    /// True while the real runtime is loading a model. Stub and unavailable
+    /// parsers never load anything.
+    fn model_loading(&self) -> bool {
+        false
+    }
 }
 
 /// Deterministic English/Italian phrase map used by CI and development.
@@ -45,7 +55,7 @@ impl QueryParser for UnavailableParser {
 }
 
 pub fn unsupported_question_message() -> String {
-    "I can answer questions about play counts, listening time, distinct tracks, artists and albums, first plays, last plays, listening streaks, milestones and grouped top lists (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones). Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
+    "I can answer questions about play counts, listening time, distinct tracks, artists and albums, first plays, last plays, listening streaks, milestones and grouped top lists (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones). I cannot write SQL or answer questions outside the archive. Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
 }
 
 pub fn stub_parse(question: &str) -> ParsedQuestion {
@@ -260,6 +270,152 @@ fn default_query(metric: Metric) -> Query {
         sort_by: SortBy::Metric,
         order: SortOrder::Desc,
         limit: None,
+    }
+}
+
+const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+
+pub fn inference_timeout() -> Duration {
+    std::env::var("SCROBBL_ASK_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS))
+}
+
+/// The real local parser. It reads consent, model selection, threads and
+/// unload minutes from the archive settings on every question, resolves the
+/// installed file from the filesystem, asks the dedicated worker and maps the
+/// grammar-constrained JSON to the shared DSL.
+pub struct ModelParser {
+    db: sqlx::SqlitePool,
+    data_dir: PathBuf,
+    runtime: Runtime,
+    timeout: Duration,
+}
+
+impl ModelParser {
+    #[cfg(feature = "llama")]
+    pub fn local(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
+        Self::new(
+            db,
+            data_dir,
+            Runtime::spawn(Box::new(crate::ask::runtime::LlamaEngine::new()), 4),
+            inference_timeout(),
+        )
+    }
+
+    pub fn new(
+        db: sqlx::SqlitePool,
+        data_dir: PathBuf,
+        runtime: Runtime,
+        timeout: Duration,
+    ) -> Self {
+        Self {
+            db,
+            data_dir,
+            runtime,
+            timeout,
+        }
+    }
+
+    pub fn runtime_state(&self) -> crate::ask::runtime::RuntimeState {
+        self.runtime.state()
+    }
+
+    async fn parse_model(&self, question: &str) -> Result<ParsedQuestion> {
+        let stored = crate::ai::read_settings_from(&self.db).await?;
+        if !stored.enabled {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "AI is off. Enable it in Settings to ask questions.".into(),
+            });
+        }
+        let Some(model_id) = stored.active_model else {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "Download and select an AI model in Settings before asking questions."
+                    .into(),
+            });
+        };
+        let Some(catalog_model) = crate::ai::catalog::find(&model_id) else {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "The selected model is not in the curated catalog. Choose another model."
+                    .into(),
+            });
+        };
+        if !catalog_model.is_available() {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "The selected model is not available for questions in this release. Choose another model."
+                    .into(),
+            });
+        }
+
+        let root = match stored.model_dir.as_deref() {
+            Some(dir) => PathBuf::from(dir),
+            None => self.data_dir.join("models"),
+        };
+        let dir = crate::ai::models::model_dir(&root, &model_id)?;
+        let installed = crate::ai::models::scan(&root)
+            .into_iter()
+            .find(|entry| entry.id == model_id);
+        if !installed.is_some_and(|entry| {
+            entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
+        }) {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "The selected model is not installed or did not pass verification. Download it again or choose another model."
+                    .into(),
+            });
+        }
+        let path = crate::ai::models::model_file(&dir, &catalog_model.download.file)?;
+
+        let spec = ModelSpec::new(
+            model_id,
+            path,
+            stored.threads.clamp(1, 64),
+            stored.unload_minutes.clamp(1, 1440),
+        );
+        let prompt = crate::ask::prompt::build_prompt(question);
+        let output = self
+            .runtime
+            .infer(&spec, &prompt, self.timeout)
+            .await
+            .map_err(runtime_error)?;
+
+        let output: ModelOutput = serde_json::from_str(output.trim()).map_err(|_| {
+            AppError::BadRequest(
+                "The local model returned an interpretation that does not match the question format. Try rephrasing the question."
+                    .into(),
+            )
+        })?;
+        output.into_parsed()
+    }
+}
+
+fn runtime_error(error: RuntimeError) -> AppError {
+    match error {
+        RuntimeError::Busy => AppError::Conflict(
+            "The local model is answering another question. Try again in a moment.".into(),
+        ),
+        RuntimeError::Timeout => {
+            AppError::BadRequest("The local model did not answer in time. Try again.".into())
+        }
+        RuntimeError::Cancelled => {
+            AppError::BadRequest("The question was cancelled before the model answered.".into())
+        }
+        RuntimeError::Closed => AppError::Internal,
+        RuntimeError::Failed(message) => AppError::BadRequest(format!(
+            "The local model could not answer: {message}. Check the selected model in Settings."
+        )),
+    }
+}
+
+impl QueryParser for ModelParser {
+    fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
+        Box::pin(async move { self.parse_model(question).await })
+    }
+
+    fn model_loading(&self) -> bool {
+        self.runtime_state().loading
     }
 }
 

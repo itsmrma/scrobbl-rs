@@ -22,8 +22,9 @@ use ts_rs::TS;
 pub const DEFAULT_THREADS: u32 = 4;
 pub const DEFAULT_UNLOAD_MINUTES: u32 = 15;
 
-/// Whether this build contains the inference runtime. Ticket #178 adds the
-/// `llama` feature and its dependency; until then the value is always false.
+/// Whether this build contains the inference runtime. The runtime is part of
+/// the official build (`llama` is a default feature); a `--no-default-features`
+/// build reports it as unavailable and keeps settings/downloads usable.
 pub fn runtime_available() -> bool {
     cfg!(feature = "llama")
 }
@@ -49,27 +50,26 @@ impl Default for StoredSettings {
     }
 }
 
-async fn setting(state: &AppState, key: &str) -> Result<Option<String>> {
-    crate::db::setting(&state.db, key).await
-}
-
-pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
-    let enabled = setting(state, "ai_enabled")
+/// Read the AI settings from any pool. The inference adapter uses this without
+/// constructing a second `AppState`.
+pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings> {
+    let setting = |key: &'static str| async move { crate::db::setting(db, key).await };
+    let enabled = setting("ai_enabled")
         .await?
         .as_deref()
         .is_some_and(|value| value == "1");
-    let active_model = setting(state, "ai_active_model")
+    let active_model = setting("ai_active_model")
         .await?
         .filter(|value| !value.is_empty());
-    let threads = setting(state, "ai_threads")
+    let threads = setting("ai_threads")
         .await?
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(DEFAULT_THREADS);
-    let unload_minutes = setting(state, "ai_unload_minutes")
+    let unload_minutes = setting("ai_unload_minutes")
         .await?
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(DEFAULT_UNLOAD_MINUTES);
-    let model_dir = setting(state, "ai_model_dir")
+    let model_dir = setting("ai_model_dir")
         .await?
         .filter(|value| !value.trim().is_empty());
     Ok(StoredSettings {
@@ -79,6 +79,48 @@ pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
         unload_minutes,
         model_dir,
     })
+}
+
+pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
+    read_settings_from(&state.db).await
+}
+
+/// Filesystem truth for the selected model, shared by the settings surface and
+/// the Ask gate so both apply exactly the same rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelReadiness {
+    pub installed: bool,
+    pub selected_available: bool,
+}
+
+pub async fn selected_model_state(
+    state: &AppState,
+    stored: &StoredSettings,
+) -> Result<(PathBuf, ModelReadiness)> {
+    let (root, scanned) = active_scan(state, stored.active_model.as_deref()).await?;
+    let catalog_model = stored.active_model.as_deref().and_then(catalog::find);
+    let installed = scanned.as_ref().is_some_and(models::ScannedModel::usable)
+        && catalog_model.as_ref().is_some_and(|model| {
+            scanned.as_ref().and_then(|entry| entry.file.as_deref())
+                == Some(model.download.file.as_str())
+        });
+    let selected_available = catalog_model
+        .as_ref()
+        .is_some_and(catalog::CatalogModel::is_available);
+    Ok((
+        root,
+        ModelReadiness {
+            installed,
+            selected_available,
+        },
+    ))
+}
+
+pub async fn selected_model_readiness(
+    state: &AppState,
+    stored: &StoredSettings,
+) -> Result<ModelReadiness> {
+    Ok(selected_model_state(state, stored).await?.1)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -286,15 +328,9 @@ fn settings_message(
 }
 
 async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<AiSettings> {
-    let (root, scanned) = active_scan(state, stored.active_model.as_deref()).await?;
-    let catalog_model = stored.active_model.as_deref().and_then(catalog::find);
-    let installed = scanned.as_ref().is_some_and(models::ScannedModel::usable)
-        && catalog_model.as_ref().is_some_and(|model| {
-            scanned.as_ref().and_then(|s| s.file.as_deref()) == Some(model.download.file.as_str())
-        });
-    let selected_available = catalog_model
-        .as_ref()
-        .is_some_and(catalog::CatalogModel::is_available);
+    let (root, readiness) = selected_model_state(state, &stored).await?;
+    let installed = readiness.installed;
+    let selected_available = readiness.selected_available;
     let ready = stored.enabled && installed && selected_available;
     Ok(AiSettings {
         enabled: stored.enabled,
@@ -417,12 +453,14 @@ pub async fn ask_status(
 ) -> Result<Json<AiAskStatus>> {
     auth::session(&state, &headers).await?;
     let stored = read_settings(&state).await?;
-    let settings = present_settings(&state, stored).await?;
+    let readiness = selected_model_readiness(&state, &stored).await?;
     Ok(Json(AiAskStatus {
-        enabled: settings.enabled,
-        runtime_available: settings.runtime_available,
-        model_ready: settings.model_ready,
-        model_loading: false,
+        enabled: stored.enabled,
+        // The build feature and the installed parser must both be present: a
+        // test or a future fallback may install a stub/unavailable parser.
+        runtime_available: runtime_available() && state.ask.runtime_available,
+        model_ready: stored.enabled && readiness.installed && readiness.selected_available,
+        model_loading: state.ask.model_loading(),
     }))
 }
 

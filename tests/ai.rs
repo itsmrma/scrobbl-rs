@@ -248,12 +248,12 @@ async fn ai_is_off_by_default_and_download_requires_consent() {
     assert_eq!(settings["enabled"], false);
     assert_eq!(settings["threads"], 4);
     assert_eq!(settings["unload_minutes"], 15);
-    assert_eq!(settings["runtime_available"], false);
+    assert_eq!(settings["runtime_available"], cfg!(feature = "llama"));
     assert_eq!(settings["model_ready"], false);
 
     let ask = get_json(&state, &token, "/api/v1/ask/status").await;
     assert_eq!(ask["enabled"], false);
-    assert_eq!(ask["runtime_available"], false);
+    assert_eq!(ask["runtime_available"], cfg!(feature = "llama"));
     assert_eq!(ask["model_ready"], false);
     assert_eq!(ask["model_loading"], false);
 
@@ -290,7 +290,7 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     catalog::clear_test_models();
     let (_dir, state, token) = setup().await;
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
-    assert_eq!(catalog["runtime_available"], false);
+    assert_eq!(catalog["runtime_available"], cfg!(feature = "llama"));
     let models = catalog["models"].as_array().unwrap();
     assert!(models.len() >= 5);
     let default = models
