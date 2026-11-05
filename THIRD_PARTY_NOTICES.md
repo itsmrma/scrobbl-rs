@@ -57,3 +57,13 @@ Material Icons Outlined font comes from the locked `material-icons` npm package
 The favicon is original project artwork. System fonts are referenced, not bundled.
 Spotify artwork is fetched from Spotify at runtime; it is not part of this source
 or covered by the project's license. No ownership of third-party music/artwork is claimed.
+
+## Optional AI models
+
+The official image contains no model weights. Models are downloaded only when
+the owner enables AI and starts a download from the curated catalog. Every
+catalog entry pins its source repository, revision, file, byte size and
+SHA-256; the download is verified before use. The v1 catalog contains Qwen3
+GGUF models published under Apache-2.0. Their source repositories, revisions
+and checksums are recorded in [docs/ai.md](docs/ai.md). Model files are not part
+of this source distribution and remain subject to their upstream license.
