@@ -8,6 +8,7 @@ use crate::{
     ask::{
         AskResult, ListenPoint, ResultLink,
         dsl::{EntityKind, Metric, Period, Query, Weekday},
+        grouping,
     },
     consultation::{Filters, selection_at},
     error::{AppError, Result},
@@ -24,11 +25,21 @@ pub enum Outcome {
 pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Result<Outcome> {
     if !matches!(
         query.metric,
-        Metric::Plays | Metric::FirstPlay | Metric::LastPlay
+        Metric::Plays
+            | Metric::FirstPlay
+            | Metric::LastPlay
+            | Metric::DistinctTracks
+            | Metric::DistinctArtists
+            | Metric::DistinctAlbums
     ) {
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
     let filters = filters_for(query)?;
+    if grouping::handles(query) {
+        return Ok(Outcome::Result(Box::new(
+            grouping::execute(conn, query, &filters, now).await?,
+        )));
+    }
     if query.hour.is_some() {
         // The assigned-calendar hour needs the calendar timezone, which portable
         // SQLite date functions cannot apply correctly across DST. Keep the
