@@ -136,14 +136,6 @@ pub struct AskQueryRequest {
     pub query: Query,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
-pub struct AskStatusResponse {
-    pub enabled: bool,
-    pub runtime_available: bool,
-    pub model_ready: bool,
-    pub model_loading: bool,
-}
-
 /// The Ask service seam. `AppState::new` installs the unavailable parser; tests
 /// and the current development page install `Ask::stub()`. #178 can replace the
 /// parser with the model-backed adapter without touching the HTTP handlers.
@@ -187,20 +179,6 @@ impl Ask {
     pub async fn parse(&self, question: &str) -> Result<ParsedQuestion> {
         self.parser.parse(question).await
     }
-}
-
-pub async fn status(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<AskStatusResponse>> {
-    auth::session(&state, &headers).await?;
-    let enabled = enabled(&state).await?;
-    Ok(Json(AskStatusResponse {
-        enabled,
-        runtime_available: state.ask.runtime_available,
-        model_ready: enabled && state.ask.model_ready,
-        model_loading: enabled && state.ask.model_loading,
-    }))
 }
 
 pub async fn ask(

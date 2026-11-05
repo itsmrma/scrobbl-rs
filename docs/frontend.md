@@ -50,8 +50,9 @@ JSON uses numbers for millisecond timestamps/counters, matching the Rust JSON en
   Unknown progress remains indeterminate. Calendar controls require CSRF authorization.
 - Toasts live in the shared shell for five seconds per notification, with an independently
   timed remaining-time bar. Reports and inline errors remain after notifications expire.
-- `/settings/general`, `/settings/appearance`, `/settings/connections`, `/settings/data`,
-  `/activities`, `/history`, `/import`, `/dashboard`, `/rankings/{kind}` and
+- `/settings/general`, `/settings/appearance`, `/settings/connections`, `/settings/images`,
+  `/settings/ai`, `/settings/data`, `/settings/api-keys`, `/activities`, `/history`,
+  `/import`, `/dashboard`, `/rankings/{kind}` and
   `/music/{kind}/{id}` support direct loads. Legacy hashes
   still resolve. Navigation retains current page selections within a browser visit.
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AskResponse,
-  AskStatusResponse,
+  AiAskStatus,
   EntityCandidate,
   Preferences,
   Query,
@@ -50,7 +50,7 @@ function headline(response: AskResponse, preferences: Preferences): string {
 }
 
 export function AskPage({ preferences }: { preferences: Preferences }) {
-  const [status, setStatus] = useState<AskStatusResponse | null>(null);
+  const [status, setStatus] = useState<AiAskStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [question, setQuestion] = useState("");
   const [response, setResponse] = useState<AskResponse | null>(null);
