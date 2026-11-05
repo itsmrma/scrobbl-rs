@@ -10,6 +10,7 @@ import type {
 import { api } from "./api";
 import { InterpretationChips } from "./ask-chips";
 import { AskTimeCard } from "./ask-time";
+import { StreakResultCard } from "./ask-streak";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
 import { Button, Heading, Icon, Notice, date, number } from "./ui";
@@ -203,8 +204,8 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
             {loading ? "Asking…" : "Ask"}
           </Button>
           <span className="field-hint">
-            Play counts, listening time, first plays and last plays are
-            available in this version.
+            Play counts, listening time, streaks, milestones, first plays and
+            last plays are available in this version.
           </span>
         </div>
       </form>
@@ -266,7 +267,8 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
               {response.message}
               <p className="ask-hint">
                 Try: “How many times did I listen to Björk?” · “When did I first
-                listen to Radiohead?” · “How many hours did I listen?”
+                listen to Radiohead?” · “How many hours did I listen?” · “What is
+                my listening streak?”
               </p>
             </Notice>
           )}
@@ -318,6 +320,15 @@ function ResultCard({
   preferences: Preferences;
 }) {
   const result = response.result!;
+  if (query.metric === "streak" || query.metric === "milestones") {
+    return (
+      <StreakResultCard
+        query={query}
+        result={result}
+        preferences={preferences}
+      />
+    );
+  }
   const point = query.metric === "first_play" ? result.first : result.last;
   const isPoint = query.metric === "first_play" || query.metric === "last_play";
   const isTime = query.metric === "time_listened";

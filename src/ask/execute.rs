@@ -25,11 +25,23 @@ pub enum Outcome {
 pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Result<Outcome> {
     if !matches!(
         query.metric,
-        Metric::Plays | Metric::TimeListened | Metric::FirstPlay | Metric::LastPlay
+        Metric::Plays
+            | Metric::TimeListened
+            | Metric::FirstPlay
+            | Metric::LastPlay
+            | Metric::Streak
+            | Metric::Milestones
     ) {
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
     let filters = filters_for(query)?;
+    if matches!(query.metric, Metric::Streak | Metric::Milestones) {
+        // Streaks and milestones always read the entity's whole history, so the
+        // requested hour never narrows them and the Rust hour pass is skipped.
+        return Ok(Outcome::Result(Box::new(
+            crate::ask::streaks::execute(conn, query, &filters, now).await?,
+        )));
+    }
     if query.hour.is_some() {
         // The assigned-calendar hour needs the calendar timezone, which portable
         // SQLite date functions cannot apply correctly across DST. Keep the
@@ -234,7 +246,7 @@ fn weekday_key(weekday: Weekday) -> &'static str {
 }
 
 pub fn unsupported_metric_message() -> String {
-    "I can currently answer only play counts, listening time, first play and last play (metrics: plays, time_listened, first_play, last_play).".into()
+    "I can currently answer only play counts, listening time, listening streaks, milestones, first play and last play (metrics: plays, time_listened, streak, milestones, first_play, last_play).".into()
 }
 
 pub(crate) fn entity_links(query: &Query) -> Vec<ResultLink> {

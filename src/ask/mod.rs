@@ -4,6 +4,7 @@ pub mod dsl;
 pub mod execute;
 pub mod names;
 pub mod parser;
+pub mod streaks;
 pub mod time;
 
 use crate::{
