@@ -146,7 +146,9 @@ reported as unavailable. No command pretends inference works.
 
 The official image compiles the runtime; weights are downloaded at runtime from
 the curated catalog and never enter the repository or the image. One model is
-loaded at a time.
+loaded at a time. The Docker build stage installs `cmake`, `clang` and
+`libclang-dev` to build llama.cpp; the runtime stage installs `libstdc++6` for
+the linked C++ runtime. No GPU toolchain is installed.
 
 ## Ask parser runtime (#178)
 
