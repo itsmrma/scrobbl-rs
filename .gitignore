@@ -11,6 +11,7 @@
 /test-results/
 /playwright-report/
 /ci-logs/
+__pycache__/
 
 # Local Impeccable agent setup
 /.agent

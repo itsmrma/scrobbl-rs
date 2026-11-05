@@ -9,8 +9,10 @@ COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
 FROM rust:1.99.1-bookworm@sha256:5c1a1732ac3f77635b24d397ceb67b4d9ea61de348f68c0aa54a79fd01e65c69 AS build
-# cmake, clang and libclang-dev build the CPU-only llama.cpp runtime behind the
-# default `llama` feature. No GPU toolchain is installed.
+# cmake, clang, libclang-dev and python3 build the CPU-only llama.cpp runtime
+# behind the default `llama` feature. No GPU toolchain is installed.
+# `llama-cpp-2` uses default-features = false, so its OpenMP feature is off
+# (GGML_OPENMP=OFF); the runtime stage therefore does not need libgomp1.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 cmake clang libclang-dev \
     && rm -rf /var/lib/apt/lists/* && rustup component add rust-docs
@@ -32,6 +34,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
 FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
+# libstdc++6 is the C++ runtime linked by llama.cpp. libgomp1 is intentionally
+# absent because the runtime is built without OpenMP; no GPU libraries either.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home scrobbl \

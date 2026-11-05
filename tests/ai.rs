@@ -238,7 +238,7 @@ async fn ai_is_off_by_default_and_download_requires_consent() {
     let _guard = TEST_LOCK.lock().await;
     catalog::clear_test_models();
     download_reset();
-    let (_dir, state, token) = setup().await;
+    let (dir, state, token) = setup().await;
     let data = synthetic_model();
     let (url, server, handle) = fake_server(data.clone()).await;
     let id = "test-off-by-default";
@@ -250,6 +250,11 @@ async fn ai_is_off_by_default_and_download_requires_consent() {
     assert_eq!(settings["unload_minutes"], 15);
     assert_eq!(settings["runtime_available"], cfg!(feature = "llama"));
     assert_eq!(settings["model_ready"], false);
+    // The image sets SCROBBL_DATA_DIR=/data, so the default folder is /data/models
+    // and the runtime never needs a writable path outside the data directory.
+    let model_dir = std::path::Path::new(settings["effective_model_dir"].as_str().unwrap());
+    assert_eq!(model_dir.file_name().unwrap(), "models");
+    assert!(model_dir.starts_with(std::fs::canonicalize(dir.path()).unwrap()));
 
     let ask = get_json(&state, &token, "/api/v1/ask/status").await;
     assert_eq!(ask["enabled"], false);
