@@ -5080,3 +5080,260 @@ dialog.artwork-lightbox {
     text-align: center;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Ask: deterministic natural-language questions over the archive
+   -------------------------------------------------------------------------- */
+.ask-form {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.ask-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ask-form-actions .field-hint {
+  flex: 1 1 240px;
+  margin: 0;
+}
+
+.ask-interpretation {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.ask-eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.ask-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ask-chip-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.ask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  max-width: 100%;
+  padding: 8px 13px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.ask-chip:hover,
+.ask-chip.is-editing {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-raised));
+}
+
+.ask-chip-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.ask-chip-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-chip .material-icons-outlined {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.ask-chip-editor {
+  display: grid;
+  gap: 8px;
+  width: max-content;
+  min-width: 240px;
+  max-width: min(340px, calc(100vw - 40px));
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.ask-chip-editor-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ask-result {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.ask-result-headline {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.ask-result-value {
+  margin: 0;
+  font-size: 38px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ask-listen {
+  display: grid;
+  gap: 3px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ask-listen-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  overflow-wrap: anywhere;
+}
+
+.ask-listen-meta,
+.ask-listen-date,
+.ask-coverage,
+.ask-empty,
+.ask-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ask-result-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ask-result-links a {
+  text-underline-offset: 3px;
+}
+
+.ask-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ask-rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.ask-candidates {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ask-candidate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+}
+
+.ask-candidate small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.ask-candidate-kind {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.ask-notice-action {
+  margin-top: 10px;
+}
+
+.ask-loading {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 600px) {
+  .ask-form-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ask-form-actions .btn {
+    width: 100%;
+  }
+
+  .ask-chip-editor {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .ask-result-value {
+    font-size: 32px;
+    text-align: left;
+  }
+
+  .ask-result-headline {
+    font-size: 18px;
+  }
+}
