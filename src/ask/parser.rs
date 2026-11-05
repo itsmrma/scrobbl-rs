@@ -45,7 +45,7 @@ impl QueryParser for UnavailableParser {
 }
 
 pub fn unsupported_question_message() -> String {
-    "I can only answer questions about play counts, first plays and last plays for now (metrics: plays, first_play, last_play). Try “How many times did I listen to Björk?” or “When did I first listen to Radiohead?”".into()
+    "I can only answer questions about play counts, listening time, first plays and last plays for now (metrics: plays, time_listened, first_play, last_play). Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
 }
 
 pub fn stub_parse(question: &str) -> ParsedQuestion {

@@ -6,6 +6,11 @@ rust-version = "1.94"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+# Declared here so `runtime_available()` is a real compile-time switch.
+# Ticket #178 adds the llama-cpp-2 dependency behind this feature.
+llama = []
+
 [dependencies]
 anyhow = "1"
 argon2 = "0.6"

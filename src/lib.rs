@@ -1,5 +1,6 @@
 pub mod account;
 pub mod activities;
+pub mod ai;
 pub mod api_keys;
 pub mod artwork;
 pub mod artwork_settings;

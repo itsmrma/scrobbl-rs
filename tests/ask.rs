@@ -221,11 +221,12 @@ async fn ask_counts_and_first_last_match_the_fixture() {
     let (_dir, state, token) = setup(true).await;
     save(&state.storage, &fixture_events()).await;
 
+    // The status endpoint is owned by the AI settings surface: this fixture
+    // enables AI but has not downloaded or selected a model.
     let (status, body) = get(&state, &token, "/api/v1/ask/status").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["enabled"], true);
-    assert_eq!(body["runtime_available"], true);
-    assert_eq!(body["model_ready"], true);
+    assert_eq!(body["model_ready"], false);
 
     let (status, body) = post(
         &state,

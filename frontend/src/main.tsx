@@ -239,6 +239,7 @@ function Shell({
     "appearance",
     "connections",
     "images",
+    "ai",
     "data",
     "api-keys",
   ].includes(path.split("/")[2])
@@ -253,7 +254,12 @@ function Shell({
         history: "Listening history",
         review: "Review duplicates",
         import: "Import history",
-        settings: settingsSection === "api-keys" ? "API keys" : "Settings",
+        settings:
+          settingsSection === "api-keys"
+            ? "API keys"
+            : settingsSection === "ai"
+              ? "AI"
+              : "Settings",
         activities: "Activities",
         rankings: "Rankings",
         music: "Music",
