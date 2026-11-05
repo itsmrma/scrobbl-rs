@@ -9,6 +9,7 @@ import type {
 } from "./generated";
 import { api } from "./api";
 import { InterpretationChips } from "./ask-chips";
+import { StreakResultCard } from "./ask-streak";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
 import { Button, Heading, Icon, Notice, date, number } from "./ui";
@@ -306,6 +307,15 @@ function ResultCard({
   preferences: Preferences;
 }) {
   const result = response.result!;
+  if (query.metric === "streak" || query.metric === "milestones") {
+    return (
+      <StreakResultCard
+        query={query}
+        result={result}
+        preferences={preferences}
+      />
+    );
+  }
   const point =
     query.metric === "first_play" ? result.first : result.last;
   const isPoint = query.metric === "first_play" || query.metric === "last_play";

@@ -411,19 +411,8 @@ async fn ask_refuses_unsupported_questions_and_metrics_explicitly() {
     assert!(message.contains("first plays"));
     assert!(message.contains("last plays"));
 
-    let (_, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask/query",
-        json!({"query": query("streak")}),
-    )
-    .await;
-    assert_eq!(body["status"], "unsupported");
-    assert!(body["query"].is_object());
-    let message = body["message"].as_str().unwrap();
-    assert!(message.contains("plays"));
-    assert!(message.contains("first_play"));
-    assert!(message.contains("last_play"));
+    // Valid-but-unimplemented metrics are covered by their owning ticket
+    // (#175 time, #176 grouping/distinct, #177 streak/milestone).
 }
 
 #[tokio::test]
