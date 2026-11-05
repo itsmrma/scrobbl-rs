@@ -65,8 +65,9 @@ Why two repositories are not `Qwen/Qwen3-*-GGUF`:
 - The official Qwen repositories publish only `Q8_0` for 0.6B and 1.7B. The
   spike (#172) measured the pinned `Q4_K_M` builds from `unsloth` and
   `ggml-org`, so the catalog uses the exact files that produced the documented
-  speed and exact-match figures. Sizes and LFS SHA-256 values were still read
-  from the Hugging Face API at implementation time.
+  speed figures; parser scores are from the #181 evaluation on the same files.
+  Sizes and LFS SHA-256 values were still read from the Hugging Face API at
+  implementation time.
 - 4B, 8B and 32B are official `Qwen/Qwen3-*-GGUF` Q4_K_M files. Their 4B size
   and checksum match the spike manifest.
 
@@ -80,19 +81,27 @@ metadata. If a future value cannot be verified, the entry must use
 or selected in v1.
 
 Catalog metadata also records license, minimum/recommended RAM, CPU cores,
-optional GPU, 2048-token context, backend, spike speed and language exact-match
-scores. Parser scores remain `null` until the parser evaluation in #181.
+optional GPU, 2048-token context, backend, measured speed and parser scores
+from the versioned evaluation set (#181): intent accuracy, slot F1, refusal
+accuracy, exact-match accuracy and per-language exact match. Entries that were
+not measured keep `null` rather than an estimate.
 
 ## Model choice and memory
 
 The settings page shows the catalog size, minimum and recommended RAM, CPU
-cores and measured speed before a download starts. The v1 CPU-only guidance is:
+cores, measured speed and parser accuracy before a download starts. The v1
+CPU-only guidance is:
 
 | Tier | Catalog id | Weights on disk | Typical role |
 | --- | --- | ---: | --- |
-| Light | `qwen3-0.6b-q4_k_m` | ~378 MiB | Low-RAM or slower CPU; fastest load and answers |
-| Default | `qwen3-1.7b-q4_k_m` | ~1.2 GiB | Best balance chosen by the #172 spike |
-| Quality | `qwen3-4b-q4_k_m` | ~2.3 GiB | Higher accuracy, noticeably slower on CPU |
+| Light | `qwen3-0.6b-q4_k_m` | ~378 MiB | Fastest; 55.8% measured intent, so use the chips |
+| Default (provisional) | `qwen3-1.7b-q4_k_m` | ~1.2 GiB | 78.9% measured intent; #181 did not confirm this default |
+| Quality | `qwen3-4b-q4_k_m` | ~2.3 GiB | Best measured accuracy (92.8%) but still below the 4B target |
+
+The #181 evaluation did not confirm the default: no model met its target, and
+the 4B is the closest but roughly twice as slow. Keep the feature opt-in, treat
+the interpretation chips as part of the answer, and read the
+[evaluation report](reports/ask-eval.md) before recommending a model.
 
 8B and 32B entries remain `gpu_future` and are not selectable in v1. The
 context is 2048 tokens and one model is loaded at a time, so the loaded model
@@ -294,6 +303,49 @@ The test installs that file into a temporary archive, asks three supported
 questions (including "Björk") and asserts the metric, literal entity and
 period. It exercises the real prompt, grammar, worker and adapter; it is not
 part of the normal suite.
+
+### Parser evaluation (#181)
+
+`evals/ask/corpus.jsonl` is the versioned eval set: 208 questions (104 English,
+104 Italian pairs) covering every metric, period, weekday, grouping, limit and
+order, plus Unicode names, ambiguous names, out-of-scope requests, prompt
+injection and empty/gibberish input. `evals/ask/README.md` documents the label
+format and how to add cases. The corpus contains no archive data.
+
+The `ask-eval` binary loads one GGUF path, reuses the production prompt,
+schema, grammar and greedy sampling, and reports intent accuracy, slot
+precision/recall/F1, refusal precision/recall/accuracy, JSON validity and
+latency (p50/p95/TTFT), overall and per language:
+
+```powershell
+$env:CARGO_TARGET_DIR='C:\Users\mbena\Documents\scrobbl-rs\target'
+cargo run --locked --release --bin ask-eval -- `
+  --model C:\models\Qwen3-1.7B-Q4_K_M.gguf `
+  --label qwen3-1.7b-q4_k_m --threads 8 `
+  --out C:\temp\qwen3-1.7b.json
+```
+
+The corpus shape is checked by a unit test (`cargo test --bin ask-eval`), which
+needs no model and no network. Normal CI never runs an evaluation, never loads a
+model and never downloads weights; it only compiles the harness (under the
+default `llama` feature) and runs the model-free corpus checks. The `ask-eval`
+binary is an offline tool, and its `required-features = ["llama"]` only makes it
+buildable in the official feature set. The measured results, methodology, exact commands and target verdict are
+in [`docs/reports/ask-eval.md`](reports/ask-eval.md); catalog parser scores are
+filled from that run and stay `null` for models that were not measured.
+
+Catalog parser fields mean: `intent` is intent accuracy over all 208 cases,
+`slots` is the F1 over active slots, `refusals` is refusal accuracy and
+`exact_match` is the fraction of supported cases with every filter slot correct
+(the metric is scored by `intent`). `languages[].exact_match` is the same exact
+filter match restricted to one language (104 cases each); `languages[].cases`
+records that denominator.
+
+The measured #181 intent accuracy is **55.77%** for the 0.6B, **78.85%** for the
+1.7B and **92.79%** for the 4B. No model met its target; the 1.7B default is
+therefore provisional and its catalog description warns to treat the chips as
+part of the answer. The full per-language, slot and refusal results and the
+target verdict are in the [evaluation report](reports/ask-eval.md).
 
 ## API summary
 

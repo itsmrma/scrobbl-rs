@@ -324,8 +324,20 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
             >= default["requirements"]["ram_min_bytes"].as_u64().unwrap()
     );
     assert_eq!(default["speed"]["p50_ms"], 4138);
-    assert!(default["languages"].as_array().unwrap().len() >= 2);
-    assert!(default["parser"]["exact_match"].is_null());
+    let languages = default["languages"].as_array().unwrap();
+    assert_eq!(languages.len(), 2);
+    assert!(
+        languages
+            .iter()
+            .all(|language| language["exact_match"].is_number() && language["cases"] == 104),
+        "the measured languages carry 104 cases and an exact-match score"
+    );
+    for field in ["intent", "slots", "refusals", "exact_match"] {
+        assert!(
+            default["parser"][field].is_number(),
+            "measured parser field {field}"
+        );
+    }
 
     let future = models
         .iter()
@@ -333,6 +345,10 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
         .unwrap();
     assert_eq!(future["status"], "gpu_future");
     assert_eq!(future["selectable"], false);
+    assert!(
+        future["parser"]["exact_match"].is_null(),
+        "unmeasured models keep null scores"
+    );
     let large = models
         .iter()
         .find(|model| model["id"] == "qwen3-32b-q4_k_m")

@@ -120,6 +120,17 @@ fn empty_parser() -> ParserScores {
     }
 }
 
+/// Scores measured by `ask-eval` on `evals/ask/corpus.jsonl` (#181).
+/// `slots` is the slot F1 and `refusals` the refusal accuracy.
+fn measured_parser(intent: f64, slots: f64, refusals: f64, exact_match: f64) -> ParserScores {
+    ParserScores {
+        intent: Some(intent),
+        slots: Some(slots),
+        refusals: Some(refusals),
+        exact_match: Some(exact_match),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn qwen(
     id: &str,
@@ -137,6 +148,7 @@ fn qwen(
     cpu_cores: u32,
     gpu_optional: bool,
     languages: Vec<LanguageScore>,
+    parser: ParserScores,
     speed: Option<MeasuredSpeed>,
 ) -> CatalogModel {
     CatalogModel {
@@ -163,7 +175,7 @@ fn qwen(
             context_tokens: 2048,
         },
         languages,
-        parser: empty_parser(),
+        parser,
         speed,
         backend: "llama.cpp (CPU)".to_string(),
         selectable: status == "available",
@@ -194,7 +206,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 0.6B",
             "light",
             "available",
-            "Fastest option for short questions. It may misread periods or weekdays, so treat the interpretation chips as part of the answer.",
+            "Fastest option for short questions. Measured accuracy is well below the default, so treat the interpretation chips as part of the answer.",
             // The official Qwen repository publishes only Q8_0 for this size.
             // The spike measured this pinned Q4_K_M build; the checksum and
             // size below are the real Hugging Face LFS values.
@@ -208,9 +220,10 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             2,
             false,
             vec![
-                language("en", Some(13.0 / 15.0), Some(15)),
-                language("it", Some(10.0 / 15.0), Some(15)),
+                language("en", Some(0.4458), Some(104)),
+                language("it", Some(0.3614), Some(104)),
             ],
+            measured_parser(0.5577, 0.6111, 0.5817, 0.4036),
             desktop_speed(1904, 2416, 909, 48.9, 777.0),
         ),
         qwen(
@@ -218,7 +231,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 1.7B",
             "default",
             "available",
-            "Recommended default: good accuracy at roughly four seconds per question on the desktop test machine.",
+            "Provisional default: measured accuracy is below the 1.7B eval target, so treat the interpretation chips as part of the answer. Use the 4B model when accuracy matters.",
             // The official Qwen repository publishes only Q8_0 for this size.
             // The spike measured this pinned Q4_K_M build.
             "ggml-org/Qwen3-1.7B-GGUF",
@@ -231,9 +244,10 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             4,
             false,
             vec![
-                language("en", Some(13.0 / 15.0), Some(15)),
-                language("it", Some(1.0), Some(15)),
+                language("en", Some(0.7108), Some(104)),
+                language("it", Some(0.6024), Some(104)),
             ],
+            measured_parser(0.7885, 0.8376, 0.8846, 0.6566),
             desktop_speed(4138, 4611, 2352, 23.0, 296.0),
         ),
         qwen(
@@ -241,7 +255,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 4B",
             "quality",
             "available",
-            "Highest accuracy in the CPU tier, with roughly twice the response time of the default model.",
+            "Highest measured accuracy in the CPU tier and the closest to the eval targets, but it still misses the 4B intent and refusal targets and is roughly twice as slow as the 1.7B model.",
             "Qwen/Qwen3-4B-GGUF",
             "bc640142c66e1fdd12af0bd68f40445458f3869b",
             "Qwen3-4B-Q4_K_M.gguf",
@@ -252,9 +266,10 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             4,
             false,
             vec![
-                language("en", Some(1.0), Some(15)),
-                language("it", Some(1.0), Some(15)),
+                language("en", Some(0.9036), Some(104)),
+                language("it", Some(0.8675), Some(104)),
             ],
+            measured_parser(0.9279, 0.9654, 0.9423, 0.8855),
             desktop_speed(8883, 9825, 5809, 10.6, 120.0),
         ),
         qwen(
@@ -273,6 +288,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             6,
             true,
             vec![language("en", None, None), language("it", None, None)],
+            empty_parser(),
             None,
         ),
         qwen(
@@ -291,6 +307,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             8,
             true,
             vec![language("en", None, None), language("it", None, None)],
+            empty_parser(),
             None,
         ),
     ]

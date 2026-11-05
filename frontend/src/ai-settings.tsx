@@ -187,7 +187,7 @@ function ModelCard({
           </dd>
         </div>
         <div>
-          <dt>Accuracy (spike)</dt>
+          <dt>Accuracy (eval)</dt>
           <dd>{evalLabel(model)}</dd>
         </div>
         <div>
@@ -201,7 +201,8 @@ function ModelCard({
       </dl>
       {model.parser.exact_match === null && (
         <p className="field-hint">
-          Parser evaluation on the real question set is still pending.
+          Parser evaluation on the real question set has not been measured for
+          this model.
         </p>
       )}
       {model.installed && (

@@ -12,6 +12,13 @@ license = "GPL-3.0-or-later"
 default = ["llama"]
 llama = ["dep:llama-cpp-2"]
 
+# Offline parser evaluation. Never built or run by the normal test suite; the
+# model is passed by path and nothing is downloaded.
+[[bin]]
+name = "ask-eval"
+path = "src/bin/ask-eval.rs"
+required-features = ["llama"]
+
 [dependencies]
 anyhow = "1"
 argon2 = "0.6"
