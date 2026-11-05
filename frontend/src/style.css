@@ -5386,6 +5386,116 @@ dialog.artwork-lightbox {
   margin-bottom: 18px;
 }
 
+/* Contextual Ask box on artist and album pages */
+.ask-context {
+  padding: 0;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.ask-context-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 20px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  white-space: normal;
+}
+
+.ask-context-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border-color: transparent;
+}
+
+.ask-context-heading {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ask-context-heading strong {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.ask-context-subject {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-context-action {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ask-context-action .material-icons-outlined {
+  font-size: 20px;
+}
+
+.ask-context-body {
+  display: grid;
+  gap: 14px;
+  padding: 0 20px 20px;
+}
+
+.ask-context-body > .notice,
+.ask-context-body > .ask-loading {
+  margin: 0;
+}
+
+.ask-context-body .ask-interpretation,
+.ask-context-body .ask-result {
+  margin-bottom: 0;
+}
+
+.ask-context-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 0;
+}
+
+.ask-context-form label {
+  min-width: 0;
+}
+
+.ask-context-form .btn {
+  min-height: 44px;
+}
+
+.ask-context-body .field-hint {
+  margin: -6px 0 0;
+}
+
+@container (max-width: 600px) {
+  .ask-context-form {
+    grid-template-columns: 1fr;
+  }
+
+  .ask-context-form .btn {
+    width: 100%;
+  }
+}
+
 @media (max-width: 600px) {
   .ask-form-actions {
     align-items: stretch;
@@ -5418,6 +5528,14 @@ dialog.artwork-lightbox {
 
   .ask-table-time {
     white-space: normal;
+  }
+
+  .ask-context-toggle {
+    padding: 10px 16px;
+  }
+
+  .ask-context-body {
+    padding: 0 16px 16px;
   }
 }
 
