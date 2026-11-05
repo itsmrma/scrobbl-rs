@@ -89,13 +89,19 @@ not measured keep `null` rather than an estimate.
 ## Model choice and memory
 
 The settings page shows the catalog size, minimum and recommended RAM, CPU
-cores and measured speed before a download starts. The v1 CPU-only guidance is:
+cores, measured speed and parser accuracy before a download starts. The v1
+CPU-only guidance is:
 
 | Tier | Catalog id | Weights on disk | Typical role |
 | --- | --- | ---: | --- |
-| Light | `qwen3-0.6b-q4_k_m` | ~378 MiB | Low-RAM or slower CPU; fastest load and answers |
-| Default | `qwen3-1.7b-q4_k_m` | ~1.2 GiB | Best balance chosen by the #172 spike |
-| Quality | `qwen3-4b-q4_k_m` | ~2.3 GiB | Higher accuracy, noticeably slower on CPU |
+| Light | `qwen3-0.6b-q4_k_m` | ~378 MiB | Fastest; 55.8% measured intent, so use the chips |
+| Default (provisional) | `qwen3-1.7b-q4_k_m` | ~1.2 GiB | 78.9% measured intent; #181 did not confirm this default |
+| Quality | `qwen3-4b-q4_k_m` | ~2.3 GiB | Best measured accuracy (92.8%) but still below the 4B target |
+
+The #181 evaluation did not confirm the default: no model met its target, and
+the 4B is the closest but roughly twice as slow. Keep the feature opt-in, treat
+the interpretation chips as part of the answer, and read the
+[evaluation report](reports/ask-eval.md) before recommending a model.
 
 8B and 32B entries remain `gpu_future` and are not selectable in v1. The
 context is 2048 tokens and one model is loaded at a time, so the loaded model
