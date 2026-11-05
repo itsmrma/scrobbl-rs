@@ -74,8 +74,9 @@ ticket measures interpretation, not execution.
 ### Hardware and build
 
 Windows 11 desktop, AMD Ryzen 7 5700X (8 cores / 16 threads), 8 inference
-threads, CPU only, no GPU. Release build, `strip = "symbols"`, no LTO. The same
-machine and thread count as the #172 spike, so the numbers are comparable.
+threads, CPU only, no GPU. Release build without LTO; the distributed profile
+also strips symbols, which does not change runtime speed. The same machine and
+thread count as the #172 spike, so the numbers are comparable.
 
 ### Models
 
