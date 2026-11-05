@@ -58,6 +58,7 @@ pub struct AppState {
 }
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
+        let ask = ask::Ask::installed(storage.writer.clone(), storage.directory.clone());
         Self {
             application: account::Application::new(),
             db: storage.writer.clone(),
@@ -66,7 +67,7 @@ impl AppState {
             storage,
             config,
             spotify: spotify::Spotify::new(),
-            ask: ask::Ask::unavailable(),
+            ask,
             login_attempts: Default::default(),
             artwork_gate: Default::default(),
             artwork_fetches: Arc::new(tokio::sync::Semaphore::new(1)),

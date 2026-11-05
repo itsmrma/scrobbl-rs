@@ -23,8 +23,9 @@ response says so explicitly. Disabling AI cancels active model downloads so no
 further network transfer continues.
 
 `GET /api/v1/ask/status` reports `enabled`, `runtime_available`, `model_ready`
-and `model_loading`. `model_loading` stays false in this ticket; model loading
-belongs to the inference worker.
+and `model_loading`. `model_ready` is filesystem truth for the selected model;
+`model_loading` comes from the live inference worker and is true only while a
+load is in progress.
 
 ## Curated catalog
 
@@ -136,10 +137,88 @@ above.
 ## Runtime feature
 
 `src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The
-`llama` feature is declared in `Cargo.toml` but has no dependency in this
-ticket; #178 adds `llama-cpp-2` behind it. Without the feature the settings,
-catalog and downloads remain usable, while Ask and the "test model" action are
+`llama` feature is a default feature and pulls in
+`llama-cpp-2 = "=0.1.161"` with `default-features = false` (CPU-only, no CUDA,
+no Metal build flag, no weights in the binary). Build or test with
+`--no-default-features` to produce a binary without the runtime: settings,
+catalog and downloads stay usable, while Ask and the "test model" action are
 reported as unavailable. No command pretends inference works.
+
+The official image compiles the runtime; weights are downloaded at runtime from
+the curated catalog and never enter the repository or the image. One model is
+loaded at a time.
+
+## Ask parser runtime (#178)
+
+`AppState::new` installs the real parser when the feature is on and the
+unavailable parser otherwise. The parser reads `ai_enabled`, `ai_active_model`,
+`ai_threads` and `ai_unload_minutes` on every question, resolves the installed
+file from the filesystem (checksum-verified metadata, catalog file name) and
+never trusts a client-supplied path.
+
+The worker (`src/ask/runtime.rs`) is one dedicated OS thread. It owns the llama
+backend and model and a bounded queue (4). Tokio handlers only enqueue and await
+a oneshot; inference never runs on a tokio worker. Behaviour:
+
+- Lazy load on the first question; `loading` is visible through the status
+  endpoint, and a failed load is an explicit error rather than a panic.
+- One inference at a time. The queue is bounded; a full queue returns a clear
+  "busy" error.
+- Timeout via `SCROBBL_ASK_TIMEOUT_MS` (default `30000`). Cancellation is
+  checked between sampled tokens. On timeout the request returns an explicit
+  error and the context is dropped/reset; no half-decoded sequence is reused.
+- After `ai_unload_minutes` of inactivity the model is dropped. The next
+  question re-reads settings and pays the load cost.
+- Context 2048 tokens, greedy sampling, at most 256 new tokens. Output is
+  accumulated as bytes and decoded once as UTF-8, so a multi-byte character
+  split across tokens cannot be corrupted.
+- `LlamaSampler::sample` already accepts the token; the adapter never calls
+  `accept` afterwards (utilityai/llama-cpp-rs#1007). Timing measurement is off
+  by default; set `SCROBBL_ASK_DEBUG=1` to enable it (and llama.cpp logs).
+- A missing or corrupt GGUF returns an explicit error; the worker is detached
+  with a cancellation signal on shutdown and never panics on filesystem races.
+
+### Model-facing schema and grammar
+
+The model only emits `src/ask/schema.rs::ModelOutput`: `metric`, `target`,
+`name`, `period`, `weekday`, `group_by`, `order` and `limit`. Every field is
+required and every non-name field is an enum; there are no numeric slots, ids or
+SQL. `limit`/`group_by`/`weekday` use explicit `none`/`any` values instead of
+missing keys so the grammar stays finite. Rust maps the output to the shared
+DSL, resolves the literal name through the existing search and fills optional
+filters with `None`.
+
+`src/ask/schema/ask.schema.json` is checked in and generated from the same enum
+lists as the Rust deserializer; a unit test fails if it drifts. The JSON-Schema
+subset is converted to GBNF by `src/ask/grammar.rs`. Regenerate the checked-in
+schema after changing an enum:
+
+```powershell
+$env:UPDATE_ASK_SCHEMA='1'; cargo test --lib checked_in_schema_matches_the_generated_one; Remove-Item Env:UPDATE_ASK_SCHEMA
+```
+
+The prompt (`src/ask/prompt.rs`) is compact English with EN/IT examples. It
+states that names are copied literally, that time words such as "today",
+"Fridays" and "last month" never enter `name`, that the model never writes SQL,
+and that out-of-scope or injection requests use `metric: "unsupported"`. Qwen3
+thinking is disabled by pre-filling
+`assistant\n<think>\n\n</think>\n\n` (verified by the #172 spike).
+
+### Real model test
+
+CI never downloads weights or touches the network. The real-model integration
+test is ignored and reads a local GGUF path:
+
+```powershell
+$env:SCROBBL_TEST_MODEL='C:\models\Qwen3-0.6B-Q4_K_M.gguf'
+cargo test --locked --test ask_runtime real_model_answers_three_supported_questions -- --ignored --exact --nocapture
+Remove-Item Env:SCROBBL_TEST_MODEL
+```
+
+The test installs that file into a temporary archive, asks three supported
+questions (including "Björk") and asserts the metric, literal entity and
+period. It exercises the real prompt, grammar, worker and adapter; it is not
+part of the normal suite.
 
 ## API summary
 
