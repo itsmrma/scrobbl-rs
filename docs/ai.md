@@ -326,10 +326,11 @@ cargo run --locked --release --bin ask-eval -- `
 ```
 
 The corpus shape is checked by a unit test (`cargo test --bin ask-eval`), which
-needs no model and no network. Normal CI never builds or runs the harness and
-never downloads weights: the `ask-eval` binary is an offline tool, and its
-`required-features = ["llama"]` only makes it buildable in the official feature
-set. The measured results, methodology, exact commands and target verdict are
+needs no model and no network. Normal CI never runs an evaluation, never loads a
+model and never downloads weights; it only compiles the harness (under the
+default `llama` feature) and runs the model-free corpus checks. The `ask-eval`
+binary is an offline tool, and its `required-features = ["llama"]` only makes it
+buildable in the official feature set. The measured results, methodology, exact commands and target verdict are
 in [`docs/reports/ask-eval.md`](reports/ask-eval.md); catalog parser scores are
 filled from that run and stay `null` for models that were not measured.
 

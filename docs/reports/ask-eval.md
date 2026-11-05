@@ -130,8 +130,9 @@ the repository; the aggregate results are reproduced below.
   `src/ai/catalog.rs`.
 - `cargo clippy --locked --all-targets -- -D warnings` passes.
 - `cargo test --locked --bin ask-eval` validates the corpus without a model.
-- Normal CI never builds or runs `ask-eval`, never downloads a model and never
-  touches the network; the harness is opt-in and offline.
+- Normal CI never runs an evaluation, never downloads a model and never touches
+  the network; it only compiles the harness and runs the model-free corpus
+  checks. The harness is opt-in and offline.
 
 ## Results
 
