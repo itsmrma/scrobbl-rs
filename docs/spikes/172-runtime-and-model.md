@@ -30,7 +30,8 @@ esclude errori di API nel harness.
 - 30 domande (15 EN, 15 IT), 3 di warm-up non conteggiate, KV cache azzerata a
   ogni caso, `reset_timings()` prima di ogni prefill.
 - Metriche per caso: token di prompt, token generati, prefill ms, TTFT, decode
-  ms, end-to-end ms, token/s. p50/p95 con nearest-rank.
+  ms, end-to-end ms, token/s. p50/p95 con nearest-rank. Le latenze includono
+  anche i casi di rifiuto (`unsupported`).
 - Ogni run salva JSON completo e tabella Markdown.
 
 ## Smoke del harness (Windows, non è un target)
@@ -52,7 +53,7 @@ configurazione.
 
 ## Requisiti emersi dall'harness
 
-Tre comportamenti di `llama-cpp-2` 0.1.161 / llama.cpp vanno recepiti
+Cinque comportamenti di `llama-cpp-2` 0.1.161 / llama.cpp vanno recepiti
 nell'adapter di #178:
 
 1. **`LlamaSampler::sample` accetta già il token.** Chiamare anche
@@ -114,15 +115,24 @@ Note:
 
 ## Thinking mode
 
-Confronto `qwen3-nothink` (prefisso `assistant\n<think>\n\n</think>\n\n`) contro
-`qwen3-think` (prefisso aperto). La grammatica obbliga il primo token a `{`,
-quindi il thinking non può comparire nell'output in nessuno dei due casi; la
-domanda è se la qualità cambia.
+La grammatica obbliga il primo token a `{`, quindi il thinking **non può
+comparire** nell'output: con GBNF il confronto non dice se il thinking è
+disattivabile. Per verificarlo servono due run **senza grammatica**:
 
-| variante | JSON valido | match esatto | e2e p50 (ms) | note |
-| --- | ---: | ---: | ---: | --- |
-| `qwen3-nothink` | | | | |
-| `qwen3-think` | | | | |
+1. `--chat qwen3-think --no-grammar`: cercare ` thinking` nell'output.
+2. `--chat qwen3-nothink --no-grammar`: il prefisso vuoto deve impedirlo.
+
+Se (1) produce thinking e (2) no, la disattivazione via prefisso è affidabile
+per il modello. Se (1) non produce thinking nemmeno senza grammatica, la
+grammatica non serve a sopprimerlo. Con grammatica si misura solo la qualità
+del JSON forzato.
+
+| run | thinking emesso | JSON valido | match esatto | note |
+| --- | --- | --- | --- | --- |
+| `qwen3-think --no-grammar` | | n/a | n/a | |
+| `qwen3-nothink --no-grammar` | | n/a | n/a | |
+| `qwen3-think` con grammatica | no, per costruzione | | | |
+| `qwen3-nothink` con grammatica | no, per costruzione | | | |
 
 Decisione: [ ] thinking disattivabile in modo affidabile con Qwen3 · [ ] serve
 il fallback Qwen2.5
@@ -152,8 +162,11 @@ validatore.
 | binario harness (stripped, LTO) | | ≤ 30 MiB | |
 | delta immagine con OpenMP | | ≤ 25 MiB | |
 | build con root filesystem read-only | | deve riuscire | |
-| modello su volume `/models` read-only | | deve riuscire | |
+| modello su volume `/data/models` read-only | | deve riuscire | |
 | binario Windows, release (solo sanity check) | 4.6 MiB | ≤ 30 MiB | passa fuori target |
+
+OpenMP richiede **entrambi** gli argomenti:
+`--build-arg CARGO_FEATURES=openmp --build-arg INSTALL_LIBGOMP=1`.
 
 Il delta qui misura il **runtime del modello**, non l'immagine ufficiale
 `scrobbl-rs`: la seconda va rimisurata in #180 dopo aver collegato

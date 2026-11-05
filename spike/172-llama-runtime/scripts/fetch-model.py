@@ -60,7 +60,7 @@ def download(url: str, destination: Path, expected_size: int, expected_sha: str)
 
     request = urllib.request.Request(url, headers=headers)
     try:
-        response = urllib.request.urlopen(request)
+        response = urllib.request.urlopen(request, timeout=60)
     except urllib.error.HTTPError as error:
         raise SystemExit(f"download failed: HTTP {error.code} {error.reason}") from error
 

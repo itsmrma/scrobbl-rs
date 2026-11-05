@@ -653,7 +653,10 @@ fn render_markdown(report: &RunReport) -> String {
 }
 
 fn escape_markdown(value: &str) -> String {
-    value.replace('|', "\\|").replace(['\r', '\n'], " ")
+    value
+        .replace('|', "\\|")
+        .replace('`', "'")
+        .replace(['\r', '\n'], " ")
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -922,6 +925,12 @@ mod tests {
             assert!(grammar.contains(&expected), "grammar lost {expected}");
         }
         assert!(grammar.contains("string ::= "), "grammar lost string rule");
+    }
+
+    #[test]
+    fn tokens_per_second_handles_zero_and_positive_durations() {
+        assert_eq!(super::tokens_per_second(10.0, 0.0), 0.0);
+        assert_eq!(super::tokens_per_second(10.0, 500.0), 20.0);
     }
 
     #[test]

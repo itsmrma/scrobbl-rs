@@ -95,12 +95,19 @@ Matrice minima da eseguire sul NAS:
 | --- | --- | --- | --- |
 | 1 | Qwen3 1.7B Q4_K_M | `qwen3-nothink` | default candidato |
 | 2 | Qwen3 4B Q4_K_M | `qwen3-nothink` | qualità vs latenza |
-| 3 | Qwen3 1.7B Q4_K_M | `qwen3-think` | verifica thinking mode |
+| 3 | Qwen3 1.7B Q4_K_M | `qwen3-think --no-grammar` | thinking emesso? |
+| 3b | Qwen3 1.7B Q4_K_M | `qwen3-nothink --no-grammar` | thinking soppresso? |
 | 4 | Qwen3 0.6B Q4_K_M | `qwen3-nothink` | tier light |
 | 5 | Qwen2.5 1.5B Instruct Q4_K_M | `qwen25` | fallback non-thinking |
 
-Se il run 3 produce JSON valido quanto il run 1, la grammatica sta già
-sopprimendo il thinking; se la qualità peggiora, il default resta
+I run 3/3b sono **senza grammatica** di proposito: con GBNF il primo token è
+obbligato a `{`, quindi il thinking non può comparire in nessun caso e il
+confronto non direbbe nulla. Cerca ` thinking` nell'output del run 3: se manca
+anche lì, il modello non sta pensando; se compare nel 3 ma non nel 3b, il
+prefisso vuoto del non-thinking funziona.
+
+Se il run 3 produce sempre JSON valido quanto il run 1, la grammatica sta
+sopprimendo l'output di thinking; se la qualità peggiora, il default resta
 `qwen3-nothink` e il fallback Qwen2.5 va provato. Registrare entrambi.
 
 Ogni run scrive:
@@ -139,6 +146,16 @@ Variante OpenMP (per capire se `libgomp` serve):
 docker build --build-arg CARGO_FEATURES=openmp \
   --build-arg INSTALL_LIBGOMP=1 -t scrobbl-spike:1.7b-openmp .
 ```
+
+Il container gira come uid 10001: se `results/` è appena stato creato da root,
+il run non può scrivere. Sull'host:
+
+```bash
+install -d -o 10001 -g 10001 results
+```
+
+In alternativa passa `--user "$(id -u):$(id -g)"` a `docker run`, ma i file
+risulteranno di proprietà dell'utente host.
 
 ## 5. Budget di distribuzione
 

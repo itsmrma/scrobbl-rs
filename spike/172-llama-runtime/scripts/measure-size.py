@@ -53,7 +53,7 @@ def human(value: int | None) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", help="current scrobbl-rs image reference")
+    parser.add_argument("--baseline", required=True, help="reference image for the delta")
     parser.add_argument("--spike", required=True, help="spike image reference")
     parser.add_argument("--binary", type=Path, help="binary already copied out of the image")
     parser.add_argument(
@@ -64,7 +64,7 @@ def main() -> int:
     parser.add_argument("--json-out", type=Path)
     args = parser.parse_args()
 
-    baseline = image_size(args.baseline) if args.baseline else None
+    baseline = image_size(args.baseline)
     spike = image_size(args.spike)
 
     binary_size: int | None = None
@@ -78,8 +78,8 @@ def main() -> int:
         finally:
             with_destination.unlink(missing_ok=True)
 
-    delta = spike - baseline if baseline is not None else None
-    image_ok = delta is None or delta <= IMAGE_BUDGET
+    delta = spike - baseline
+    image_ok = delta <= IMAGE_BUDGET
     binary_ok = binary_size <= BINARY_BUDGET
 
     print(f"baseline image : {human(baseline)}")
