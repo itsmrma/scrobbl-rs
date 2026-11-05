@@ -1,0 +1,48 @@
+{
+  "$id": "https://scrobbl.rs/schemas/ask.spike.v1.json",
+  "title": "Trial DSL schema for spike #172",
+  "description": "Deliberately smaller than the real DSL from #173. Every property is required so the spike measures the runtime and the model, not optional-property handling.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["intent", "target", "name", "period", "weekday", "limit"],
+  "properties": {
+    "intent": {
+      "enum": ["count_plays", "first_play", "last_play", "top", "unsupported"]
+    },
+    "target": {
+      "enum": ["artist", "album", "track", "none"]
+    },
+    "name": {
+      "type": "string",
+      "description": "Literal entity name copied from the question, or an empty string when target is none."
+    },
+    "period": {
+      "enum": [
+        "all_time",
+        "today",
+        "yesterday",
+        "this_week",
+        "last_week",
+        "this_month",
+        "last_month",
+        "this_year",
+        "last_year"
+      ]
+    },
+    "weekday": {
+      "enum": [
+        "any",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ]
+    },
+    "limit": {
+      "enum": ["1", "5", "10", "25"]
+    }
+  }
+}

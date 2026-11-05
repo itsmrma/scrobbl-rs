@@ -1,0 +1,4 @@
+root ::= "{" ws "\"intent\"" ws ":" ws ("\"count_plays\"" | "\"first_play\"" | "\"last_play\"" | "\"top\"" | "\"unsupported\"") ws "," ws "\"target\"" ws ":" ws ("\"artist\"" | "\"album\"" | "\"track\"" | "\"none\"") ws "," ws "\"name\"" ws ":" ws string ws "," ws "\"period\"" ws ":" ws ("\"all_time\"" | "\"today\"" | "\"yesterday\"" | "\"this_week\"" | "\"last_week\"" | "\"this_month\"" | "\"last_month\"" | "\"this_year\"" | "\"last_year\"") ws "," ws "\"weekday\"" ws ":" ws ("\"any\"" | "\"monday\"" | "\"tuesday\"" | "\"wednesday\"" | "\"thursday\"" | "\"friday\"" | "\"saturday\"" | "\"sunday\"") ws "," ws "\"limit\"" ws ":" ws ("\"1\"" | "\"5\"" | "\"10\"" | "\"25\"") ws "}"
+ws ::= [ \t\n\r]*
+string ::= "\"" ( [^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) )* "\""
+integer ::= "-"? ([0-9] | [1-9] [0-9]*)

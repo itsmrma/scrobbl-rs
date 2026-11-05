@@ -1,0 +1,33 @@
+[package]
+name = "scrobbl-ask-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Throwaway spike harness for issue #172. Not part of the scrobbl-rs build:
+# the root package does not depend on this crate and CI does not build it.
+#
+# llama-cpp-2 is pinned to an exact version on purpose. The GBNF grammar is
+# generated from the trial schema, never stored by hand.
+[dependencies]
+anyhow = "1"
+llama-cpp-2 = { version = "=0.1.161", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.11"
+
+[features]
+default = []
+# Pass-through used by the Docker build to measure the libgomp variant.
+openmp = ["llama-cpp-2/openmp"]
+# `common` swaps in the crate's `llama_rs_sampler_init_grammar` wrapper.
+# The spike must measure whether the raw (default-features = false) path is
+# usable; see the finding in docs/spikes/172-runtime-and-model.md.
+common = ["llama-cpp-2/common"]
+
+[profile.release]
+debug = false
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"
