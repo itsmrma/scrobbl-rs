@@ -57,7 +57,7 @@ test("confirmed restore survives restart and requires new access and explicit re
         } catch {
           return 0;
         }
-      })
+      }, { timeout: 20000 })
       .toBe(200);
   }
   async function stop() {

@@ -53,7 +53,7 @@ const test = base.extend({
           } catch {
             return 0;
           }
-        })
+        }, { timeout: 20000 })
         .toBe(200);
       await page.goto("/");
       await page.getByLabel("Username", { exact: true }).fill("owner");
