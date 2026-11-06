@@ -6,6 +6,19 @@ rust-version = "1.94"
 publish = false
 license = "GPL-3.0-or-later"
 
+[features]
+# The local inference runtime is part of the official build. Build with
+# `--no-default-features` to compile a binary that reports AI as unavailable.
+default = ["llama"]
+llama = ["dep:llama-cpp-2"]
+
+# Offline parser evaluation. Never built or run by the normal test suite; the
+# model is passed by path and nothing is downloaded.
+[[bin]]
+name = "ask-eval"
+path = "src/bin/ask-eval.rs"
+required-features = ["llama"]
+
 [dependencies]
 anyhow = "1"
 argon2 = "0.6"
@@ -16,6 +29,7 @@ dotenvy = "0.15"
 fs2 = "0.4"
 futures-util = "0.3.34"
 libsqlite3-sys = { version = "0.37", features = ["bundled"] }
+llama-cpp-2 = { version = "=0.1.161", default-features = false, optional = true }
 rand = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rusqlite = { version = "0.39", features = ["cache"] }
@@ -40,3 +54,9 @@ tower = { version = "0.5", features = ["util"] }
 debug = 0
 incremental = true
 
+# The distributed binary must stay inside the #180 budget. LTO is intentionally
+# not enabled: the measured size is already below the limit and LTO would add
+# minutes to every release/CI link. Symbols are stripped because the image has
+# no debugger; crash reports are still readable through the panic message.
+[profile.release]
+strip = "symbols"

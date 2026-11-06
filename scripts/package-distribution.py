@@ -23,6 +23,17 @@ SOURCE_ROOTS = (
     "docs", ".github", ".cargo", "vendor", "node_modules",
 )
 NOTICE_NAMES = ("license", "licence", "copying", "notice", "copyright", "authors")
+# These crates publish no top-level license file even though their manifest
+# declares one. The texts come from the exact pinned upstream revision recorded
+# in each crate's `.cargo_vcs_info.json`. The sys crate does ship the bundled
+# llama.cpp MIT license; both options of the bindings' dual license are kept.
+UPSTREAM_LICENSE_FILES = {
+    "llama-cpp-2": ("llama-cpp-rs-MIT.txt", "llama-cpp-rs-APACHE-2.0.txt"),
+    "llama-cpp-sys-2": ("llama-cpp-rs-MIT.txt", "llama-cpp-rs-APACHE-2.0.txt"),
+    # Build-time CUDA search helper pulled in by llama-cpp-sys-2; it publishes
+    # no license files, only the Rust-CUDA repository texts.
+    "find_cuda_helper": ("rust-cuda-MIT.txt", "rust-cuda-APACHE-2.0.txt"),
+}
 
 
 def command(*args):
@@ -73,6 +84,14 @@ def main():
             destination.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / "docs/licenses/upstream/ts-rs-MIT.txt", destination / "LICENSE")
             files.append("LICENSE")
+        for license_file in UPSTREAM_LICENSE_FILES.get(package["name"], ()):
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT / "docs/licenses/upstream" / license_file, destination / license_file)
+            files.append(license_file)
+        if package["name"] == "llama-cpp-sys-2" and not any(
+            Path(notice).parts[-2:] == ("llama.cpp", "LICENSE") for notice in files
+        ):
+            raise RuntimeError("The vendored llama.cpp source is missing its MIT license")
         if not package["license"] or not files:
             raise RuntimeError(f"Missing license metadata or notices: {package['name']} {package['version']}")
         manifest["cargo"].append({"name": package["name"], "version": package["version"], "license": package["license"], "repository": package["repository"], "target_build": (package["name"], "v" + package["version"]) in selected, "features": features.get(package["id"], []), "notices": files})

@@ -1,9 +1,11 @@
 pub mod account;
 pub mod activities;
+pub mod ai;
 pub mod api_keys;
 pub mod artwork;
 pub mod artwork_settings;
 pub mod artwork_sources;
+pub mod ask;
 pub mod auth;
 pub mod boot;
 pub mod browse;
@@ -47,6 +49,7 @@ pub struct AppState {
     pub storage: storage::Storage,
     pub config: Config,
     pub spotify: spotify::Spotify,
+    pub ask: ask::Ask,
     pub(crate) artwork_gate:
         Arc<Mutex<std::collections::HashMap<String, std::sync::Weak<Mutex<()>>>>>,
     pub(crate) artwork_fetches: Arc<tokio::sync::Semaphore>,
@@ -55,6 +58,7 @@ pub struct AppState {
 }
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
+        let ask = ask::Ask::installed(storage.writer.clone(), storage.directory.clone());
         Self {
             application: account::Application::new(),
             db: storage.writer.clone(),
@@ -63,6 +67,7 @@ impl AppState {
             storage,
             config,
             spotify: spotify::Spotify::new(),
+            ask,
             login_attempts: Default::default(),
             artwork_gate: Default::default(),
             artwork_fetches: Arc::new(tokio::sync::Semaphore::new(1)),

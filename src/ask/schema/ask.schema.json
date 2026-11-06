@@ -1,0 +1,109 @@
+{
+  "$id": "https://scrobbl.rs/schemas/ask.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Model-facing Ask output. Rust maps it to the shared DSL, validates it and computes every number.",
+  "properties": {
+    "group_by": {
+      "description": "Grouping dimension, or none when the answer is a single value.",
+      "enum": [
+        "none",
+        "day",
+        "week",
+        "month",
+        "year",
+        "hour",
+        "weekday",
+        "artist",
+        "album",
+        "track"
+      ]
+    },
+    "limit": {
+      "description": "Result limit, or none when the question does not ask for a top-N.",
+      "enum": [
+        "none",
+        "one",
+        "five",
+        "ten",
+        "twenty_five",
+        "fifty",
+        "hundred"
+      ]
+    },
+    "metric": {
+      "description": "Requested metric; unsupported means the question is outside the schema.",
+      "enum": [
+        "plays",
+        "time_listened",
+        "distinct_tracks",
+        "distinct_artists",
+        "distinct_albums",
+        "first_play",
+        "last_play",
+        "streak",
+        "milestones",
+        "unsupported"
+      ]
+    },
+    "name": {
+      "description": "Literal artist, album or track name copied from the question; empty when target is none.",
+      "type": "string"
+    },
+    "order": {
+      "description": "Sort direction.",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "period": {
+      "description": "Listening period.",
+      "enum": [
+        "all_time",
+        "today",
+        "yesterday",
+        "this_week",
+        "last_week",
+        "this_month",
+        "last_month",
+        "this_year",
+        "last_year"
+      ]
+    },
+    "target": {
+      "description": "Entity kind named by the question, or none.",
+      "enum": [
+        "artist",
+        "album",
+        "track",
+        "none"
+      ]
+    },
+    "weekday": {
+      "description": "Weekday filter, or any when no weekday is mentioned.",
+      "enum": [
+        "any",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday"
+      ]
+    }
+  },
+  "required": [
+    "group_by",
+    "limit",
+    "metric",
+    "name",
+    "order",
+    "period",
+    "target",
+    "weekday"
+  ],
+  "title": "Ask model output v1",
+  "type": "object"
+}

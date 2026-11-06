@@ -1,10 +1,13 @@
 # Install with Docker
 
 The published image runs on **linux/amd64** (x86-64), including Linux hosts and
-Docker Desktop using Linux containers. It contains the Rust executable, embedded
-React interface, source bundle and notices. Node and Rust are not needed on the
-host. Use Docker Compose or paste the same service configuration into a Docker
-stack manager. No particular NAS, proxy, VPN or DNS provider is required.
+Docker Desktop using Linux containers. The same Dockerfile also builds for
+**linux/arm64**, but only the amd64 image is smoke-tested and published today;
+see [Architectures and the CPU-only AI runtime](#architectures-and-the-cpu-only-ai-runtime).
+The image contains the Rust executable, embedded React interface, source bundle
+and notices. Node and Rust are not needed on the host. Use Docker Compose or
+paste the same service configuration into a Docker stack manager. No particular
+NAS, proxy, VPN or DNS provider is required.
 
 ## Choose the image and data directory
 
@@ -40,6 +43,48 @@ error by running the application as root or making private data world-readable.
 The image works with either bind mounts or named volumes; the supplied Compose
 uses a bind mount to make the data location explicit. For a named volume, replace
 that mount with `scrobbl-data:/data` and declare `volumes: {scrobbl-data: {}}`.
+
+## Architectures and the CPU-only AI runtime
+
+| Platform | Built by CI | Smoke-tested | Published |
+| --- | --- | --- | --- |
+| `linux/amd64` | Every application change (required PR check) | Yes, `scripts/verify-docker.py` | Yes, from trusted `main`/`v*` pushes |
+| `linux/arm64` | Pushes to `main` and `v*` tags (buildx + QEMU, `load: false`) | Build only | Not yet |
+
+The arm64 job builds the same Dockerfile and catches architecture-specific
+compiler or llama.cpp failures. It is intentionally skipped on pull requests to
+keep the required amd64 check fast. Publishing still consumes only the tested
+amd64 image tar from the same run: combining it with a second, untested arm64
+build would publish bytes that no smoke test exercised, so a multi-arch manifest
+is deferred until the workflow can build and test both platforms before
+publication. Treat arm64 as a build-regression signal, not a release artifact:
+an arm64 build failure is visible but does not block publication of the
+smoke-tested amd64 image.
+
+Both builds compile the local inference runtime behind the default `llama`
+feature. It is **CPU-only**: `llama-cpp-2` is pinned and built with
+`default-features = false`, so OpenMP (`GGML_OPENMP=OFF`) and `libgomp1` are not
+used, and CUDA/Metal/Vulkan/BLAS are not built. The builder installs `cmake`,
+`clang`, `libclang-dev` and `python3`; the runtime stage installs `libstdc++6`
+(the linked C++ runtime) and `ca-certificates`. No weights, GPU toolchain or
+model files are present in either image.
+
+## AI model storage and read-only root filesystem
+
+AI is off by default and the image ships no weights. After the owner enables AI
+and starts a catalog download, files are written under **`/data/models`**
+(`SCROBBL_DATA_DIR=/data`). There is no separate environment variable for the
+model folder; the absolute `ai_model_dir` setting can point at another writable
+mount. Partial downloads and metadata stay in that same tree.
+
+Compose enables `read_only: true`, drops all capabilities, sets
+`no-new-privileges` and mounts only `/data` plus a small `/tmp` tmpfs (used by
+SQLite for large temporary sorts). The application does not write outside
+`/data` at startup with AI enabled. The Docker smoke enables AI, asserts the
+effective model folder is `/data/models`, verifies that `/data` is writable and
+`/usr/local/bin` is not, and runs `docker diff` to fail if the container layer
+changed anywhere outside `/data` and `/tmp`. This scenario is verified in CI;
+it cannot be reproduced on a machine without Docker.
 
 ## Start the generic Compose stack
 
@@ -216,6 +261,30 @@ and restarted authorization, reconnect, refresh, collection with browser closed,
 now-playing source/request/display timing, container restart/recreation with
 archive and credentials retained, and certificate renewal. Automated simulated
 tests are separate evidence and do not establish these live results.
+
+## Distribution budget
+
+The image stays single and CPU-only; model weights are downloaded later and do
+not count against the image. The release profile strips symbols (LTO is not
+enabled: the measured binary is already below the limit and LTO would add link
+time to every release and CI build for no measured need).
+
+| Measure | Budget | Result |
+| --- | ---: | --- |
+| Windows release binary `target/release/scrobbl-rs.exe`, stripped | 30 MiB | **22.7 MiB** (23,785,984 bytes) |
+| linux/amd64 stripped binary extracted from the image | 30 MiB | Measured by CI (`ci-logs/image-size.json`) |
+| Runtime image delta vs `debian:bookworm-slim` (official image minus the fixed source/notices bundle) | 30 MiB | Measured by CI and enforced |
+
+`scripts/measure-image-size.py` runs after the amd64 build. It reports the raw
+image delta, the size of `/usr/share/scrobbl-rs` (the GPL corresponding-source
+and notices bundle, which is not an AI runtime cost) and the resulting runtime
+delta, then extracts the stripped binary. It exits non-zero if either budget is
+exceeded. The source bundle is reported rather than folded into the budget so a
+large vendor tree cannot hide a runtime regression, and the raw delta remains
+visible in the log. The CI job is the authoritative measurement because this
+documentation environment has no Docker; the local Windows figure above is a
+cross-check, and its `strip` difference is only a few KiB because MSVC keeps
+symbols in the separate PDB.
 
 ## Build and corresponding source
 

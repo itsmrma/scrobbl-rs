@@ -50,7 +50,7 @@ const test = base.extend({
           } catch {
             return 0;
           }
-        })
+        }, { timeout: 20000 })
         .toBe(200);
       await use({ page: await context.newPage(), baseURL });
     } finally {

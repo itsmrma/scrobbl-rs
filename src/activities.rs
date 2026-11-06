@@ -280,7 +280,12 @@ pub async fn action(
     let job = state.storage.job(&id).await?;
     if !matches!(
         job.kind.as_str(),
-        "calendar" | "spotify_import" | "listenbrainz_file" | "listenbrainz_fetch" | "artwork"
+        "calendar"
+            | "spotify_import"
+            | "listenbrainz_file"
+            | "listenbrainz_fetch"
+            | "artwork"
+            | "model_download"
     ) {
         return Err(AppError::BadRequest(
             "Controls for this activity belong to its source workflow.".into(),

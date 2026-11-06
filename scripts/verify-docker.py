@@ -17,6 +17,20 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def unexpected_diff_entries(diff_lines):
+    """Return container diff lines that touch anything outside the documented writable set.
+
+    /data is a bind mount and /tmp a tmpfs, so neither should create container-layer
+    writes. Docker Compose `init: true` injects Docker's init binary (`docker-init`),
+    which touches /usr, /usr/sbin, /sbin or /dev/init in the container layer upon creation.
+    Any other change indicates an unexpected write to the read-only root filesystem.
+    """
+    allowed = re.compile(
+        r"^[ACD] /(data|tmp)(/|$)|^[AC] /((usr/)?sbin|usr)?$|^A /(usr/)?sbin/docker-init$|^A /dev/init$"
+    )
+    return [line for line in diff_lines if line and not allowed.match(line)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image")
@@ -109,11 +123,33 @@ def main():
             assert re.search(r"^SQLite source \d{4}-\d{2}-\d{2} .+ [0-9a-f]{64}$", version, re.MULTILINE), version
             labels = json.loads(docker("image", "inspect", args.image, capture=True))[0]["Config"]["Labels"]
             assert labels["org.opencontainers.image.revision"] == args.revision
+            # The official image compiles the CPU-only runtime, keeps AI off until
+            # consent, and stores model data under the writable /data volume even
+            # though the container root filesystem is read-only.
+            ai = request("/api/v1/ai/settings", {"enabled": True, "active_model": None,
+                                                 "threads": 4, "unload_minutes": 15,
+                                                 "model_dir": None})
+            assert ai["enabled"] and ai["runtime_available"], ai
+            assert ai["effective_model_dir"] == "/data/models", ai
+            assert not ai["model_installed"], ai
+            assert ai["message"] and "no model is selected" in ai["message"], ai
+            ask = request("/api/v1/ask/status")
+            assert ask["enabled"] and ask["runtime_available"] and not ask["model_ready"], ask
+            catalog_info = request("/api/v1/ai/catalog")
+            assert catalog_info["model_dir"] == "/data/models", catalog_info
+            # The container user (10001) must be able to create and write the model
+            # folder inside the /data volume. Create it through the container so
+            # host-side ownership of the bind mount cannot make this check pass or
+            # fail for the wrong reason.
+            docker("exec", container, "sh", "-c", "mkdir -p /data/models && test -w /data/models")
+            docker("exec", container, "sh", "-c", "test ! -w /usr/local/bin")
             # Recreate, not just restart: authentication, preferences, archive and jobs must survive.
             stack("up", "-d", "--force-recreate", "--pull", "never")
             assert ready()["authenticated"]
             assert request("/api/v1/preferences")["name"] == "Docker persistence smoke"
             assert request("/api/history")["total"] == 1
+            restored_ai = request("/api/v1/ai/settings")
+            assert restored_ai["enabled"] and restored_ai["effective_model_dir"] == "/data/models", restored_ai
             assert not request("/api/session")["setup_required"]
             export_id = request("/api/v1/recovery", {"kind": "export", "format": "json"})["id"]
             wait_asset(export_id)
@@ -157,6 +193,12 @@ def main():
             inspection = json.loads(docker("inspect", container, capture=True))[0]
             assert inspection["Config"]["User"] == "10001:10001"
             assert inspection["HostConfig"]["ReadonlyRootfs"]
+            # /data is a bind mount and /tmp a tmpfs, so neither appears in the
+            # container layer. Any other change means the app wrote outside the
+            # documented writable set and would fail on a read-only rootfs.
+            changed = docker("diff", container, capture=True).splitlines()
+            unexpected = unexpected_diff_entries(changed)
+            assert not unexpected, unexpected
             docker("cp", f"{container}:/usr/share/scrobbl-rs", str(directory / "distribution"))
             manifest = json.loads((directory / "distribution/distribution.json").read_text())
             assert manifest["revision"] == args.revision
@@ -215,7 +257,7 @@ def main():
             stack("start", "scrobbl")
             ready()
             stack("stop")
-            print("Docker smoke passed: import, persistence, portable backup/export, isolated verification, uploaded restore, fresh owner access, pause/resume, actual disk-full refusal, retained copies, source notices and SIGTERM")
+            print("Docker smoke passed: import, persistence, AI /data model layout with read-only rootfs, portable backup/export, isolated verification, uploaded restore, fresh owner access, pause/resume, actual disk-full refusal, retained copies, source notices and SIGTERM")
         finally:
             if full_container:
                 subprocess.run(["docker", "rm", "--force", full_container], check=False)

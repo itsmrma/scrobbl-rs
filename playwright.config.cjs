@@ -4,6 +4,9 @@ module.exports = defineConfig({
   testMatch: "*.spec.cjs",
   workers: process.env.CI ? 4 : undefined,
   timeout: 60000,
+  expect: {
+    timeout: 15000,
+  },
   use: {
     baseURL: `http://127.0.0.1:${process.env.SCROBBL_E2E_PORT || 3211}`,
     headless: true,

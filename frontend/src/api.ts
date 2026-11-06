@@ -33,6 +33,16 @@ import type {
   DiscoveryRatio,
   ListeningCalendar,
   ListeningMilestones,
+  AskResponse,
+  Query,
+  AiSettings,
+  SaveAiSettings,
+  AiCatalog,
+  AiAskStatus,
+  AiDownloadStarted,
+  AiDeleteResult,
+  AiSelection,
+  AiTestResult,
 } from "./generated";
 
 class SessionExpired extends Error {}
@@ -108,6 +118,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     )
       headers.set("Content-Type", "application/json");
     if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
+    if (options.method === "DELETE" && csrf)
+      headers.set("X-CSRF-Token", csrf);
     const response = await fetch(path, {
       ...options,
       signal: controller.signal,
@@ -125,7 +137,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     if (!response.ok)
       throw new Error(data.error || `Request failed (${response.status}).`);
-    if (options.method === "POST")
+    if (options.method === "POST" || options.method === "DELETE")
       window.dispatchEvent(new Event("read-data-changed"));
     return data;
   } finally {
@@ -375,6 +387,11 @@ export const api = {
     request<ListeningCalendar>(`/api/v1/consultation/calendar?${params}`),
   milestones: (params: URLSearchParams) =>
     request<ListeningMilestones>(`/api/v1/consultation/milestones?${params}`),
+  askStatus: () => request<AiAskStatus>("/api/v1/ask/status"),
+  ask: (question: string, context: { kind: string; id: string } | null) =>
+    post<AskResponse>("/api/v1/ask", { question, context }),
+  askQuery: (query: Query) =>
+    post<AskResponse>("/api/v1/ask/query", { query }),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),
@@ -438,4 +455,24 @@ export const api = {
       confirm_replace: true,
     }),
   resumeRecovery: () => post("/api/v1/recovery/resume"),
+  aiSettings: () => request<AiSettings>("/api/v1/ai/settings"),
+  saveAiSettings: (form: SaveAiSettings) =>
+    post<AiSettings>("/api/v1/ai/settings", form),
+  aiCatalog: () => request<AiCatalog>("/api/v1/ai/catalog"),
+  downloadAiModel: (id: string) =>
+    post<AiDownloadStarted>(
+      `/api/v1/ai/models/${encodeURIComponent(id)}/download`,
+    ),
+  cancelAiModelDownload: (id: string) =>
+    post<{ cancelled: boolean }>(
+      `/api/v1/ai/models/${encodeURIComponent(id)}/cancel`,
+    ),
+  deleteAiModel: (id: string, confirm: boolean, force: boolean) =>
+    request<AiDeleteResult>(`/api/v1/ai/models/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirm, force }),
+    }),
+  selectAiModel: (id: string) =>
+    post<AiSelection>(`/api/v1/ai/models/${encodeURIComponent(id)}/select`),
+  testAiModel: () => post<AiTestResult>("/api/v1/ai/test"),
 };

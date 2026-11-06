@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{Html, IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -45,8 +45,11 @@ pub fn router(state: AppState) -> Router {
         .route("/spotify/connect-result/{attempt}", get(index))
         .route("/dashboard", get(index))
         .route("/search", get(index))
+        .route("/ask", get(index))
         .route("/history", get(index))
         .route("/review", get(index))
+        .route("/api/v1/ask", post(crate::ask::ask))
+        .route("/api/v1/ask/query", post(crate::ask::query))
         .route(
             "/api/v1/review",
             get(crate::review::list).post(crate::review::decide),
@@ -158,6 +161,26 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/listenbrainz/jobs/{id}/files/{file_id}",
             get(crate::listenbrainz::original_file),
         )
+        .route(
+            "/api/v1/ai/settings",
+            get(crate::ai::settings_get).post(crate::ai::settings_post),
+        )
+        .route("/api/v1/ai/catalog", get(crate::ai::catalog_get))
+        .route(
+            "/api/v1/ai/models/{id}/download",
+            post(crate::ai::download_start),
+        )
+        .route(
+            "/api/v1/ai/models/{id}/cancel",
+            post(crate::ai::download_cancel),
+        )
+        .route("/api/v1/ai/models/{id}", delete(crate::ai::model_delete))
+        .route(
+            "/api/v1/ai/models/{id}/select",
+            post(crate::ai::model_select),
+        )
+        .route("/api/v1/ai/test", post(crate::ai::model_test))
+        .route("/api/v1/ask/status", get(crate::ai::ask_status))
         .route("/api/v1/activities", get(crate::activities::list))
         .route("/api/v1/info", get(crate::read_api::info))
         .route("/api/v1/listens", get(crate::read_api::listens))

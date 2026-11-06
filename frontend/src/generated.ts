@@ -60,3 +60,74 @@ export type ApiRemoval = { id: string, replacement_id: string | null, };
 export type ApiPage = { api_version: number, instance_id: string, generation: string, from_revision: number | null, revision: number, retained_from: number, snapshot_id: string, expires_at_ms: number, selection: ApiSelection, items: Array<ApiListen>, removed: Array<ApiRemoval>, next_cursor: string | null, sync_cursor: string | null, complete: boolean, };
 export type WidgetConfig = { id: string, type: string, colSpan: 2 | 3 | 4 | 6, periodOverride?: string | null, };
 export type DashboardLayout = { version: number, widgets: Array<WidgetConfig>, };
+export type Query = { metric: Metric, entity: Entity | null, period: Period, 
+/**
+ * Chip/API only; never emitted by the grammar.
+ */
+year: number | null, 
+/**
+ * 1..=12
+ */
+month: number | null, weekday: Weekday | null, 
+/**
+ * 0..=23, in the listen's assigned calendar timezone.
+ */
+hour: number | null, source: string | null, group_by: GroupBy | null, sort_by: SortBy, order: SortOrder, limit: Limit | null, };
+export type Metric = "plays" | "time_listened" | "distinct_tracks" | "distinct_artists" | "distinct_albums" | "first_play" | "last_play" | "streak" | "milestones";
+export type EntityKind = "artist" | "album" | "track";
+export type Entity = { kind: EntityKind, 
+/**
+ * Literal name from the question; resolved against the library by Rust.
+ */
+name: string, 
+/**
+ * Set after resolution or by an explicit candidate/context choice.
+ */
+id: string | null, };
+export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year";
+export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+export type GroupBy = "day" | "week" | "month" | "year" | "hour" | "weekday" | "artist" | "album" | "track";
+export type SortBy = "metric" | "date";
+export type SortOrder = "asc" | "desc";
+export type Limit = "one" | "five" | "ten" | "twenty_five" | "fifty" | "hundred";
+export type Chip = { key: string, label: string, value: string, };
+export type AskStatus = "ok" | "unsupported" | "ambiguous" | "model_unavailable" | "model_missing" | "failed";
+export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, };
+export type AskResult = { metric: Metric, 
+/**
+ * Count, or timestamp in milliseconds for first/last.
+ */
+scalar: number | null, time: TimeCoverage | null, rows: Array<ResultRow>, first: ListenPoint | null, last: ListenPoint | null, streak: StreakResult | null, milestones: Array<MilestonePoint>, 
+/**
+ * Row/result cardinality used by the deterministic card.
+ */
+total: number, links: Array<ResultLink>, };
+export type TimeCoverage = { known_ms: number, actual_ms: number, estimated_ms: number, unknown_listens: number, unknown_percent: number, };
+export type ResultRow = { label: string, key: string, plays: number, time: TimeCoverage | null, href: string | null, };
+export type ListenPoint = { played_at_ms: number, title: string, artist: string, album: string | null, track_id: string, };
+export type StreakResult = { current: StreakSpan, longest: StreakSpan, };
+export type StreakSpan = { days: number, start: string | null, end: string | null, };
+export type MilestonePoint = { count: number, reached_at_ms: number, };
+export type ResultLink = { label: string, href: string, };
+export type EntityCandidate = { id: string, name: string, subtitle: string, kind: EntityKind, };
+export type AskRequest = { question: string, context: AskContext | null, };
+export type AskContext = { kind: EntityKind, id: string, };
+export type AskQueryRequest = { query: Query, };
+export type AiSettings = { enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, };
+export type AiAskStatus = { enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
+export type AiLicense = { name: string, url: string, };
+export type AiDownload = { repo: string, revision: string, file: string, sha256: string, size_bytes: number, };
+export type AiRequirements = { disk_bytes: number, ram_min_bytes: number, ram_recommended_bytes: number, cpu_cores: number, gpu_optional: boolean, context_tokens: number, };
+export type AiLanguageScore = { language: string, exact_match: number | null, cases: number | null, };
+export type AiParserScores = { intent: number | null, slots: number | null, refusals: number | null, exact_match: number | null, };
+export type AiSpeed = { p50_ms: number, p95_ms: number, ttft_ms: number, decode_tokens_per_second: number, prefill_tokens_per_second: number, measured_on: string, };
+export type AiDownloadJob = { id: string, state: string, processed_bytes: number, expected_bytes: number, cancel_requested: boolean, error_code: string | null, };
+export type AiCatalogModel = { id: string, name: string, tier: string, status: string, description: string, license: AiLicense, download: AiDownload, requirements: AiRequirements, languages: Array<AiLanguageScore>, parser: AiParserScores, speed: AiSpeed | null, backend: string, selectable: boolean, installed: boolean, installed_size_bytes: number | null, checksum_verified: boolean, error: string | null, download_job: AiDownloadJob | null, };
+export type AiInstalledModel = { id: string, name: string | null, file: string | null, size_bytes: number, installed_at_ms: number | null, checksum_verified: boolean, error: string | null, };
+export type AiCatalog = { runtime_available: boolean, model_dir: string, models: Array<AiCatalogModel>, installed: Array<AiInstalledModel>, total_installed_bytes: number, disk_used_bytes: number, };
+export type AiDownloadStarted = { job_id: string, };
+export type AiDeleteRequest = { confirm: boolean, force: boolean, };
+export type AiDeleteResult = { id: string, freed_bytes: number, };
+export type AiSelection = { active_model: string, };
+export type AiTestResult = { runtime_available: boolean, model_loaded: boolean, model_ready: boolean, message: string, };
