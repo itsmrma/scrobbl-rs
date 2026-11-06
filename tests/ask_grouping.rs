@@ -558,3 +558,38 @@ async fn ask_query_returns_grouped_rows_over_http() {
             > 0
     );
 }
+
+#[tokio::test]
+async fn ask_query_refuses_grouping_for_unsupported_metrics() {
+    let (_dir, state, token) = setup().await;
+    save(&state.storage, &fixture()).await;
+
+    for metric in [
+        "time_listened",
+        "first_play",
+        "last_play",
+        "streak",
+        "milestones",
+    ] {
+        let mut q = grouped(metric, "month");
+        if matches!(metric, "first_play" | "last_play" | "streak" | "milestones") {
+            q["entity"] = json!({
+                "kind": "artist",
+                "name": "Björk",
+                "id": null
+            });
+        }
+        let (status, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": q})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["status"], "unsupported",
+            "metric {metric} must be unsupported with group_by: {body}"
+        );
+        assert!(body["result"].is_null());
+        let message = body["message"].as_str().expect("message must be present");
+        assert!(
+            message.contains("Grouping is only supported") && message.contains("cannot be grouped"),
+            "unexpected message for {metric}: {message}"
+        );
+    }
+}

@@ -37,7 +37,7 @@ FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2
 # libstdc++6 is the C++ runtime linked by llama.cpp. libgomp1 is intentionally
 # absent because the runtime is built without OpenMP; no GPU libraries either.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
-    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
     && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home scrobbl \
     && install -d -o 10001 -g 10001 -m 0700 /data
 WORKDIR /app

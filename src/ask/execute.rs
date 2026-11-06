@@ -38,6 +38,11 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
     ) {
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
+    if query.group_by.is_some() && !grouping::handles(query) {
+        return Ok(Outcome::Unsupported(unsupported_grouping_message(
+            query.metric,
+        )));
+    }
     let filters = filters_for(query)?;
     if grouping::handles(query) {
         return Ok(Outcome::Result(Box::new(
@@ -256,6 +261,13 @@ fn weekday_key(weekday: Weekday) -> &'static str {
 
 pub fn unsupported_metric_message() -> String {
     "I can answer play counts, listening time, distinct tracks/artists/albums, first play, last play, streaks and milestones (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones).".into()
+}
+
+pub fn unsupported_grouping_message(metric: Metric) -> String {
+    format!(
+        "Grouping is only supported for play counts and distinct tracks, artists or albums. The metric “{}” cannot be grouped.",
+        metric.label()
+    )
 }
 
 pub(crate) fn entity_links(query: &Query) -> Vec<ResultLink> {

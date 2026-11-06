@@ -248,98 +248,100 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
         <Notice title="The question could not be answered">{error}</Notice>
       )}
 
-      {loading && (
-        <article className="panel padded ask-loading" aria-busy="true">
-          <SkeletonBlock height={18} />
-          <SkeletonBlock height={44} />
-          <SkeletonBlock height={120} />
-        </article>
-      )}
+      <div aria-live="polite" aria-atomic="true">
+        {loading && (
+          <article className="panel padded ask-loading" aria-busy="true">
+            <SkeletonBlock height={18} />
+            <SkeletonBlock height={44} />
+            <SkeletonBlock height={120} />
+          </article>
+        )}
 
-      {!loading && response && (
-        <>
-          {response.chips.length > 0 && response.query && (
-            <section className="ask-interpretation" aria-label="Interpretation">
-              <p className="ask-eyebrow">Interpretation</p>
-              <InterpretationChips
+        {!loading && response && (
+          <>
+            {response.chips.length > 0 && response.query && (
+              <section className="ask-interpretation" aria-label="Interpretation">
+                <p className="ask-eyebrow">Interpretation</p>
+                <InterpretationChips
+                  query={response.query}
+                  chips={response.chips}
+                  onChange={(query) => void runQuery(query)}
+                />
+              </section>
+            )}
+
+            {response.status === "ambiguous" && (
+              <Notice title="More than one match" tone="warning">
+                <p>{response.message}</p>
+                <div className="ask-candidates">
+                  {response.candidates.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      className="btn btn-secondary secondary ask-candidate"
+                      onClick={() => choose(candidate)}
+                    >
+                      <span>
+                        <strong>{candidate.name}</strong>
+                        {candidate.subtitle && (
+                          <small>{candidate.subtitle}</small>
+                        )}
+                      </span>
+                      <span className="ask-candidate-kind">{candidate.kind}</span>
+                    </button>
+                  ))}
+                </div>
+              </Notice>
+            )}
+
+            {response.status === "unsupported" && (
+              <Notice
+                title="That question is outside the current scope"
+                tone="info"
+              >
+                {response.message}
+                <p className="ask-hint">
+                  Try: “How many times did I listen to Björk?” · “When did I first
+                  listen to Radiohead?” · “How many hours did I listen?” · “What is
+                  my listening streak?”
+                </p>
+              </Notice>
+            )}
+
+            {response.status === "model_unavailable" && (
+              <Notice title="The model is not available" tone="warning">
+                {response.message}
+              </Notice>
+            )}
+
+            {response.status === "model_missing" && (
+              <Notice title="No model is ready" tone="warning">
+                {response.message}
+                <div className="ask-notice-action">
+                  <Link to="/settings/ai" className="btn btn-secondary secondary">
+                    <Icon>settings</Icon>
+                    Open AI settings
+                  </Link>
+                </div>
+              </Notice>
+            )}
+
+            {response.status === "failed" && (
+              <Notice title="I couldn't answer that" tone="error">
+                {response.message}
+              </Notice>
+            )}
+
+            {response.status === "ok" && response.result && response.query && (
+              <ResultCard
+                response={response}
                 query={response.query}
-                chips={response.chips}
-                onChange={(query) => void runQuery(query)}
+                preferences={preferences}
               />
-            </section>
-          )}
-
-          {response.status === "ambiguous" && (
-            <Notice title="More than one match" tone="warning">
-              <p>{response.message}</p>
-              <div className="ask-candidates">
-                {response.candidates.map((candidate) => (
-                  <button
-                    key={candidate.id}
-                    type="button"
-                    className="btn btn-secondary secondary ask-candidate"
-                    onClick={() => choose(candidate)}
-                  >
-                    <span>
-                      <strong>{candidate.name}</strong>
-                      {candidate.subtitle && (
-                        <small>{candidate.subtitle}</small>
-                      )}
-                    </span>
-                    <span className="ask-candidate-kind">{candidate.kind}</span>
-                  </button>
-                ))}
-              </div>
-            </Notice>
-          )}
-
-          {response.status === "unsupported" && (
-            <Notice
-              title="That question is outside the current scope"
-              tone="info"
-            >
-              {response.message}
-              <p className="ask-hint">
-                Try: “How many times did I listen to Björk?” · “When did I first
-                listen to Radiohead?” · “How many hours did I listen?” · “What is
-                my listening streak?”
-              </p>
-            </Notice>
-          )}
-
-          {response.status === "model_unavailable" && (
-            <Notice title="The model is not available" tone="warning">
-              {response.message}
-            </Notice>
-          )}
-
-          {response.status === "model_missing" && (
-            <Notice title="No model is ready" tone="warning">
-              {response.message}
-              <div className="ask-notice-action">
-                <Link to="/settings/ai" className="btn btn-secondary secondary">
-                  <Icon>settings</Icon>
-                  Open AI settings
-                </Link>
-              </div>
-            </Notice>
-          )}
-
-          {response.status === "failed" && (
-            <Notice title="I couldn't answer that" tone="error">
-              {response.message}
-            </Notice>
-          )}
-
-          {response.status === "ok" && response.result && response.query && (
-            <ResultCard
-              response={response}
-              query={response.query}
-              preferences={preferences}
-            />
-          )}
-        </>
-      )}
+            )}
+          </>
+        )}
+      </div>
     </>
   );
 }

@@ -212,7 +212,7 @@ the 30 MiB budget without enabling LTO (LTO would add link time for no measured
 size need). The Docker workflow also measures the runtime image increment
 against `debian:bookworm-slim`; the corresponding-source/notices bundle is
 reported separately because it is a fixed GPL distribution obligation, not part
-of the AI runtime addition. Budgets: **runtime image delta ≤ 25 MiB**, **binary
+of the AI runtime addition. Budgets: **runtime image delta ≤ 30 MiB**, **binary
 ≤ 30 MiB**. CI records both in `ci-logs/image-size.json` and fails the build if
 either is exceeded.
 

@@ -154,7 +154,7 @@ jobs:
         run: |
           sed -i 's/azure\.archive\.ubuntu\.com/archive\.ubuntu\.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
           apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update
-          apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install --no-install-recommends -y build-essential
+          apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install --no-install-recommends -y build-essential cmake clang libclang-dev
       - run: cargo build --locked --bin scrobbl-rs 2>&1 | tee ci-logs/server-build.log
       - run: HOME=/root npm run test:e2e -- --browser=${{ matrix.browser }} 2>&1 | tee ci-logs/browser.log
         env:
