@@ -24,12 +24,12 @@ and requires a PR with **zero** additional approving reviews:
 | `Docker / linux/amd64` | Image build, distribution budget, generic Compose startup and persistent-volume smoke |
 | `PR checks` | Always runs; requires successful verification for application changes or the explicit documentation-only skip |
 
-The Docker workflow also has a `linux/arm64` build job (buildx + QEMU,
-`load: false`). It runs only on trusted pushes to `main`/`v*` tags, not on pull
-requests, and is not part of the required set or of publication. An arm64 build
-failure is shown as a red job but does not fail the required amd64 check or block
-publication. The publish job continues to push only the exact amd64 image tar
-that passed the smoke test.
+The `Checks` workflow also has a standalone `Docker / linux/arm64` build job
+(buildx on native `ubuntu-24.04-arm`, `load: false`). It runs only on trusted pushes
+to `main`/`v*` tags, not on pull requests, and is not part of the required set or of
+publication. An arm64 build failure is shown as a red job but does not fail the
+required amd64 check or block publication. The publish job continues to push only
+the exact amd64 image tar that passed the smoke test.
 
 A failed or canceled verification cannot make `PR checks` pass. For application
 changes, every verification must succeed; for documentation-only changes, all
