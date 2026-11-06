@@ -17,6 +17,20 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def unexpected_diff_entries(diff_lines):
+    """Return container diff lines that touch anything outside the documented writable set.
+
+    /data is a bind mount and /tmp a tmpfs, so neither should create container-layer
+    writes. Docker Compose `init: true` injects Docker's init binary (`docker-init`),
+    which touches /usr, /usr/sbin, /sbin or /dev/init in the container layer upon creation.
+    Any other change indicates an unexpected write to the read-only root filesystem.
+    """
+    allowed = re.compile(
+        r"^[ACD] /(data|tmp)(/|$)|^[AC] /((usr/)?sbin|usr)?$|^A /(usr/)?sbin/docker-init$|^A /dev/init$"
+    )
+    return [line for line in diff_lines if line and not allowed.match(line)]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image")
@@ -183,8 +197,7 @@ def main():
             # container layer. Any other change means the app wrote outside the
             # documented writable set and would fail on a read-only rootfs.
             changed = docker("diff", container, capture=True).splitlines()
-            unexpected = [line for line in changed
-                          if line and not re.match(r"^[ACD] /(data|tmp)(/|$)", line)]
+            unexpected = unexpected_diff_entries(changed)
             assert not unexpected, unexpected
             docker("cp", f"{container}:/usr/share/scrobbl-rs", str(directory / "distribution"))
             manifest = json.loads((directory / "distribution/distribution.json").read_text())
