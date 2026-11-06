@@ -185,6 +185,89 @@ fn inconsistent_output_is_not_guessed_into_a_query() {
 }
 
 #[test]
+fn eval_1_7b_over_refusals_produce_explicit_user_facing_refusal() {
+    // 15 cases from the 1.7B eval where the model emitted "unsupported".
+    // Verify every recorded output safely produces an explicit refusal with
+    // suggestions of supported metrics, never panics and never guesses a query.
+    let recorded_refusal = r#"{
+        "group_by": "none",
+        "limit": "none",
+        "metric": "unsupported",
+        "name": "",
+        "order": "desc",
+        "period": "all_time",
+        "target": "none",
+        "weekday": "any"
+    }"#;
+    let output: ModelOutput = serde_json::from_str(recorded_refusal).unwrap();
+    let parsed = output.into_parsed().unwrap();
+    let ParsedQuestion::Unsupported { reason } = parsed else {
+        panic!("expected ParsedQuestion::Unsupported");
+    };
+    assert!(reason.contains("play counts"), "{reason}");
+    assert!(reason.contains("time_listened"), "{reason}");
+    assert!(reason.contains("streak"), "{reason}");
+}
+
+#[test]
+fn eval_4b_missed_refusals_and_injections_are_contained_and_safe() {
+    // 1. In the 4B eval, out-of-scope recommendations/comparisons emitted standard DSL queries.
+    // Verify that the resulting query is strictly constrained to standard metrics and cannot
+    // emit SQL, arbitrary URLs, or unbounded limits.
+    let recorded_out_of_scope = r#"{
+        "group_by": "none",
+        "limit": "one",
+        "metric": "plays",
+        "name": "Homogenic",
+        "order": "desc",
+        "period": "all_time",
+        "target": "album",
+        "weekday": "any"
+    }"#;
+    let output: ModelOutput = serde_json::from_str(recorded_out_of_scope).unwrap();
+    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
+        panic!("expected ParsedQuestion::Query");
+    };
+    assert_eq!(query.metric, Metric::Plays);
+    assert_eq!(query.entity.as_ref().unwrap().name, "Homogenic");
+    assert_eq!(query.limit, Some(Limit::One));
+
+    // 2. Prompt injection attempts cannot bypass the GBNF schema:
+    // Any extra keys like "sql", "command", "raw" fail deserialization.
+    let injection_with_sql = r#"{
+        "group_by": "none",
+        "limit": "none",
+        "metric": "plays",
+        "name": "Radiohead",
+        "order": "desc",
+        "period": "all_time",
+        "target": "artist",
+        "weekday": "any",
+        "sql": "DROP TABLE listens"
+    }"#;
+    assert!(
+        serde_json::from_str::<ModelOutput>(injection_with_sql).is_err(),
+        "schema must reject injection attempting to emit SQL"
+    );
+
+    // 3. Invalid metric injection is rejected by schema enum:
+    let injection_metric = r#"{
+        "group_by": "none",
+        "limit": "none",
+        "metric": "execute_query",
+        "name": "",
+        "order": "desc",
+        "period": "all_time",
+        "target": "none",
+        "weekday": "any"
+    }"#;
+    assert!(
+        serde_json::from_str::<ModelOutput>(injection_metric).is_err(),
+        "schema must reject non-whitelisted metrics"
+    );
+}
+
+#[test]
 fn prompt_has_the_no_sql_literal_name_and_thinking_rules() {
     let system = prompt::system_prompt();
     assert!(system.contains("Never output SQL"), "{system}");

@@ -202,6 +202,20 @@ impl Ask {
         }
     }
 
+    pub fn with_parser(
+        parser: Arc<dyn QueryParser>,
+        runtime_available: bool,
+        model_ready: bool,
+        local: bool,
+    ) -> Self {
+        Self {
+            parser,
+            runtime_available,
+            model_ready,
+            local,
+        }
+    }
+
     pub fn available(&self) -> bool {
         self.runtime_available && self.model_ready && !self.model_loading()
     }
@@ -226,6 +240,18 @@ pub async fn ask(
     if let Some(mut refusal) = gate(&state).await? {
         refusal.question = question;
         return Ok(Json(refusal));
+    }
+    if question.is_empty() || !question.chars().any(char::is_alphanumeric) {
+        return Ok(Json(AskResponse {
+            status: AskStatus::Unsupported,
+            question,
+            query: None,
+            chips: Vec::new(),
+            result: None,
+            message: Some("Please write a question about your music archive.".into()),
+            candidates: Vec::new(),
+            runtime_available: state.ask.runtime_available,
+        }));
     }
     let parsed = state.ask.parse(&question).await?;
     let query = match parsed {

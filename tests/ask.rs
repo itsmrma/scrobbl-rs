@@ -417,6 +417,32 @@ async fn ask_refuses_unsupported_questions_and_metrics_explicitly() {
 }
 
 #[tokio::test]
+async fn ask_refuses_empty_and_gibberish_input() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    for input in ["", "   ", "???", "   !!!   ", "asdkjh qwe zxcv"] {
+        let (status, body) = post(
+            &state,
+            &token,
+            "/api/v1/ask",
+            json!({"question": input, "context": null}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["status"], "unsupported",
+            "input '{input}' should be unsupported"
+        );
+        assert!(body["result"].is_null());
+        assert!(
+            body["message"].is_string() && !body["message"].as_str().unwrap().is_empty(),
+            "message for '{input}' should be clear: {body}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn ask_query_rejects_invalid_dsl() {
     let (_dir, state, token) = setup(true).await;
     let mut invalid = query("plays");
@@ -467,6 +493,101 @@ async fn ask_is_model_unavailable_when_ai_is_off() {
             .as_str()
             .unwrap()
             .contains("Enable it in Settings")
+    );
+}
+
+#[tokio::test]
+async fn ask_failure_modes_produce_clear_messages() {
+    let (_dir, mut state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    // 1. Model missing when model_ready is false
+    state.ask.model_ready = false;
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "model_missing");
+    let msg = body["message"].as_str().unwrap();
+    assert!(msg.contains("Download and select"), "{msg}");
+
+    // 2. Model loading
+    state.ask.model_ready = true;
+    struct LoadingParser;
+    impl scrobbl_rs::ask::parser::QueryParser for LoadingParser {
+        fn parse<'a>(&'a self, _q: &'a str) -> scrobbl_rs::ask::parser::ParseFuture<'a> {
+            Box::pin(async {
+                Ok(scrobbl_rs::ask::parser::ParsedQuestion::Unsupported {
+                    reason: "loading".into(),
+                })
+            })
+        }
+        fn model_loading(&self) -> bool {
+            true
+        }
+    }
+    state.ask = Ask::with_parser(std::sync::Arc::new(LoadingParser), true, true, false);
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "model_unavailable");
+    let msg = body["message"].as_str().unwrap();
+    assert!(msg.contains("model is loading"), "{msg}");
+
+    // 3. Runtime unavailable
+    state.ask = Ask::unavailable();
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "model_unavailable");
+    let msg = body["message"].as_str().unwrap();
+    assert!(msg.contains("runtime is not available"), "{msg}");
+
+    // 4. Unknown entity
+    state.ask = Ask::stub();
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Unknown Artist 9999?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "failed");
+    let msg = body["message"].as_str().unwrap();
+    assert!(msg.contains("couldn't find"), "{msg}");
+
+    // 5. Context entity not in library
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({
+            "question": "how many plays",
+            "context": {"kind": "artist", "id": "nonexistent-id"}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "failed");
+    let msg = body["message"].as_str().unwrap();
+    assert!(
+        msg.contains("context entity is not in your library"),
+        "{msg}"
     );
 }
 

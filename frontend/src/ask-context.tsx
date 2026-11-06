@@ -164,7 +164,7 @@ export function AskContextPanel({
               disabled={disabled || loading || !question.trim()}
             >
               <Icon>send</Icon>
-              {loading ? "Askingâ€¦" : "Ask"}
+              {loading ? "Asking…" : "Ask"}
             </Button>
           </form>
 

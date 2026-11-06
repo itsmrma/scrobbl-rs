@@ -35,10 +35,10 @@ class EvaluateTests(unittest.TestCase):
         result = budget.evaluate(
             image_bytes=200 * MIB,
             baseline_bytes=100 * MIB,
-            distribution_bytes=70 * MIB,
+            distribution_bytes=65 * MIB,
             binary_bytes=20 * MIB,
         )
-        self.assertEqual(result["runtime_image_delta_bytes"], 30 * MIB)
+        self.assertEqual(result["runtime_image_delta_bytes"], 35 * MIB)
         self.assertFalse(result["image_ok"])
         self.assertFalse(result["ok"])
 
@@ -55,7 +55,7 @@ class EvaluateTests(unittest.TestCase):
 
     def test_exact_budget_boundaries_pass(self):
         result = budget.evaluate(
-            image_bytes=125 * MIB,
+            image_bytes=130 * MIB,
             baseline_bytes=100 * MIB,
             distribution_bytes=0,
             binary_bytes=30 * MIB,

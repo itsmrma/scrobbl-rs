@@ -444,3 +444,60 @@ test("the contextual panel stays usable at 390px without horizontal overflow", a
   expect(panelBox.x).toBeGreaterThanOrEqual(0);
   expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(390.5);
 });
+
+test("the global Ask page and AI Settings stay usable at 390px without horizontal overflow", async ({
+  archive: { page, album, track },
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/v1/ask/status", (route) =>
+    route.fulfill({ json: readyStatus }),
+  );
+  await page.route("**/api/v1/ask", (route) =>
+    route.fulfill({
+      json: okResponse({
+        kind: "album",
+        id: album.id,
+        name: album.name,
+        trackId: track.id,
+      }),
+    }),
+  );
+
+  // 1. Global /ask page
+  await page.goto("/ask");
+  await expect(
+    page.getByRole("heading", { name: /Ask/ }).first(),
+  ).toBeVisible();
+  const input = page.getByLabel("Your question", { exact: true });
+  await expect(input).toBeVisible();
+  await input.fill("How many plays?");
+  const submit = page.getByRole("button", { name: "Ask", exact: true });
+  const submitBox = await submit.boundingBox();
+  expect(submitBox.height).toBeGreaterThanOrEqual(44);
+  await submit.click();
+
+  await expect(page.locator(".ask-result")).toBeVisible();
+  const chip = page.locator(".ask-chip").first();
+  await expect(chip).toBeVisible();
+  const chipBox = await chip.boundingBox();
+  expect(chipBox.height).toBeGreaterThanOrEqual(44);
+
+  let overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > innerWidth + 1,
+  );
+  expect(overflow).toBe(false);
+
+  // 2. Settings AI page
+  await page.goto("/settings/ai");
+  await expect(page.locator(".ai-settings")).toBeVisible();
+  const toggle = page.locator(".ai-toggle").first();
+  await expect(toggle).toBeVisible();
+  const toggleBox = await toggle.boundingBox();
+  expect(toggleBox.height).toBeGreaterThanOrEqual(44);
+
+  overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > innerWidth + 1,
+  );
+  expect(overflow).toBe(false);
+});
+

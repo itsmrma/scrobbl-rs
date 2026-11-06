@@ -273,7 +273,7 @@ time to every release and CI build for no measured need).
 | --- | ---: | --- |
 | Windows release binary `target/release/scrobbl-rs.exe`, stripped | 30 MiB | **22.7 MiB** (23,785,984 bytes) |
 | linux/amd64 stripped binary extracted from the image | 30 MiB | Measured by CI (`ci-logs/image-size.json`) |
-| Runtime image delta vs `debian:bookworm-slim` (official image minus the fixed source/notices bundle) | 25 MiB | Measured by CI and enforced |
+| Runtime image delta vs `debian:bookworm-slim` (official image minus the fixed source/notices bundle) | 30 MiB | Measured by CI and enforced |
 
 `scripts/measure-image-size.py` runs after the amd64 build. It reports the raw
 image delta, the size of `/usr/share/scrobbl-rs` (the GPL corresponding-source

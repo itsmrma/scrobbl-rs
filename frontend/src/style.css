@@ -5506,6 +5506,15 @@ dialog.artwork-lightbox {
     width: 100%;
   }
 
+  .ask-chip {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+
+  .ask-candidate {
+    min-height: 44px;
+  }
+
   .ask-chip-editor {
     width: 100%;
     min-width: 0;

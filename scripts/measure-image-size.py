@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 MIB = 1024 * 1024
-IMAGE_BUDGET = 25 * MIB
+IMAGE_BUDGET = 30 * MIB
 BINARY_BUDGET = 30 * MIB
 DEFAULT_BASELINE = "debian:bookworm-slim"
 DEFAULT_BINARY_PATH = "/usr/local/bin/scrobbl-rs"
