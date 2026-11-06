@@ -49,7 +49,7 @@ that mount with `scrobbl-data:/data` and declare `volumes: {scrobbl-data: {}}`.
 | Platform | Built by CI | Smoke-tested | Published |
 | --- | --- | --- | --- |
 | `linux/amd64` | Every application change (required PR check) | Yes, `scripts/verify-docker.py` | Yes, from trusted `main`/`v*` pushes |
-| `linux/arm64` | Pushes to `main` and `v*` tags (buildx + QEMU, `load: false`) | Build only | Not yet |
+| `linux/arm64` | Pushes to `main` and `v*` tags (buildx on native `ubuntu-24.04-arm`, `load: false`) | Build only | Not yet |
 
 The arm64 job builds the same Dockerfile and catches architecture-specific
 compiler or llama.cpp failures. It is intentionally skipped on pull requests to
