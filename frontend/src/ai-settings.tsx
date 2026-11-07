@@ -32,7 +32,8 @@ const downloadError: Record<string, string> = {
     "The downloaded file failed SHA-256 verification and was removed. Retry the download.",
   model_source_rejected:
     "The model source refused the download. Check the server connection and retry.",
-  model_download_failed: "The model download failed. Check the server log and retry.",
+  model_download_failed:
+    "The model download failed. Check the server log and retry.",
   model_download_retry:
     "The download was interrupted. It resumes automatically with the bytes already saved.",
   model_cancelled: "The download was cancelled.",
@@ -90,7 +91,9 @@ function DownloadProgress({
   return (
     <div className="ai-progress">
       <div className="ai-progress-head">
-        <span>{running ? "Downloading" : failed ? "Download failed" : "Cancelled"}</span>
+        <span>
+          {running ? "Downloading" : failed ? "Download failed" : "Cancelled"}
+        </span>
         <span className="tabular-nums">
           {bytes(job.processed_bytes)} of {bytes(job.expected_bytes)}
         </span>
@@ -172,7 +175,9 @@ function ModelCard({
         </div>
         <div>
           <dt>Minimum RAM</dt>
-          <dd className="tabular-nums">{bytes(model.requirements.ram_min_bytes)}</dd>
+          <dd className="tabular-nums">
+            {bytes(model.requirements.ram_min_bytes)}
+          </dd>
         </div>
         <div>
           <dt>Recommended RAM</dt>
@@ -183,7 +188,9 @@ function ModelCard({
         <div>
           <dt>Speed (desktop p50)</dt>
           <dd className="tabular-nums">
-            {model.speed ? `${number.format(model.speed.p50_ms)} ms` : "Not measured"}
+            {model.speed
+              ? `${number.format(model.speed.p50_ms)} ms`
+              : "Not measured"}
           </dd>
         </div>
         <div>
@@ -227,7 +234,7 @@ function ModelCard({
         <p className="field-hint">Enable AI and save to start a download.</p>
       )}
       <div className="ai-actions">
-        {model.selectable && !model.installed && (
+        {model.selectable && !model.installed && !running && (
           <Button
             variant="primary"
             onClick={onDownload}
@@ -272,7 +279,9 @@ export function AiSettingsSection() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<AiInstalledModel | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AiInstalledModel | null>(
+    null,
+  );
   const toast = useToast();
 
   function adopt(next: AiSettings) {
@@ -294,9 +303,7 @@ export function AiSettingsSection() {
   }
 
   useEffect(() => {
-    load().catch((e) =>
-      setError(e instanceof Error ? e.message : String(e)),
-    );
+    load().catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
   const polling =
@@ -304,9 +311,26 @@ export function AiSettingsSection() {
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(() => {
-      api
-        .aiCatalog()
-        .then(setCatalog)
+      Promise.all([api.aiCatalog(), api.aiSettings()])
+        .then(([cat, set]) => {
+          setCatalog(cat);
+          adopt(set);
+          if (!set.active_model) {
+            const newlyInstalled = cat.models.find(
+              (m) => m.installed && m.selectable && !isRunning(m.download_job),
+            );
+            if (newlyInstalled) {
+              void api
+                .selectAiModel(newlyInstalled.id)
+                .then(() => Promise.all([api.aiCatalog(), api.aiSettings()]))
+                .then(([c, s]) => {
+                  setCatalog(c);
+                  adopt(s);
+                })
+                .catch(() => {});
+            }
+          }
+        })
         .catch((e) => setError(e instanceof Error ? e.message : String(e)));
     }, 2000);
     return () => clearInterval(timer);
@@ -372,7 +396,11 @@ export function AiSettingsSection() {
   if (!settings || !catalog) {
     return (
       <div className="ai-settings">
-        {error ? <ErrorText>{error}</ErrorText> : <SkeletonCard label="Loading AI settings and model catalog." />}
+        {error ? (
+          <ErrorText>{error}</ErrorText>
+        ) : (
+          <SkeletonCard label="Loading AI settings and model catalog." />
+        )}
       </div>
     );
   }
@@ -388,7 +416,9 @@ export function AiSettingsSection() {
         <div className="panel-title">
           <h2>AI</h2>
           <span className="ai-badge">
-            {settings.runtime_available ? "Runtime available" : "Runtime not in this build"}
+            {settings.runtime_available
+              ? "Runtime available"
+              : "Runtime not in this build"}
           </span>
         </div>
         <p>
@@ -406,7 +436,9 @@ export function AiSettingsSection() {
           <div className="notice notice-warning" role="status">
             <Icon>info</Icon>
             <div className="notice-body">
-              <strong>This build does not include the inference runtime.</strong>
+              <strong>
+                This build does not include the inference runtime.
+              </strong>
               <span>
                 You can still manage settings and download models. Asking
                 questions stays disabled until the runtime is available.
@@ -526,7 +558,17 @@ export function AiSettingsSection() {
                   "Active model updated.",
                 )
               }
-              onDelete={() => setDeleteTarget({ id: model.id, name: model.name, file: model.download.file, size_bytes: model.download.size_bytes, installed_at_ms: null, checksum_verified: model.checksum_verified, error: null })}
+              onDelete={() =>
+                setDeleteTarget({
+                  id: model.id,
+                  name: model.name,
+                  file: model.download.file,
+                  size_bytes: model.download.size_bytes,
+                  installed_at_ms: null,
+                  checksum_verified: model.checksum_verified,
+                  error: null,
+                })
+              }
             />
           ))}
         </div>
@@ -551,10 +593,13 @@ export function AiSettingsSection() {
                 <div>
                   <strong>{model.name ?? model.id}</strong>
                   <span className="field-hint">
-                    {model.file ?? "No readable file"} · {bytes(model.size_bytes)}
+                    {model.file ?? "No readable file"} ·{" "}
+                    {bytes(model.size_bytes)}
                     {model.id === activeModel ? " · Active" : ""}
                   </span>
-                  {model.error && <span className="form-error">{model.error}</span>}
+                  {model.error && (
+                    <span className="form-error">{model.error}</span>
+                  )}
                 </div>
                 <Button
                   variant="danger"
@@ -627,7 +672,11 @@ export function AiSettingsSection() {
             Model folder
             <code className="ai-path">{catalog.model_dir}</code>
           </label>
-          <Button type="submit" variant="secondary" disabled={busy === "settings"}>
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={busy === "settings"}
+          >
             <Icon>save</Icon>
             Save options
           </Button>
@@ -635,10 +684,7 @@ export function AiSettingsSection() {
       </article>
 
       {deleteTarget && (
-        <Modal
-          title="Delete model"
-          close={() => setDeleteTarget(null)}
-        >
+        <Modal title="Delete model" close={() => setDeleteTarget(null)}>
           <p>
             Delete <strong>{deleteTarget.name ?? deleteTarget.id}</strong> and
             free {bytes(deleteTarget.size_bytes)}?
@@ -655,20 +701,15 @@ export function AiSettingsSection() {
               disabled={busy === deleteTarget.id}
               onClick={() => {
                 const target = deleteTarget;
-                action(
-                  target.id,
-                  async () => {
-                    const result = await api.deleteAiModel(
-                      target.id,
-                      true,
-                      target.id === activeModel,
-                    );
-                    setDeleteTarget(null);
-                    toast(
-                      `Model deleted. ${bytes(result.freed_bytes)} freed.`,
-                    );
-                  },
-                );
+                action(target.id, async () => {
+                  const result = await api.deleteAiModel(
+                    target.id,
+                    true,
+                    target.id === activeModel,
+                  );
+                  setDeleteTarget(null);
+                  toast(`Model deleted. ${bytes(result.freed_bytes)} freed.`);
+                });
               }}
             >
               <Icon>delete_outline</Icon>

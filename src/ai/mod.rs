@@ -567,13 +567,25 @@ pub async fn catalog_get(
                 installed,
                 installed_size_bytes: installed_entry.map(|entry| entry.size_bytes),
                 checksum_verified: installed_entry.is_some_and(|entry| entry.checksum_verified),
-                error: installed_entry.and_then(|entry| entry.error.clone()),
+                error: if job
+                    .as_ref()
+                    .is_some_and(|j| matches!(j.state.as_str(), "queued" | "running" | "waiting"))
+                {
+                    None
+                } else {
+                    installed_entry.and_then(|entry| entry.error.clone())
+                },
                 download_job: job,
             }
         })
         .collect();
     let installed = scanned
         .iter()
+        .filter(|entry| {
+            !latest_jobs
+                .get(&entry.id)
+                .is_some_and(|j| matches!(j.state.as_str(), "queued" | "running" | "waiting"))
+        })
         .map(|entry| AiInstalledModel {
             id: entry.id.clone(),
             name: catalog::find(&entry.id).map(|model| model.name),
