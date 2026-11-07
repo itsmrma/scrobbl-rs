@@ -888,4 +888,3 @@ async fn in_progress_download_is_not_reported_as_installed_or_missing_metadata()
 
     handle.abort();
 }
-
