@@ -99,6 +99,25 @@ pub fn directory_size(path: &Path) -> u64 {
         .fold(0, u64::saturating_add)
 }
 
+fn is_partial_or_temporary(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    name.ends_with(".part") || name.ends_with(".tmp")
+}
+
+fn has_only_partial_files(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return true;
+    };
+    for entry in entries.flatten() {
+        if !is_partial_or_temporary(&entry.path()) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Scan every model directory. A corrupt or orphaned directory stays visible
 /// with an explicit error instead of disappearing or crashing startup.
 pub fn scan(root: &Path) -> Vec<ScannedModel> {
@@ -124,12 +143,13 @@ pub fn scan(root: &Path) -> Vec<ScannedModel> {
         let metadata = match read_metadata_sync(&path.join(METADATA_FILE)) {
             Ok(metadata) => metadata,
             Err(error) => {
-                let size_bytes = directory_size(&path);
-                // A failed download or a deleted file can leave an empty
-                // directory; it is not an installed model.
-                if !path.join(METADATA_FILE).exists() && size_bytes == 0 {
+                // A download in progress or interrupted, or an empty directory,
+                // contains no completed model or metadata; it is not an
+                // installed model.
+                if !path.join(METADATA_FILE).exists() && has_only_partial_files(&path) {
                     continue;
                 }
+                let size_bytes = directory_size(&path);
                 models.push(ScannedModel {
                     id: id.to_string(),
                     file: None,

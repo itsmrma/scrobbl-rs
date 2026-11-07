@@ -839,3 +839,52 @@ async fn settings_validate_threads_model_dir_and_unknown_model() {
     assert_eq!(status, StatusCode::BAD_REQUEST, "{value}");
     assert!(value["error"].as_str().unwrap().contains("Unknown model"));
 }
+
+#[tokio::test]
+async fn in_progress_download_is_not_reported_as_installed_or_missing_metadata() {
+    let _guard = TEST_LOCK.lock().await;
+    catalog::clear_test_models();
+    let (_dir, state, token) = setup().await;
+    let root = models::root(&state).await.unwrap();
+
+    let id = "test-downloading";
+    let data = synthetic_model();
+    let (url, _server, handle) = fake_server(data.clone()).await;
+    catalog::register_test_model(test_model(id, url, sha256(&data), data.len() as u64));
+    enable(&state, &token).await;
+
+    // Simulate an in-progress download directory containing only a .part file
+    let dir = models::model_dir(&root, id).unwrap();
+    tokio::fs::create_dir_all(&dir).await.unwrap();
+    tokio::fs::write(dir.join("model.gguf.part"), b"partial chunk")
+        .await
+        .unwrap();
+
+    let scanned = models::scan(&root);
+    assert!(
+        scanned.iter().all(|m| m.id != id),
+        "Downloading directory with only .part file must not appear in scanned models"
+    );
+
+    let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
+    let entry = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == id)
+        .unwrap();
+    assert_eq!(entry["installed"], false);
+    assert_eq!(
+        entry["error"],
+        serde_json::Value::Null,
+        "Catalog model must not have error while downloading"
+    );
+
+    let installed = catalog["installed"].as_array().unwrap();
+    assert!(
+        installed.iter().all(|m| m["id"] != id),
+        "Downloading model must not appear in installed models list"
+    );
+
+    handle.abort();
+}

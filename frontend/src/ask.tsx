@@ -89,7 +89,13 @@ function headline(response: AskResponse, preferences: Preferences): string {
   return `${query.metric} for ${entity} ${period}.`;
 }
 
-export function AskPage({ preferences }: { preferences: Preferences }) {
+export function AskPage({
+  preferences,
+  visible = true,
+}: {
+  preferences: Preferences;
+  visible?: boolean;
+}) {
   const [status, setStatus] = useState<AiAskStatus | null>(null);
   const [statusError, setStatusError] = useState("");
   const [question, setQuestion] = useState("");
@@ -98,22 +104,36 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    if (!visible) return;
     let current = true;
-    void api
-      .askStatus()
-      .then((data) => {
-        if (current) {
-          setStatus(data);
-          setStatusError("");
-        }
-      })
-      .catch((cause) => {
-        if (current) setStatusError(cause.message);
-      });
+    const fetchStatus = () => {
+      void api
+        .askStatus()
+        .then((data) => {
+          if (current) {
+            setStatus(data);
+            setStatusError("");
+          }
+        })
+        .catch((cause) => {
+          if (current) {
+            setStatusError(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+        });
+    };
+    fetchStatus();
+    const timer = setInterval(() => {
+      if (current && status?.model_loading) {
+        fetchStatus();
+      }
+    }, 1000);
     return () => {
       current = false;
+      clearInterval(timer);
     };
-  }, []);
+  }, [visible, status?.model_loading]);
 
   async function submitQuestion(event: FormEvent) {
     event.preventDefault();
@@ -260,7 +280,10 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
         {!loading && response && (
           <>
             {response.chips.length > 0 && response.query && (
-              <section className="ask-interpretation" aria-label="Interpretation">
+              <section
+                className="ask-interpretation"
+                aria-label="Interpretation"
+              >
                 <p className="ask-eyebrow">Interpretation</p>
                 <InterpretationChips
                   query={response.query}
@@ -287,7 +310,9 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
                           <small>{candidate.subtitle}</small>
                         )}
                       </span>
-                      <span className="ask-candidate-kind">{candidate.kind}</span>
+                      <span className="ask-candidate-kind">
+                        {candidate.kind}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -301,9 +326,9 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
               >
                 {response.message}
                 <p className="ask-hint">
-                  Try: “How many times did I listen to Björk?” · “When did I first
-                  listen to Radiohead?” · “How many hours did I listen?” · “What is
-                  my listening streak?”
+                  Try: “How many times did I listen to Björk?” · “When did I
+                  first listen to Radiohead?” · “How many hours did I listen?” ·
+                  “What is my listening streak?”
                 </p>
               </Notice>
             )}
@@ -318,7 +343,10 @@ export function AskPage({ preferences }: { preferences: Preferences }) {
               <Notice title="No model is ready" tone="warning">
                 {response.message}
                 <div className="ask-notice-action">
-                  <Link to="/settings/ai" className="btn btn-secondary secondary">
+                  <Link
+                    to="/settings/ai"
+                    className="btn btn-secondary secondary"
+                  >
                     <Icon>settings</Icon>
                     Open AI settings
                   </Link>

@@ -54,21 +54,28 @@ export function AskContextPanel({
 
   useEffect(() => {
     let current = true;
-    void api
-      .askStatus()
-      .then((data) => {
-        if (current) {
-          setStatus(data);
-          setStatusError("");
-        }
-      })
-      .catch((cause) => {
-        if (current) setStatusError(cause.message);
-      });
+    const fetchStatus = () => {
+      void api
+        .askStatus()
+        .then((data) => {
+          if (current) {
+            setStatus(data);
+            setStatusError("");
+          }
+        })
+        .catch((cause) => {
+          if (current) {
+            setStatusError(
+              cause instanceof Error ? cause.message : String(cause),
+            );
+          }
+        });
+    };
+    fetchStatus();
     return () => {
       current = false;
     };
-  }, []);
+  }, [open]);
 
   async function submitQuestion(event: FormEvent) {
     event.preventDefault();

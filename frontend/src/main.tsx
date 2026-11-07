@@ -494,7 +494,7 @@ function Shell({
               </section>
             )}
             <section className="page-container" hidden={page !== "ask"}>
-              <AskPage preferences={preferences} />
+              <AskPage preferences={preferences} visible={page === "ask"} />
             </section>
             <section className="page-container" hidden={page !== "dashboard"}>
               <Overview
