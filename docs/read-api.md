@@ -2,7 +2,7 @@
 
 Implementation guide for [Implementare API di lettura, sincronizzazione incrementale e gestione delle chiavi](https://github.com/itsmrma/scrobbl-rs/issues/20).
 The product contract lives in its linked resolution. The spotify_analysis adapter and real
-GitHub Pages → private HTTPS browser acceptance belong to the following client ticket;
+`https://benassimatteo.dev` → private HTTPS browser acceptance belong to the following client ticket;
 the owner's PC/Mac/iOS acceptance runs once on the stabilized release.
 
 ## Connect privately
@@ -11,12 +11,12 @@ the owner's PC/Mac/iOS acceptance runs once on the stabilized release.
    any nonstandard port. Follow [private HTTPS setup](docker.md); the browser must reach
    this address on LAN/VPN and trust its certificate. The API URL uses this configured
    origin, never a request's Host, forwarded header or container hostname. HTTP loopback
-   supports local development, not a connection from an HTTPS GitHub Pages site.
+   supports local development, not a connection from an HTTPS site such as `https://benassimatteo.dev`.
 2. Sign in as owner and open **Settings → API keys**. The previous
    `/integrations/api-keys` link redirects there, preserving the later Settings decision.
 3. Save the application's exact HTTPS browser origin, for example
-   `https://itsmrma.github.io`, under **Allowed browser origins**. Use one per line,
-   without paths or wildcards. All repositories hosted at that origin share CORS
+   `https://benassimatteo.dev`, under **Allowed browser origins**. Use one per line,
+   without paths or wildcards. Every app served from that origin shares CORS
    permission; CORS does not authenticate requests. HTTP origins are allowed only for
    literal loopback development. No cross-origin sites are enabled by default.
 4. Create a named key with an application label and optional expiry. The form shows

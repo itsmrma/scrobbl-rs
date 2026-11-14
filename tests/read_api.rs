@@ -585,7 +585,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
         &state,
         &owner,
         "/api/v1/api-keys/cors",
-        json!({"origins":["https://itsmrma.github.io"]}),
+        json!({"origins":["https://benassimatteo.dev"]}),
     )
     .await;
     let response = web::router(state.clone())
@@ -594,7 +594,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
                 .method("OPTIONS")
                 .uri("/api/v1/listens")
                 .header("host", "127.0.0.1:3210")
-                .header("origin", "https://itsmrma.github.io")
+                .header("origin", "https://benassimatteo.dev")
                 .header("access-control-request-method", "GET")
                 .header("access-control-request-headers", "Authorization")
                 .body(Body::empty())
@@ -605,7 +605,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(
         response.headers()["access-control-allow-origin"],
-        "https://itsmrma.github.io"
+        "https://benassimatteo.dev"
     );
     assert_eq!(
         response.headers()["access-control-allow-private-network"],
@@ -631,7 +631,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
                 .method("OPTIONS")
                 .uri("/api/v1/info")
                 .header("host", "127.0.0.1:3210")
-                .header("origin", "https://itsmrma.github.io")
+                .header("origin", "https://benassimatteo.dev")
                 .header("access-control-request-method", "GET")
                 .header(
                     "access-control-request-headers",
@@ -654,7 +654,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
         "/api/v1/info",
         None,
         None,
-        Some("https://itsmrma.github.io"),
+        Some("https://benassimatteo.dev"),
         Value::Null,
     )
     .await;
@@ -702,7 +702,7 @@ async fn cors_preflight_errors_rate_limits_empty_archives_and_unknown_durations_
             "/api/v1/info",
             None,
             Some(secret),
-            Some("https://itsmrma.github.io"),
+            Some("https://benassimatteo.dev"),
             Value::Null,
         )
         .await;

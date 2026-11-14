@@ -600,15 +600,24 @@ mod tests {
             (done.state.as_str(), done.processed, done.added),
             ("completed", 2, 2)
         );
+        // Album and artist resolve concurrently: check the order per kind.
         let calls = script.calls.lock().unwrap().clone();
+        let order = |kind: &str| -> Vec<ImageProvider> {
+            calls
+                .iter()
+                .filter(|(_, k)| k == kind)
+                .map(|(p, _)| *p)
+                .collect()
+        };
         assert_eq!(
-            calls,
-            vec![
-                (ImageProvider::Deezer, "albums".to_string()),
-                (ImageProvider::Itunes, "albums".to_string()),
-                (ImageProvider::Deezer, "artists".to_string()),
-            ],
-            "albums try Deezer then iTunes; the artist is found by Deezer at once"
+            order("albums"),
+            vec![ImageProvider::Deezer, ImageProvider::Itunes],
+            "albums try Deezer, then iTunes"
+        );
+        assert_eq!(
+            order("artists"),
+            vec![ImageProvider::Deezer],
+            "the artist is found by Deezer at once"
         );
         let sources: Vec<(String, String)> =
             sqlx::query_as("SELECT kind,source FROM artwork ORDER BY kind")

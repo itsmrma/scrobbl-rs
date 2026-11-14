@@ -260,12 +260,12 @@ pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> R
         sqlx::query_scalar("SELECT MIN(played_at_ms) FROM listens WHERE trashed_at_ms IS NULL")
             .fetch_one(&state.read_db)
             .await?;
-    let size = |name: &str| {
-        std::fs::metadata(state.storage.directory.join(name))
-            .map(|m| m.len())
-            .unwrap_or(0)
-    };
-    let archive_bytes = size("archive.db") + size("archive.db-wal");
+    // SQLite knows its own size; no filesystem path is involved.
+    let archive_bytes: i64 = sqlx::query_scalar(
+        "SELECT page_count*page_size FROM pragma_page_count(), pragma_page_size()",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
     Ok(Json(json!({
         "boot_id": state.application.boot_id,
         "version": env!("CARGO_PKG_VERSION"),

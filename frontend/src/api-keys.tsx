@@ -120,8 +120,9 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                   {!settings.base_url.startsWith("https://") ? (
                     <p className="warning">
                       This instance uses HTTP. Configure the external HTTPS
-                      origin before connecting from GitHub Pages. HTTP loopback
-                      is for local development.
+                      origin before connecting from an HTTPS app such as the
+                      Spotify history analyzer. HTTP loopback is for local
+                      development.
                     </p>
                   ) : (
                     <p className="subtle">
@@ -147,7 +148,7 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                 <div className="api-step-content">
                   <p>
                     Enter one exact HTTPS origin per line, for example{" "}
-                    <code>https://itsmrma.github.io</code> without a repository
+                    <code>https://benassimatteo.dev</code> without a repository
                     path. Browser apps are blocked by CORS unless their origin
                     is listed here.
                   </p>
@@ -172,7 +173,7 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                         rows={3}
                         value={origins}
                         onChange={(e) => setOrigins(e.target.value)}
-                        placeholder="https://itsmrma.github.io"
+                        placeholder="https://benassimatteo.dev"
                       />
                     </label>
                     <p className="subtle">
@@ -343,11 +344,11 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                       </div>
 
                       <div className="api-key-meta">
-                        <span className="api-key-meta-item">
+                        <span className="api-key-meta-item" title="Application">
                           <Icon>apps</Icon>
                           <span>{key.application}</span>
                         </span>
-                        <span className="api-key-meta-item">
+                        <span className="api-key-meta-item" title="Permission">
                           <Icon>lock</Icon>
                           <span>{key.permissions}</span>
                         </span>
