@@ -63,9 +63,10 @@ recreating the container. Values are stored with the archive's instance settings
 shared by browsers and preserved across restarts and archive snapshots.
 Changing them does not bypass Spotify's shared request-limit wait.
 
-Existing `SCROBBL_SYNC_SECONDS` / `SCROBBL_NOW_PLAYING_SECONDS` values remain initial
-fallbacks until intervals are saved through Settings. Saved values then take
-precedence even if the old Docker variables are still present. Now playing still
+Until intervals are saved, collection runs every 120 seconds and now playing
+every 30. Since 0.1 alpha the intervals are set only here: the former
+`SCROBBL_SYNC_SECONDS` / `SCROBBL_NOW_PLAYING_SECONDS` variables are ignored, so
+they can be removed from existing Compose files. Now playing still
 polls only while the page is visible. Intervals are polling settings, not a promise
 of provider availability or end-to-end latency.
 
