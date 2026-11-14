@@ -140,7 +140,6 @@ export function AskContextPanel({
         onClick={() => setOpen((value) => !value)}
       >
         <span className="ask-context-heading">
-          <span className="ask-eyebrow">Ask</span>
           <strong id={titleId}>Ask about this {label}</strong>
           <span className="ask-context-subject">{name}</span>
         </span>

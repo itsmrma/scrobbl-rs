@@ -71,7 +71,7 @@ export function BackButton({ fallback }: { fallback: string }) {
   const current = navigationState();
   return (
     <button
-      className="button secondary music-back"
+      className="btn btn-ghost music-back"
       onClick={() => {
         if (current.back && current.back.index < current.index)
           history.go(current.back.index - current.index);

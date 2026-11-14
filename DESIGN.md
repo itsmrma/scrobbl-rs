@@ -419,12 +419,16 @@ To ensure that the future customizable dashboard grid and new widgets look 100% 
 - **Do** wrap primary page headings with the signature accent dot: `<h1>Title<span className="accent">.</span></h1>`.
 - **Do** isolate widget responsiveness using CSS Container Queries (`@container`) on `container-type: inline-size;` instead of relying on global viewport media queries.
 - **Do** ensure interactive controls have at least `min-height: 44px;` and `min-width: 44px;` for comfortable touch ergonomics across mobile and desktop.
-- **Do** maintain a strict single-column flow with left-aligned values directly below labels on viewports ≤ 600px (Baseline mobile).
+- **Do** keep a single-column flow on viewports ≤ 600px (Baseline mobile), with values left-aligned directly below their labels. Compact groups of 2–3 peers (Period / Rank by, the stat strip, header actions) may share one row.
 - **Do** ensure the mobile navigation drawer has continuous vertical scroll (`overflow-y: auto; -webkit-overflow-scrolling: touch;`) and accessible touch toggles for Now Playing expansion.
 - **Do** use `color-mix(in srgb, var(--accent) 9%, var(--surface))` for subtle interactive hover states on neutral items.
 - **Do** use `tabular-nums` for numeric counters, timestamps, durations, and rankings.
 - **Do** build skeleton loaders (`<SkeletonBlock>`) that mirror the exact height and layout of widget content.
 - **Do** respect `prefers-reduced-motion` for all keyframe animations and transitions.
+- **Do** give every page header one toolbar: title (with its dot) and subtitle on the left, actions and Period / Rank by on one aligned row. Navigation such as Back sits above the title, never floating alone.
+- **Do** bound long lists in multi-column rows (internal scroll, whole rows only) so neighbouring widgets keep comparable heights; never let a short widget stretch beside a long one.
+- **Do** show secondary detail only when it carries information: the actual/estimated time split only when estimated time exists, pagination buttons only when there is more than one page, size steppers only in grid views.
+- **Do** collapse empty result groups to one muted line instead of an empty panel.
 
 ### Don't:
 - **Don't** add raw gray hex codes (`#111`, `#222`, `#eee`, `#888`) or CSS frameworks (Tailwind, Bootstrap); scrobbl.rs uses a cohesive pure CSS custom property architecture.
@@ -437,3 +441,4 @@ To ensure that the future customizable dashboard grid and new widgets look 100% 
 - **Don't** introduce external font links or remote CDN scripts. All icons must use the local `Material Icons Outlined` font.
 - **Don't** use spinning circle loaders for content panels; always use shimmer skeletons.
 - **Don't** let long music titles break the layout; always use `overflow-wrap: anywhere` or ellipsis with `min-width: 0`.
+- **Don't** add eyebrow labels above headings, full-width button slabs for ordinary actions, or labels in a second language: the interface copy is English.

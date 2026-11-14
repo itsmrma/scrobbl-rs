@@ -20,7 +20,19 @@ const labels: Record<Kind, string> = {
   tracks: "Tracks",
 };
 
-function SearchResults({ kind, query }: { kind: Kind; query: string }) {
+const OVERVIEW_LIMIT = 8;
+
+function SearchResults({
+  kind,
+  query,
+  overview = false,
+  onShowAll,
+}: {
+  kind: Kind;
+  query: string;
+  overview?: boolean;
+  onShowAll?: (kind: Kind) => void;
+}) {
   const [retry, setRetry] = useState(0);
   const result = useLoad(
     () => api.search(kind, query),
@@ -29,15 +41,23 @@ function SearchResults({ kind, query }: { kind: Kind; query: string }) {
     undefined,
     true,
   );
+  const empty = result.data?.length === 0;
+  const shown =
+    overview && result.data
+      ? result.data.slice(0, OVERVIEW_LIMIT)
+      : result.data;
+  const hidden = (result.data?.length ?? 0) - (shown?.length ?? 0);
   return (
     <section
-      className="search-result-group"
+      className={`search-result-group${empty && overview ? " is-empty" : ""}`}
       aria-labelledby={`search-${kind}`}
       aria-busy={result.loading}
     >
       <div className="search-group-heading">
-        <h2 id={`search-${kind}`}>{labels[kind]}</h2>
-        {result.data && (
+        <h2 id={`search-${kind}`} tabIndex={-1}>
+          {labels[kind]}
+        </h2>
+        {result.data && !(empty && overview) && (
           <span>
             {number.format(result.data.length)}
             {result.data.length === 50 ? "+" : ""}
@@ -60,14 +80,15 @@ function SearchResults({ kind, query }: { kind: Kind; query: string }) {
           label={`Searching ${labels[kind].toLowerCase()}…`}
         />
       )}
-      {result.data?.length === 0 && (
+      {empty && (
         <p className="search-no-matches">
-          No {labels[kind].toLowerCase()} match “{query}”. Try another name.
+          No {labels[kind].toLowerCase()} match “{query}”.
+          {!overview && " Try another name."}
         </p>
       )}
-      {!!result.data?.length && (
+      {!!shown?.length && (
         <ul className="search-result-list">
-          {result.data.map((item) => (
+          {shown.map((item) => (
             <li key={item.id}>
               <Link
                 to={`/music/${kind}/${encodeURIComponent(item.id)}?period=all`}
@@ -114,7 +135,17 @@ function SearchResults({ kind, query }: { kind: Kind; query: string }) {
           ))}
         </ul>
       )}
-      {result.data?.length === 50 && (
+      {hidden > 0 && onShowAll && (
+        <button
+          type="button"
+          className="secondary search-show-all"
+          onClick={() => onShowAll(kind)}
+        >
+          Show all {number.format(result.data!.length)}
+          {result.data!.length === 50 ? "+" : ""} {labels[kind].toLowerCase()}
+        </button>
+      )}
+      {!overview && result.data?.length === 50 && (
         <p className="subtle">
           Showing the first 50 matches. Use a more specific name to narrow the
           results.
@@ -188,11 +219,22 @@ export function SearchPage() {
           <p className="search-query-summary" role="status">
             Results for <strong>“{query}”</strong> · Most listened first
           </p>
-          <div
-            className={`search-result-groups ${kind ? "single-category" : ""}`}
-          >
+          <div className="search-result-groups">
             {(kind ? [kind] : kinds).map((type) => (
-              <SearchResults key={type} kind={type} query={query} />
+              <SearchResults
+                key={type}
+                kind={type}
+                query={query}
+                overview={!kind}
+                onShowAll={(value) => {
+                  change(query, value);
+                  // The overview unmounts with the button; keep focus on the
+                  // group the person asked to expand.
+                  requestAnimationFrame(() =>
+                    document.getElementById(`search-${value}`)?.focus(),
+                  );
+                }}
+              />
             ))}
           </div>
         </>

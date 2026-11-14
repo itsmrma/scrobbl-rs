@@ -439,31 +439,30 @@ export function MusicTemplatesSettings() {
 
   return (
     <article className="panel padded settings-form">
-      <h2>Template pagine musicali</h2>
+      <h2>Music page templates</h2>
       <p>
-        Personalizza la disposizione e i widget condivisi dalle pagine di
-        consultazione musicale. Le modifiche a un template vengono applicate a
-        tutte le pagine di quel tipo.
+        Customize the layout and widgets shared by the music pages. Changes to a
+        template apply to every page of that type.
       </p>
       <div className="form-grid">
         <label>
-          Tipo di pagina
+          Page type
           <Select
-            aria-label="Tipo di pagina"
+            aria-label="Page type"
             value={template}
             onChange={(val) => setTemplate(val as "artist" | "album" | "track")}
           >
-            <option value="artist">Pagina Artista</option>
-            <option value="album">Pagina Album</option>
-            <option value="track">Pagina Brano</option>
+            <option value="artist">Artist page</option>
+            <option value="album">Album page</option>
+            <option value="track">Track page</option>
           </Select>
         </label>
         {template === "artist" && (
           <label>
-            Artista di anteprima
+            Preview artist
             {artists.length > 0 ? (
               <Select
-                aria-label="Artista di anteprima"
+                aria-label="Preview artist"
                 value={selectedArtist}
                 onChange={(val) => setSelectedArtist(val)}
               >
@@ -476,18 +475,18 @@ export function MusicTemplatesSettings() {
             ) : (
               <span className="empty-preview-notice field-hint">
                 {loadingArtists
-                  ? "Caricamento artisti…"
-                  : "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota."}
+                  ? "Loading artists…"
+                  : "No artists in the archive. An empty preview will be used."}
               </span>
             )}
           </label>
         )}
         {template === "album" && (
           <label>
-            Album di anteprima
+            Preview album
             {albums.length > 0 ? (
               <Select
-                aria-label="Album di anteprima"
+                aria-label="Preview album"
                 value={selectedAlbum}
                 onChange={(val) => setSelectedAlbum(val)}
               >
@@ -500,18 +499,18 @@ export function MusicTemplatesSettings() {
             ) : (
               <span className="empty-preview-notice field-hint">
                 {loadingAlbums
-                  ? "Caricamento album…"
-                  : "Nessun album presente nell'archivio. Verrà usata un'anteprima vuota."}
+                  ? "Loading albums…"
+                  : "No albums in the archive. An empty preview will be used."}
               </span>
             )}
           </label>
         )}
         {template === "track" && (
           <label>
-            Brano di anteprima
+            Preview track
             {tracks.length > 0 ? (
               <Select
-                aria-label="Brano di anteprima"
+                aria-label="Preview track"
                 value={selectedTrack}
                 onChange={(val) => setSelectedTrack(val)}
               >
@@ -524,8 +523,8 @@ export function MusicTemplatesSettings() {
             ) : (
               <span className="empty-preview-notice field-hint">
                 {loadingTracks
-                  ? "Caricamento brani…"
-                  : "Nessun brano presente nell'archivio. Verrà usata un'anteprima vuota."}
+                  ? "Loading tracks…"
+                  : "No tracks in the archive. An empty preview will be used."}
               </span>
             )}
           </label>
@@ -539,10 +538,10 @@ export function MusicTemplatesSettings() {
         >
           <Icon>tune</Icon>{" "}
           {template === "artist"
-            ? "Personalizza template artista"
+            ? "Customize artist template"
             : template === "album"
-              ? "Personalizza template album"
-              : "Personalizza template brano"}
+              ? "Customize album template"
+              : "Customize track template"}
         </button>
       </div>
     </article>
@@ -1548,7 +1547,7 @@ export function DataRecovery({
   active: boolean;
 }) {
   return (
-    <article className="panel padded">
+    <article className="panel padded settings-form">
       <h2>Data & recovery</h2>
       <p>Your archive’s operations and saved reports.</p>
       <Link to="/activities" className="button secondary">
