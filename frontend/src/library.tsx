@@ -788,7 +788,16 @@ export function ImportPage({
             </li>
             <li>
               Reports stay in <Link to="/activities">Activities</Link>.
-              Reimporting the same data never multiplies listens.
+              Reimporting the same data, even renamed or reformatted, never
+              multiplies listens.
+            </li>
+            <li>
+              Raw JSON is discarded and source files are released after a
+              successful import, so keep your own ZIP for future reimports.
+            </li>
+            <li>
+              Podcasts and audiobooks are excluded. Music played under 30
+              seconds is kept but stays out of listening statistics.
             </li>
           </ul>
         </aside>

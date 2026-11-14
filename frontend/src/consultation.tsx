@@ -202,15 +202,15 @@ function Composition({
 }: {
   value: { actual_ms: number; estimated_ms: number; unknown_durations: number };
 }) {
-  if (value.estimated_ms <= 0) return null;
-  return (
-    <small className="time-composition">
-      {duration(value.actual_ms, true)} actual ·{" "}
-      {duration(value.estimated_ms, true)} estimated
-      {value.unknown_durations > 0 &&
-        ` · ${number.format(value.unknown_durations)} with unknown duration`}
-    </small>
-  );
+  // Only worth a line when part of the total is not plain measured time.
+  const parts = [
+    value.estimated_ms > 0 &&
+      `${duration(value.actual_ms, true)} actual · ${duration(value.estimated_ms, true)} estimated`,
+    value.unknown_durations > 0 &&
+      `${number.format(value.unknown_durations)} with unknown duration`,
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return <small className="time-composition">{parts.join(" · ")}</small>;
 }
 function Stats({
   totals,
@@ -614,7 +614,7 @@ function RankingsPanel({
     });
   return (
     <article
-      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""} ${scrolling ? "scrolling-rankings" : ""}`}
+      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""}`}
       aria-label={`${kind} rankings`}
     >
       <div className="ranking-panel-heading">

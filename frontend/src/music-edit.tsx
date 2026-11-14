@@ -166,6 +166,10 @@ export function MusicActions({
 
   return (
     <>
+      {/* Reserve the rating row while details load so the header never shifts. */}
+      {!details.data && !details.error && (
+        <div className="music-personal music-personal-pending" aria-hidden />
+      )}
       {details.data && (
         <div className="music-personal">
           <Stars

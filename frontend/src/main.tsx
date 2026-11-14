@@ -266,11 +266,15 @@ function Shell({
       } as Record<string, string>
     )[page] || "Page not found";
 
-  const musicKind = {
-    artists: "Artist",
-    albums: "Album",
-    tracks: "Track",
-  }[path.split("/")[2] ?? ""];
+  const kindSegment = path.split("/")[2];
+  const musicKind =
+    kindSegment === "artists"
+      ? "Artist"
+      : kindSegment === "albums"
+        ? "Album"
+        : kindSegment === "tracks"
+          ? "Track"
+          : undefined;
   const breadcrumb =
     page === "music" && musicKind ? `Music / ${musicKind}` : title;
 

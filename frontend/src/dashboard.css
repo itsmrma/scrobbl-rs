@@ -1478,8 +1478,11 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
+}
 
-  /* Three compact metrics side by side instead of three tall slabs. */
+/* Narrow widgets (phones, or a 2-column span on desktop): three compact
+   metrics side by side instead of three tall slabs. */
+@container (max-width: 480px) {
   .stats-grid {
     gap: 8px;
   }

@@ -3096,6 +3096,10 @@ dialog.artwork-lightbox {
   min-width: 0;
 }
 
+.music-personal-pending {
+  min-height: 44px;
+}
+
 .music-personal > a {
   overflow-wrap: anywhere;
 }
@@ -4672,6 +4676,7 @@ dialog.artwork-lightbox {
 
 .upload-limits > summary::after,
 .import-help > summary::after {
+  content: "expand_more";
   content: "expand_more" / "";
   margin-left: auto;
   font-family: "Material Icons Outlined";
@@ -4900,8 +4905,7 @@ dialog.artwork-lightbox {
   }
 
   .sidebar-resizer,
-  .desktop-collapse,
-  .topbar-breadcrumb {
+  .desktop-collapse {
     display: none !important;
   }
 
@@ -5066,6 +5070,11 @@ dialog.artwork-lightbox {
   .music-actions > .btn {
     flex: 1 1 auto;
     padding-inline: 10px;
+  }
+
+  /* The page title sits right below; the breadcrumb would only truncate. */
+  .topbar-breadcrumb {
+    display: none;
   }
 
   .label-long {
