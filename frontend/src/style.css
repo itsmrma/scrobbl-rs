@@ -5261,9 +5261,12 @@ dialog.artwork-lightbox {
     gap: 8px;
   }
 
+  /* Icon-only on phones, still a full 44px touch target. */
   .music-back {
+    min-width: 44px;
     margin: -8px -10px 0 0;
     padding-inline: 10px;
+    justify-content: center;
   }
 
   .music-back-label {
