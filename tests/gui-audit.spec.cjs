@@ -3768,8 +3768,13 @@ test("overview charts and activity reports have compact responsive layouts", asy
 test("period notices do not move controls and music artwork stays square", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await login(page);
+  await expect(page.locator("#dashboard-grid")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
   const controls = page.locator(".overview-heading .filters [role=combobox]");
   const before = await controls.evaluateAll((nodes) =>
     nodes.map((node) => ({

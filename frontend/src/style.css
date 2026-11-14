@@ -3102,6 +3102,8 @@ dialog.artwork-lightbox {
 }
 
 .music-back {
+  /* Override .btn's max-width: 100% so Firefox does not clamp to the auto track shrunk by margin-right: -10px. */
+  max-width: none;
   margin: 0 -10px 0 0;
   padding-inline: 10px 14px;
   color: var(--muted);
