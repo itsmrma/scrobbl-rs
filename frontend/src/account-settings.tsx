@@ -407,11 +407,29 @@ function AboutApplication() {
           </div>
           <div>
             <dt>Saved images</dt>
-            <dd>{number.format(data.images)}</dd>
+            <dd>
+              {number.format(data.images)} ({size(data.artwork_bytes)})
+            </dd>
           </div>
           <div>
-            <dt>Archive size</dt>
+            <dt>Listens &amp; catalog data</dt>
+            <dd>{size(data.listens_bytes)}</dd>
+          </div>
+          <div>
+            <dt>Archive database total</dt>
             <dd>{size(data.archive_bytes)}</dd>
+          </div>
+          <div>
+            <dt>AI models on disk</dt>
+            <dd>{size(data.models_bytes)}</dd>
+          </div>
+          <div>
+            <dt>Backups on disk</dt>
+            <dd>{size(data.backups_bytes)}</dd>
+          </div>
+          <div>
+            <dt>Total app data</dt>
+            <dd>{size(data.total_storage_bytes)}</dd>
           </div>
           <div>
             <dt>Database schema</dt>

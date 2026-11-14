@@ -113,6 +113,29 @@ export function CopyButton({
   );
 }
 
+export function Spinner({
+  size = "sm",
+}: {
+  size?: "sm" | "md" | "lg";
+} = {}) {
+  return (
+    <span
+      className={`spinner-dot${size !== "md" ? ` spinner-${size}` : ""}`}
+      aria-hidden="true"
+    />
+  );
+}
+
+export function LoadingDots() {
+  return (
+    <span className="loading-dots" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
 export function Cover({
   url,
   large = false,
@@ -209,8 +232,18 @@ export function Cover({
     };
   }, [failed, local]);
 
+  const downloading =
+    local && !failed && ready?.source !== source && cacheMiss === source;
+
   return local && !failed && ready?.source === source ? (
-    <span className={`cover image-frame ${large ? "large" : ""}`}>
+    <span
+      className={`cover image-frame ${large ? "large" : ""} ${!loaded ? "is-loading" : ""}`}
+    >
+      {!loaded && (
+        <span className="cover-loader" aria-hidden="true">
+          <Spinner size={large ? "lg" : "sm"} />
+        </span>
+      )}
       <img
         ref={(node) => {
           marker.current = node;
@@ -280,9 +313,14 @@ export function Cover({
       ref={(node) => {
         marker.current = node;
       }}
-      className={`cover placeholder ${large ? "large" : ""}`}
+      className={`cover placeholder ${large ? "large" : ""} ${downloading ? "is-loading" : ""}`}
+      aria-busy={downloading || undefined}
     >
-      <Icon>music_note</Icon>
+      {downloading ? (
+        <Spinner size={large ? "lg" : "sm"} />
+      ) : (
+        <Icon>music_note</Icon>
+      )}
       {children}
     </span>
   );

@@ -266,6 +266,21 @@ pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> R
     )
     .fetch_one(&state.read_db)
     .await?;
+    let artwork_bytes: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(LENGTH(bytes)), 0) FROM artwork WHERE bytes IS NOT NULL",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
+    let listens_bytes = archive_bytes.saturating_sub(artwork_bytes);
+    let models_bytes = match crate::ai::models::root(&state).await {
+        Ok(root) => crate::ai::models::directory_size(&root),
+        Err(_) => 0,
+    };
+    let backups_bytes = crate::ai::models::directory_size(&state.storage.directory.join("backups"));
+    let total_storage_bytes = u64::try_from(archive_bytes)
+        .unwrap_or(0)
+        .saturating_add(models_bytes)
+        .saturating_add(backups_bytes);
     Ok(Json(json!({
         "boot_id": state.application.boot_id,
         "version": env!("CARGO_PKG_VERSION"),
@@ -273,6 +288,11 @@ pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> R
         "started_at_ms": state.application.started_at_ms,
         "schema": schema,
         "archive_bytes": archive_bytes,
+        "artwork_bytes": artwork_bytes,
+        "listens_bytes": listens_bytes,
+        "models_bytes": models_bytes,
+        "backups_bytes": backups_bytes,
+        "total_storage_bytes": total_storage_bytes,
         "listens": listens,
         "tracks": tracks,
         "artists": artists,

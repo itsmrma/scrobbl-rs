@@ -234,13 +234,13 @@ async fn enable(state: &AppState, token: &str) -> Value {
 }
 
 #[tokio::test]
-async fn ai_is_off_by_default_and_download_requires_consent() {
+async fn ai_is_off_by_default_but_allows_model_download() {
     let _guard = TEST_LOCK.lock().await;
     catalog::clear_test_models();
     download_reset();
     let (dir, state, token) = setup().await;
     let data = synthetic_model();
-    let (url, server, handle) = fake_server(data.clone()).await;
+    let (url, _server, handle) = fake_server(data.clone()).await;
     let id = "test-off-by-default";
     catalog::register_test_model(test_model(id, url, sha256(&data), data.len() as u64));
 
@@ -269,19 +269,12 @@ async fn ai_is_off_by_default_and_download_requires_consent() {
         json!({}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{value}");
-    assert!(
-        value["error"]
-            .as_str()
-            .unwrap()
-            .contains("Enable AI before downloading")
-    );
-    let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind='model_download'")
-        .fetch_one(&state.db)
-        .await
-        .unwrap();
-    assert_eq!(jobs, 0);
-    assert!(server.requested_ranges().is_empty());
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert!(value["job_id"].as_str().is_some());
+    assert!(ai::download::run_once(&state).await.unwrap());
+    let ask_after = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_after["enabled"], false);
+    assert_eq!(ask_after["model_ready"], false);
     handle.abort();
 }
 

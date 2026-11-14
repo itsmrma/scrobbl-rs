@@ -75,6 +75,11 @@ export type ApplicationInfo = {
   started_at_ms: number;
   schema: number | null;
   archive_bytes: number;
+  artwork_bytes: number;
+  listens_bytes: number;
+  models_bytes: number;
+  backups_bytes: number;
+  total_storage_bytes: number;
   listens: number;
   tracks: number;
   artists: number;
@@ -227,6 +232,8 @@ export type ArtworkCandidatesResponse = {
   target_name: string;
   default_query: string;
   query: string;
+  current_image_url?: string | null;
+  current_provider?: string | null;
   candidates: ArtworkCandidate[];
   warnings: string[];
 };
@@ -385,9 +392,10 @@ export const api = {
     request<EntityChoice[]>(
       `/api/v1/consultation/choices/${kind}?${new URLSearchParams({ q })}`,
     ),
-  search: (kind: string, q: string) =>
+  search: (kind: string, q: string, signal?: AbortSignal) =>
     request<SearchItem[]>(
       `/api/v1/consultation/search/${kind}?${new URLSearchParams({ q })}`,
+      { signal },
     ),
   rankings: (kind: string, params: URLSearchParams) =>
     request<RankingPage>(`/api/v1/consultation/rankings/${kind}?${params}`),

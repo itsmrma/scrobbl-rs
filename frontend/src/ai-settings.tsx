@@ -8,7 +8,6 @@ import type {
 import { api } from "./api";
 import { Select } from "./select";
 import { Button, ErrorText, Icon, Modal, number, useToast } from "./ui";
-import { SkeletonCard } from "./skeleton";
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -48,9 +47,22 @@ function bytes(value: number): string {
   return `${number.format(value)} B`;
 }
 
-function percent(done: number, total: number): number {
-  if (!Number.isFinite(total) || total <= 0) return 0;
-  return Math.max(0, Math.min(100, (done / total) * 100));
+function speed(bps: number): string {
+  if (!Number.isFinite(bps) || bps <= 0) return "";
+  if (bps >= 1024 * 1024) return `${(bps / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (bps >= 1024) return `${(bps / 1024).toFixed(0)} KB/s`;
+  return `${number.format(bps)} B/s`;
+}
+
+function eta(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${seconds}s left`;
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (mins < 60) return secs > 0 ? `${mins}m ${secs}s left` : `${mins}m left`;
+  const hours = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hours}h ${remMins}m left` : `${hours}h left`;
 }
 
 function evalLabel(model: AiCatalogModel): string {
@@ -88,15 +100,37 @@ function DownloadProgress({
   const failed = job.state === "failed";
   const cancelled = job.state === "cancelled";
   if (!running && !failed && !cancelled) return null;
+  const speedText =
+    running && job.bytes_per_second ? speed(job.bytes_per_second) : "";
+  const etaText =
+    running && job.eta_seconds !== null && job.eta_seconds !== undefined
+      ? eta(job.eta_seconds)
+      : "";
+  const metrics = [
+    `${bytes(job.processed_bytes)} of ${bytes(job.expected_bytes)}`,
+    speedText,
+    etaText,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <div className="ai-progress">
       <div className="ai-progress-head">
-        <span>
-          {running ? "Downloading" : failed ? "Download failed" : "Cancelled"}
+        <span className="ai-progress-status">
+          {running && (
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+          )}
+          {running
+            ? job.state === "queued"
+              ? "Starting download…"
+              : job.state === "waiting"
+                ? "Retrying download…"
+                : "Downloading"
+            : failed
+              ? "Download failed"
+              : "Cancelled"}
         </span>
-        <span className="tabular-nums">
-          {bytes(job.processed_bytes)} of {bytes(job.expected_bytes)}
-        </span>
+        <span className="tabular-nums">{metrics}</span>
       </div>
       <progress
         value={job.processed_bytes}
@@ -113,8 +147,12 @@ function DownloadProgress({
       )}
       {running && (
         <Button variant="secondary" onClick={onCancel} disabled={busy}>
-          <Icon>close</Icon>
-          Cancel download
+          {busy ? (
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+          ) : (
+            <Icon>close</Icon>
+          )}
+          {busy ? "Cancelling…" : "Cancel download"}
         </Button>
       )}
     </div>
@@ -123,7 +161,6 @@ function DownloadProgress({
 
 function ModelCard({
   model,
-  enabled,
   activeModel,
   busy,
   onDownload,
@@ -132,7 +169,6 @@ function ModelCard({
   onDelete,
 }: {
   model: AiCatalogModel;
-  enabled: boolean;
   activeModel: string | null;
   busy: string;
   onDownload: () => void;
@@ -142,9 +178,7 @@ function ModelCard({
 }) {
   const job = model.download_job;
   const running = isRunning(job);
-  const canDownload =
-    enabled && model.selectable && !model.installed && !running;
-  const progress = job ? percent(job.processed_bytes, job.expected_bytes) : 0;
+  const canDownload = model.selectable && !model.installed && !running;
   return (
     <article className="ai-card" aria-labelledby={`ai-model-${model.id}`}>
       <div className="ai-card-head">
@@ -220,19 +254,11 @@ function ModelCard({
         </p>
       )}
       {model.error && <p className="form-error">{model.error}</p>}
-      {running && (
-        <div className="ai-inline-progress" aria-hidden="true">
-          <span style={{ width: `${progress}%` }} />
-        </div>
-      )}
       <DownloadProgress
         model={model}
         onCancel={onCancel}
         busy={busy === model.id}
       />
-      {model.selectable && !model.installed && !running && !enabled && (
-        <p className="field-hint">Enable AI and save to start a download.</p>
-      )}
       <div className="ai-actions">
         {model.selectable && !model.installed && !running && (
           <Button
@@ -240,8 +266,12 @@ function ModelCard({
             onClick={onDownload}
             disabled={!canDownload || busy === model.id}
           >
-            <Icon>download</Icon>
-            Download
+            {busy === model.id ? (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            ) : (
+              <Icon>download</Icon>
+            )}
+            {busy === model.id ? "Starting…" : "Download"}
           </Button>
         )}
         {model.installed && model.selectable && activeModel !== model.id && (
@@ -399,7 +429,10 @@ export function AiSettingsSection() {
         {error ? (
           <ErrorText>{error}</ErrorText>
         ) : (
-          <SkeletonCard label="Loading AI settings and model catalog." />
+          <div className="panel padded ai-loading-panel" role="status">
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            <span>Loading AI settings and model catalog…</span>
+          </div>
         )}
       </div>
     );
@@ -428,9 +461,9 @@ export function AiSettingsSection() {
           number is calculated by scrobbl.rs.
         </p>
         <p className="field-hint">
-          AI is off by default. Nothing is downloaded or loaded until you enable
-          it and choose a model. The only network request is the model download
-          you start.
+          AI is off by default. You can download a model now or enable AI when
+          ready; the model only loads when AI is turned on. The only network
+          request is the model download you start.
         </p>
         {!settings.runtime_available && (
           <div className="notice notice-warning" role="status">
@@ -507,7 +540,11 @@ export function AiSettingsSection() {
               variant="primary"
               disabled={busy === "settings"}
             >
-              <Icon>save</Icon>
+              {busy === "settings" ? (
+                <span className="spinner-dot spinner-sm" aria-hidden="true" />
+              ) : (
+                <Icon>save</Icon>
+              )}
               {busy === "settings" ? "Saving…" : "Save AI settings"}
             </Button>
           </div>
@@ -532,7 +569,6 @@ export function AiSettingsSection() {
             <ModelCard
               key={model.id}
               model={model}
-              enabled={settings.enabled}
               activeModel={activeModel}
               busy={busy}
               onDownload={() =>
@@ -635,8 +671,12 @@ export function AiSettingsSection() {
                 : "This build does not include the inference runtime."
             }
           >
-            <Icon>play_circle_outline</Icon>
-            Test active model
+            {busy === "test" ? (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            ) : (
+              <Icon>play_circle_outline</Icon>
+            )}
+            {busy === "test" ? "Testing model…" : "Test active model"}
           </Button>
         </div>
         <form
@@ -677,8 +717,12 @@ export function AiSettingsSection() {
             variant="secondary"
             disabled={busy === "settings"}
           >
-            <Icon>save</Icon>
-            Save options
+            {busy === "settings" ? (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            ) : (
+              <Icon>save</Icon>
+            )}
+            {busy === "settings" ? "Saving…" : "Save options"}
           </Button>
         </form>
       </article>

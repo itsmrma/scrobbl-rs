@@ -162,7 +162,11 @@ export function AskContextPanel({
               variant="primary"
               disabled={disabled || loading || !question.trim()}
             >
-              <Icon>send</Icon>
+              {loading ? (
+                <span className="spinner-dot spinner-sm" aria-hidden="true" />
+              ) : (
+                <Icon>send</Icon>
+              )}
               {loading ? "Asking…" : "Ask"}
             </Button>
           </form>
@@ -177,6 +181,15 @@ export function AskContextPanel({
 
           {loading && (
             <article className="ask-loading" aria-busy="true">
+              <div className="ask-loading-status" role="status">
+                <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                <span>Thinking</span>
+                <span className="loading-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </div>
               <SkeletonBlock height={18} />
               <SkeletonBlock height={44} />
               <SkeletonBlock height={120} />
@@ -300,6 +313,15 @@ function AvailabilityNotices({
   if (!status) {
     return (
       <article className="ask-loading" aria-busy="true">
+        <div className="ask-loading-status" role="status">
+          <span className="spinner-dot spinner-sm" aria-hidden="true" />
+          <span>Checking AI status</span>
+          <span className="loading-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </div>
         <SkeletonBlock height={18} />
         <SkeletonBlock height={44} />
       </article>
@@ -341,8 +363,13 @@ function AvailabilityNotices({
 
       {status.enabled && status.model_loading && (
         <Notice title="The model is loading" tone="info">
-          Ask will be ready in a moment. Nothing else in the application is
-          blocked.
+          <span className="inline-loading">
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            <span>
+              Ask will be ready in a moment. Nothing else in the application is
+              blocked.
+            </span>
+          </span>
           <div className="ask-notice-action">
             <Link to="/settings/ai" className="btn btn-secondary secondary">
               <Icon>settings</Icon>

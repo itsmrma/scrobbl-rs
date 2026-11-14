@@ -14,13 +14,82 @@ use crate::{
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{
+    Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 pub const JOB_KIND: &str = "model_download";
 const REPORT_BYTES: u64 = 512 * 1024;
+const REPORT_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_ATTEMPTS: i64 = 5;
+
+#[derive(Clone, Debug)]
+struct DownloadRate {
+    last_at: Instant,
+    last_bytes: u64,
+    bytes_per_second: f64,
+}
+
+fn rates() -> &'static Mutex<HashMap<String, DownloadRate>> {
+    static RATES: OnceLock<Mutex<HashMap<String, DownloadRate>>> = OnceLock::new();
+    RATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn reset_rate(job_id: &str, bytes: u64) {
+    if let Ok(mut map) = rates().lock() {
+        map.insert(
+            job_id.to_string(),
+            DownloadRate {
+                last_at: Instant::now(),
+                last_bytes: bytes,
+                bytes_per_second: 0.0,
+            },
+        );
+    }
+}
+
+fn record_rate(job_id: &str, bytes: u64) {
+    if let Ok(mut map) = rates().lock() {
+        let now = Instant::now();
+        let entry = map.entry(job_id.to_string()).or_insert(DownloadRate {
+            last_at: now,
+            last_bytes: bytes,
+            bytes_per_second: 0.0,
+        });
+        let elapsed = now.duration_since(entry.last_at).as_secs_f64();
+        let delta = bytes.saturating_sub(entry.last_bytes);
+        if elapsed >= 0.05 && delta > 0 {
+            let instant_bps = delta as f64 / elapsed;
+            entry.bytes_per_second = if entry.bytes_per_second <= 0.0 {
+                instant_bps
+            } else {
+                entry.bytes_per_second * 0.65 + instant_bps * 0.35
+            };
+            entry.last_at = now;
+            entry.last_bytes = bytes;
+        }
+    }
+}
+
+fn clear_rate(job_id: &str) {
+    if let Ok(mut map) = rates().lock() {
+        map.remove(job_id);
+    }
+}
+
+pub fn current_speed_bps(job_id: &str) -> Option<u64> {
+    let map = rates().lock().ok()?;
+    let entry = map.get(job_id)?;
+    if entry.bytes_per_second > 0.0 {
+        Some(entry.bytes_per_second.round() as u64)
+    } else {
+        None
+    }
+}
 
 static AVAILABLE_OVERRIDE_SET: AtomicBool = AtomicBool::new(false);
 static AVAILABLE_OVERRIDE: AtomicU64 = AtomicU64::new(0);
@@ -104,6 +173,7 @@ struct Finish<'a> {
 }
 
 async fn finish(state: &AppState, job: &Job, member: &str, finish: Finish<'_>) {
+    clear_rate(&job.id);
     let processed = i64::try_from(finish.processed).unwrap_or(i64::MAX);
     let _ = sqlx::query(
         "UPDATE jobs SET state=?,outcome=?,error_code=?,phase=?,processed=?,retry_at_ms=NULL,updated_at_ms=? WHERE id=?",
@@ -343,6 +413,8 @@ pub async fn run_claimed(state: &AppState, job: Job) -> Result<()> {
         }
     };
     let mut last_report = downloaded;
+    let mut last_report_at = Instant::now();
+    reset_rate(&job.id, downloaded);
     let mut response = response;
     loop {
         let chunk = match response.chunk().await {
@@ -351,6 +423,7 @@ pub async fn run_claimed(state: &AppState, job: Job) -> Result<()> {
             Err(_) => {
                 let _ = file.sync_all().await;
                 drop(file);
+                clear_rate(&job.id);
                 wait_for_retry(state, &job, "model_download_retry", job.attempt).await;
                 return Ok(());
             }
@@ -363,12 +436,16 @@ pub async fn run_claimed(state: &AppState, job: Job) -> Result<()> {
         }
         if file.write_all(&chunk).await.is_err() {
             drop(file);
+            clear_rate(&job.id);
             wait_for_retry(state, &job, "model_download_retry", job.attempt).await;
             return Ok(());
         }
         downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded.saturating_sub(last_report) >= REPORT_BYTES {
+        if downloaded.saturating_sub(last_report) >= REPORT_BYTES
+            || last_report_at.elapsed() >= REPORT_INTERVAL
+        {
             let _ = file.flush().await;
+            record_rate(&job.id, downloaded);
             if !update_progress(state, &job, &member, downloaded, "downloading").await {
                 drop(file);
                 remove_partial(&part_path);
@@ -382,6 +459,7 @@ pub async fn run_claimed(state: &AppState, job: Job) -> Result<()> {
                 return Ok(());
             }
             last_report = downloaded;
+            last_report_at = Instant::now();
             if cancel_requested(state, &job.id).await {
                 let _ = file.sync_all().await;
                 drop(file);

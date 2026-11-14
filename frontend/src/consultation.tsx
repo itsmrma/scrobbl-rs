@@ -70,7 +70,15 @@ import {
 import type { Kind } from "./selection";
 type Selection = ReturnType<typeof useSelection>;
 
-function TimeHelp() {
+function TimeHelp({
+  totals,
+}: {
+  totals?: {
+    actual_ms: number;
+    estimated_ms: number;
+    unknown_durations: number;
+  };
+}) {
   const id = useId();
   const button = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState<Style>();
@@ -159,6 +167,24 @@ function TimeHelp() {
           style={position}
         >
           <strong>How we calculate listening time</strong>
+          {totals && (
+            <dl className="time-explanation-breakdown tabular-nums">
+              <div>
+                <dt>Actual</dt>
+                <dd>{duration(totals.actual_ms, true)}</dd>
+              </div>
+              <div>
+                <dt>Estimated</dt>
+                <dd>{duration(totals.estimated_ms, true)}</dd>
+              </div>
+              {totals.unknown_durations > 0 && (
+                <div>
+                  <dt>Unknown duration</dt>
+                  <dd>{number.format(totals.unknown_durations)} listens</dd>
+                </div>
+              )}
+            </dl>
+          )}
           <span>
             Actual time is playback time reported by the source, rather than the
             full track length.
@@ -250,7 +276,7 @@ function Stats({
         </article>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>
-            Listening time <TimeHelp />
+            Listening time <TimeHelp totals={loading ? undefined : totals} />
           </span>
           <strong id={ids ? "total-time" : undefined}>
             {loading ? (
@@ -259,7 +285,6 @@ function Stats({
               timeValue(totals)
             )}
           </strong>
-          {!loading && <Composition value={totals} />}
         </article>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>Different tracks</span>

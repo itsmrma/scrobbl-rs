@@ -210,9 +210,13 @@ export function MusicActions({
               kind === "tracks" ? "Edit details" : "Edit details & image"
             }
           >
-            <Icon>edit</Icon>Edit
-            <span className="label-long">
-              &nbsp;details{kind !== "tracks" && " & image"}
+            <Icon>edit</Icon>
+            <span>
+              Edit
+              <span className="label-long">
+                {" "}
+                details{kind !== "tracks" && " & image"}
+              </span>
             </span>
           </Link>
           {children}

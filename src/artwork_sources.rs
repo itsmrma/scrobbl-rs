@@ -741,6 +741,8 @@ pub struct ArtworkCandidatesResponse {
     pub target_name: String,
     pub default_query: String,
     pub query: String,
+    pub current_image_url: Option<String>,
+    pub current_provider: Option<String>,
     pub candidates: Vec<ArtworkCandidate>,
     pub warnings: Vec<String>,
 }
@@ -975,6 +977,19 @@ pub async fn candidates(
     let found = target(&mut conn, &target_kind, &target_id)
         .await?
         .ok_or(AppError::NotFound)?;
+    let current_credit = credit_in(&mut conn, &target_kind, &target_id)
+        .await
+        .ok()
+        .flatten();
+    let current_source: Option<String> = sqlx::query_scalar(
+        "SELECT source FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
+    )
+    .bind(&target_kind)
+    .bind(&target_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .ok()
+    .flatten();
     let settings = artwork_settings::read(&mut conn).await?;
     drop(conn);
     let default_query = match found.artists.first() {
@@ -1018,6 +1033,8 @@ pub async fn candidates(
         target_name: found.name,
         default_query,
         query,
+        current_image_url: current_credit.as_ref().map(|c| c.image_url.clone()),
+        current_provider: current_source.or_else(|| current_credit.map(|c| c.provider)),
         candidates,
         warnings,
     }))
