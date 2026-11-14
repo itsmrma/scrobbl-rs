@@ -9,7 +9,7 @@ import type {
   Query,
 } from "./generated";
 import { api } from "./api";
-import { InterpretationChips } from "./ask-chips";
+import { applyCandidate, InterpretationChips } from "./ask-chips";
 import { ResultCard } from "./ask";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
@@ -107,14 +107,7 @@ export function AskContextPanel({
 
   function choose(candidate: EntityCandidate) {
     if (!response?.query) return;
-    void runQuery({
-      ...response.query,
-      entity: {
-        kind: candidate.kind,
-        name: candidate.name,
-        id: candidate.id,
-      },
-    });
+    void runQuery(applyCandidate(response.query, candidate));
   }
 
   const unavailable =

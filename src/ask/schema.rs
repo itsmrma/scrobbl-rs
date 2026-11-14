@@ -81,6 +81,9 @@ model_enum! {
         LastPlay = "last_play",
         Streak = "streak",
         Milestones = "milestones",
+        Rank = "rank",
+        Share = "share",
+        ListeningDays = "listening_days",
         Unsupported = "unsupported",
     }
 }
@@ -105,6 +108,27 @@ model_enum! {
         LastMonth = "last_month",
         ThisYear = "this_year",
         LastYear = "last_year",
+        Last7Days = "last_7_days",
+        Last30Days = "last_30_days",
+        Last365Days = "last_365_days",
+    }
+}
+
+model_enum! {
+    pub ModelMonth {
+        None = "none",
+        January = "january",
+        February = "february",
+        March = "march",
+        April = "april",
+        May = "may",
+        June = "june",
+        July = "july",
+        August = "august",
+        September = "september",
+        October = "october",
+        November = "november",
+        December = "december",
     }
 }
 
@@ -160,18 +184,32 @@ model_enum! {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelOutput {
+    /// v2 fields default so recorded v1 outputs still parse; the grammar
+    /// always emits them.
+    #[serde(default)]
+    pub artist: String,
     pub group_by: ModelGroupBy,
     pub limit: ModelLimit,
     pub metric: ModelMetric,
+    #[serde(default = "no_month")]
+    pub month: ModelMonth,
     pub name: String,
     pub order: ModelOrder,
     pub period: ModelPeriod,
     pub target: ModelTarget,
     pub weekday: ModelWeekday,
+    #[serde(default)]
+    pub year: i64,
 }
 
-const FIELD_ORDER: [&str; 8] = [
-    "group_by", "limit", "metric", "name", "order", "period", "target", "weekday",
+fn no_month() -> ModelMonth {
+    ModelMonth::None
+}
+
+/// Alphabetical, matching serde_json's map order used by the grammar.
+const FIELD_ORDER: [&str; 11] = [
+    "artist", "group_by", "limit", "metric", "month", "name", "order", "period", "target",
+    "weekday", "year",
 ];
 
 fn enum_schema(values: &[&str], description: &str) -> Value {
@@ -186,6 +224,13 @@ fn enum_schema(values: &[&str], description: &str) -> Value {
 /// use explicit `none`/`any` enum values instead of missing keys.
 pub fn schema_json() -> Value {
     let mut properties = Map::new();
+    properties.insert(
+        "artist".into(),
+        json!({
+            "type": "string",
+            "description": "Literal artist name that narrows a named track or album (\"Show by Ado\"), or whose tracks/albums are counted or grouped (\"my top songs by Ado\"); empty otherwise.",
+        }),
+    );
     // Insertion order matches `FIELD_ORDER`; serde_json's default map sorts
     // alphabetically, which is the same order, so the grammar stays stable.
     properties.insert(
@@ -207,6 +252,13 @@ pub fn schema_json() -> Value {
         enum_schema(
             ModelMetric::VALUES,
             "Requested metric; unsupported means the question is outside the schema.",
+        ),
+    );
+    properties.insert(
+        "month".into(),
+        enum_schema(
+            ModelMonth::VALUES,
+            "Calendar month named by the question, or none.",
         ),
     );
     properties.insert(
@@ -238,11 +290,18 @@ pub fn schema_json() -> Value {
             "Weekday filter, or any when no weekday is mentioned.",
         ),
     );
+    properties.insert(
+        "year".into(),
+        json!({
+            "type": "integer",
+            "description": "Four-digit calendar year named by the question, or 0 when no year is named.",
+        }),
+    );
 
     json!({
-        "$id": "https://scrobbl.rs/schemas/ask.v1.json",
+        "$id": "https://scrobbl.rs/schemas/ask.v2.json",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Ask model output v1",
+        "title": "Ask model output v2",
         "description": "Model-facing Ask output. Rust maps it to the shared DSL, validates it and computes every number.",
         "type": "object",
         "additionalProperties": false,
@@ -269,6 +328,9 @@ fn metric(self_metric: ModelMetric) -> Option<Metric> {
         ModelMetric::LastPlay => Metric::LastPlay,
         ModelMetric::Streak => Metric::Streak,
         ModelMetric::Milestones => Metric::Milestones,
+        ModelMetric::Rank => Metric::Rank,
+        ModelMetric::Share => Metric::Share,
+        ModelMetric::ListeningDays => Metric::ListeningDays,
         ModelMetric::Unsupported => return None,
     })
 }
@@ -293,7 +355,28 @@ fn period(period: ModelPeriod) -> Period {
         ModelPeriod::LastMonth => Period::LastMonth,
         ModelPeriod::ThisYear => Period::ThisYear,
         ModelPeriod::LastYear => Period::LastYear,
+        ModelPeriod::Last7Days => Period::Last7Days,
+        ModelPeriod::Last30Days => Period::Last30Days,
+        ModelPeriod::Last365Days => Period::Last365Days,
     }
+}
+
+fn month(month: ModelMonth) -> Option<u8> {
+    Some(match month {
+        ModelMonth::None => return None,
+        ModelMonth::January => 1,
+        ModelMonth::February => 2,
+        ModelMonth::March => 3,
+        ModelMonth::April => 4,
+        ModelMonth::May => 5,
+        ModelMonth::June => 6,
+        ModelMonth::July => 7,
+        ModelMonth::August => 8,
+        ModelMonth::September => 9,
+        ModelMonth::October => 10,
+        ModelMonth::November => 11,
+        ModelMonth::December => 12,
+    })
 }
 
 fn weekday(weekday: ModelWeekday) -> Option<Weekday> {
@@ -353,27 +436,58 @@ impl ModelOutput {
             });
         };
 
-        let entity = match entity_kind(self.target) {
+        let artist = self.artist.trim();
+        let artist_entity = (!artist.is_empty()).then(|| Entity {
+            kind: EntityKind::Artist,
+            name: artist.to_string(),
+            id: None,
+        });
+        let (entity, scope) = match entity_kind(self.target) {
             None => {
                 if !self.name.trim().is_empty() {
                     return Ok(invalid_output());
                 }
-                None
+                // "My top songs by Ado": the artist is the subject.
+                (artist_entity, None)
             }
             Some(kind) => {
                 let name = self.name.trim();
                 if name.is_empty() {
                     // A contextual question may not repeat the entity name.
                     // Rust fills it from the request context before execution.
-                    None
+                    (
+                        if kind == EntityKind::Artist {
+                            artist_entity
+                        } else {
+                            None
+                        },
+                        None,
+                    )
+                } else if kind == EntityKind::Artist {
+                    (
+                        Some(Entity {
+                            kind,
+                            name: name.to_string(),
+                            id: None,
+                        }),
+                        None,
+                    )
                 } else {
-                    Some(Entity {
-                        kind,
-                        name: name.to_string(),
-                        id: None,
-                    })
+                    (
+                        Some(Entity {
+                            kind,
+                            name: name.to_string(),
+                            id: None,
+                        }),
+                        artist_entity,
+                    )
                 }
             }
+        };
+        let year = match self.year {
+            0 => None,
+            year @ 1900..=2200 => Some(year as i32),
+            _ => return Ok(invalid_output()),
         };
 
         let group_by = group_by(self.group_by);
@@ -394,9 +508,15 @@ impl ModelOutput {
         let query = Query {
             metric,
             entity,
-            period: period(self.period),
-            year: None,
-            month: None,
+            scope,
+            // A named year replaces the relative period.
+            period: if year.is_some() {
+                Period::AllTime
+            } else {
+                period(self.period)
+            },
+            year,
+            month: month(self.month),
             weekday: weekday(self.weekday),
             hour: None,
             source: None,
@@ -453,6 +573,7 @@ mod tests {
             ("target", ModelTarget::VALUES),
             ("period", ModelPeriod::VALUES),
             ("weekday", ModelWeekday::VALUES),
+            ("month", ModelMonth::VALUES),
             ("group_by", ModelGroupBy::VALUES),
             ("order", ModelOrder::VALUES),
             ("limit", ModelLimit::VALUES),

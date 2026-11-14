@@ -32,7 +32,10 @@ const listeners = new Set<() => void>();
 const priorityQueue: (() => Promise<void>)[] = [];
 const browseQueue: (() => Promise<void>)[] = [];
 const requests = new Map<string, Promise<Blob>>();
-let busy = false;
+let running = 0;
+// The server resolves several images at once and paces each provider itself.
+// Two at a time keeps most of the browser's connections free for the page.
+const PARALLEL = 2;
 
 const artworkRevisions = new Map<string, number>();
 let globalArtworkRevision = 0;
@@ -86,15 +89,12 @@ function publish(next: ArtworkActivity) {
 }
 
 function isBrowseSuppressed(): boolean {
-  return !!snapshot.serverSync && !snapshot.serverSync.paused;
+  // Browse downloads and the library queue share the server's provider
+  // pacing, so visible images no longer wait for the background sync.
+  return false;
 }
 
-/**
- * Coordinates client on-the-fly browse artwork downloads (#155) with active
- * server-side full-library artwork jobs. While an unpaused server `artwork`
- * job is running/queued, non-priority browse fetches defer so they do not
- * compete for the single provider rate-limit slot.
- */
+/** Mirrors the server-side library artwork job for the settings and activity views. */
 export function syncServerArtworkJobs(jobs: Activity[]) {
   const activeJob = jobs.find(
     (j) =>
@@ -118,38 +118,35 @@ export function syncServerArtworkJobs(jobs: Activity[]) {
     publish({
       ...snapshot,
       serverSync: nextSync,
-      deferred: nextSync && !nextSync.paused ? browseQueue.length : 0,
+      deferred: 0,
     });
   }
   if (prevSuppressed && !isBrowseSuppressed() && browseQueue.length > 0) {
-    void pump();
+    pump();
   }
 }
 
-async function pump() {
-  if (busy) return;
-  busy = true;
-  try {
-    while (
-      priorityQueue.length > 0 ||
-      (!isBrowseSuppressed() && browseQueue.length > 0)
-    ) {
-      const nextTask =
-        priorityQueue.shift() ??
-        (!isBrowseSuppressed() ? browseQueue.shift() : undefined);
-      if (!nextTask) break;
-      if (
-        snapshot.deferred !== (isBrowseSuppressed() ? browseQueue.length : 0)
-      ) {
-        publish({
-          ...snapshot,
-          deferred: isBrowseSuppressed() ? browseQueue.length : 0,
-        });
-      }
-      await nextTask();
-    }
-  } finally {
-    busy = false;
+function pump() {
+  while (
+    running < PARALLEL &&
+    (priorityQueue.length > 0 ||
+      (!isBrowseSuppressed() && browseQueue.length > 0))
+  ) {
+    const nextTask =
+      priorityQueue.shift() ??
+      (!isBrowseSuppressed() ? browseQueue.shift() : undefined);
+    if (!nextTask) break;
+    running += 1;
+    void nextTask().finally(() => {
+      running -= 1;
+      pump();
+    });
+  }
+  if (snapshot.deferred !== (isBrowseSuppressed() ? browseQueue.length : 0)) {
+    publish({
+      ...snapshot,
+      deferred: isBrowseSuppressed() ? browseQueue.length : 0,
+    });
   }
 }
 
@@ -191,7 +188,7 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
         setTimeout(() => {
           if (priority) priorityQueue.push(run);
           else browseQueue.push(run);
-          void pump();
+          pump();
         }, delay);
       } else {
         reject(error);
@@ -231,7 +228,7 @@ export function queueArtwork(url: string, priority = false): Promise<Blob> {
         },
   );
 
-  void pump();
+  pump();
   return result;
 }
 

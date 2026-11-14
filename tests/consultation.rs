@@ -413,8 +413,13 @@ async fn browsing_combines_filters_hides_short_plays_and_distinguishes_missing_t
         )
         .await;
         assert!(page["totals"]["listens"].as_i64().unwrap() > 0);
-        if kind != "artists" {
+        // A track lists every credited artist; an album only its album
+        // artists (the primary credit), not a guest on one song.
+        if kind == "tracks" {
             assert_eq!(page["artists"].as_array().unwrap().len(), 2);
+        }
+        if kind == "albums" {
+            assert_eq!(page["artists"].as_array().unwrap().len(), 1);
         }
         if kind == "tracks" {
             assert_eq!(page["album_id"], album);

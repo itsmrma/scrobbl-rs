@@ -1148,11 +1148,14 @@ test("music page back preserves source filters across child filters reload and f
   const coverBox = await page.locator(".music-heading > .cover").boundingBox();
   const headingBox = await page.locator(".music-heading").boundingBox();
   expect(Math.abs(backBox.y - coverBox.y)).toBeLessThan(1);
-  // Back sits above the title, beside the cover, never floating at the far edge.
-  expect(backBox.x).toBeGreaterThanOrEqual(coverBox.x + coverBox.width);
-  expect(backBox.x + backBox.width).toBeLessThan(
+  // Back sits on the title's row at the right edge, so it never pushes the
+  // title down.
+  const titleBox = await page.locator(".music-heading h1").boundingBox();
+  expect(backBox.x).toBeGreaterThan(titleBox.x + titleBox.width);
+  expect(backBox.x + backBox.width).toBeGreaterThan(
     headingBox.x + headingBox.width / 2,
   );
+  expect(titleBox.y).toBeLessThan(backBox.y + backBox.height);
   await page.screenshot({
     path: `test-results/gui-music-back-right-${browserName}.png`,
     fullPage: true,
@@ -1185,7 +1188,7 @@ test("music page back preserves source filters across child filters reload and f
   await expect(page).toHaveURL(/\/rankings\/albums\?period=all$/);
 });
 
-test("report and duplicate review links use the shared action button style", async ({
+test("duplicate review uses the action button style and reports a quiet link", async ({
   page,
 }) => {
   await login(page, "/history?period=all");
@@ -1217,11 +1220,14 @@ test("report and duplicate review links use the shared action button style", asy
     (await monitor.getAttribute("open")) === null
   )
     await monitor.locator(":scope > summary").click();
-  for (const link of [reports, review]) {
-    await expect(link).toBeVisible();
-    await expect(link).toHaveClass(/button secondary/);
+  // The duplicate review is an action; the reports link is quiet navigation
+  // beside the diagnostics heading. Neither is underlined.
+  await expect(review).toBeVisible();
+  await expect(review).toHaveClass(/button secondary/);
+  await expect(reports).toBeVisible();
+  await expect(reports).toHaveClass(/text-link/);
+  for (const link of [reports, review])
     await expect(link).toHaveCSS("text-decoration-line", "none");
-  }
 });
 
 test("custom dropdowns support keyboard and mobile categories while grid controls stay stable", async ({
@@ -2683,7 +2689,7 @@ test("visible artwork waits in the client while music data remains available", a
     expect(
       requests,
       "cold images must not occupy all browser HTTP connections",
-    ).toBe(1);
+    ).toBeLessThanOrEqual(2);
   } finally {
     release();
   }

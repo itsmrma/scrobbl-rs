@@ -13,6 +13,7 @@ import {
   Heading,
   Icon,
   Modal,
+  number,
   useToast,
 } from "./ui";
 import { SpotifyConnectButton } from "./spotify-connect";
@@ -689,7 +690,7 @@ function RefreshIntervals({
   }, [status.sync_seconds, status.now_playing_seconds]);
   return (
     <form
-      className="settings-form"
+      className="settings-form refresh-intervals"
       onSubmit={async (event) => {
         event.preventDefault();
         setBusy(true);
@@ -718,10 +719,10 @@ function RefreshIntervals({
     >
       <h3>Refresh intervals</h3>
       <p>
-        Saved for this instance and shared across browsers. Changes apply while
-        the server is running.
+        Shared by every browser and applied without restarting. Listens come
+        from collection; now playing only feeds the live card.
       </p>
-      <div className="form-grid">
+      <div className="interval-fields">
         <label>
           Collection interval (seconds)
           <input
@@ -752,17 +753,16 @@ function RefreshIntervals({
             }
           />
         </label>
+        <button className="secondary" disabled={busy || !dirty}>
+          Save intervals
+        </button>
       </div>
       <p className="subtle">
-        Collection: at least 60 seconds. Now playing: 0 to disable live tracking
-        (saving API quota like Stats.fm and Maloja), or 15–86400 seconds while
-        the page is visible. Spotify availability and request limits can add
-        delay.
+        Collection: 60 to 86400 seconds. Now playing: 0 turns it off, otherwise
+        30 to 86400 seconds while a page is open. Spotify shares one request
+        quota across your developer apps, so slower polling avoids pauses.
       </p>
       <ErrorText>{error}</ErrorText>
-      <button className="secondary" disabled={busy || !dirty}>
-        Save intervals
-      </button>
     </form>
   );
 }
@@ -823,6 +823,26 @@ export function SpotifyConnectedCard({
         : "Active — awaiting first collection",
     }[status.collection] || status.collection;
 
+  const coolingDown = !!status.retry_at_ms && status.retry_at_ms > Date.now();
+  const nextAttempt = coolingDown
+    ? date(status.retry_at_ms, preferences)
+    : status.connected && status.last_attempt_ms
+      ? date(
+          Math.max(
+            Date.now(),
+            status.last_attempt_ms + status.sync_seconds * 1000,
+          ),
+          preferences,
+        )
+      : "After authorization";
+  const limitStatus = waiting
+    ? `${isQuota ? "Developer quota exceeded" : "Request limit"} · retry ${date(status.retry_at_ms, preferences)} (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"})`
+    : status.rate_limit_reason === "QUOTA_EXCEEDED"
+      ? "Developer quota exceeded · waiting for Spotify"
+      : status.rate_limit_reason
+        ? "Request limit · waiting for Spotify"
+        : "Normal";
+
   return (
     <div className="spotify-card spotify-operational-card">
       <header className="connection-card-header">
@@ -847,44 +867,28 @@ export function SpotifyConnectedCard({
                 : "link"}
           </Icon>
           <span className="connection-badge-copy">
-            {status.connection === "verified" ? (
-              <>
-                <strong>Connected</strong>
-                <small>Verified on last request</small>
-              </>
-            ) : (
-              connection
-            )}
+            {status.connection === "verified" ? "Connected" : connection}
           </span>
         </span>
       </header>
 
-      <div className="spotify-details spotify-operational-body">
-        <SpotifyNotice status={status} preferences={preferences} />
-        <ErrorText>{error}</ErrorText>
+      <SpotifyNotice status={status} preferences={preferences} />
+      <ErrorText>{error}</ErrorText>
 
-        <div className="connection-actions">
-          <SpotifyConnectButton
-            connected={status.connected}
-            disabled={busy || !status.configured}
-            refresh={refresh}
-          />
-          <button
-            className="secondary"
-            disabled={
-              busy ||
-              !status.connected ||
-              (!!status.retry_at_ms && status.retry_at_ms > Date.now())
-            }
-            onClick={() =>
-              void action(async () => {
-                const result = await api.sync();
-                return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
-              })
-            }
-          >
-            Verify &amp; sync now
-          </button>
+      <div className="connection-actions">
+        <button
+          className="primary"
+          disabled={busy || !status.connected || coolingDown}
+          onClick={() =>
+            void action(async () => {
+              const result = await api.sync();
+              return `Connection checked and sync complete: ${result.added} new listens, ${result.reconciled} reconciled, ${result.duplicates} already present.`;
+            })
+          }
+        >
+          <Icon>sync</Icon>Verify &amp; sync now
+        </button>
+        {(coolingDown || status.collection === "error") && (
           <button
             className="secondary"
             disabled={busy}
@@ -897,6 +901,179 @@ export function SpotifyConnectedCard({
           >
             Retry collection now
           </button>
+        )}
+        <SpotifyConnectButton
+          connected={status.connected}
+          disabled={busy || !status.configured}
+          refresh={refresh}
+        />
+      </div>
+
+      <section className="connection-section">
+        <div className="connection-section-heading">
+          <h3>Collection status &amp; diagnostics</h3>
+          <Link className="text-link" to="/activities">
+            Collection and import reports
+            <Icon>arrow_forward</Icon>
+          </Link>
+        </div>
+        <dl className="connection-facts">
+          <div>
+            <dt>Last successful collection</dt>
+            <dd>{date(status.last_sync_ms, preferences)}</dd>
+          </div>
+          <div>
+            <dt>New listens in last successful collection</dt>
+            <dd>
+              {status.last_added === null
+                ? "Not yet known"
+                : status.last_added === 0
+                  ? "0 — successful, no new listens"
+                  : status.last_added}
+            </dd>
+          </div>
+          <div>
+            <dt>Last collection attempt</dt>
+            <dd>{date(status.last_attempt_ms, preferences)}</dd>
+          </div>
+          <div>
+            <dt>Next attempt</dt>
+            <dd>{nextAttempt}</dd>
+          </div>
+          <div>
+            <dt>Authorization last verified</dt>
+            <dd>{date(status.verified_at_ms, preferences)}</dd>
+          </div>
+          <div>
+            <dt>Request limit</dt>
+            <dd>{limitStatus}</dd>
+          </div>
+        </dl>
+        {status.coverage_warning && (
+          <p className="warning">{status.coverage_warning}</p>
+        )}
+        {status.review_count > 0 && (
+          <div className="connection-review-actions">
+            <span>
+              {number.format(status.review_count)} records need review
+            </span>
+            <Link className="button secondary" to="/review">
+              <Icon>rule</Icon>Review possible duplicates
+            </Link>
+          </div>
+        )}
+        {status.now_playing_timing && (
+          <details className="connection-timing">
+            <summary>Last now-playing sample timing</summary>
+            <p>
+              Server queue{" "}
+              {status.now_playing_timing.source_requested_at_ms -
+                status.now_playing_timing.requested_at_ms}{" "}
+              ms · Spotify request{" "}
+              {status.now_playing_timing.response_received_at_ms -
+                status.now_playing_timing.source_requested_at_ms}{" "}
+              ms · source change{" "}
+              {date(status.now_playing_timing.source_timestamp_ms, preferences)}
+              . Now playing never creates listens.
+            </p>
+          </details>
+        )}
+      </section>
+
+      <section className="connection-section">
+        <RefreshIntervals status={status} refresh={refresh} />
+      </section>
+
+      <section className="connection-section">
+        <h3>Setup</h3>
+        <div className="application-action">
+          <div>
+            <h4>HTTPS and domain</h4>
+            <p>
+              Spotify sends you back over HTTPS. The guide covers DuckDNS or a
+              domain you own.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="button secondary https-guide-trigger"
+            onClick={onOpenHttpsGuide}
+          >
+            <Icon>lock</Icon>
+            <span>HTTPS and domain setup guide</span>
+          </button>
+        </div>
+        <div className="application-action">
+          <div>
+            <h4>Spotify app credentials</h4>
+            <p>
+              {status.credentials_from_env
+                ? "Managed by the server environment. Change both values there and restart the server."
+                : "Client ID and secret of your Spotify developer app."}
+            </p>
+          </div>
+          {!status.credentials_from_env && (
+            <button
+              type="button"
+              className="button secondary"
+              aria-expanded={reconfigureApp}
+              onClick={() => setReconfigureApp(!reconfigureApp)}
+            >
+              <Icon>{reconfigureApp ? "close" : "edit"}</Icon>
+              <span>{reconfigureApp ? "Cancel" : "Edit app credentials"}</span>
+            </button>
+          )}
+        </div>
+        {reconfigureApp && !status.credentials_from_env && (
+          <form
+            className="spotify-credentials-edit"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action(async () => {
+                await api.credentials(client, secret);
+                setClient("");
+                setSecret("");
+                setReconfigureApp(false);
+                return "Spotify app saved.";
+              });
+            }}
+          >
+            <div className="form-grid">
+              <label>
+                Client ID
+                <input
+                  value={client}
+                  required
+                  maxLength={256}
+                  autoComplete="off"
+                  onChange={(e) => setClient(e.target.value)}
+                />
+              </label>
+              <label>
+                Client Secret
+                <input
+                  type="password"
+                  value={secret}
+                  required
+                  maxLength={256}
+                  autoComplete="off"
+                  onChange={(e) => setSecret(e.target.value)}
+                />
+              </label>
+            </div>
+            <button className="secondary" disabled={busy}>
+              Save Spotify app
+            </button>
+          </form>
+        )}
+        <div className="application-action">
+          <div>
+            <h4>Disconnect Spotify</h4>
+            <p>
+              Stops collection and keeps your listening archive. You can also
+              revoke access in your Spotify account’s Apps settings.
+            </p>
+          </div>
           <button
             className="secondary danger"
             disabled={busy || !status.connected}
@@ -907,218 +1084,10 @@ export function SpotifyConnectedCard({
               })
             }
           >
-            Disconnect
+            <Icon>link_off</Icon>Disconnect
           </button>
         </div>
-
-        {/* Polling intervals directly on main surface (no nested accordion) */}
-        <div className="spotify-intervals-surface">
-          <RefreshIntervals status={status} refresh={refresh} />
-        </div>
-
-        {/* Flat diagnostics section (no nested details accordion) */}
-        <section className="connection-diagnostics">
-          <h3>Collection status &amp; diagnostics</h3>
-          <p>
-            Authorization and collection are separate. A saved authorization is
-            not a continuous health check.
-          </p>
-          <dl className="diagnostics">
-            <div>
-              <dt>Authorization last verified</dt>
-              <dd>{date(status.verified_at_ms, preferences)}</dd>
-            </div>
-            <div>
-              <dt>Last collection attempt</dt>
-              <dd>{date(status.last_attempt_ms, preferences)}</dd>
-            </div>
-            <div>
-              <dt>Last successful collection</dt>
-              <dd>{date(status.last_sync_ms, preferences)}</dd>
-            </div>
-            <div>
-              <dt>New listens in last successful collection</dt>
-              <dd>
-                {status.last_added === null
-                  ? "Not yet known"
-                  : status.last_added === 0
-                    ? "0 — successful, no new listens"
-                    : status.last_added}
-              </dd>
-            </div>
-            <div>
-              <dt>Collection interval</dt>
-              <dd>Every {status.sync_seconds} seconds</dd>
-            </div>
-            <div>
-              <dt>Rate limit &amp; cooldown status</dt>
-              <dd>
-                {waiting ? (
-                  <span>
-                    {isQuota
-                      ? "Developer quota exceeded"
-                      : "Request rate limit active"}
-                    {" — retry at "}
-                    {date(status.retry_at_ms, preferences)}
-                    {` (${remainingMinutes} ${remainingMinutes === 1 ? "minute" : "minutes"} / ${remainingSeconds}s remaining)`}
-                  </span>
-                ) : status.rate_limit_reason === "QUOTA_EXCEEDED" ? (
-                  "Developer quota exceeded — retry requested; waiting for Spotify’s response"
-                ) : status.rate_limit_reason ? (
-                  "Request rate limit — retry requested; waiting for Spotify’s response"
-                ) : (
-                  "Normal — no cooldown active"
-                )}
-              </dd>
-            </div>
-            <div>
-              <dt>Next attempt / request limit</dt>
-              <dd>
-                {status.retry_at_ms && status.retry_at_ms > Date.now()
-                  ? date(status.retry_at_ms, preferences)
-                  : status.connected && status.last_attempt_ms
-                    ? date(
-                        Math.max(
-                          Date.now(),
-                          status.last_attempt_ms + status.sync_seconds * 1000,
-                        ),
-                        preferences,
-                      )
-                    : "After authorization"}
-              </dd>
-            </div>
-          </dl>
-          {status.now_playing_timing && (
-            <details>
-              <summary>Last now-playing sample timing</summary>
-              <p>
-                Request:{" "}
-                {date(
-                  status.now_playing_timing.source_requested_at_ms,
-                  preferences,
-                )}
-                . Response:{" "}
-                {date(
-                  status.now_playing_timing.response_received_at_ms,
-                  preferences,
-                )}
-                .
-              </p>
-              <p>
-                Server queue:{" "}
-                {status.now_playing_timing.source_requested_at_ms -
-                  status.now_playing_timing.requested_at_ms}{" "}
-                ms. Provider request:{" "}
-                {status.now_playing_timing.response_received_at_ms -
-                  status.now_playing_timing.source_requested_at_ms}{" "}
-                ms.
-              </p>
-              <p>
-                Source playback-state change:{" "}
-                {date(
-                  status.now_playing_timing.source_timestamp_ms,
-                  preferences,
-                )}
-                . This source timestamp does not measure propagation delay. Now
-                playing never creates listens.
-              </p>
-            </details>
-          )}
-          <div className="connection-report-actions">
-            <Link className="button secondary" to="/activities">
-              <Icon>receipt_long</Icon>Collection and import reports
-            </Link>
-          </div>
-          {status.coverage_warning && (
-            <p className="warning">{status.coverage_warning}</p>
-          )}
-          {status.review_count > 0 && (
-            <div className="connection-review-actions">
-              <span className="warning">
-                {status.review_count} records need review.
-              </span>
-              <Link className="button secondary" to="/review">
-                <Icon>rule</Icon>Review possible duplicates
-              </Link>
-            </div>
-          )}
-        </section>
-
-        <div className="spotify-operational-tools">
-          <button
-            type="button"
-            className="button secondary https-guide-trigger"
-            onClick={onOpenHttpsGuide}
-          >
-            <Icon>lock</Icon>
-            <span>HTTPS and domain setup guide</span>
-          </button>
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() => setReconfigureApp(!reconfigureApp)}
-          >
-            <Icon>settings</Icon>
-            <span>
-              {reconfigureApp ? "Hide app credentials" : "Edit app credentials"}
-            </span>
-          </button>
-        </div>
-
-        {reconfigureApp && (
-          <div className="spotify-credentials-edit">
-            {status.credentials_from_env ? (
-              <p>
-                Spotify app credentials are managed by the server environment.
-                Change both values there and restart the server.
-              </p>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void action(async () => {
-                    await api.credentials(client, secret);
-                    setClient("");
-                    setSecret("");
-                    setReconfigureApp(false);
-                    return "Spotify app saved.";
-                  });
-                }}
-              >
-                <label>
-                  Client ID
-                  <input
-                    value={client}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setClient(e.target.value)}
-                  />
-                </label>
-                <label>
-                  Client Secret
-                  <input
-                    type="password"
-                    value={secret}
-                    required
-                    maxLength={256}
-                    autoComplete="off"
-                    onChange={(e) => setSecret(e.target.value)}
-                  />
-                </label>
-                <button className="secondary" disabled={busy}>
-                  Save Spotify app
-                </button>
-              </form>
-            )}
-          </div>
-        )}
-
-        <p>
-          You can also revoke access in your Spotify account’s Apps settings.
-          Disconnecting keeps the listening archive.
-        </p>
-      </div>
+      </section>
     </div>
   );
 }
@@ -1504,11 +1473,13 @@ export function Connections({
 
   return (
     <article className="panel padded connections-panel">
-      <h2>Connections</h2>
-      <p>
-        Collection runs while scrobbl.rs is running, even with the browser
-        closed.
-      </p>
+      <div className="settings-section-intro">
+        <h2>Connections</h2>
+        <p>
+          Collection runs while scrobbl.rs is running, even with the browser
+          closed.
+        </p>
+      </div>
       <ErrorText>{statusError}</ErrorText>
 
       {status.connected ? (
@@ -1557,6 +1528,18 @@ export function DataRecovery({
     </article>
   );
 }
+const SECTIONS: [string, string, string][] = [
+  ["general", "General", "tune"],
+  ["account", "Account", "person"],
+  ["application", "Application", "apps"],
+  ["appearance", "Appearance", "palette"],
+  ["connections", "Connections", "link"],
+  ["images", "Image providers", "image"],
+  ["ai", "AI", "forum"],
+  ["data", "Data & recovery", "inventory_2"],
+  ["api-keys", "API keys", "key"],
+];
+
 export function Settings({
   section,
   preferences,
@@ -1588,66 +1571,57 @@ export function Settings({
           value={section}
           onChange={(value) => navigate(`/settings/${value}`)}
         >
-          <option value="general">General</option>
-          <option value="account">Account</option>
-          <option value="application">Application</option>
-          <option value="appearance">Appearance</option>
-          <option value="connections">Connections</option>
-          <option value="images">Image providers</option>
-          <option value="ai">AI</option>
-          <option value="data">Data &amp; recovery</option>
-          <option value="api-keys">API keys</option>
+          {SECTIONS.map(([key, title]) => (
+            <option key={key} value={key}>
+              {title}
+            </option>
+          ))}
         </Select>
       </label>
-      <nav className="settings-tabs" aria-label="Settings sections">
-        {[
-          ["general", "General"],
-          ["account", "Account"],
-          ["application", "Application"],
-          ["appearance", "Appearance"],
-          ["connections", "Connections"],
-          ["images", "Image providers"],
-          ["ai", "AI"],
-          ["data", "Data & recovery"],
-          ["api-keys", "API keys"],
-        ].map(([key, title]) => (
-          <Link
-            key={key}
-            to={`/settings/${key}`}
-            aria-current={section === key ? "page" : undefined}
-          >
-            {title}
-          </Link>
-        ))}
-      </nav>
-      {section === "images" && <ArtworkProviderSettings />}
-      {section === "account" && <AccountSettings />}
-      {section === "application" && <ApplicationSettings />}
-      <div hidden={section !== "ai"}>
-        {section === "ai" && <AiSettingsSection />}
-      </div>
-      <div hidden={section !== "general"}>
-        <General preferences={preferences} saved={saved} />
-      </div>
-      <div hidden={section !== "appearance"}>
-        <Appearance appearance={appearance} />
-      </div>
-      <div hidden={section !== "connections"}>
-        <Connections
-          status={status}
-          preferences={preferences}
-          refresh={refresh}
-          statusError={statusError}
-        />
-      </div>
-      <div hidden={section !== "data"}>
-        <DataRecovery
-          preferences={preferences}
-          active={visible && section === "data"}
-        />
-      </div>
-      <div hidden={section !== "api-keys"}>
-        {section === "api-keys" && <ApiKeys preferences={preferences} />}
+      <div className="settings-layout">
+        <nav className="settings-tabs" aria-label="Settings sections">
+          {SECTIONS.map(([key, title, icon]) => (
+            <Link
+              key={key}
+              to={`/settings/${key}`}
+              aria-current={section === key ? "page" : undefined}
+            >
+              <Icon>{icon}</Icon>
+              {title}
+            </Link>
+          ))}
+        </nav>
+        <div className="settings-panels">
+          {section === "images" && <ArtworkProviderSettings />}
+          {section === "account" && <AccountSettings />}
+          {section === "application" && <ApplicationSettings />}
+          <div hidden={section !== "ai"}>
+            {section === "ai" && <AiSettingsSection />}
+          </div>
+          <div hidden={section !== "general"}>
+            <General preferences={preferences} saved={saved} />
+          </div>
+          <div hidden={section !== "appearance"}>
+            <Appearance appearance={appearance} />
+          </div>
+          <div hidden={section !== "connections"}>
+            <Connections
+              status={status}
+              preferences={preferences}
+              refresh={refresh}
+              statusError={statusError}
+            />
+          </div>
+          <div hidden={section !== "data"}>
+            <DataRecovery
+              preferences={preferences}
+              active={visible && section === "data"}
+            />
+          </div>
+          <div hidden={section !== "api-keys"}>
+            {section === "api-keys" && <ApiKeys preferences={preferences} />}
+          </div>
+        </div>
       </div>
     </div>
   );

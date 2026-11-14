@@ -44,14 +44,17 @@ const test = base.extend({
     const context = await browser.newContext({ baseURL });
     try {
       await expect
-        .poll(async () => {
-          if (child.exitCode !== null) throw new Error(logs);
-          try {
-            return (await context.request.get("/api/session")).status();
-          } catch {
-            return 0;
-          }
-        }, { timeout: 20000 })
+        .poll(
+          async () => {
+            if (child.exitCode !== null) throw new Error(logs);
+            try {
+              return (await context.request.get("/api/session")).status();
+            } catch {
+              return 0;
+            }
+          },
+          { timeout: 20000 },
+        )
         .toBe(200);
       await use({ page: await context.newPage(), baseURL });
     } finally {
@@ -100,12 +103,12 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await expect(save).toBeDisabled();
   await page
     .getByRole("button", {
-      name: "Move MusicBrainz → Wikidata → Commons up",
+      name: "Move Wikimedia Commons up",
       exact: true,
     })
     .click();
   await page
-    .getByRole("checkbox", { name: "MusicBrainz → Commons image", exact: true })
+    .getByRole("checkbox", { name: "Apple iTunes", exact: true })
     .uncheck();
   await page.route("**/api/v1/artwork-providers", (route) =>
     route.request().method() === "POST"
@@ -121,7 +124,7 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   );
   await expect(
     page.getByRole("checkbox", {
-      name: "MusicBrainz → Commons image",
+      name: "Apple iTunes",
       exact: true,
     }),
   ).not.toBeChecked();
@@ -129,24 +132,24 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await save.click();
   await expect(save).toBeDisabled();
   await page.reload();
-  await expect(page.locator(".artwork-provider").nth(1)).toContainText(
-    "MusicBrainz → Wikidata → Commons",
+  await expect(page.locator(".artwork-provider").nth(2)).toContainText(
+    "Wikimedia Commons",
   );
   await expect(
     page.getByRole("checkbox", {
-      name: "MusicBrainz → Commons image",
+      name: "Apple iTunes",
       exact: true,
     }),
   ).not.toBeChecked();
   const other = await browser.newContext({ baseURL });
   const second = await other.newPage();
   await login(second, "/settings/images");
-  await expect(second.locator(".artwork-provider").nth(1)).toContainText(
-    "MusicBrainz → Wikidata → Commons",
+  await expect(second.locator(".artwork-provider").nth(2)).toContainText(
+    "Wikimedia Commons",
   );
   await second
     .getByRole("checkbox", {
-      name: "MusicBrainz → Cover Art Archive",
+      name: "Cover Art Archive",
       exact: true,
     })
     .uncheck();
@@ -158,7 +161,7 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   ).toBeDisabled();
   await page
     .getByRole("checkbox", {
-      name: "MusicBrainz → Cover Art Archive",
+      name: "Cover Art Archive",
       exact: true,
     })
     .uncheck();
@@ -170,7 +173,7 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   await expect(save).toBeDisabled();
   await expect(
     page.getByRole("checkbox", {
-      name: "MusicBrainz → Cover Art Archive",
+      name: "Cover Art Archive",
       exact: true,
     }),
   ).not.toBeChecked();
@@ -187,7 +190,7 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   );
   await settleDisclosure(infoDisclosure);
   await expect(
-    page.getByRole("link", { name: "Cover Art Archive API", exact: true }),
+    page.getByRole("link", { name: "Deezer API", exact: true }),
   ).toBeVisible();
   await page.screenshot({
     animations: "disabled",
@@ -217,16 +220,16 @@ test("image providers save instance order, handle conflicts and fit mobile setti
   // Restore defaults for the other browser scenarios sharing this isolated server.
   await page
     .getByRole("button", {
-      name: "Move MusicBrainz → Commons image up",
+      name: "Move Cover Art Archive up",
       exact: true,
     })
     .click();
   await page
-    .getByRole("checkbox", { name: "MusicBrainz → Commons image", exact: true })
+    .getByRole("checkbox", { name: "Apple iTunes", exact: true })
     .check();
   await page
     .getByRole("checkbox", {
-      name: "MusicBrainz → Cover Art Archive",
+      name: "Cover Art Archive",
       exact: true,
     })
     .check();

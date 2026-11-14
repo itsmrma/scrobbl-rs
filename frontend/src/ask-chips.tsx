@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type {
   Chip,
+  EntityCandidate,
   GroupBy,
   Limit,
   Metric,
@@ -23,6 +24,9 @@ const metrics: { value: Metric; label: string }[] = [
   { value: "last_play", label: "Last play" },
   { value: "streak", label: "Listening streak" },
   { value: "milestones", label: "Milestones" },
+  { value: "rank", label: "Ranking position" },
+  { value: "share", label: "Share of plays" },
+  { value: "listening_days", label: "Listening days" },
 ];
 
 const periods: { value: Period; label: string }[] = [
@@ -35,6 +39,9 @@ const periods: { value: Period; label: string }[] = [
   { value: "last_month", label: "Last month" },
   { value: "this_year", label: "This year" },
   { value: "last_year", label: "Last year" },
+  { value: "last_7_days", label: "Last 7 days" },
+  { value: "last_30_days", label: "Last 30 days" },
+  { value: "last_365_days", label: "Last 365 days" },
 ];
 
 const weekdays: { value: Weekday; label: string }[] = [
@@ -84,6 +91,8 @@ function currentValue(query: Query, key: string): string {
       return query.metric;
     case "entity":
       return query.entity?.name ?? "";
+    case "scope":
+      return query.scope?.name ?? "";
     case "period":
       return query.period;
     case "year":
@@ -109,6 +118,30 @@ function currentValue(query: Query, key: string): string {
   }
 }
 
+/**
+ * A chosen candidate answers whichever name was ambiguous: the artist that
+ * narrows a song ("Show by Ado") or the song itself.
+ */
+export function applyCandidate(
+  query: Query,
+  candidate: EntityCandidate,
+): Query {
+  const chosen = {
+    kind: candidate.kind,
+    name: candidate.name,
+    id: candidate.id,
+  };
+  if (
+    query.scope &&
+    !query.scope.id &&
+    query.scope.kind === candidate.kind &&
+    query.entity?.kind !== candidate.kind
+  ) {
+    return { ...query, scope: chosen };
+  }
+  return { ...query, entity: chosen };
+}
+
 /** Apply one chip edit without inventing fields outside the DSL contract. */
 export function editQuery(query: Query, key: string, value: string): Query {
   const next: Query = { ...query };
@@ -122,6 +155,11 @@ export function editQuery(query: Query, key: string, value: string): Query {
         name: value,
         id: null,
       };
+      break;
+    case "scope":
+      next.scope = value.trim()
+        ? { kind: query.scope?.kind ?? "artist", name: value, id: null }
+        : null;
       break;
     case "period":
       next.period = value as Period;

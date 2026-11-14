@@ -606,3 +606,198 @@ async fn ask_requires_the_owner_session() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+struct FixedParser(scrobbl_rs::ask::dsl::Query);
+
+impl scrobbl_rs::ask::parser::QueryParser for FixedParser {
+    fn parse<'a>(&'a self, _question: &'a str) -> scrobbl_rs::ask::parser::ParseFuture<'a> {
+        let query = self.0.clone();
+        Box::pin(async move { Ok(scrobbl_rs::ask::parser::ParsedQuestion::Query(query)) })
+    }
+}
+
+fn show_events() -> Vec<Event> {
+    vec![
+        // The single, then the album edition of the same song.
+        event(
+            11,
+            at("2023-03-01T10:00:00Z"),
+            Some(240_000),
+            DurationKind::Estimated,
+            "ado",
+            "Ado",
+            "show-single",
+            "Show",
+            "Show",
+        ),
+        event(
+            12,
+            at("2024-02-01T10:00:00Z"),
+            Some(240_000),
+            DurationKind::Estimated,
+            "ado",
+            "Ado",
+            "zanmu",
+            "Zanmu",
+            "Show",
+        ),
+        event(
+            12,
+            at("2024-02-02T10:00:00Z"),
+            Some(240_000),
+            DurationKind::Estimated,
+            "ado",
+            "Ado",
+            "zanmu",
+            "Zanmu",
+            "Show",
+        ),
+        event(
+            13,
+            at("2024-02-03T10:00:00Z"),
+            Some(240_000),
+            DurationKind::Estimated,
+            "ado",
+            "Ado",
+            "zanmu",
+            "Zanmu",
+            "Odo",
+        ),
+        // A homonym by somebody else, played earlier than Ado's.
+        event(
+            14,
+            at("2020-01-01T10:00:00Z"),
+            Some(240_000),
+            DurationKind::Estimated,
+            "other",
+            "Other Band",
+            "other-album",
+            "Other Album",
+            "Show",
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn page_context_scopes_a_named_song_instead_of_replacing_it() {
+    use scrobbl_rs::ask::dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder};
+    let (_dir, mut state, token) = setup(true).await;
+    save(&state.storage, &show_events()).await;
+    let first_show = Query {
+        metric: Metric::FirstPlay,
+        entity: Some(Entity {
+            kind: EntityKind::Track,
+            name: "Show".into(),
+            id: None,
+        }),
+        scope: None,
+        period: Period::AllTime,
+        year: None,
+        month: None,
+        weekday: None,
+        hour: None,
+        source: None,
+        group_by: None,
+        sort_by: SortBy::Metric,
+        order: SortOrder::Desc,
+        limit: None,
+    };
+    let ado: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=(SELECT id FROM artists WHERE name='Ado')")
+        .fetch_one(&state.storage.writer)
+        .await
+        .unwrap();
+    state.ask = Ask::with_parser(
+        std::sync::Arc::new(FixedParser(first_show.clone())),
+        true,
+        true,
+        false,
+    );
+
+    // Asked from Ado's page: the song, not the artist, and Ado's song, not
+    // the homonym. Both editions count, so the single's play is the first.
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "When did I first listen to Show?", "context": {"kind": "artist", "id": ado}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["query"]["entity"]["kind"], "track");
+    assert_eq!(body["result"]["scalar"], at("2023-03-01T10:00:00Z"));
+    assert_eq!(body["result"]["first"]["artist"], "Ado");
+
+    // Without a page, the same name is ambiguous between two artists.
+    let (_, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "When did I first listen to Show?", "context": null}),
+    )
+    .await;
+    assert_eq!(body["status"], "ambiguous", "{body}");
+
+    // An explicit artist in the question scopes it the same way.
+    let mut scoped = first_show.clone();
+    scoped.scope = Some(Entity {
+        kind: EntityKind::Artist,
+        name: "Ado".into(),
+        id: None,
+    });
+    let (_, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask/query",
+        json!({"query": scoped}),
+    )
+    .await;
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["result"]["scalar"], at("2023-03-01T10:00:00Z"));
+    assert!(
+        body["chips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|chip| chip["key"] == "scope" && chip["value"] == "Ado"),
+        "{body}"
+    );
+
+    // A question that names nothing still uses the page.
+    let mut plays = first_show.clone();
+    plays.metric = Metric::Plays;
+    plays.entity = None;
+    state.ask = Ask::with_parser(std::sync::Arc::new(FixedParser(plays)), true, true, false);
+    let (_, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen?", "context": {"kind": "artist", "id": ado}}),
+    )
+    .await;
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["query"]["entity"]["kind"], "artist");
+    assert_eq!(body["result"]["scalar"], 4);
+
+    // Ranking position, share of plays and listening days.
+    let mut rank = scoped.clone();
+    rank.metric = Metric::Rank;
+    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": rank})).await;
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["result"]["scalar"], 1, "three plays across editions");
+    assert_eq!(
+        body["result"]["total"], 3,
+        "Show (Ado), Odo, Show (Other Band)"
+    );
+
+    let mut share = scoped.clone();
+    share.metric = Metric::Share;
+    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": share})).await;
+    assert_eq!(body["result"]["scalar"], 3);
+    assert_eq!(body["result"]["total"], 5);
+
+    let mut days = scoped;
+    days.metric = Metric::ListeningDays;
+    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": days})).await;
+    assert_eq!(body["result"]["scalar"], 3);
+}

@@ -172,7 +172,7 @@ fn qwen(
             ram_recommended_bytes,
             cpu_cores,
             gpu_optional,
-            context_tokens: 2048,
+            context_tokens: 3072,
         },
         languages,
         parser,

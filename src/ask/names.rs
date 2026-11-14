@@ -31,16 +31,35 @@ pub async fn resolve(
     kind: EntityKind,
     literal: &str,
 ) -> Result<Resolution> {
+    resolve_in(conn, kind, literal, None).await
+}
+
+/// Like [`resolve`], restricted to the tracks or albums of one artist, or the
+/// tracks of one album. Several editions of the same song by the same artists
+/// are one answer: the first edition is returned and execution counts all of
+/// them through [`track_editions`].
+pub async fn resolve_in(
+    conn: &mut SqliteConnection,
+    kind: EntityKind,
+    literal: &str,
+    scope: Option<(EntityKind, &str)>,
+) -> Result<Resolution> {
     let needle = fold(literal);
     if needle.is_empty() {
         return Ok(Resolution::NotFound);
     }
+    let allowed = match scope {
+        Some(scope) => Some(scope_members(conn, kind, scope).await?),
+        None => None,
+    };
+    let in_scope = |row: &NameRow| allowed.as_ref().is_none_or(|ids| ids.contains(&row.id));
     let mut rows = search_rows(conn, kind, literal).await?;
+    rows.retain(|row| in_scope(row));
     if rows.is_empty() {
         // SQLite LIKE folds ASCII case only. Fall back to a Rust fold so
         // "Bjork" still finds "Björk" without a new dependency.
         rows = all_rows(conn, kind).await?;
-        rows.retain(|row| fold(&row.name).contains(&needle));
+        rows.retain(|row| in_scope(row) && fold(&row.name).contains(&needle));
     }
     if rows.is_empty() {
         return Ok(Resolution::NotFound);
@@ -61,6 +80,9 @@ pub async fn resolve(
             .cmp(&fold(&right.name))
             .then_with(|| left.id.cmp(&right.id))
     });
+    if rows.len() > 1 && kind == EntityKind::Track && same_song(&rows) {
+        rows.truncate(1);
+    }
     if rows.len() == 1 {
         let row = rows.remove(0);
         return Ok(Resolution::Unique {
@@ -79,6 +101,81 @@ pub async fn resolve(
             })
             .collect(),
     ))
+}
+
+/// Tracks whose folded title and artist credit are identical are editions of
+/// one song (single, album, deluxe). The album part of the subtitle differs.
+fn same_song(rows: &[NameRow]) -> bool {
+    let key = |row: &NameRow| {
+        let artists = row
+            .subtitle
+            .as_deref()
+            .unwrap_or_default()
+            .split(" · ")
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        (fold(&row.name), fold(&artists))
+    };
+    let first = key(&rows[0]);
+    !first.1.is_empty() && rows.iter().all(|row| key(row) == first)
+}
+
+/// Every track that is an edition of `track_id`: same folded title and the
+/// same set of credited artists. Always contains `track_id` itself.
+pub async fn track_editions(conn: &mut SqliteConnection, track_id: &str) -> Result<Vec<String>> {
+    #[derive(FromRow)]
+    struct Edition {
+        id: String,
+        title: String,
+        artists: Option<String>,
+    }
+    let sql = format!(
+        "{} SELECT e.id,e.title,(SELECT group_concat(artist_id, ',') FROM (SELECT ta.artist_id FROM track_artists ta WHERE ta.track_id=e.id ORDER BY ta.artist_id)) AS artists FROM tracks e WHERE e.id=? OR e.id IN (SELECT ta.track_id FROM track_artists ta WHERE ta.artist_id IN (SELECT artist_id FROM track_artists WHERE track_id=?))",
+        crate::library::METADATA
+    );
+    let rows: Vec<Edition> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(track_id)
+        .bind(track_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    let Some(target) = rows.iter().find(|row| row.id == track_id) else {
+        return Ok(vec![track_id.to_owned()]);
+    };
+    let (title, artists) = (fold(&target.title), target.artists.clone());
+    let mut ids: Vec<String> = rows
+        .iter()
+        .filter(|row| row.id == track_id || (fold(&row.title) == title && row.artists == artists))
+        .map(|row| row.id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// IDs of the tracks/albums inside an artist or album scope.
+async fn scope_members(
+    conn: &mut SqliteConnection,
+    kind: EntityKind,
+    (scope_kind, scope_id): (EntityKind, &str),
+) -> Result<std::collections::BTreeSet<String>> {
+    let sql = match (kind, scope_kind) {
+        (EntityKind::Track, EntityKind::Artist) => {
+            "SELECT DISTINCT ta.track_id FROM track_artists ta WHERE ta.artist_id IN (SELECT entity_id FROM name_group_members WHERE kind='artists' AND group_id=(SELECT COALESCE((SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=?1),?1)) UNION SELECT ?1)"
+        }
+        (EntityKind::Album, EntityKind::Artist) => {
+            "SELECT DISTINCT COALESCE(m.group_id,t.album_id) FROM tracks t JOIN track_artists ta ON ta.track_id=t.id LEFT JOIN name_group_members m ON m.kind='albums' AND m.entity_id=t.album_id WHERE t.album_id IS NOT NULL AND ta.artist_id IN (SELECT entity_id FROM name_group_members WHERE kind='artists' AND group_id=(SELECT COALESCE((SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=?1),?1)) UNION SELECT ?1)"
+        }
+        (EntityKind::Track, EntityKind::Album) => {
+            "SELECT t.id FROM tracks t WHERE t.album_id IN (SELECT entity_id FROM name_group_members WHERE kind='albums' AND group_id=(SELECT COALESCE((SELECT group_id FROM name_group_members WHERE kind='albums' AND entity_id=?1),?1)) UNION SELECT ?1)"
+        }
+        _ => return Ok(Default::default()),
+    };
+    let ids: Vec<String> = sqlx::query_scalar(sql)
+        .bind(scope_id)
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(ids.into_iter().collect())
 }
 
 /// Verify an explicit ID (from the request context or a chosen candidate).

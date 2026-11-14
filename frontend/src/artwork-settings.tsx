@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ArtworkSettings, ImageProvider } from "./generated";
 import { api } from "./api";
-import { useArtworkActivity } from "./artwork-activity";
+import { triggerArtworkBackfill, useArtworkActivity } from "./artwork-activity";
 import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { ErrorText, Icon, Modal, number, useToast } from "./ui";
@@ -11,6 +11,7 @@ const providers: Record<
   ImageProvider,
   {
     name: string;
+    summary: string;
     coverage: string;
     access: string;
     limits: string;
@@ -18,17 +19,46 @@ const providers: Record<
     sources: [string, string][];
   }
 > = {
-  cover_art_archive: {
-    name: "MusicBrainz → Cover Art Archive",
+  deezer: {
+    name: "Deezer",
+    summary: "Album covers and artist photos",
     coverage:
-      "Album covers from an unambiguous MusicBrainz release group. No artist portraits; some releases have no cover.",
+      "Album covers up to 1000 × 1000 and artist photos from Deezer's public catalogue. Fast and broad, including Japanese and Korean releases. Homonym artists resolve to the most followed one.",
     access: "No account or API key required.",
     limits:
-      "MusicBrainz requests are paced to at most one per second. Archive availability varies; request limits and temporary failures pause retrieval.",
+      "Deezer allows 50 requests every 5 seconds; scrobbl.rs stays below that and pauses briefly when Deezer reports its quota.",
     rights:
-      "Artwork can be copyrighted. The MusicBrainz metadata licence does not grant image reuse rights. The source page is kept with each image.",
+      "Artwork may be copyrighted by its rights holders. The Deezer page is saved with each image.",
+    sources: [["Deezer API", "https://developers.deezer.com/api"]],
+  },
+  itunes: {
+    name: "Apple iTunes",
+    summary: "Album covers",
+    coverage:
+      "Album covers up to 1000 × 1000 from the iTunes Search API, used when Deezer has no match.",
+    access: "No account or API key required.",
+    limits:
+      "Apple asks for about 20 searches per minute, so requests are spaced three seconds apart.",
+    rights:
+      "Artwork may be copyrighted by its rights holders. The Apple Music page is saved with each image.",
     sources: [
-      ["MusicBrainz API", "https://musicbrainz.org/doc/MusicBrainz_API"],
+      [
+        "iTunes Search API",
+        "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/",
+      ],
+    ],
+  },
+  cover_art_archive: {
+    name: "Cover Art Archive",
+    summary: "Album covers via MusicBrainz",
+    coverage:
+      "Album covers from a confident MusicBrainz release-group match. Strong on original-script titles such as 狂言 that other stores list in romaji.",
+    access: "No account or API key required.",
+    limits:
+      "MusicBrainz allows one request per second; scrobbl.rs keeps that pace and waits when MusicBrainz is busy.",
+    rights:
+      "Artwork can be copyrighted. The MusicBrainz metadata licence does not grant image reuse rights. The release-group page is saved with each image.",
+    sources: [
       [
         "Cover Art Archive API",
         "https://musicbrainz.org/doc/Cover_Art_Archive/API",
@@ -39,63 +69,22 @@ const providers: Record<
       ],
     ],
   },
-  musicbrainz_image: {
-    name: "MusicBrainz → Commons image",
+  wikimedia: {
+    name: "Wikimedia Commons",
+    summary: "Attributed artist photos via MusicBrainz",
     coverage:
-      "Artist portraits explicitly linked from MusicBrainz to a Commons file. No album covers; coverage is incomplete. Multiple candidates are left unresolved.",
+      "Artist photos linked from MusicBrainz to Commons, directly or through Wikidata. Only files with an author and a licence are used.",
     access: "No account or API key required.",
     limits:
-      "Uses the shared MusicBrainz pace, then serial Commons requests with an identifying client name. Provider Retry-After is respected.",
+      "Shares the MusicBrainz pace of one request per second, then asks Wikidata and Commons.",
     rights:
-      "The individual Commons file licence applies. Author, credits, licence and source page are saved and available in Image credits. Images without attribution metadata are skipped.",
+      "The licence of each Commons file applies. Author, licence and source page are saved and shown in Image credits.",
     sources: [
-      [
-        "MusicBrainz image relationship",
-        "https://musicbrainz.org/relationship/221132e9-e30e-43f2-a741-15afc4c5fa7c",
-      ],
       [
         "Commons reuse",
         "https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia",
       ],
-      [
-        "Wikimedia request limits",
-        "https://www.mediawiki.org/wiki/Wikimedia_APIs/Rate_limits",
-      ],
-    ],
-  },
-  wikidata: {
-    name: "MusicBrainz → Wikidata → Commons",
-    coverage:
-      "Artist portraits from P18 on the Wikidata entity linked by MusicBrainz. No album covers. Missing or multiple images remain unresolved; coverage is not guaranteed.",
-    access: "No account or API key required.",
-    limits:
-      "Shares the MusicBrainz pace and makes serial Wikidata/Commons requests. Temporary failures are retried rather than recorded as missing images.",
-    rights:
-      "Commons file terms apply, separately from Wikidata metadata. Author, credits, licence and source page are retained with the image.",
-    sources: [
       ["Wikidata image property", "https://www.wikidata.org/wiki/Property:P18"],
-      ["Wikidata access", "https://www.wikidata.org/wiki/Wikidata:Data_access"],
-      [
-        "Commons reuse",
-        "https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia",
-      ],
-    ],
-  },
-  itunes: {
-    name: "Apple iTunes / Deezer fallback",
-    coverage:
-      "Public fallback provider for missing album covers (via Apple iTunes Search API) and artist portraits (via Deezer public API). Covers Japanese/romaji releases and digital singles.",
-    access: "No account or API key required.",
-    limits:
-      "Direct HTTPS requests with standard rate limiting. Unavailable images are skipped rather than failing lookups.",
-    rights:
-      "Cover and artist artwork may be copyrighted by original rights holders; images are used for personal library indexing and display.",
-    sources: [
-      [
-        "iTunes Search API",
-        "https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/",
-      ],
-      ["Deezer API", "https://developers.deezer.com/api"],
     ],
   },
 };
@@ -145,17 +134,13 @@ function ProviderForm({
         }
       }}
     >
-      <h2>Image providers</h2>
-      <p>
-        Choose sources for missing album and artist images, in the order shown.
-        These settings belong to this instance and apply across browsers. Image
-        retrieval uses public sources and does not call the Spotify API.
-      </p>
-      <p>
-        Saved images stay in your library. Personal images always take priority.
-        Changing sources does not replace or delete them. Ambiguous identities
-        are left without an automatic image.
-      </p>
+      <div className="settings-section-intro">
+        <h2>Image providers</h2>
+        <p>
+          Sources for missing album and artist images, asked in this order.
+          Track pages use their album cover. No source calls the Spotify API.
+        </p>
+      </div>
       <ol className="artwork-provider-list">
         {draft.providers.map((item, index) => {
           const info = providers[item.provider];
@@ -168,6 +153,7 @@ function ProviderForm({
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
+                    aria-label={info.name}
                     checked={item.enabled}
                     disabled={busy}
                     onChange={(event) =>
@@ -181,7 +167,10 @@ function ProviderForm({
                       }))
                     }
                   />
-                  <span className="artwork-provider-name">{info.name}</span>
+                  <span className="artwork-provider-copy">
+                    <span className="artwork-provider-name">{info.name}</span>
+                    <small>{info.summary}</small>
+                  </span>
                 </label>
                 <div className="artwork-provider-actions">
                   <button
@@ -209,7 +198,7 @@ function ProviderForm({
                     onClick={() => setInspectingProvider(item.provider)}
                   >
                     <Icon>info</Icon>
-                    <span>Access, limits &amp; image rights</span>
+                    <span>Details</span>
                   </button>
                 </div>
               </div>
@@ -252,8 +241,8 @@ function ProviderForm({
         </Modal>
       )}
       <p className="subtle">
-        Last.fm is unavailable as an image provider: its API data licence
-        excludes artwork.{" "}
+        Saved and personal images are never replaced when you change sources.
+        Last.fm is not offered: its API licence excludes artwork.{" "}
         <a href="https://www.last.fm/api/tos" target="_blank" rel="noreferrer">
           Last.fm API terms
         </a>
@@ -281,6 +270,8 @@ function ProviderForm({
 
 export function ArtworkProviderSettings() {
   const [revision, setRevision] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const toast = useToast();
   const artworkWork = useArtworkActivity();
   const settings = useLoad(
     () => api.artworkSettings(),
@@ -290,36 +281,43 @@ export function ArtworkProviderSettings() {
     <>
       <article className="panel padded artwork-sync-overview">
         <div className="panel-title">
-          <h2>Library artwork sync</h2>
+          <h2>Library artwork</h2>
           <span className="pill">
             {artworkWork.serverSync
               ? artworkWork.serverSync.paused
                 ? "Paused"
-                : "Running"
-              : artworkWork.pending > 0
-                ? `${number.format(artworkWork.pending)} queued`
-                : "Idle"}
+                : artworkWork.serverSync.expected
+                  ? `${number.format(artworkWork.serverSync.processed)} of ${number.format(artworkWork.serverSync.expected)}`
+                  : "Running"
+              : "Up to date"}
           </span>
         </div>
         <p>
-          Manage missing artwork scans from Library tools or Activities, or pick
-          custom artwork directly on any artist, album, or track page.
+          Missing covers and artist photos download by themselves after imports
+          and new listens. To choose an image yourself, open any artist, album
+          or track page.
         </p>
-        {artworkWork.serverSync && !artworkWork.serverSync.paused && (
-          <div className="artwork-coordination-banner" role="status">
-            <Icon>bolt</Icon>
-            <span>
-              Library sync is checking{" "}
-              {artworkWork.serverSync.expected
-                ? `${number.format(artworkWork.serverSync.processed)} of ${number.format(artworkWork.serverSync.expected)}`
-                : "missing"}{" "}
-              items. Browse-time fetches yield automatically while it runs.
-            </span>
-          </div>
-        )}
         <div className="connection-actions">
-          <Link to="/activities" className="btn btn-secondary button secondary">
-            <Icon>receipt_long</Icon>Open artwork activities
+          <button
+            type="button"
+            className="secondary"
+            disabled={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              try {
+                await triggerArtworkBackfill(toast);
+              } catch (e) {
+                toast(e instanceof Error ? e.message : String(e), true);
+              } finally {
+                setRefreshing(false);
+              }
+            }}
+          >
+            <Icon>refresh</Icon>Retry missing images
+          </button>
+          <Link to="/activities" className="text-link">
+            Artwork activity
+            <Icon>arrow_forward</Icon>
           </Link>
         </div>
       </article>

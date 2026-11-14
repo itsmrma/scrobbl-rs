@@ -254,7 +254,8 @@ async fn image_provider_settings_require_owner_csrf_validate_order_and_survive_r
         .fetch_one(&state.db)
         .await
         .unwrap();
-    assert_eq!(misses, 1);
+    // One step now resolves several images at once: the album and the artist.
+    assert_eq!(misses, 2);
     sqlx::query("UPDATE archive_state SET maintenance=1")
         .execute(&state.db)
         .await

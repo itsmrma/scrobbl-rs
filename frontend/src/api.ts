@@ -68,6 +68,23 @@ window.addEventListener("pageshow", () => {
 
 // Artwork downloads survive SPA navigation but must be cancelled before the
 // document disappears, just like the JSON reads below (not left to WebKit).
+export type ApplicationInfo = {
+  boot_id: string;
+  version: string;
+  revision: string;
+  started_at_ms: number;
+  schema: number | null;
+  archive_bytes: number;
+  listens: number;
+  tracks: number;
+  artists: number;
+  albums: number;
+  images: number;
+  first_listen_ms: number | null;
+  license: string;
+  repository: string;
+};
+
 export class ArtworkRetry extends Error {
   constructor(public readonly delayMs: number) {
     super("Artwork temporarily unavailable");
@@ -118,8 +135,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     )
       headers.set("Content-Type", "application/json");
     if (options.method === "POST" && csrf) headers.set("X-CSRF-Token", csrf);
-    if (options.method === "DELETE" && csrf)
-      headers.set("X-CSRF-Token", csrf);
+    if (options.method === "DELETE" && csrf) headers.set("X-CSRF-Token", csrf);
     const response = await fetch(path, {
       ...options,
       signal: controller.signal,
@@ -231,7 +247,7 @@ export const api = {
   removeAvatar: () => post<AccountProfile>("/api/v1/account/avatar/remove"),
   changePassword: (current_password: string, password: string) =>
     post("/api/v1/account/password", { current_password, password }),
-  application: () => request<{ boot_id: string }>("/api/v1/application"),
+  application: () => request<ApplicationInfo>("/api/v1/application"),
   controlApplication: (action: "restart" | "stop") =>
     post("/api/v1/application", { action, confirmed: true }),
   listeningPatterns: (params: URLSearchParams) =>
@@ -390,8 +406,7 @@ export const api = {
   askStatus: () => request<AiAskStatus>("/api/v1/ask/status"),
   ask: (question: string, context: { kind: string; id: string } | null) =>
     post<AskResponse>("/api/v1/ask", { question, context }),
-  askQuery: (query: Query) =>
-    post<AskResponse>("/api/v1/ask/query", { query }),
+  askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

@@ -58,7 +58,7 @@ inferred start; Spotify does not guarantee identical timing across those records
 
 Use **Settings → Connections → Spotify → Refresh intervals** to change collection
 and now-playing intervals in seconds. Collection accepts 60–86400 seconds; now
-playing accepts 15–86400 seconds. Save applies immediately without restarting or
+playing accepts 30–86400 seconds (values saved by older versions are raised to 30). Save applies immediately without restarting or
 recreating the container. Values are stored with the archive's instance settings,
 shared by browsers and preserved across restarts and archive snapshots.
 Changing them does not bypass Spotify's shared request-limit wait.
@@ -72,6 +72,36 @@ of provider availability or end-to-end latency.
 API keys is now a section under **Settings → API keys**. The previous
 `/integrations/api-keys` address redirects there; key creation/revocation remains
 part of the separate read-API implementation.
+
+### Request budget and resilience
+
+Spotify publishes no numeric limits. The rate limit is computed over a rolling
+30-second window, and Development Mode apps also share one quota bucket per
+developer account; exceeding it returns `429` with `QUOTA_EXCEEDED`. scrobbl.rs
+therefore keeps its own use small and predictable:
+
+- **Collection** reads `/me/player/recently-played` (50 items per page). Spotify
+  keeps only about the 50 most recent plays, so a run reads at most three pages
+  and normally one. The default interval is 120 seconds; at least 60.
+- **Now playing** reads `/me/player/currently-playing` only while a page is
+  open, at most once per interval for all browsers together. The minimum is
+  30 seconds (older saved values of 15–29 are raised to 30). When nothing is
+  playing the next check waits twice the interval, at least 90 seconds.
+- Both share Spotify's cooldown: a `Retry-After` is respected by both, never
+  shortened by a later shorter answer, and survives restarts.
+
+Collection never stalls on one bad answer:
+
+- A row without a valid track identifier or timestamp is reported as skipped
+  in the activity and the rest of the page is saved.
+- If an older page fails (for example a `429` after the first page), the
+  listens already received are saved, the cursor advances and Connections
+  shows a possible gap that an extended-history import can fill. Before 0.1
+  alpha the whole run was discarded and repeated, which could block
+  collection indefinitely.
+- A paused run is retried exactly when it becomes due instead of one whole
+  interval later, and a scheduled wait is not reported as an error.
+- New listens queue missing album and artist images right away.
 
 ### Authorization and recovery
 

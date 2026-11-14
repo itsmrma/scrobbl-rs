@@ -3,8 +3,9 @@
 //! Filters, assigned calendars and timezone boundaries come from
 //! `crate::consultation::selection_at`, so Ask can never drift from the listening
 //! pages. Plays, listening time, distinct counts, first/last play, streaks and
-//! milestones execute here or in their owning module. Grouping applies to plays
-//! and the distinct metrics; grouping other metrics is not implemented.
+//! milestones, ranking position, share of plays and listening days execute here
+//! or in their owning module. Grouping applies to plays and the distinct
+//! metrics; grouping other metrics is not implemented.
 use crate::{
     ask::{
         AskResult, ListenPoint, ResultLink,
@@ -35,6 +36,9 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
             | Metric::LastPlay
             | Metric::Streak
             | Metric::Milestones
+            | Metric::Rank
+            | Metric::Share
+            | Metric::ListeningDays
     ) {
         return Ok(Outcome::Unsupported(unsupported_metric_message()));
     }
@@ -43,7 +47,22 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
             query.metric,
         )));
     }
-    let filters = filters_for(query)?;
+    let mut filters = filters_for(query)?;
+    if let Some(track) = filters.track.clone() {
+        filters.track_any = crate::ask::names::track_editions(conn, &track).await?;
+    }
+    if matches!(query.metric, Metric::Rank | Metric::Share) {
+        if query.entity.is_none() {
+            return Ok(Outcome::Unsupported(
+                "Ranking position and share of plays need an artist, album or track.".into(),
+            ));
+        }
+        if query.hour.is_some() {
+            return Ok(Outcome::Unsupported(
+                "Ranking position and share of plays cannot be filtered by hour yet.".into(),
+            ));
+        }
+    }
     if grouping::handles(query) {
         return Ok(Outcome::Result(Box::new(
             grouping::execute(conn, query, &filters, now).await?,
@@ -89,7 +108,114 @@ pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Re
             let point = point_query(conn, &filters, query.metric, now).await?;
             Ok(Outcome::Result(Box::new(point_result(query, point))))
         }
+        Metric::ListeningDays => {
+            let mut days = selection_at(conn, &filters, false, now).await?;
+            days.push("SELECT COUNT(DISTINCT local_date) FROM selected WHERE counted=1");
+            let days: i64 = days.build_query_scalar().fetch_one(&mut *conn).await?;
+            Ok(Outcome::Result(Box::new(scalar_result(
+                query,
+                Some(days),
+                days,
+            ))))
+        }
+        Metric::Share => {
+            let mut entity_plays = selection_at(conn, &filters, false, now).await?;
+            entity_plays.push("SELECT COALESCE(SUM(counted),0) FROM selected");
+            let plays: i64 = entity_plays
+                .build_query_scalar()
+                .fetch_one(&mut *conn)
+                .await?;
+            let all = without_entity(&filters);
+            let mut total = selection_at(conn, &all, false, now).await?;
+            total.push("SELECT COALESCE(SUM(counted),0) FROM selected");
+            let total: i64 = total.build_query_scalar().fetch_one(&mut *conn).await?;
+            // scalar = entity plays, total = all plays in the same selection.
+            Ok(Outcome::Result(Box::new(scalar_result(
+                query,
+                Some(plays),
+                total,
+            ))))
+        }
+        Metric::Rank => {
+            let entity = query.entity.as_ref().ok_or(AppError::Internal)?;
+            let id = entity.id.as_deref().ok_or(AppError::Internal)?;
+            let all = without_entity(&filters);
+            let mut ranking = selection_at(conn, &all, true, now).await?;
+            // Same keys as the rankings pages: artist and album name groups,
+            // tracks by id. Editions of the target song count as the target.
+            let target = match entity.kind {
+                EntityKind::Artist => crate::name_groups::canonical(conn, "artists", id)
+                    .await
+                    .unwrap_or_else(|_| id.to_owned()),
+                EntityKind::Album => crate::name_groups::canonical(conn, "albums", id)
+                    .await
+                    .unwrap_or_else(|_| id.to_owned()),
+                EntityKind::Track => id.to_owned(),
+            };
+            let editions = filters.track_any.clone();
+            if entity.kind == EntityKind::Artist {
+                ranking.push(
+                    "SELECT k AS key, SUM(counted) AS plays FROM (SELECT COALESCE(m.group_id,ta.artist_id) AS k, s.counted FROM selected s JOIN track_artists ta ON ta.track_id=s.track_id LEFT JOIN name_group_members m ON m.kind='artists' AND m.entity_id=ta.artist_id) GROUP BY k",
+                );
+            } else if entity.kind == EntityKind::Album {
+                ranking.push(
+                    "SELECT COALESCE(m.group_id,s.album_id) AS key, SUM(s.counted) AS plays FROM selected s LEFT JOIN name_group_members m ON m.kind='albums' AND m.entity_id=s.album_id WHERE s.album_id IS NOT NULL GROUP BY 1",
+                );
+            } else {
+                ranking.push(
+                    "SELECT s.track_id AS key, SUM(s.counted) AS plays FROM selected s GROUP BY 1",
+                );
+            }
+            let rows: Vec<(String, i64)> = ranking.build_query_as().fetch_all(&mut *conn).await?;
+            let mut totals: std::collections::BTreeMap<String, i64> = Default::default();
+            for (key, plays) in rows {
+                let key = if editions.contains(&key) {
+                    target.clone()
+                } else {
+                    key
+                };
+                *totals.entry(key).or_default() += plays;
+            }
+            totals.retain(|_, plays| *plays > 0);
+            let own = totals.get(&target).copied().unwrap_or(0);
+            let rank =
+                (own > 0).then(|| 1 + totals.values().filter(|plays| **plays > own).count() as i64);
+            let mut result = scalar_result(query, rank, totals.len() as i64);
+            result.rows.push(crate::ask::ResultRow {
+                label: entity.name.clone(),
+                key: target,
+                plays: own,
+                time: None,
+                href: None,
+            });
+            Ok(Outcome::Result(Box::new(result)))
+        }
         _ => unreachable!(),
+    }
+}
+
+fn without_entity(filters: &Filters) -> Filters {
+    Filters {
+        artist: None,
+        album: None,
+        track: None,
+        track_any: Vec::new(),
+        ..filters.clone()
+    }
+}
+
+fn scalar_result(query: &Query, scalar: Option<i64>, total: i64) -> AskResult {
+    AskResult {
+        metric: query.metric,
+        scalar,
+        time: None,
+        rows: Vec::new(),
+        first: None,
+        last: None,
+        streak: None,
+        milestones: Vec::new(),
+        total,
+        links: entity_links(query),
     }
 }
 
@@ -118,6 +244,13 @@ async fn execute_with_hour(
     }
     let counted = || matching.iter().filter(|row| row.counted);
     match query.metric {
+        Metric::ListeningDays => {
+            let mut days: Vec<&str> = counted().map(|row| row.local_date.as_str()).collect();
+            days.sort_unstable();
+            days.dedup();
+            let days = days.len() as i64;
+            Ok(scalar_result(query, Some(days), days))
+        }
         Metric::Plays => {
             let plays = counted().count() as i64;
             Ok(AskResult {
@@ -244,6 +377,9 @@ fn period_key(period: Period) -> &'static str {
         Period::LastMonth => "last_month",
         Period::ThisYear => "year",
         Period::LastYear => "last_year",
+        Period::Last7Days => "7d",
+        Period::Last30Days => "30d",
+        Period::Last365Days => "365d",
     }
 }
 
@@ -260,7 +396,7 @@ fn weekday_key(weekday: Weekday) -> &'static str {
 }
 
 pub fn unsupported_metric_message() -> String {
-    "I can answer play counts, listening time, distinct tracks/artists/albums, first play, last play, streaks and milestones (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones).".into()
+    "I can answer play counts, listening time, distinct tracks/artists/albums, first and last play, streaks, milestones, ranking position, share of plays and listening days.".into()
 }
 
 pub fn unsupported_grouping_message(metric: Metric) -> String {

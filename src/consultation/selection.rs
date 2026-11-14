@@ -35,6 +35,9 @@ pub struct Filters {
     /// functions (DST), so Ask applies it after the canonical selection.
     pub hour: Option<u8>,
     pub include_totals: Option<bool>,
+    /// Ask only: several editions of one song, counted together.
+    #[serde(skip)]
+    pub track_any: Vec<String>,
 }
 
 impl Filters {
@@ -137,7 +140,14 @@ pub(crate) async fn selection_at(
             .push_bind(id.to_owned())
             .push(")");
     }
-    if let Some(id) = filters.track.as_deref().filter(|s| !s.is_empty()) {
+    if !filters.track_any.is_empty() {
+        b.push(" AND l.track_id IN (");
+        let mut ids = b.separated(",");
+        for id in &filters.track_any {
+            ids.push_bind(id.to_owned());
+        }
+        b.push(")");
+    } else if let Some(id) = filters.track.as_deref().filter(|s| !s.is_empty()) {
         b.push(" AND l.track_id=").push_bind(id.to_owned());
     }
     if let Some(source) = filters.source.as_deref().filter(|s| !s.is_empty()) {

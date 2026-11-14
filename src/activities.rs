@@ -192,15 +192,7 @@ pub async fn detail(
         } else {
             None
         };
-        let next_at_ms: Option<i64> = sqlx::query_scalar::<_, String>(
-            "SELECT value FROM settings WHERE key='artwork_background_next_at_ms'",
-        )
-        .fetch_optional(&mut *view.transaction)
-        .await?
-        .and_then(|v| v.parse().ok());
         Some(serde_json::json!({
-            "interval_ms": crate::artwork::IMAGE_INTERVAL_MS,
-            "next_at_ms": next_at_ms,
             "current_provider": current_provider,
         }))
     } else if job.kind.starts_with("listenbrainz_") {

@@ -81,7 +81,7 @@ metadata. If a future value cannot be verified, the entry must use
 or selected in v1.
 
 Catalog metadata also records license, minimum/recommended RAM, CPU cores,
-optional GPU, 2048-token context, backend, measured speed and parser scores
+optional GPU, 3072-token context, backend, measured speed and parser scores
 from the versioned evaluation set (#181): intent accuracy, slot F1, refusal
 accuracy, exact-match accuracy and per-language exact match. Entries that were
 not measured keep `null` rather than an estimate.
@@ -104,7 +104,7 @@ the interpretation chips as part of the answer, and read the
 [evaluation report](reports/ask-eval.md) before recommending a model.
 
 8B and 32B entries remain `gpu_future` and are not selectable in v1. The
-context is 2048 tokens and one model is loaded at a time, so the loaded model
+context is 3072 tokens and one model is loaded at a time, so the loaded model
 needs its file size plus roughly 1–2 GiB of working memory; use the catalog's
 minimum/recommended RAM values as the authoritative figures. The downloader
 refuses to start without enough free disk space for the remaining bytes and
@@ -253,7 +253,7 @@ a oneshot; inference never runs on a tokio worker. Behaviour:
   error and the context is dropped/reset; no half-decoded sequence is reused.
 - After `ai_unload_minutes` of inactivity the model is dropped. The next
   question re-reads settings and pays the load cost.
-- Context 2048 tokens, greedy sampling, at most 256 new tokens. Output is
+- Context 3072 tokens, greedy sampling, at most 256 new tokens. Output is
   accumulated as bytes and decoded once as UTF-8, so a multi-byte character
   split across tokens cannot be corrupted.
 - `LlamaSampler::sample` already accepts the token; the adapter never calls
@@ -264,13 +264,36 @@ a oneshot; inference never runs on a tokio worker. Behaviour:
 
 ### Model-facing schema and grammar
 
-The model only emits `src/ask/schema.rs::ModelOutput`: `metric`, `target`,
-`name`, `period`, `weekday`, `group_by`, `order` and `limit`. Every field is
-required and every non-name field is an enum; there are no numeric slots, ids or
-SQL. `limit`/`group_by`/`weekday` use explicit `none`/`any` values instead of
-missing keys so the grammar stays finite. Rust maps the output to the shared
-DSL, resolves the literal name through the existing search and fills optional
-filters with `None`.
+The model only emits `src/ask/schema.rs::ModelOutput` (schema v2): `artist`,
+`group_by`, `limit`, `metric`, `month`, `name`, `order`, `period`, `target`,
+`weekday` and `year`. Every field is required in the grammar; `artist`, `month`
+and `year` default when a recorded v1 output omits them. Strings are literal
+names copied from the question; `year` is `0` or a four-digit year that Rust
+bounds to 1900–2200; every other field is an enum with explicit `none`/`any`
+values, so the grammar stays finite. There are no ids or SQL.
+
+Metrics: `plays`, `time_listened`, `distinct_tracks`, `distinct_artists`,
+`distinct_albums`, `first_play`, `last_play`, `streak`, `milestones`, `rank`
+(position of the entity among its kind by plays, ties share a position),
+`share` (entity plays over all plays in the same selection) and
+`listening_days` (distinct calendar days with a counted play). Periods add
+`last_7_days`, `last_30_days` and `last_365_days`; a named year or month narrows
+the selection directly.
+
+Name resolution:
+
+- `artist` narrows a named track or album ("Show by Ado"); with no named track
+  or album it is the subject ("my top songs by Ado").
+- A track name resolves to the song across its editions: tracks with the same
+  folded title and the same credited artists (single, album, deluxe) count
+  together, so "first time I listened to Show" finds the earliest edition.
+- The page context (artist, album or track page) answers questions that name
+  nothing, and narrows a named track or album to the page's artist or album.
+  It never replaces what the question names: before 0.1 alpha, asking about
+  the song "Show" on Ado's page answered about Ado. A name that is not in the
+  page's scope is still looked up in the whole library.
+- Ambiguity remains explicit: candidates are offered, and a chosen artist
+  candidate fills the scope while a chosen song fills the entity.
 
 `src/ask/schema/ask.schema.json` is checked in and generated from the same enum
 lists as the Rust deserializer; a unit test fails if it drifts. The JSON-Schema
@@ -281,7 +304,9 @@ schema after changing an enum:
 $env:UPDATE_ASK_SCHEMA='1'; cargo test --lib checked_in_schema_matches_the_generated_one; Remove-Item Env:UPDATE_ASK_SCHEMA
 ```
 
-The prompt (`src/ask/prompt.rs`) is compact English with EN/IT examples. It
+The prompt (`src/ask/prompt.rs`) is compact English with EN/IT examples and
+embeds the schema without descriptions to stay well inside the 3072-token
+context; a test bounds its size. It
 states that names are copied literally, that time words such as "today",
 "Fridays" and "last month" never enter `name`, that the model never writes SQL,
 and that out-of-scope or injection requests use `metric: "unsupported"`. Qwen3
@@ -306,8 +331,8 @@ part of the normal suite.
 
 ### Parser evaluation (#181)
 
-`evals/ask/corpus.jsonl` is the versioned eval set: 208 questions (104 English,
-104 Italian pairs) covering every metric, period, weekday, grouping, limit and
+`evals/ask/corpus.jsonl` is the versioned eval set: 220 questions (110 English,
+110 Italian pairs) covering every metric, period, weekday, grouping, limit and
 order, plus Unicode names, ambiguous names, out-of-scope requests, prompt
 injection and empty/gibberish input. `evals/ask/README.md` documents the label
 format and how to add cases. The corpus contains no archive data.

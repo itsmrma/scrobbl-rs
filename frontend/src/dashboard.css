@@ -701,7 +701,7 @@
   gap: 8px;
   font-family: var(--font-display);
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .chart-readout small,
@@ -1147,7 +1147,7 @@
 }
 
 .legend-count {
-  font-weight: 650;
+  font-weight: 600;
 }
 
 /* --------------------------------------------------------------------------
@@ -1266,7 +1266,7 @@
 .milestone-value {
   font-family: var(--font-display);
   font-size: 16px;
-  font-weight: 700;
+  font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1297,7 +1297,7 @@
 }
 
 .threshold-count {
-  font-weight: 700;
+  font-weight: 600;
 }
 
 /* --------------------------------------------------------------------------

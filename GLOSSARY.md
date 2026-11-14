@@ -41,6 +41,13 @@ La specifica pubblicazione del brano associata a un ascolto, per esempio sull'al
 L'associazione di brani di edizioni diverse per consultarne insieme gli ascolti, conservando l'edizione ascoltata.
 _Avoid_: Duplicato di ascolto.
 
+**Artista dell'album**:
+Un artista accreditato per primo su almeno un brano dell'album, oppure accreditato su tutti i brani di un album con più brani. Un ospite presente in un solo brano (come Halsey in "Boy With Luv" di BTS) non è artista dell'album. Usato per l'intestazione della pagina album, le classifiche e la ricerca delle copertine.
+_Avoid_: Tutti gli artisti dei brani.
+
+**Edizioni dello stesso brano**:
+Brani con lo stesso titolo, normalizzato senza maiuscole e accenti, e gli stessi artisti accreditati, pubblicati in edizioni diverse (singolo, album, deluxe). Nelle domande in linguaggio naturale vengono contati insieme; nella consultazione restano separati salvo raggruppamento di brani.
+
 **Raggruppamento di album**:
 L'associazione di edizioni di un album per consultarne insieme gli ascolti. È una scelta distinta dal raggruppamento dei brani che contengono.
 

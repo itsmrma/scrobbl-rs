@@ -72,13 +72,15 @@ export function BackButton({ fallback }: { fallback: string }) {
   return (
     <button
       className="btn btn-ghost music-back"
+      aria-label="Back"
       onClick={() => {
         if (current.back && current.back.index < current.index)
           history.go(current.back.index - current.index);
         else navigate(fallback);
       }}
     >
-      <Icon>arrow_back</Icon>Back
+      <Icon>arrow_back</Icon>
+      <span className="music-back-label">Back</span>
     </button>
   );
 }

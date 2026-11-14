@@ -55,7 +55,7 @@ impl QueryParser for UnavailableParser {
 }
 
 pub fn unsupported_question_message() -> String {
-    "I can answer questions about play counts, listening time, distinct tracks, artists and albums, first plays, last plays, listening streaks, milestones and grouped top lists (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones). I cannot write SQL or answer questions outside the archive. Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
+    "I can answer questions about play counts, listening time, distinct tracks, artists and albums, first plays, last plays, listening streaks, milestones, ranking positions, shares of plays, listening days and grouped top lists (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones, rank, share, listening_days). I cannot write SQL or answer questions outside the archive. Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
 }
 
 pub fn stub_parse(question: &str) -> ParsedQuestion {
@@ -260,6 +260,7 @@ fn default_query(metric: Metric) -> Query {
     Query {
         metric,
         entity: None,
+        scope: None,
         period: Period::AllTime,
         year: None,
         month: None,
