@@ -466,7 +466,7 @@ mod llama {
         sync::{LazyLock, Once},
     };
 
-    pub const CONTEXT_TOKENS: u32 = 2048;
+    pub const CONTEXT_TOKENS: u32 = 3072;
     pub const MAX_NEW_TOKENS: i32 = 256;
     const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 

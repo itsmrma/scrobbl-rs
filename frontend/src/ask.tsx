@@ -8,7 +8,7 @@ import type {
   Query,
 } from "./generated";
 import { api } from "./api";
-import { InterpretationChips } from "./ask-chips";
+import { applyCandidate, InterpretationChips } from "./ask-chips";
 import { AskResultRows } from "./ask-table";
 import { AskTimeCard } from "./ask-time";
 import { StreakResultCard } from "./ask-streak";
@@ -26,6 +26,9 @@ const periodCopy: Record<string, string> = {
   last_month: "last month",
   this_year: "this year",
   last_year: "last year",
+  last_7_days: "in the last 7 days",
+  last_30_days: "in the last 30 days",
+  last_365_days: "in the last 365 days",
 };
 
 const metricCopy: Record<string, string> = {
@@ -38,6 +41,9 @@ const metricCopy: Record<string, string> = {
   last_play: "Last play",
   streak: "Listening streak",
   milestones: "Milestones",
+  rank: "Ranking position",
+  share: "Share of plays",
+  listening_days: "Listening days",
 };
 
 const groupCopy: Record<string, string> = {
@@ -53,7 +59,22 @@ const groupCopy: Record<string, string> = {
 };
 
 function entityName(query: Query): string {
-  return query.entity?.name ?? "your archive";
+  if (!query.entity) return "your archive";
+  return query.scope && query.scope.name !== query.entity.name
+    ? `${query.entity.name} by ${query.scope.name}`
+    : query.entity.name;
+}
+
+const kindPlural: Record<string, string> = {
+  artist: "artists",
+  album: "albums",
+  track: "tracks",
+};
+
+/** Share of plays as a percentage with one decimal, from integer counts. */
+export function sharePercent(plays: number, total: number): string {
+  if (total <= 0) return "0%";
+  return `${(Math.round((plays / total) * 1000) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 }
 
 function headline(response: AskResponse, preferences: Preferences): string {
@@ -85,6 +106,19 @@ function headline(response: AskResponse, preferences: Preferences): string {
     return value === null
       ? `No ${which} listen found for ${entity} ${period}.`
       : `Your ${which} listen to ${entity} was on ${date(value, preferences)}.`;
+  }
+  if (query.metric === "rank") {
+    const kind = kindPlural[query.entity?.kind ?? "artist"];
+    return value === null
+      ? `${entity} has no plays ${period}.`
+      : `${entity} is number ${number.format(value)} of ${number.format(result.total)} ${kind} ${period}.`;
+  }
+  if (query.metric === "share") {
+    return `${entity} is ${sharePercent(value ?? 0, result.total)} of your plays ${period}.`;
+  }
+  if (query.metric === "listening_days") {
+    const days = value ?? 0;
+    return `You listened to ${entity} on ${number.format(days)} ${days === 1 ? "day" : "days"} ${period}.`;
   }
   return `${query.metric} for ${entity} ${period}.`;
 }
@@ -163,14 +197,7 @@ export function AskPage({
 
   function choose(candidate: EntityCandidate) {
     if (!response?.query) return;
-    void runQuery({
-      ...response.query,
-      entity: {
-        kind: candidate.kind,
-        name: candidate.name,
-        id: candidate.id,
-      },
-    });
+    void runQuery(applyCandidate(response.query, candidate));
   }
 
   const unavailable =
@@ -402,7 +429,19 @@ export function ResultCard({
       <p className="ask-result-headline">{headline(response, preferences)}</p>
       {!isPoint && !isTime && !query.group_by && (
         <p className="ask-result-value" aria-label="Result value">
-          {number.format(result.scalar ?? 0)}
+          {query.metric === "share"
+            ? sharePercent(result.scalar ?? 0, result.total)
+            : query.metric === "rank"
+              ? result.scalar === null
+                ? "—"
+                : `#${number.format(result.scalar)}`
+              : number.format(result.scalar ?? 0)}
+        </p>
+      )}
+      {query.metric === "share" && (
+        <p className="ask-coverage">
+          {number.format(result.scalar ?? 0)} of {number.format(result.total)}{" "}
+          counted plays
         </p>
       )}
       {isTime && result.time && <AskTimeCard time={result.time} />}
@@ -429,7 +468,7 @@ export function ResultCard({
             : ""}
         </p>
       )}
-      {result.rows.length > 0 && (
+      {result.rows.length > 0 && query.metric !== "rank" && (
         <AskResultRows result={result} query={query} />
       )}
       {result.links.length > 0 && (

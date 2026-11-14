@@ -72,7 +72,7 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   const baseline = await (await page.request.get("/api/spotify/status")).json();
   await expect(collection).toHaveValue(String(baseline.sync_seconds));
   await collection.fill("90");
-  await now.fill("20");
+  await now.fill("45");
   await page.route("**/api/spotify/intervals", (route) =>
     route.fulfill({
       status: 503,
@@ -88,16 +88,16 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   await saveIntervals(page);
   let effective = await (await page.request.get("/api/spotify/status")).json();
   expect([effective.sync_seconds, effective.now_playing_seconds]).toEqual([
-    90, 20,
+    90, 45,
   ]);
   await page.reload();
   await openSpotify(page);
   await expect(collection).toHaveValue("90");
-  await expect(now).toHaveValue("20");
+  await expect(now).toHaveValue("45");
   const owner = await (await page.request.get("/api/session")).json();
   const invalid = await page.request.post("/api/spotify/intervals", {
     headers: { Origin: baseURL, "X-CSRF-Token": owner.csrf },
-    data: { sync_seconds: 59, now_playing_seconds: 14 },
+    data: { sync_seconds: 59, now_playing_seconds: 29 },
   });
   expect(invalid.status()).toBe(400);
   const zeroNow = await page.request.post("/api/spotify/intervals", {
@@ -111,12 +111,12 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   ]);
   const restoreNow = await page.request.post("/api/spotify/intervals", {
     headers: { Origin: baseURL, "X-CSRF-Token": owner.csrf },
-    data: { sync_seconds: 90, now_playing_seconds: 20 },
+    data: { sync_seconds: 90, now_playing_seconds: 45 },
   });
   expect(restoreNow.status()).toBe(200);
   effective = await (await page.request.get("/api/spotify/status")).json();
   expect([effective.sync_seconds, effective.now_playing_seconds]).toEqual([
-    90, 20,
+    90, 45,
   ]);
 
   const other = await browser.newContext({
@@ -131,13 +131,13 @@ test("Spotify intervals save on the server, survive reload and are shared; API k
   await expect(
     otherPage.getByLabel("Collection interval (seconds)"),
   ).toHaveValue("90");
-  await otherPage.getByLabel("Now playing interval (seconds)").fill("25");
+  await otherPage.getByLabel("Now playing interval (seconds)").fill("35");
   await saveIntervals(otherPage);
-  await expect(now).toHaveValue("25", { timeout: 10000 });
+  await expect(now).toHaveValue("35", { timeout: 10000 });
   await other.close();
 
   await collection.fill("60");
-  await now.fill("15");
+  await now.fill("30");
   await saveIntervals(page);
   if (browserName === "chromium") {
     mkdirSync("docs/screenshots", { recursive: true });

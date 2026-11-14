@@ -315,7 +315,7 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     );
     assert_eq!(default["download"]["sha256"].as_str().unwrap().len(), 64);
     assert_eq!(default["download"]["size_bytes"], 1_282_439_264_u64);
-    assert_eq!(default["requirements"]["context_tokens"], 2048);
+    assert_eq!(default["requirements"]["context_tokens"], 3072);
     assert!(default["requirements"]["ram_min_bytes"].as_u64().unwrap() > 0);
     assert!(
         default["requirements"]["ram_recommended_bytes"]

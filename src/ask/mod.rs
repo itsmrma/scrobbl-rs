@@ -349,26 +349,114 @@ async fn run(
     let mut view = state.storage.read_view().await?;
     let conn = &mut *view.transaction;
 
+    let failed = |query: &Query, message: String| AskResponse {
+        status: AskStatus::Failed,
+        question: question.clone(),
+        query: Some(query.clone()),
+        chips: query.chips(),
+        result: None,
+        message: Some(message),
+        candidates: Vec::new(),
+        runtime_available: state.ask.runtime_available,
+    };
+
+    // The page context is what the owner is looking at. It answers questions
+    // that name nothing ("how many times did I play this?"), and narrows a
+    // named track or album to the artist/album page it was asked from. It
+    // never replaces something the question names explicitly.
+    let mut soft_scope: Option<(EntityKind, String)> = None;
     if let Some(context) = context {
-        match names::resolve_id(conn, context.kind, &context.id).await? {
-            Some((id, name)) => {
+        let Some((context_id, context_name)) =
+            names::resolve_id(conn, context.kind, &context.id).await?
+        else {
+            return Ok(failed(
+                &query,
+                "That context entity is not in your library.".into(),
+            ));
+        };
+        let named = query
+            .entity
+            .as_ref()
+            .filter(|entity| !entity.name.trim().is_empty() || entity.id.is_some());
+        match named {
+            None => {
                 query.entity = Some(Entity {
                     kind: context.kind,
-                    name,
-                    id: Some(id),
+                    name: context_name,
+                    id: Some(context_id),
                 });
             }
-            None => {
+            Some(entity)
+                if entity.id.is_none()
+                    && entity.kind == context.kind
+                    && names::fold(&entity.name) == names::fold(&context_name) =>
+            {
+                query.entity = Some(Entity {
+                    kind: context.kind,
+                    name: context_name,
+                    id: Some(context_id),
+                });
+            }
+            Some(entity)
+                if entity.id.is_none()
+                    && query.scope.is_none()
+                    && matches!(
+                        (entity.kind, context.kind),
+                        (EntityKind::Track | EntityKind::Album, EntityKind::Artist)
+                            | (EntityKind::Track, EntityKind::Album)
+                    ) =>
+            {
+                soft_scope = Some((context.kind, context_id));
+            }
+            Some(_) => {}
+        }
+    }
+
+    // An explicit scope ("Show by Ado") must resolve before the entity.
+    let mut hard_scope: Option<(EntityKind, String)> = None;
+    if let Some(scope) = query.scope.clone() {
+        let resolved = match scope.id.as_deref().filter(|id| !id.is_empty()) {
+            Some(id) => names::resolve_id(conn, scope.kind, id)
+                .await?
+                .map(|(id, name)| names::Resolution::Unique { id, name })
+                .unwrap_or(names::Resolution::NotFound),
+            None => names::resolve(conn, scope.kind, &scope.name).await?,
+        };
+        match resolved {
+            names::Resolution::Unique { id, name } => {
+                query.scope = Some(Entity {
+                    kind: scope.kind,
+                    name,
+                    id: Some(id.clone()),
+                });
+                hard_scope = Some((scope.kind, id));
+            }
+            names::Resolution::Ambiguous(candidates) => {
+                // Keep the question answerable: a chosen candidate becomes the
+                // scope through the chips, exactly like an ambiguous entity.
                 return Ok(AskResponse {
-                    status: AskStatus::Failed,
+                    status: AskStatus::Ambiguous,
                     question,
                     query: Some(query.clone()),
                     chips: query.chips(),
                     result: None,
-                    message: Some("That context entity is not in your library.".into()),
-                    candidates: Vec::new(),
+                    message: Some(
+                        "I found more than one artist with that name. Choose the one you meant."
+                            .into(),
+                    ),
+                    candidates,
                     runtime_available: state.ask.runtime_available,
                 });
+            }
+            names::Resolution::NotFound => {
+                return Ok(failed(
+                    &query,
+                    format!(
+                        "I couldn't find {} “{}” in your library.",
+                        scope.kind.label().to_lowercase(),
+                        scope.name.trim()
+                    ),
+                ));
             }
         }
     }
@@ -384,20 +472,24 @@ async fn run(
                     });
                 }
                 None => {
-                    return Ok(AskResponse {
-                        status: AskStatus::Failed,
-                        question,
-                        query: Some(query.clone()),
-                        chips: query.chips(),
-                        result: None,
-                        message: Some("That entity is not in your library.".into()),
-                        candidates: Vec::new(),
-                        runtime_available: state.ask.runtime_available,
-                    });
+                    return Ok(failed(&query, "That entity is not in your library.".into()));
                 }
             }
         } else {
-            match names::resolve(conn, entity.kind, &entity.name).await? {
+            let mut resolution = match hard_scope.as_ref().or(soft_scope.as_ref()) {
+                Some((kind, id)) => {
+                    names::resolve_in(conn, entity.kind, &entity.name, Some((*kind, id))).await?
+                }
+                None => names::resolve(conn, entity.kind, &entity.name).await?,
+            };
+            // The page is only a hint: a song by another artist is still found.
+            if resolution == names::Resolution::NotFound
+                && hard_scope.is_none()
+                && soft_scope.is_some()
+            {
+                resolution = names::resolve(conn, entity.kind, &entity.name).await?;
+            }
+            match resolution {
                 names::Resolution::Unique { id, name } => {
                     query.entity = Some(Entity {
                         kind: entity.kind,
@@ -420,23 +512,25 @@ async fn run(
                     });
                 }
                 names::Resolution::NotFound => {
-                    return Ok(AskResponse {
-                        status: AskStatus::Failed,
-                        question,
-                        query: Some(query.clone()),
-                        chips: query.chips(),
-                        result: None,
-                        message: Some(format!(
-                            "I couldn't find {} “{}” in your library.",
+                    let scope = query
+                        .scope
+                        .as_ref()
+                        .map(|scope| format!(" by {}", scope.name.trim()))
+                        .unwrap_or_default();
+                    return Ok(failed(
+                        &query,
+                        format!(
+                            "I couldn't find {} “{}”{scope} in your library.",
                             entity.kind.label().to_lowercase(),
                             entity.name.trim()
-                        )),
-                        candidates: Vec::new(),
-                        runtime_available: state.ask.runtime_available,
-                    });
+                        ),
+                    ));
                 }
             }
         }
+    } else if let Some(scope) = query.scope.take() {
+        // A scope without a named entity is the subject itself.
+        query.entity = Some(scope);
     }
 
     let chips = query.chips();

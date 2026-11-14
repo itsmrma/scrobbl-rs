@@ -25,6 +25,7 @@ pub enum Action {
 pub struct Application {
     pub action: tokio::sync::watch::Sender<Action>,
     pub boot_id: String,
+    pub started_at_ms: i64,
 }
 impl Default for Application {
     fn default() -> Self {
@@ -37,6 +38,7 @@ impl Application {
         Self {
             action,
             boot_id: auth::random_secret(),
+            started_at_ms: auth::now_ms(),
         }
     }
 }
@@ -238,9 +240,48 @@ pub async fn password(
     Ok(Json(json!({"saved":true})))
 }
 
+/// What the Application settings page shows about this instance.
 pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
-    Ok(Json(json!({"boot_id":state.application.boot_id})))
+    let (listens, tracks, artists, albums, images): (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT COUNT(*) FROM listens WHERE trashed_at_ms IS NULL),\
+         (SELECT COUNT(*) FROM tracks),\
+         (SELECT COUNT(*) FROM name_groups WHERE kind='artists'),\
+         (SELECT COUNT(*) FROM name_groups WHERE kind='albums'),\
+         (SELECT COUNT(*) FROM artwork WHERE bytes IS NOT NULL)",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
+    let schema: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations WHERE success=1")
+            .fetch_one(&state.read_db)
+            .await?;
+    let first_listen: Option<i64> =
+        sqlx::query_scalar("SELECT MIN(played_at_ms) FROM listens WHERE trashed_at_ms IS NULL")
+            .fetch_one(&state.read_db)
+            .await?;
+    // SQLite knows its own size; no filesystem path is involved.
+    let archive_bytes: i64 = sqlx::query_scalar(
+        "SELECT page_count*page_size FROM pragma_page_count(), pragma_page_size()",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
+    Ok(Json(json!({
+        "boot_id": state.application.boot_id,
+        "version": env!("CARGO_PKG_VERSION"),
+        "revision": option_env!("SCROBBL_BUILD_REF").unwrap_or("development"),
+        "started_at_ms": state.application.started_at_ms,
+        "schema": schema,
+        "archive_bytes": archive_bytes,
+        "listens": listens,
+        "tracks": tracks,
+        "artists": artists,
+        "albums": albums,
+        "images": images,
+        "first_listen_ms": first_listen,
+        "license": "GPL-3.0-or-later",
+        "repository": "https://github.com/itsmrma/scrobbl-rs",
+    })))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

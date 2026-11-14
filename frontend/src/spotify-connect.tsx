@@ -184,7 +184,7 @@ export function SpotifyConnectButton({
   return (
     <>
       <button
-        className="primary"
+        className={connected ? "secondary" : "primary"}
         disabled={disabled || flow !== null}
         onClick={() => void start()}
       >

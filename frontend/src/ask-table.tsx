@@ -28,6 +28,9 @@ const metricLabels: Record<Metric, string> = {
   last_play: "Last play",
   streak: "Listening streak",
   milestones: "Milestones",
+  rank: "Ranking position",
+  share: "Share of plays",
+  listening_days: "Listening days",
 };
 
 const groupLabels: Record<GroupBy, string> = {
@@ -47,7 +50,10 @@ function formatDate(value: string, options: Intl.DateTimeFormatOptions) {
   const key = JSON.stringify(options);
   let formatter = dateFormatters.get(key);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", ...options });
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "UTC",
+      ...options,
+    });
     dateFormatters.set(key, formatter);
   }
   const date = new Date(`${value}T00:00:00Z`);
@@ -91,7 +97,11 @@ export function AskResultRows({
   const groupBy = query.group_by;
   if (groupBy && temporalGroups.includes(groupBy)) {
     return (
-      <TemporalRows rows={result.rows} groupBy={groupBy} metric={result.metric} />
+      <TemporalRows
+        rows={result.rows}
+        groupBy={groupBy}
+        metric={result.metric}
+      />
     );
   }
   return (

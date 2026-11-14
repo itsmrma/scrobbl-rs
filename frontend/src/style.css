@@ -153,7 +153,8 @@ h4 {
   font-family: var(--font-display);
   color: var(--text);
   font-weight: 600;
-  letter-spacing: -0.035em;
+  /* Tight tracking only where the type is large enough to need it. */
+  letter-spacing: normal;
   line-height: 1.2;
   text-wrap: balance;
   overflow-wrap: anywhere;
@@ -161,10 +162,12 @@ h4 {
 
 h1 {
   font-size: clamp(28px, 3vw, 40px);
+  letter-spacing: -0.035em;
 }
 
 h2 {
   font-size: 20px;
+  letter-spacing: -0.01em;
 }
 
 h3 {
@@ -299,7 +302,7 @@ a:focus-visible {
   border-radius: var(--radius-control);
   background: var(--accent);
   color: var(--accent-ink);
-  font-weight: 700;
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -527,7 +530,7 @@ form
   background: var(--accent);
   color: var(--accent-ink);
   border-color: color-mix(in oklab, var(--accent) 82%, var(--text));
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled),
@@ -824,7 +827,7 @@ input.select-search {
 }
 
 .select-options [role="option"][aria-selected="true"] {
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .select-options [role="option"][aria-disabled="true"] {
@@ -904,8 +907,32 @@ input.select-search {
   min-width: 0;
 }
 
+/* Padded panels are a vertical rhythm: every block gets the same 12px step,
+   so text never sits directly on the control below it. Panels that need a
+   different rhythm set their own display and gap. */
 .panel.padded {
-  padding: 18px 20px;
+  padding: 20px 24px;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.panel.padded > * {
+  /* Grid items default to their min-content width; long names, codes and
+     tables must wrap or scroll inside the panel instead. */
+  min-width: 0;
+}
+
+.panel.padded > .panel-title {
+  margin-bottom: 0;
+}
+
+.panel.padded > :is(button, a.button, .button, .btn) {
+  justify-self: start;
+}
+
+.panel.padded > :is(h2, h3) + p {
+  margin-top: -6px;
 }
 
 .panel-title {
@@ -915,6 +942,12 @@ input.select-search {
   gap: 10px 14px;
   flex-wrap: wrap;
   margin-bottom: 12px;
+}
+
+.panel-title > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .panel-title h2 {
@@ -1598,8 +1631,7 @@ progress::-moz-progress-bar {
 .sidebar nav[aria-label="Main navigation"] a.active {
   background: var(--surface-raised);
   color: var(--text);
-  border-color: var(--border-strong);
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-color: var(--row-border);
 }
 
 .collapsed-label {
@@ -1722,7 +1754,7 @@ progress::-moz-progress-bar {
   overflow: hidden;
   white-space: nowrap;
   text-decoration: none;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .playback-title-text {
@@ -1893,7 +1925,7 @@ footer {
   color: var(--accent-ink);
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2238,7 +2270,6 @@ dialog.artwork-lightbox {
   .search-result-list > li > a:hover {
     background: var(--row-hover);
     border-color: var(--row-hover-border);
-    box-shadow: inset 3px 0 0 var(--accent);
   }
 }
 
@@ -2297,7 +2328,7 @@ dialog.artwork-lightbox {
 }
 
 .listen-heading > a {
-  font-weight: 650;
+  font-weight: 600;
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -2605,7 +2636,7 @@ dialog.artwork-lightbox {
 .rank-number {
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   text-align: right;
@@ -2618,7 +2649,7 @@ dialog.artwork-lightbox {
 }
 
 .rank-name a {
-  font-weight: 650;
+  font-weight: 600;
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -2782,8 +2813,7 @@ dialog.artwork-lightbox {
 
 .ranking-categories a[aria-current="page"] {
   background: var(--surface-raised);
-  border-color: color-mix(in oklab, var(--accent) 55%, var(--border-strong));
-  box-shadow: inset 3px 0 0 var(--accent);
+  border-color: var(--border-strong);
 }
 
 .ranking-categories a span {
@@ -3001,7 +3031,7 @@ dialog.artwork-lightbox {
   color: var(--muted);
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
   line-height: 1;
   display: inline-flex;
   align-items: center;
@@ -3061,8 +3091,20 @@ dialog.artwork-lightbox {
   max-width: 100%;
 }
 
+/* Back sits beside the title, so it never pushes the title down. */
+.music-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
+  justify-self: stretch;
+  width: 100%;
+}
+
 .music-back {
-  margin: 0 0 -4px -10px;
+  /* Override .btn's max-width: 100% so Firefox does not clamp to the auto track shrunk by margin-right: -10px. */
+  max-width: none;
+  margin: 0 -10px 0 0;
   padding-inline: 10px 14px;
   color: var(--muted);
 }
@@ -3550,7 +3592,7 @@ dialog.artwork-lightbox {
 
 .history-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
@@ -4368,27 +4410,40 @@ dialog.artwork-lightbox {
   display: none;
 }
 
+/* Sections in a quiet column: the active one is a surface step, nothing else. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
 .settings-tabs {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 5px;
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 2px;
 }
 
 .settings-tabs a {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  min-height: 38px;
-  padding: 6px 14px;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   color: var(--muted);
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.settings-tabs a .material-icons-outlined {
+  font-size: 18px;
 }
 
 .settings-tabs a:hover {
@@ -4398,8 +4453,14 @@ dialog.artwork-lightbox {
 
 .settings-tabs a[aria-current="page"] {
   background: var(--surface-raised);
+  border-color: var(--row-border);
   color: var(--text);
-  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.settings-panels {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
 }
 
 .settings-form,
@@ -4501,7 +4562,7 @@ dialog.artwork-lightbox {
   justify-self: start;
   padding: 6px 12px;
   border-radius: var(--radius-control);
-  font-weight: 650;
+  font-weight: 600;
   font-size: 13px;
 }
 
@@ -4512,15 +4573,143 @@ dialog.artwork-lightbox {
 
 /* Connections, Artwork Providers, Account, API Keys & Recovery */
 .connections-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+  display: grid;
+  gap: 24px;
+}
+
+.settings-section-intro {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-section-intro p {
+  margin: 0;
+  color: var(--muted);
 }
 
 .spotify-card {
+  display: grid;
+  gap: 20px;
+}
+
+/* Sections inside a card: separated by space and one hairline, not boxes. */
+.connection-section {
+  display: grid;
+  gap: 12px;
+  padding-top: 24px;
+  border-top: 1px solid var(--row-border);
+}
+
+.connection-section > p,
+.refresh-intervals > p {
+  margin: 0;
+}
+
+.connection-section-heading {
   display: flex;
-  flex-direction: column;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.text-link .material-icons-outlined {
+  font-size: 16px;
+}
+
+.text-link:hover {
+  color: var(--text);
+}
+
+.connection-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+}
+
+.connection-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 16px;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--row-border);
+}
+
+.connection-facts dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connection-facts dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.connection-timing > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.connection-timing > p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.interval-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 260px)) auto;
+  align-items: end;
+  justify-content: start;
+  gap: 16px;
+}
+
+.refresh-intervals {
+  gap: 12px;
+}
+
+.application-action h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.application-action p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+@media (max-width: 760px) {
+  .connection-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .interval-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .interval-fields > button {
+    justify-self: start;
+  }
 }
 
 .connection-card-header {
@@ -4583,12 +4772,6 @@ dialog.artwork-lightbox {
   gap: 16px;
 }
 
-.spotify-operational-tools,
-.spotify-intervals-surface {
-  display: grid;
-  gap: 12px;
-}
-
 .connection-steps {
   list-style: none;
   margin: 0;
@@ -4630,7 +4813,7 @@ dialog.artwork-lightbox {
   color: var(--accent-ink);
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4725,7 +4908,6 @@ dialog.artwork-lightbox {
   display: none;
 }
 
-.connection-diagnostics,
 .diagnostics {
   margin: 0;
   display: grid;
@@ -4757,23 +4939,29 @@ dialog.artwork-lightbox {
   overflow-wrap: anywhere;
 }
 
-.connection-report-actions,
 .connection-review-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
-  padding: 10px 14px;
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  border: 1px solid var(--border);
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--radius-md);
+  background: var(--warning-surface);
+  border: 1px solid color-mix(in oklab, var(--warning) 30%, var(--border));
+  font-size: 13px;
 }
 
 .spotify-credentials-edit {
   display: grid;
   gap: 12px;
-  margin-top: 10px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--row-border);
+}
+
+.spotify-credentials-edit > button {
+  justify-self: start;
 }
 
 .artwork-provider-list {
@@ -4860,6 +5048,31 @@ dialog.artwork-lightbox {
   flex-wrap: wrap;
   gap: 10px;
   font-size: 13px;
+  color: var(--muted);
+}
+
+.api-key-meta {
+  gap: 8px;
+}
+
+/* Application and scope are identifiers: quiet mono chips, icon centred. */
+.api-key-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 10px 2px 8px;
+  border-radius: var(--radius-control);
+  background: var(--row-bg);
+  border: 1px solid var(--row-border);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.api-key-meta-item .material-icons-outlined {
+  font-size: 16px;
   color: var(--muted);
 }
 
@@ -5037,26 +5250,32 @@ dialog.artwork-lightbox {
     display: contents;
   }
 
-  .music-header-content > .music-back {
-    grid-column: 1 / -1;
-    grid-row: 1;
-    justify-self: start;
-    margin: 0 0 -6px -10px;
-  }
-
   .music-heading > .cover.large {
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 1;
     width: 100%;
   }
 
-  .music-header-content > .page-heading {
+  .music-header-content > .music-title-row {
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 1;
     align-self: center;
+    gap: 8px;
   }
 
-  .music-header-content > :not(.music-back):not(.page-heading) {
+  /* Icon-only on phones, still a full 44px touch target. */
+  .music-back {
+    min-width: 44px;
+    margin: -8px -10px 0 0;
+    padding-inline: 10px;
+    justify-content: center;
+  }
+
+  .music-back-label {
+    display: none;
+  }
+
+  .music-header-content > :not(.music-title-row) {
     grid-column: 1 / -1;
   }
 
@@ -5173,6 +5392,10 @@ dialog.artwork-lightbox {
     display: none;
   }
 
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .settings-section-select {
     display: flex;
   }
@@ -5263,10 +5486,8 @@ dialog.artwork-lightbox {
 .ask-eyebrow {
   margin: 0;
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .ask-chips {
@@ -5306,10 +5527,8 @@ dialog.artwork-lightbox {
 
 .ask-chip-label {
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -5355,7 +5574,6 @@ dialog.artwork-lightbox {
   font-size: 20px;
   font-weight: 600;
   line-height: 1.35;
-  letter-spacing: -0.02em;
   text-wrap: balance;
 }
 
@@ -5384,7 +5602,6 @@ dialog.artwork-lightbox {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  letter-spacing: -0.02em;
   overflow-wrap: anywhere;
 }
 
@@ -5462,10 +5679,8 @@ dialog.artwork-lightbox {
 
 .ask-table thead th {
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -5522,10 +5737,8 @@ dialog.artwork-lightbox {
 
 .ask-candidate-kind {
   color: var(--muted);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .ask-notice-action {
@@ -5959,4 +6172,54 @@ dialog.artwork-lightbox {
   .ai-installed-list li > button {
     width: 100%;
   }
+}
+
+.artwork-provider-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.artwork-provider-copy small {
+  font-size: 12px;
+}
+
+/* Application → About */
+.about-identity {
+  display: grid;
+  gap: 4px;
+}
+
+.about-wordmark {
+  font-size: 28px;
+}
+
+.about-identity p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+}
+
+.about-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.about-links a:hover {
+  color: var(--text);
+}
+
+.about-links .material-icons-outlined {
+  font-size: 14px;
 }

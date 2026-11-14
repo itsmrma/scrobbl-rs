@@ -91,14 +91,26 @@ async fn diagnostics(state: &AppState, entries: &[(&str, &str)]) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
+/// Spotify publishes no numbers, but Dev Mode apps share one quota bucket per
+/// developer account and the rate limit is a rolling 30-second window. One
+/// currently-playing request every 30 seconds plus one recently-played request
+/// per collection stays far from it; faster polling only adds 429 risk for no
+/// visible gain, because recently-played is the source of listens anyway.
+pub(crate) const MIN_NOW_PLAYING_SECONDS: u64 = 30;
+
 async fn intervals(state: &AppState) -> Result<crate::dto::SpotifyIntervals> {
-    match db::setting(&state.read_db, "spotify_intervals").await? {
-        Some(value) => serde_json::from_str(&value).map_err(|_| AppError::Internal),
-        None => Ok(crate::dto::SpotifyIntervals {
+    let mut intervals = match db::setting(&state.read_db, "spotify_intervals").await? {
+        Some(value) => serde_json::from_str(&value).map_err(|_| AppError::Internal)?,
+        None => crate::dto::SpotifyIntervals {
             sync_seconds: state.config.sync_seconds,
             now_playing_seconds: state.config.now_playing_seconds,
-        }),
+        },
+    };
+    // Values saved by older versions (15 seconds) are raised, not rejected.
+    if intervals.now_playing_seconds != 0 {
+        intervals.now_playing_seconds = intervals.now_playing_seconds.max(MIN_NOW_PLAYING_SECONDS);
     }
+    Ok(intervals)
 }
 
 pub async fn save_intervals(
@@ -108,10 +120,11 @@ pub async fn save_intervals(
 ) -> Result<Json<crate::dto::SpotifyIntervals>> {
     auth::require_write(&state, &headers).await?;
     if !(60..=86400).contains(&form.sync_seconds)
-        || !(form.now_playing_seconds == 0 || (15..=86400).contains(&form.now_playing_seconds))
+        || !(form.now_playing_seconds == 0
+            || (MIN_NOW_PLAYING_SECONDS..=86400).contains(&form.now_playing_seconds))
     {
         return Err(AppError::BadRequest(
-            "Use 60–86400 seconds for collection and 0 or 15–86400 seconds for now playing.".into(),
+            "Use 60–86400 seconds for collection and 0 or 30–86400 seconds for now playing.".into(),
         ));
     }
     let _now = state.spotify.now_gate.lock().await;
@@ -218,7 +231,7 @@ pub async fn status(
         now_playing_timing: map
             .get("now_playing_timing")
             .and_then(|v| serde_json::from_str(v).ok()),
-        coverage_warning: map.remove("coverage_warning"),
+        coverage_warning: map.remove("coverage_warning").filter(|v| !v.is_empty()),
         retry_at_ms,
         rate_limit_reason: map.remove("spotify_rate_limit_reason"),
         review_count: sqlx::query_scalar(
@@ -762,6 +775,8 @@ pub fn parse_track(row: &Value) -> Result<Track> {
     })
 }
 const SYNC_COALESCE_MS: i64 = 15_000;
+const MAX_HISTORY_PAGES: usize = 3;
+
 const COALESCED_SYNC_MESSAGE: &str =
     "A collection attempt finished just now. Please wait a few seconds.";
 
@@ -879,8 +894,12 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     let mut excluded = Vec::new();
     let mut newest = previous;
     let mut warning = None;
+    let mut reached_previous = false;
+    let mut partial = false;
     // Walk backwards using our own cursors. Never follow arbitrary upstream URLs with a bearer token.
-    for page in 0..20 {
+    // Spotify keeps only about the 50 most recent plays, so a few pages are
+    // enough; walking further only spends request quota.
+    for page in 0..MAX_HISTORY_PAGES {
         if page > 0 {
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
@@ -891,7 +910,21 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
         if let Some(cursor) = before {
             params.push(("before", cursor.to_string()));
         }
-        let value = api_get(state, "/me/player/recently-played", &params).await?;
+        let value = match api_get(state, "/me/player/recently-played", &params).await {
+            Ok(value) => value,
+            // Keep what earlier pages already returned: a later 429 or
+            // network error must not throw away a successful first page,
+            // otherwise every retry repeats the same requests and the
+            // collection never moves forward.
+            Err(_) if page > 0 => {
+                partial = true;
+                warning = Some(
+                    "Spotify stopped answering while older recent history was being read. Saved what was received; an extended-history import can fill any gap.",
+                );
+                break;
+            }
+            Err(error) => return Err(error),
+        };
         let rows = value
             .get("items")
             .and_then(Value::as_array)
@@ -906,7 +939,20 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
         }
         let mut oldest: Option<i64> = None;
         for row in rows {
-            let timestamp = row.get("played_at").and_then(Value::as_str).and_then(|s|DateTime::parse_from_rfc3339(s).ok()).map(|v|v.timestamp_millis()).ok_or_else(||AppError::Spotify("Spotify returned an invalid listening timestamp. The sync cursor has not advanced.".into()))?;
+            // One malformed row must never block every later collection: it is
+            // reported as skipped and the rest of the page is saved.
+            let Some(timestamp) = row
+                .get("played_at")
+                .and_then(Value::as_str)
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|v| v.timestamp_millis())
+            else {
+                excluded.push(crate::jobs::SourceRow::Skipped {
+                    raw: row.clone(),
+                    reason: "Spotify returned a listen without a valid timestamp.".into(),
+                });
+                continue;
+            };
             oldest = Some(oldest.map_or(timestamp, |v| v.min(timestamp)));
             newest = Some(newest.map_or(timestamp, |v| v.max(timestamp)));
             if row["track"]["type"].as_str().is_some_and(|v| v != "track")
@@ -918,7 +964,13 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
                 });
                 continue;
             }
-            let track = parse_track(&row["track"])?;
+            let Ok(track) = parse_track(&row["track"]) else {
+                excluded.push(crate::jobs::SourceRow::Skipped {
+                    raw: row.clone(),
+                    reason: "Spotify returned a track without a valid identifier.".into(),
+                });
+                continue;
+            };
             events.push(Event {
                 source: "spotify_api",
                 source_key: db::metadata_id("event", &[&track.id, &timestamp.to_string()]),
@@ -935,7 +987,8 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
                 raw: row.clone(),
             });
         }
-        let reached_previous = previous.is_some_and(|p| oldest.is_some_and(|o| o <= p));
+        reached_previous =
+            reached_previous || previous.is_some_and(|p| oldest.is_some_and(|o| o <= p));
         if reached_previous || rows.len() < 50 || oldest.is_none() {
             if previous.is_some() && !reached_previous {
                 warning = Some(
@@ -944,7 +997,7 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
             }
             break;
         }
-        if page == 19 || before.is_some_and(|b| oldest.is_some_and(|o| o >= b)) {
+        if page + 1 == MAX_HISTORY_PAGES || before.is_some_and(|b| oldest.is_some_and(|o| o >= b)) {
             warning = Some(
                 "Recent-history recovery stopped at the pagination limit. Some listens may be missing; import extended history to repair gaps.",
             );
@@ -970,10 +1023,26 @@ async fn sync_locked(state: &AppState, job: &crate::jobs::Job) -> Result<Value> 
     db::set_setting(&mut tx, "last_sync_ms", &auth::now_ms().to_string()).await?;
     db::set_setting(&mut tx, "spotify_error", "").await?;
     db::set_setting(&mut tx, "collection_error", "").await?;
-    db::set_setting(&mut tx, "spotify_rate_limit_reason", "").await?;
+    if !partial {
+        db::set_setting(&mut tx, "spotify_rate_limit_reason", "").await?;
+    }
+    // The first page proved the authorization; a later page error is not a
+    // reason to ask the owner to reconnect.
+    db::set_setting(&mut tx, "spotify_action_required", "").await?;
     db::set_setting(&mut tx, "last_sync_added", &report.added.to_string()).await?;
-    if let Some(warning) = warning {
-        db::set_setting(&mut tx, "coverage_warning", warning).await?;
+    // New albums and artists from live collection get their images too, not
+    // only those from file imports.
+    if report.added > 0 {
+        crate::artwork::enqueue_missing(&mut tx).await?;
+    }
+    match warning {
+        Some(warning) => db::set_setting(&mut tx, "coverage_warning", warning).await?,
+        // A collection that reached the previous cursor has no gap: an old
+        // warning would otherwise stay on Connections forever.
+        None if reached_previous || previous.is_none() => {
+            db::set_setting(&mut tx, "coverage_warning", "").await?
+        }
+        None => {}
     }
     tx.commit().await?;
     Ok(json!(report))
@@ -1090,7 +1159,8 @@ async fn now_playing_in_window(
     let now = poll_at_ms.unwrap_or(requested_at_ms);
     if let Some((time, value)) = &*state.spotify.cache.lock().await {
         let ttl = if value.is_null() {
-            interval.max(60_000)
+            // Nothing playing: check less often, the next track can wait.
+            interval.saturating_mul(2).max(90_000)
         } else {
             interval
         };
@@ -1194,6 +1264,25 @@ pub async fn disconnect(State(state): State<AppState>, headers: HeaderMap) -> Re
     *state.spotify.cache.lock().await = None;
     Ok(Json(json!({"ok":true})))
 }
+/// Sleep until the next scheduled attempt: the regular interval, or earlier
+/// when a paused collection job becomes due, so a failed run is retried on
+/// time instead of one whole interval late. Spotify's own cooldown is kept on
+/// the job, so this never shortens a Retry-After.
+async fn next_collection_delay(state: &AppState, interval: Duration) -> Duration {
+    let due: Option<i64> = sqlx::query_scalar(
+        "SELECT MIN(retry_at_ms) FROM jobs WHERE kind='spotify_collection' AND state='waiting' AND retry_at_ms IS NOT NULL",
+    )
+    .fetch_one(&state.db)
+    .await
+    .ok()
+    .flatten();
+    let Some(due) = due else {
+        return interval;
+    };
+    let wait = due.saturating_sub(auth::now_ms()).max(1_000) as u64;
+    interval.min(Duration::from_millis(wait))
+}
+
 pub async fn worker(state: AppState) {
     loop {
         let connected =
@@ -1204,15 +1293,22 @@ pub async fn worker(state: AppState) {
         if connected
             && !crate::recovery::paused(&state.storage).await
             && !state.storage.directory.join("recovery.pending").exists()
-            && let Err(error) = sync(&state).await
         {
-            let _ = diagnostic(&state, "spotify_error", &error.to_string()).await;
+            match sync(&state).await {
+                // A pending retry or a run that just finished is the normal
+                // schedule, not a failure to report on Connections.
+                Ok(_) | Err(AppError::Conflict(_)) => {}
+                Err(error) => {
+                    let _ = diagnostic(&state, "spotify_error", &error.to_string()).await;
+                }
+            }
         }
         let seconds = intervals(&state)
             .await
             .map(|value| value.sync_seconds)
             .unwrap_or(state.config.sync_seconds);
-        tokio::select! { _ = tokio::time::sleep(Duration::from_secs(seconds)) => {}, _ = state.spotify.wake.notified() => {} }
+        let delay = next_collection_delay(&state, Duration::from_secs(seconds)).await;
+        tokio::select! { _ = tokio::time::sleep(delay) => {}, _ = state.spotify.wake.notified() => {} }
     }
 }
 
@@ -1409,7 +1505,7 @@ mod tests {
         *state.spotify.cache.lock().await = Some((auth::now_ms(), json!({"title":"old sample"})));
         let configured = crate::dto::SpotifyIntervals {
             sync_seconds: 60,
-            now_playing_seconds: 15,
+            now_playing_seconds: 30,
         };
         assert_eq!(
             save_intervals(State(state.clone()), headers.clone(), Json(configured))
@@ -1423,7 +1519,7 @@ mod tests {
             .await
             .unwrap()
             .0;
-        assert_eq!((shown.sync_seconds, shown.now_playing_seconds), (60, 15));
+        assert_eq!((shown.sync_seconds, shown.now_playing_seconds), (60, 30));
         assert_eq!(
             now_playing(State(state.clone()), headers).await.unwrap().0["title"],
             "Test track"
@@ -1452,7 +1548,7 @@ mod tests {
         let mut headers = owner_headers(&state).await;
         let configured = crate::dto::SpotifyIntervals {
             sync_seconds: 60,
-            now_playing_seconds: 15,
+            now_playing_seconds: 30,
         };
         assert!(matches!(
             save_intervals(State(state.clone()), headers.clone(), Json(configured)).await,
@@ -1463,7 +1559,7 @@ mod tests {
             Err(AppError::Unauthorized)
         ));
         headers.insert("x-csrf-token", HeaderValue::from_static("csrf"));
-        for (sync_seconds, now_playing_seconds) in [(59, 15), (60, 14), (86401, 15), (60, 86401)] {
+        for (sync_seconds, now_playing_seconds) in [(59, 30), (60, 29), (86401, 30), (60, 86401)] {
             assert!(matches!(
                 save_intervals(
                     State(state.clone()),
@@ -1829,7 +1925,9 @@ mod tests {
         handle.abort();
     }
     #[tokio::test]
-    async fn paginates_backwards_and_does_not_advance_after_partial_failure() {
+    async fn a_failing_older_page_keeps_the_first_page_and_reports_a_gap() {
+        // Before: any error on an older page discarded the whole run, so a
+        // Spotify that kept rejecting `before=` blocked collection forever.
         let at = 1_749_000_000_000;
         let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
         let (_dir, state, mock, handle) = fixture(
@@ -1845,43 +1943,66 @@ mod tests {
             false,
         )
         .await;
-        assert!(sync(&state).await.is_err());
-        assert!(
-            db::setting(&state.db, "recent_cursor_ms")
-                .await
-                .unwrap()
-                .is_none()
-        );
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM listens")
-            .fetch_one(&state.db)
+        sqlx::query("INSERT INTO settings(key,value) VALUES('recent_cursor_ms',?)")
+            .bind((at - 400 * 180_000).to_string())
+            .execute(&state.db)
             .await
             .unwrap();
-        assert_eq!(count, 0);
+        assert_eq!(sync(&state).await.unwrap()["added"], 50);
         assert!(mock.calls.lock().await[1].1.contains("before="));
-        mock.replies.lock().await.extend([
-            reply("/v1/me/player/recently-played", json!({"items":batch})),
-            reply(
-                "/v1/me/player/recently-played",
-                json!({"items":[item(at-50*180_000)]}),
-            ),
-        ]);
-        // The failed attempt is durably waiting. Simulate its scheduled retry becoming due.
-        sqlx::query(
-            "UPDATE jobs SET retry_at_ms=0 WHERE kind='spotify_collection' AND state='waiting'",
-        )
-        .execute(&state.db)
-        .await
-        .unwrap();
-        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
-        assert_eq!(sync(&state).await.unwrap()["added"], 51);
+        assert_eq!(
+            db::setting(&state.db, "recent_cursor_ms").await.unwrap(),
+            Some(at.to_string())
+        );
+        assert!(
+            db::setting(&state.db, "coverage_warning")
+                .await
+                .unwrap()
+                .is_some_and(|warning| warning.contains("extended-history import"))
+        );
         let completed: crate::jobs::Job =
             sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
                 .fetch_one(&state.db)
                 .await
                 .unwrap();
         assert_eq!(completed.outcome.as_deref(), Some("complete"));
-        assert!(completed.error_code.is_none());
-        assert!(completed.retry_at_ms.is_none());
+
+        // The next run reaches the saved cursor in one request and clears the warning.
+        mock.replies.lock().await.push_back(reply(
+            "/v1/me/player/recently-played",
+            json!({"items":[item(at + 180_000), item(at)]}),
+        ));
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        assert_eq!(sync(&state).await.unwrap()["added"], 1);
+        assert_eq!(mock.calls.lock().await.len(), 3);
+        assert_eq!(
+            db::setting(&state.db, "coverage_warning")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("")
+        );
+        handle.abort();
+    }
+    #[tokio::test]
+    async fn malformed_rows_are_skipped_instead_of_blocking_collection() {
+        let at = 1_749_000_000_000;
+        let broken_track = json!({"played_at":"2025-06-04T01:20:00Z","track":{"uri":"not-a-uri","name":"?","type":"track"}});
+        let broken_time = json!({"played_at":"yesterday","track":item(at)["track"].clone()});
+        let (_dir, state, _mock, handle) = fixture(
+            vec![reply(
+                "/v1/me/player/recently-played",
+                json!({"items":[item(at), broken_track, broken_time]}),
+            )],
+            false,
+        )
+        .await;
+        let report = sync(&state).await.unwrap();
+        assert_eq!(report["added"], 1, "{report}");
+        assert_eq!(
+            db::setting(&state.db, "recent_cursor_ms").await.unwrap(),
+            Some(at.to_string())
+        );
         handle.abort();
     }
     #[tokio::test]
@@ -2486,8 +2607,7 @@ mod tests {
             async fn lookup(
                 &self,
                 _provider: crate::artwork_settings::ImageProvider,
-                _kind: &str,
-                _id: &str,
+                _target: &crate::artwork_sources::Target,
             ) -> Result<crate::artwork_sources::Lookup> {
                 Ok(crate::artwork_sources::Lookup::Missing)
             }
@@ -2519,14 +2639,14 @@ mod tests {
                 .await
                 .unwrap();
         let image =
-            crate::library::ensure_artwork_with(&state, "albums", &album, &PublicMisses).await;
+            crate::artwork::resolve_with(&state, "albums", &album, &PublicMisses, None).await;
         let collection = sync_force(&state).await;
         assert!(
             collection.is_ok(),
             "Artwork must not block new listens: {collection:?}; image result: {image:?}"
         );
         assert_eq!(collection.unwrap()["added"], 1);
-        assert_eq!(image.unwrap(), crate::library::ArtworkFetch::Missing);
+        assert_eq!(image.unwrap(), crate::artwork::ArtworkFetch::Missing);
         let headers = owner_headers(&state).await;
         let now = now_playing(State(state.clone()), headers.clone())
             .await
@@ -3708,7 +3828,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rate_limit_mid_pagination_keeps_cursor_and_commits_no_partial_batch() {
+    async fn rate_limit_mid_pagination_saves_the_first_page_and_keeps_the_cooldown() {
         let at = 1_749_000_000_000;
         let batch: Vec<_> = (0..50).map(|i| item(at - i * 180_000)).collect();
         let (_dir, state, mock, handle) = fixture(
@@ -3730,29 +3850,42 @@ mod tests {
             false,
         )
         .await;
+        sqlx::query("INSERT INTO settings(key,value) VALUES('recent_cursor_ms',?)")
+            .bind((at - 400 * 180_000).to_string())
+            .execute(&state.db)
+            .await
+            .unwrap();
 
-        assert!(sync(&state).await.is_err());
+        assert_eq!(sync(&state).await.unwrap()["added"], 50);
         assert_eq!(mock.calls.lock().await.len(), 2);
-        assert!(
-            db::setting(&state.db, "recent_cursor_ms")
+        assert_eq!(
+            db::setting(&state.db, "spotify_rate_limit_reason")
                 .await
                 .unwrap()
-                .is_none()
+                .as_deref(),
+            Some("QUOTA_EXCEEDED"),
+            "the quota diagnosis stays visible"
         );
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM listens")
-                .fetch_one(&state.db)
+        assert!(
+            db::setting(&state.db, "retry_at_ms")
                 .await
-                .unwrap(),
-            0
+                .unwrap()
+                .and_then(|v| v.parse::<i64>().ok())
+                .unwrap()
+                > auth::now_ms()
         );
+
         let job: crate::jobs::Job =
             sqlx::query_as("SELECT * FROM jobs WHERE kind='spotify_collection'")
                 .fetch_one(&state.db)
                 .await
                 .unwrap();
-        assert_eq!(job.state, "waiting");
-        assert!(job.retry_at_ms.unwrap() > auth::now_ms());
+        assert_eq!(job.outcome.as_deref(), Some("complete"));
+        auth::advance_clock(SYNC_COALESCE_MS + 1_000);
+        assert!(
+            sync(&state).await.is_err(),
+            "the next collection waits for Spotify's cooldown"
+        );
 
         let headers = owner_headers(&state).await;
         let sample = now_playing(State(state.clone()), headers).await.unwrap().0;

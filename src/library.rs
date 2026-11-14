@@ -12,11 +12,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::{
-    collections::BTreeSet,
-    net::{IpAddr, SocketAddr},
-    time::Duration,
-};
+use std::collections::BTreeSet;
 
 // CTEs overlay corrections without altering source metadata or executable schema.
 // Readers of a frozen archive use the same overlays as the live consultation.
@@ -241,189 +237,44 @@ pub(crate) fn image_type(bytes: &[u8]) -> Result<&'static str> {
         ))
     }
 }
-fn public_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v) => {
-            let [a, b, c, _] = v.octets();
-            !(v.is_private()
-                || v.is_loopback()
-                || v.is_link_local()
-                || v.is_broadcast()
-                || v.is_documentation()
-                || a == 0
-                || a >= 224
-                || (a == 100 && (64..=127).contains(&b))
-                || (a == 192 && b == 0 && c == 0)
-                || (a == 198 && (b == 18 || b == 19)))
-        }
-        IpAddr::V6(v) => v
-            .to_ipv4_mapped()
-            .map(|v| public_ip(IpAddr::V4(v)))
-            .unwrap_or_else(|| {
-                // Only global unicast; exclude documentation, special protocols and 6to4.
-                let s = v.segments();
-                (s[0] & 0xe000) == 0x2000
-                    && s[0] != 0x2002
-                    && !(s[0] == 0x2001 && (s[1] < 0x0200 || s[1] == 0x0db8))
-            }),
-    }
+/// Album artists: everyone credited first on at least one of the album's
+/// tracks, plus artists credited on every track of a multi-track album. A
+/// guest on one song (Halsey on "Boy With Luv") is not an album artist.
+pub(crate) const ALBUM_ARTISTS_SQL: &str = "SELECT a.id,a.name FROM track_artists ta JOIN tracks t ON t.id=ta.track_id JOIN artists a ON a.id=ta.artist_id WHERE t.album_id=?1 GROUP BY a.id HAVING MIN(ta.ordinal)=0 OR (COUNT(DISTINCT ta.track_id)=(SELECT COUNT(*) FROM tracks WHERE album_id=?1) AND (SELECT COUNT(*) FROM tracks WHERE album_id=?1)>1) ORDER BY MIN(ta.ordinal),COUNT(DISTINCT ta.track_id) DESC,a.name COLLATE NOCASE,a.id";
+
+/// Album artists of an album group, after local corrections and grouping.
+pub(crate) async fn album_artists(
+    conn: &mut sqlx::SqliteConnection,
+    album_id: &str,
+) -> Result<Vec<db::Artist>> {
+    Ok(sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{METADATA} {ALBUM_ARTISTS_SQL}"
+    )))
+    .bind(album_id)
+    .fetch_all(conn)
+    .await?
+    .into_iter()
+    .map(|row| db::Artist {
+        id: row.get("id"),
+        name: row.get("name"),
+    })
+    .collect())
 }
-fn image_retry_at(value: Option<&str>, now: i64) -> i64 {
-    value
-        .and_then(|value| {
-            value
-                .parse::<i64>()
-                .ok()
-                .filter(|seconds| *seconds >= 0)
-                .map(|seconds| now.saturating_add(seconds.saturating_mul(1000)))
-                .or_else(|| {
-                    chrono::DateTime::parse_from_rfc2822(value)
-                        .ok()
-                        .map(|date| date.timestamp_millis())
-                })
-        })
-        .unwrap_or_else(|| now.saturating_add(60_000))
-        .max(now.saturating_add(1000))
-}
-pub(crate) fn archive_https(mut target: url::Url) -> url::Url {
-    // CAA still returns legacy HTTP Archive links. Request HTTPS directly;
-    // never transmit an HTTP hop or relax public-address validation.
-    if target.scheme() == "http"
-        && target.host_str().is_some_and(|host| {
-            host == "coverartarchive.org" || host == "archive.org" || host.ends_with(".archive.org")
-        })
-    {
-        if target.port() == Some(80) {
-            let _ = target.set_port(None);
-        }
-        let _ = target.set_scheme("https");
+
+/// Download a user-supplied public image link.
+pub(crate) async fn download(url: &str) -> Result<Vec<u8>> {
+    match crate::artwork_http::image(url).await {
+        Ok(Some(bytes)) => Ok(bytes),
+        Ok(None) => Err(AppError::BadRequest(
+            "The image host has no file at that link. Use a direct image link or upload a file."
+                .into(),
+        )),
+        Err(AppError::ArtworkWait { .. }) => Err(AppError::BadRequest(
+            "The image host is not answering right now. Try again in a minute or upload a file."
+                .into(),
+        )),
+        Err(error) => Err(error),
     }
-    target
-}
-pub(crate) async fn public_response(
-    url: &str,
-    state: Option<&AppState>,
-) -> Result<reqwest::Response> {
-    let mut target = url.to_owned();
-    for _ in 0..5 {
-        let url = target.as_str();
-        let url = url::Url::parse(url)
-            .map_err(|_| AppError::BadRequest("Enter a valid public HTTPS image URL.".into()))?;
-        if url.scheme() != "https"
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.port_or_known_default() != Some(443)
-        {
-            return Err(AppError::BadRequest(
-                "Use a public HTTPS image URL on port 443, without credentials.".into(),
-            ));
-        }
-        let host = url
-            .host_str()
-            .ok_or_else(|| AppError::BadRequest("The image URL needs a public hostname.".into()))?;
-        if let Some(state) = state {
-            crate::artwork_sources::request_slot(state, host).await?;
-        }
-        let addresses: Vec<SocketAddr> = match tokio::net::lookup_host((host, 443)).await {
-            Ok(addresses) => addresses.collect(),
-            Err(_) => {
-                if let Some(state) = state {
-                    return Err(crate::artwork_sources::request_failed(state, host, None).await?);
-                }
-                return Err(AppError::BadRequest(
-                    "Could not resolve the image host.".into(),
-                ));
-            }
-        };
-        if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
-            return Err(AppError::BadRequest(
-                "Image links must point to the public internet, not a local or private address."
-                    .into(),
-            ));
-        }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .resolve_to_addrs(host, &addresses)
-            .build()
-            .map_err(|_| AppError::Internal)?;
-        let response = client
-            .get(url.clone())
-            .header(
-                header::USER_AGENT,
-                concat!(
-                    "scrobbl.rs/",
-                    env!("CARGO_PKG_VERSION"),
-                    " (https://github.com/itsmrma/scrobbl-rs)"
-                ),
-            )
-            .send()
-            .await;
-        let response = match response {
-            Ok(response) => response,
-            Err(_) => {
-                if let Some(state) = state {
-                    return Err(crate::artwork_sources::request_failed(state, host, None).await?);
-                }
-                return Err(AppError::BadRequest(
-                    "Could not download the image. Try a direct image link or upload a file."
-                        .into(),
-                ));
-            }
-        };
-        if (response.status().is_server_error()
-            || response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS)
-            && let Some(state) = state
-        {
-            let retry = response
-                .headers()
-                .get(header::RETRY_AFTER)
-                .map(|v| image_retry_at(v.to_str().ok(), auth::now_ms()));
-            return Err(crate::artwork_sources::request_failed(state, host, retry).await?);
-        }
-        if let Some(state) = state {
-            crate::artwork_sources::request_succeeded(state, host).await?;
-        }
-        if response.status().is_redirection() {
-            let location = response
-                .headers()
-                .get(header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .ok_or(AppError::Internal)?;
-            target = archive_https(url.join(location).map_err(|_| AppError::Internal)?).to_string();
-            continue;
-        }
-        return Ok(response);
-    }
-    Err(AppError::BadRequest(
-        "Too many image provider redirects.".into(),
-    ))
-}
-pub(crate) async fn download(url: &str, state: Option<&AppState>) -> Result<Vec<u8>> {
-    let mut response = public_response(url, state).await?;
-    if !response.status().is_success()
-        || response
-            .content_length()
-            .is_some_and(|v| v > IMAGE_LIMIT as u64)
-    {
-        return Err(AppError::BadRequest("The image host did not return an image within the 5 MB limit. Use a direct link or upload a file.".into()));
-    }
-    let mut data = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|_| AppError::BadRequest("Image download was interrupted. Please retry.".into()))?
-    {
-        if data.len() + chunk.len() > IMAGE_LIMIT {
-            return Err(AppError::BadRequest(
-                "Images must be 5 MB or smaller.".into(),
-            ));
-        }
-        data.extend_from_slice(&chunk);
-    }
-    image_type(&data)?;
-    Ok(data)
 }
 async fn save_image(
     state: &AppState,
@@ -493,7 +344,7 @@ pub async fn image_url(
     }
     exists(&state, &kind, &id).await?;
     if let Some(url) = form.url {
-        let bytes = download(&url, None).await?;
+        let bytes = download(&url).await?;
         let provenance = match form.credit {
             Some(mut credit) => {
                 credit.source_url = crate::artwork_sources::secure_url(&credit.source_url)
@@ -529,7 +380,7 @@ pub async fn artwork_preview(
     Query(query): Query<PreviewQuery>,
 ) -> Result<Response> {
     auth::session(&state, &headers).await?;
-    let bytes = download(&query.url, None).await?;
+    let bytes = download(&query.url).await?;
     let mime = image_type(&bytes)?;
     Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
@@ -577,7 +428,7 @@ pub async fn artwork(
             .into_response()
     };
     let cached = sqlx::query(
-        "SELECT bytes FROM artwork WHERE kind=? AND entity_id=? ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
+        "SELECT bytes FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END LIMIT 1",
     )
     .bind(&kind)
     .bind(&id)
@@ -605,8 +456,8 @@ pub async fn artwork(
         )
             .into_response());
     }
-    match ensure_artwork_after_miss(&state, &kind, &id).await {
-        Ok(ArtworkFetch::Busy) => Ok(unavailable(1)),
+    use crate::artwork::ArtworkFetch;
+    match crate::artwork::resolve_for_browser(&state, &kind, &id).await {
         Ok(ArtworkFetch::Missing) | Err(AppError::Unauthorized) => Err(AppError::NotFound),
         Ok(ArtworkFetch::Saved | ArtworkFetch::Cached) => {
             let bytes: Vec<u8> = sqlx::query_scalar(
@@ -625,359 +476,10 @@ pub async fn artwork(
             )
                 .into_response())
         }
+        // The browser retries; the download keeps running server-side.
         Err(AppError::ArtworkWait { retry_at_ms }) => Ok(unavailable(
-            ((retry_at_ms.saturating_sub(auth::now_ms()) + 999) / 1000).max(1),
+            ((retry_at_ms.saturating_sub(auth::now_ms()) + 999) / 1000).clamp(1, 60),
         )),
-        Err(_) => Ok(unavailable(60)),
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum ArtworkFetch {
-    Cached,
-    Saved,
-    Missing,
-    Busy,
-}
-
-#[cfg(test)]
-pub(crate) async fn ensure_artwork(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
-    ensure_artwork_with(
-        state,
-        kind,
-        id,
-        &crate::artwork_sources::PublicSources(state),
-    )
-    .await
-}
-
-async fn ensure_artwork_after_miss(state: &AppState, kind: &str, id: &str) -> Result<ArtworkFetch> {
-    ensure_artwork_inner(
-        state,
-        kind,
-        id,
-        &crate::artwork_sources::PublicSources(state),
-        None,
-        false,
-    )
-    .await
-}
-
-#[cfg(test)]
-pub(crate) async fn ensure_artwork_with(
-    state: &AppState,
-    kind: &str,
-    id: &str,
-    sources: &impl crate::artwork_sources::ImageLookup,
-) -> Result<ArtworkFetch> {
-    ensure_artwork_inner(state, kind, id, sources, None, true).await
-}
-
-pub(crate) async fn ensure_artwork_for_activity(
-    state: &AppState,
-    kind: &str,
-    id: &str,
-    sources: &impl crate::artwork_sources::ImageLookup,
-    activity_id: &str,
-    member: &str,
-) -> Result<ArtworkFetch> {
-    ensure_artwork_inner(state, kind, id, sources, Some((activity_id, member)), true).await
-}
-
-async fn ensure_artwork_inner(
-    state: &AppState,
-    kind: &str,
-    id: &str,
-    sources: &impl crate::artwork_sources::ImageLookup,
-    activity: Option<(&str, &str)>,
-    precheck: bool,
-) -> Result<ArtworkFetch> {
-    if precheck {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
-        )
-        .bind(kind)
-        .bind(id)
-        .fetch_one(&state.read_db)
-        .await?;
-        if exists {
-            return Ok(ArtworkFetch::Cached);
-        }
-    }
-    let entity_gate = {
-        let mut locks = state.artwork_gate.lock().await;
-        locks.retain(|_, lock| lock.strong_count() > 0);
-        let key = format!("{kind}:{id}");
-        if let Some(lock) = locks.get(&key).and_then(std::sync::Weak::upgrade) {
-            lock
-        } else {
-            let lock = std::sync::Arc::new(tokio::sync::Mutex::new(()));
-            locks.insert(key, std::sync::Arc::downgrade(&lock));
-            lock
-        }
-    };
-    let Ok(_gate) = entity_gate.try_lock() else {
-        return Ok(ArtworkFetch::Busy);
-    };
-    // A browser/worker may have completed while this request acquired its lock.
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM artwork WHERE kind=? AND entity_id=? AND bytes IS NOT NULL)",
-    )
-    .bind(kind)
-    .bind(id)
-    .fetch_one(&state.read_db)
-    .await?;
-    if exists {
-        return Ok(ArtworkFetch::Cached);
-    }
-    writable(state).await?;
-    let settings = crate::artwork_settings::read(&mut *state.read_db.acquire().await?).await?;
-    let missing: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artwork_misses WHERE kind=? AND entity_id=? AND settings_version=? AND expires_at_ms>?)").bind(kind).bind(id).bind(settings.version).bind(auth::now_ms()).fetch_one(&state.read_db).await?;
-    if missing {
-        return Ok(ArtworkFetch::Missing);
-    }
-    let Ok(Ok(_capacity)) = tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
-        state.artwork_fetches.acquire(),
-    )
-    .await
-    else {
-        return Ok(ArtworkFetch::Busy);
-    };
-    crate::artwork_sources::fetch_with_activity(state, &settings, kind, id, sources, activity).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[tokio::test]
-    async fn cold_artwork_does_not_queue_http_requests_behind_provider_downloads() {
-        let directory = tempfile::tempdir().unwrap();
-        let storage = crate::storage::open(directory.path()).await.unwrap();
-        let config = crate::config::Config {
-            port: 3210,
-            bind_ip: "127.0.0.1".parse().unwrap(),
-            external_origin: None,
-            data_dir: directory.path().into(),
-            sync_seconds: 120,
-            now_playing_seconds: 30,
-            import_limits: Default::default(),
-            api_snapshot_limits: Default::default(),
-            env_client_id: None,
-            env_client_secret: None,
-        };
-        let state = AppState::new(storage, config);
-        let token = auth::random_secret();
-        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
-            .bind(auth::digest(&token))
-            .execute(&state.private_db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO artists(id,name,metadata_rank) VALUES('source','Artist',1)")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO name_groups VALUES('group','artists','artist','source')")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO name_group_members VALUES('artists','source','group','group')")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        let id: String =
-            sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE entity_id='source'")
-                .fetch_one(&state.read_db)
-                .await
-                .unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "cookie",
-            format!("scrobbl_session={token}").parse().unwrap(),
-        );
-        // Simulate a slow download occupying the single optional catalogue slot.
-        let _download = state.artwork_fetches.acquire().await.unwrap();
-        let result = tokio::time::timeout(
-            std::time::Duration::from_millis(2500),
-            artwork(
-                State(state.clone()),
-                headers.clone(),
-                Path(("artists".into(), id.clone())),
-                Query(ArtworkQuery::default()),
-            ),
-        )
-        .await;
-        assert!(
-            result.is_ok(),
-            "queued artwork holds browser HTTP connections while waiting for the provider"
-        );
-        let response = result.unwrap().unwrap();
-        assert_eq!(
-            response.status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
-        );
-        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
-        let cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork")
-            .fetch_one(&state.read_db)
-            .await
-            .unwrap();
-        assert_eq!(cached, 0, "a busy provider must not cache a missing image");
-        save_image(&state, "artists", &id, "custom", b"\x89PNG\r\n\x1a\n", None)
-            .await
-            .unwrap();
-        let cached = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            artwork(
-                State(state.clone()),
-                headers,
-                Path(("artists".into(), id)),
-                Query(ArtworkQuery::default()),
-            ),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(cached.status(), axum::http::StatusCode::OK);
-    }
-    #[tokio::test]
-    async fn concurrent_requests_wait_briefly_for_capacity_rather_than_failing_immediately() {
-        let directory = tempfile::tempdir().unwrap();
-        let storage = crate::storage::open(directory.path()).await.unwrap();
-        let config = crate::config::Config {
-            port: 3210,
-            bind_ip: "127.0.0.1".parse().unwrap(),
-            external_origin: None,
-            data_dir: directory.path().into(),
-            sync_seconds: 120,
-            now_playing_seconds: 30,
-            import_limits: Default::default(),
-            api_snapshot_limits: Default::default(),
-            env_client_id: None,
-            env_client_secret: None,
-        };
-        let state = AppState::new(storage, config);
-        let token = auth::random_secret();
-        sqlx::query("INSERT INTO sessions VALUES(?,'csrf',9999999999999)")
-            .bind(auth::digest(&token))
-            .execute(&state.private_db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO artists(id,name,metadata_rank) VALUES('art1','Artist One',1)")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO name_groups VALUES('g1','artists','artist','art1')")
-            .execute(&state.db)
-            .await
-            .unwrap();
-        sqlx::query("INSERT INTO name_group_members VALUES('artists','art1','g1','g1')")
-            .execute(&state.db)
-            .await
-            .unwrap();
-
-        // Hold the single artwork capacity permit, but release it after 200ms.
-        let permit = state.artwork_fetches.clone().acquire_owned().await.unwrap();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            drop(permit);
-        });
-
-        struct EmptyLookup;
-        impl crate::artwork_sources::ImageLookup for EmptyLookup {
-            async fn lookup(
-                &self,
-                _provider: crate::artwork_settings::ImageProvider,
-                _kind: &str,
-                _id: &str,
-            ) -> Result<crate::artwork_sources::Lookup> {
-                Ok(crate::artwork_sources::Lookup::Missing)
-            }
-        }
-        let res = ensure_artwork_inner(&state, "artists", "g1", &EmptyLookup, None, false)
-            .await
-            .unwrap();
-        assert_eq!(res, ArtworkFetch::Missing);
-    }
-    #[tokio::test]
-    async fn artwork_wait_or_503_does_not_poison_artwork_misses() {
-        let directory = tempfile::tempdir().unwrap();
-        let storage = crate::storage::open(directory.path()).await.unwrap();
-        let config = crate::config::Config {
-            port: 3210,
-            bind_ip: "127.0.0.1".parse().unwrap(),
-            external_origin: None,
-            data_dir: directory.path().into(),
-            sync_seconds: 120,
-            now_playing_seconds: 30,
-            import_limits: Default::default(),
-            api_snapshot_limits: Default::default(),
-            env_client_id: None,
-            env_client_secret: None,
-        };
-        let state = AppState::new(storage, config);
-        struct FailingSources;
-        impl crate::artwork_sources::ImageLookup for FailingSources {
-            async fn lookup(
-                &self,
-                _provider: crate::artwork_settings::ImageProvider,
-                _kind: &str,
-                _id: &str,
-            ) -> Result<crate::artwork_sources::Lookup> {
-                Err(AppError::ArtworkWait {
-                    retry_at_ms: auth::now_ms() + 30_000,
-                })
-            }
-        }
-        let settings = crate::artwork_settings::ArtworkSettings::default();
-        let result = crate::artwork_sources::fetch_with(
-            &state,
-            &settings,
-            "artists",
-            "artist-1",
-            &FailingSources,
-        )
-        .await;
-        assert!(matches!(result, Err(AppError::ArtworkWait { .. })));
-
-        let misses: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM artwork_misses")
-            .fetch_one(&state.read_db)
-            .await
-            .unwrap();
-        assert_eq!(
-            misses, 0,
-            "HTTP 503 / ArtworkWait must never record into artwork_misses"
-        );
-    }
-    #[test]
-    fn image_retry_after_accepts_seconds_dates_and_a_conservative_fallback() {
-        let now = 1_000_000;
-        assert_eq!(image_retry_at(Some("1200"), now), now + 1_200_000);
-        assert_eq!(
-            image_retry_at(Some("Thu, 01 Jan 1970 01:00:00 GMT"), now),
-            3_600_000
-        );
-        assert_eq!(image_retry_at(Some("invalid"), now), now + 60_000);
-        assert_eq!(image_retry_at(Some("-1"), now), now + 60_000);
-    }
-    #[test]
-    fn image_url_blocks_private_special_and_mapped_addresses() {
-        for ip in [
-            "127.0.0.1",
-            "10.0.0.1",
-            "192.168.0.1",
-            "169.254.169.254",
-            "100.64.1.2",
-            "198.18.0.1",
-            "224.0.0.1",
-            "::1",
-            "::ffff:127.0.0.1",
-            "2002:7f00:1::",
-            "2001:db8::1",
-        ] {
-            assert!(!public_ip(ip.parse().unwrap()), "{ip}");
-        }
-        for ip in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
-            assert!(public_ip(ip.parse().unwrap()), "{ip}");
-        }
+        Err(_) => Ok(unavailable(30)),
     }
 }

@@ -38,7 +38,7 @@ export type Limits = { upload_bytes: number, expanded_bytes: number, members: nu
 export type GroupMember = { id: string, name: string, sample: string, tracks: number, listens: number, };
 export type GroupPage = { members: Array<GroupMember>, total: number, page: number, can_rejoin: boolean, };
 export type Details = { name: string, original_name: string, rating: number | null, custom_image: boolean, spotify_url: string | null, image_credit: ImageCredit | null, };
-export type ImageProvider = "cover_art_archive" | "musicbrainz_image" | "wikidata" | "itunes";
+export type ImageProvider = "deezer" | "itunes" | "cover_art_archive" | "wikimedia";
 export type ProviderPreference = { provider: ImageProvider, enabled: boolean, };
 export type ArtworkSettings = { providers: Array<ProviderPreference>, version: number, };
 export type ImageCredit = { provider: string, source_url: string, image_url: string, author: string | null, license: string | null, license_url: string | null, credit: string | null, };
@@ -60,7 +60,12 @@ export type ApiRemoval = { id: string, replacement_id: string | null, };
 export type ApiPage = { api_version: number, instance_id: string, generation: string, from_revision: number | null, revision: number, retained_from: number, snapshot_id: string, expires_at_ms: number, selection: ApiSelection, items: Array<ApiListen>, removed: Array<ApiRemoval>, next_cursor: string | null, sync_cursor: string | null, complete: boolean, };
 export type WidgetConfig = { id: string, type: string, colSpan: 2 | 3 | 4 | 6, periodOverride?: string | null, };
 export type DashboardLayout = { version: number, widgets: Array<WidgetConfig>, };
-export type Query = { metric: Metric, entity: Entity | null, period: Period, 
+export type Query = { metric: Metric, entity: Entity | null, 
+/**
+ * Artist or album whose catalogue the entity name is looked up in, for
+ * example the artist in "Show by Ado". Used only to resolve the entity.
+ */
+scope: Entity | null, period: Period, 
 /**
  * Chip/API only; never emitted by the grammar.
  */
@@ -73,7 +78,7 @@ month: number | null, weekday: Weekday | null,
  * 0..=23, in the listen's assigned calendar timezone.
  */
 hour: number | null, source: string | null, group_by: GroupBy | null, sort_by: SortBy, order: SortOrder, limit: Limit | null, };
-export type Metric = "plays" | "time_listened" | "distinct_tracks" | "distinct_artists" | "distinct_albums" | "first_play" | "last_play" | "streak" | "milestones";
+export type Metric = "plays" | "time_listened" | "distinct_tracks" | "distinct_artists" | "distinct_albums" | "first_play" | "last_play" | "streak" | "milestones" | "rank" | "share" | "listening_days";
 export type EntityKind = "artist" | "album" | "track";
 export type Entity = { kind: EntityKind, 
 /**
@@ -84,7 +89,7 @@ name: string,
  * Set after resolution or by an explicit candidate/context choice.
  */
 id: string | null, };
-export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year";
+export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year" | "last_7_days" | "last_30_days" | "last_365_days";
 export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
 export type GroupBy = "day" | "week" | "month" | "year" | "hour" | "weekday" | "artist" | "album" | "track";
 export type SortBy = "metric" | "date";

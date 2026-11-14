@@ -613,3 +613,61 @@ async fn real_model_answers_three_supported_questions() {
         println!("{question} => {query:?}");
     }
 }
+
+#[test]
+fn v2_output_maps_artist_scope_year_and_month() {
+    let output: ModelOutput = serde_json::from_str(
+        r#"{"artist":"Ado","group_by":"none","limit":"none","metric":"first_play","month":"march","name":"Show","order":"desc","period":"this_year","target":"track","weekday":"any","year":2023}"#,
+    )
+    .unwrap();
+    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
+        panic!("expected a query");
+    };
+    let entity = query.entity.unwrap();
+    assert_eq!(
+        (entity.kind, entity.name.as_str()),
+        (EntityKind::Track, "Show")
+    );
+    let scope = query.scope.unwrap();
+    assert_eq!(
+        (scope.kind, scope.name.as_str()),
+        (EntityKind::Artist, "Ado")
+    );
+    assert_eq!(query.year, Some(2023));
+    assert_eq!(query.month, Some(3));
+    assert_eq!(
+        query.period,
+        Period::AllTime,
+        "a named year replaces the period"
+    );
+
+    let top_by_artist: ModelOutput = serde_json::from_str(
+        r#"{"artist":"Ado","group_by":"track","limit":"five","metric":"plays","month":"none","name":"","order":"desc","period":"all_time","target":"none","weekday":"any","year":0}"#,
+    )
+    .unwrap();
+    let ParsedQuestion::Query(query) = top_by_artist.into_parsed().unwrap() else {
+        panic!("expected a query");
+    };
+    assert_eq!(query.entity.unwrap().kind, EntityKind::Artist);
+    assert!(query.scope.is_none());
+
+    let absurd_year: ModelOutput = serde_json::from_str(
+        r#"{"artist":"","group_by":"none","limit":"none","metric":"plays","month":"none","name":"","order":"desc","period":"all_time","target":"none","weekday":"any","year":99999}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        absurd_year.into_parsed().unwrap(),
+        ParsedQuestion::Unsupported { .. }
+    ));
+}
+
+#[test]
+fn prompt_fits_the_context_window() {
+    // Conservative: ~3 characters per token for this JSON-heavy prompt.
+    let prompt = prompt::build_prompt("Quando ho ascoltato per la prima volta Show di Ado?");
+    let estimated_tokens = prompt.chars().count() / 3;
+    assert!(
+        estimated_tokens as i32 + runtime::MAX_NEW_TOKENS <= runtime::CONTEXT_TOKENS as i32,
+        "prompt is about {estimated_tokens} tokens"
+    );
+}

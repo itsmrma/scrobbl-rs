@@ -24,20 +24,12 @@ impl Config {
             .unwrap_or_else(|_| "3210".into())
             .parse()?;
         anyhow::ensure!(port != 0, "SCROBBL_PORT must be between 1 and 65535");
-        let sync_seconds = env::var("SCROBBL_SYNC_SECONDS")
-            .unwrap_or_else(|_| "120".into())
-            .parse::<u64>()?;
-        let now_playing_seconds = env::var("SCROBBL_NOW_PLAYING_SECONDS")
-            .unwrap_or_else(|_| "30".into())
-            .parse::<u64>()?;
-        anyhow::ensure!(
-            sync_seconds >= 60,
-            "SCROBBL_SYNC_SECONDS must be at least 60"
-        );
-        anyhow::ensure!(
-            now_playing_seconds == 0 || now_playing_seconds >= 15,
-            "SCROBBL_NOW_PLAYING_SECONDS must be 0 (disabled) or at least 15"
-        );
+        // Refresh intervals live only in Settings → Connections. These are the
+        // values used until the owner saves their own; the former
+        // SCROBBL_SYNC_SECONDS / SCROBBL_NOW_PLAYING_SECONDS variables are
+        // ignored, so an old value can never prevent startup.
+        let sync_seconds = 120;
+        let now_playing_seconds = 30;
         let env_client_id = env::var("SPOTIFY_CLIENT_ID")
             .ok()
             .filter(|v| !v.trim().is_empty());

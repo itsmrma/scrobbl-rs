@@ -4,7 +4,7 @@ import type { AccountProfile } from "./api";
 import { useLoad } from "./load";
 import { SkeletonCard } from "./skeleton";
 import { Link } from "./navigation";
-import { ErrorText, Icon, Modal, useToast } from "./ui";
+import { ErrorText, Icon, Modal, number, useToast } from "./ui";
 import { PasswordFeedback, passwordChecks } from "./account";
 import { LifecycleScreen } from "./lifecycle-screen";
 
@@ -339,64 +339,172 @@ export function AccountSettings() {
   );
 }
 
+function since(ms: number): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - ms) / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} h ${minutes % 60} min`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+function size(bytes: number): string {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
+}
+
+function AboutApplication() {
+  const info = useLoad(() => api.application(), "application-info");
+  const data = info.data;
+  return (
+    <article className="panel padded about-application">
+      <div className="about-identity">
+        <span className="wordmark about-wordmark">
+          scrobbl<span className="accent">.</span>
+          <span className="wordmark-suffix">rs</span>
+        </span>
+        <p>
+          A private listening archive. Your listens, corrections and images stay
+          on this server.
+        </p>
+      </div>
+      <ErrorText>{info.error}</ErrorText>
+      {data ? (
+        <dl className="connection-facts">
+          <div>
+            <dt>Version</dt>
+            <dd>
+              {data.version}
+              {data.revision !== "development" &&
+                ` · ${data.revision.slice(0, 7)}`}
+            </dd>
+          </div>
+          <div>
+            <dt>Running for</dt>
+            <dd>{since(data.started_at_ms)}</dd>
+          </div>
+          <div>
+            <dt>Listens</dt>
+            <dd>{number.format(data.listens)}</dd>
+          </div>
+          <div>
+            <dt>Archive since</dt>
+            <dd>
+              {data.first_listen_ms
+                ? new Date(data.first_listen_ms).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "long",
+                  })
+                : "No listens yet"}
+            </dd>
+          </div>
+          <div>
+            <dt>Artists · albums · tracks</dt>
+            <dd>
+              {number.format(data.artists)} · {number.format(data.albums)} ·{" "}
+              {number.format(data.tracks)}
+            </dd>
+          </div>
+          <div>
+            <dt>Saved images</dt>
+            <dd>{number.format(data.images)}</dd>
+          </div>
+          <div>
+            <dt>Archive size</dt>
+            <dd>{size(data.archive_bytes)}</dd>
+          </div>
+          <div>
+            <dt>Database schema</dt>
+            <dd>{data.schema ?? "—"}</dd>
+          </div>
+        </dl>
+      ) : (
+        !info.error && <SkeletonCard label="Loading application details…" />
+      )}
+      <div className="about-links">
+        <a
+          href="https://github.com/itsmrma/scrobbl-rs"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Source code
+          <Icon>open_in_new</Icon>
+        </a>
+        <a
+          href="https://github.com/itsmrma/scrobbl-rs/issues"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Report a problem
+          <Icon>open_in_new</Icon>
+        </a>
+        <a href="/licenses">Licenses · {data?.license ?? "GPL-3.0-or-later"}</a>
+      </div>
+    </article>
+  );
+}
+
 export function ApplicationSettings() {
   const [action, setAction] = useState<"restart" | "stop" | null>(null);
   return (
-    <article className="panel padded settings-form">
-      <h2>Application</h2>
-      <p>Manage scrobbl.rs without restarting or shutting down your host.</p>
-      <div className="application-action">
-        <div>
-          <h3>Startup screen</h3>
-          <p>
-            Inspect the scrobbl.rs boot and archive verification screen at any
-            time.
-          </p>
+    <>
+      <AboutApplication />
+      <article className="panel padded settings-form">
+        <h2>Application</h2>
+        <p>Manage scrobbl.rs without restarting or shutting down your host.</p>
+        <div className="application-action">
+          <div>
+            <h3>Startup screen</h3>
+            <p>
+              Inspect the scrobbl.rs boot and archive verification screen at any
+              time.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary secondary"
+            onClick={() =>
+              window.dispatchEvent(new Event("preview-startup-screen"))
+            }
+          >
+            <Icon>bolt</Icon>Preview startup screen
+          </button>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary secondary"
-          onClick={() =>
-            window.dispatchEvent(new Event("preview-startup-screen"))
-          }
-        >
-          <Icon>bolt</Icon>Preview startup screen
-        </button>
-      </div>
-      <div className="application-action">
-        <div>
-          <h3>Restart application</h3>
-          <p>
-            Close the archive safely and start scrobbl.rs again. Saved data and
-            account access are retained.
-          </p>
+        <div className="application-action">
+          <div>
+            <h3>Restart application</h3>
+            <p>
+              Close the archive safely and start scrobbl.rs again. Saved data
+              and account access are retained.
+            </p>
+          </div>
+          <button
+            className="btn btn-secondary secondary"
+            onClick={() => setAction("restart")}
+          >
+            <Icon>restart_alt</Icon>Restart application
+          </button>
         </div>
-        <button
-          className="btn btn-secondary secondary"
-          onClick={() => setAction("restart")}
-        >
-          <Icon>restart_alt</Icon>Restart application
-        </button>
-      </div>
-      <div className="application-action">
-        <div>
-          <h3>Stop application</h3>
-          <p>
-            Stop collection and close scrobbl.rs. Start the application again
-            from Docker or your process manager.
-          </p>
+        <div className="application-action">
+          <div>
+            <h3>Stop application</h3>
+            <p>
+              Stop collection and close scrobbl.rs. Start the application again
+              from Docker or your process manager.
+            </p>
+          </div>
+          <button
+            className="btn btn-danger secondary danger"
+            onClick={() => setAction("stop")}
+          >
+            <Icon>power_settings_new</Icon>Stop application
+          </button>
         </div>
-        <button
-          className="btn btn-danger secondary danger"
-          onClick={() => setAction("stop")}
-        >
-          <Icon>power_settings_new</Icon>Stop application
-        </button>
-      </div>
-      {action && (
-        <ApplicationDialog action={action} close={() => setAction(null)} />
-      )}
-    </article>
+        {action && (
+          <ApplicationDialog action={action} close={() => setAction(null)} />
+        )}
+      </article>
+    </>
   );
 }
 function ApplicationDialog({

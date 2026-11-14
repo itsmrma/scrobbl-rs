@@ -3,97 +3,89 @@
 Open **Settings → Image providers** to enable sources and change their order.
 The settings belong to the instance and survive restarts and portable backups.
 Concurrent saves are rejected until the older page reloads its saved settings.
-All sources can be disabled. Spotify is no longer an image provider: image
-retrieval never calls its catalogue API, preserving the app quota for listening
-history and now playing.
+No source calls the Spotify API: image retrieval never spends the quota used for
+listening history and now playing.
 
-The default order is MusicBrainz → Cover Art Archive for albums, MusicBrainz
-image relationships → Commons for artists, MusicBrainz → Wikidata P18 → Commons
-for artists, with Apple iTunes and Deezer as public fallback providers.
-For albums, the iTunes provider searches the Apple iTunes Search API and retrieves
-high-resolution (600x600) album covers. For artists, the iTunes provider searches
-the Deezer public API for artist portraits. Public sources need no Spotify login or API key.
+## Sources
 
-Lookup rules balance high coverage with precision:
-- **Relaxed edition matching**: Common album edition suffixes such as `(Deluxe Edition)`,
-  `[Remastered]`, `(Bonus Track Version)`, `(Soundtrack from the Animated Series)` are normalized,
-  allowing releases with edition variations to match their core release groups.
-- **Multi-artist albums and compilations**: Albums with multiple track artists (compilations,
-  soundtracks, collaborations) allow searching by clean album title, enabling Cover Art Archive
-  and iTunes fallback to discover covers without being aborted by single-artist constraints.
-- **Provider fall-through on ambiguous results**: If an upstream provider returns an ambiguous
-  result (such as multiple candidates with equal scores), retrieval continues to subsequent
-  enabled providers. A confirmed miss is only recorded after all enabled providers have been
-  exhausted without a match. Temporary provider errors or rate limits never poison the negative cache.
+| Order | Source | Albums | Artists | Pace |
+| --- | --- | --- | --- | --- |
+| 1 | Deezer public search | covers up to 1000 × 1000 | photos | 50 requests / 5 s allowed, paced at 120 ms |
+| 2 | Apple iTunes Search API | covers up to 1000 × 1000 | — | about 20 searches / min, paced at 3 s |
+| 3 | MusicBrainz → Cover Art Archive | covers | — | MusicBrainz 1 request / s |
+| 4 | MusicBrainz → Wikimedia Commons (direct or via Wikidata P18) | — | attributed photos | MusicBrainz 1 request / s |
 
-### Missing artwork backfill
+Tracks show their album's cover. Fast sources come first; the MusicBrainz
+sources catch what stores list differently, for example original-script titles
+such as `狂言` that Deezer and Apple publish in romaji.
 
-The **Refresh missing artwork** action (available in **Activities** and the **Library tools menu**)
-allows re-evaluating the library when new providers are enabled or provider coverage improves.
-The backfill selectively clears negative cache records for entities that still lack artwork,
-resets failed or paused queue members, and re-enqueues all missing entities, reporting the count
-of queued items broken down into album covers and artist portraits.
+## Matching
 
-Settings affect missing images. Existing images, including legacy permanent
-Spotify images, remain in the active archive. A personal image takes precedence,
-including when it arrives during an automatic download. Changing settings during
-a download prevents that old result from being saved. Saved absences are retried
-under the new settings; confirmed absences otherwise expire after one day.
+- Names are the library's own, after local corrections and name grouping.
+- Album searches use the **album artists** (primary credits, see the glossary),
+  never a guest on one song, so `MAP OF THE SOUL : 7` is searched as BTS.
+- Titles are compared ignoring case, accents, spacing and punctuation, and
+  common edition suffixes such as `(Deluxe Edition)` or `[Remastered]`.
+- A compilation by "Various Artists" matches any album artist.
+- Deezer homonym artists resolve to the most followed one; placeholder
+  silhouettes are skipped.
+- MusicBrainz release groups need a search score of at least 90 and matching
+  title and artist; MusicBrainz artists need a unique exact name or a clear
+  winner. Otherwise the next source is asked.
+- Commons files without author and licence are skipped.
 
-MusicBrainz requests use an identifying User-Agent and a shared durable pace of
-at least 1.1 seconds between requests, including redirects. The background queue
-yields for one second between images; it no longer waits one minute per image.
-This is not a coverage or completion-time guarantee. Retrieval shares the existing bounded image slot,
-checks public HTTPS/DNS again at each redirect, limits redirects and download
-sizes, and accepts PNG/JPEG/WebP. Provider Retry-After and network/server backoff
-are retained per host across restarts; one host's pause does not block other
-image sources. Network/server failures without Retry-After back off from
-30 seconds to one hour. Confirmed absences are cached for one day; errors are not
-cached as absences. A cooldown saved before this upgrade did not identify its
-host: that existing finite pause is honored until its original expiry; new waits
-are scoped per host.
+## Engine
 
-Each queued image has its own persistent retry time. An unavailable source stays
-pending while other eligible images continue. New items take priority over
-retries so a large queue cannot starve its tail. Changing providers reconsiders
-pending items. A confirmed absence completes that item and is cached for one day;
-it never waits for a Spotify connection. User pauses, saved bytes and progress
-survive restarts. Activities shows provider waits without estimating completion
-from a fixed per-image rate.
+The engine was rewritten for the 0.1 alpha. One resolver serves pages and the
+background queue:
 
-Upgrading removes Spotify from saved provider settings while retaining the order
-and enabled state of public sources. Temporary and expired Spotify artwork rows
-are permanently retired, and Spotify provider badges on covers are removed.
-Pending items from the retired fallback are reconsidered; user pauses and public host
-waits remain respected. Existing Spotify API Retry-After waits are preserved:
-removing artwork requests does not shorten a pause already imposed by Spotify.
-Collection and now playing resume on their scheduled retry after the pause.
-A long interruption can leave a history gap if Spotify no longer returns all listens;
-an extended-history import can repair it.
+- One pooled HTTPS client. A custom DNS resolver refuses private, loopback and
+  special addresses on every connection, including redirects, so personal
+  image links stay safe too.
+- Politeness is per host and in memory. A Retry-After or server error pauses
+  only that host (5 s growing to 10 min, Retry-After capped at one hour);
+  other sources continue.
+- A page that shows a missing image starts its download in a task that
+  survives the request and waits up to 8 seconds; a second request for the
+  same image waits for the first download instead of starting another. If the
+  download takes longer, the page retries after the time the server suggests.
+- The background queue resolves four images at once and starts by itself on
+  startup, after imports and after Spotify collection adds listens.
+- A temporary provider failure is never cached as "no image". A confirmed
+  absence (every enabled source answered without a match) is retried after
+  three days, or at once after **Retry missing images** or a settings change.
+- Saved images are never replaced. A personal image always wins, including
+  when it is saved while an automatic download is running. Changing settings
+  during a download discards that download's result.
 
-Legacy permanent images remain saved; temporary Spotify image rows are retired by
-migration 0020. Portable backups and their isolated restores continue to omit all
-Spotify images; personal images are preserved. Technical private upgrade copies
-retain their recovery purpose.
+Typical timings measured against the public services: 0.1–0.3 s per image when
+Deezer has it, about 2.5 s when MusicBrainz has to answer.
+
+## Credits and rights
 
 The image source, author, credits and licence are retained where supplied.
 **Image credits** on the music/edit page exposes them, and collage PNG exports
 carry attribution text and source/licence URLs. Commons metadata is displayed as
 text, never executable HTML. Album artwork may be copyrighted: MusicBrainz's
 metadata licence does not license its images. Last.fm is unavailable as an image
-source because its API data licence excludes artwork. Each provider's Settings
-entry links its documentation and explains access, limitations and reuse terms.
+source because its API data licence excludes artwork.
 
-Queue pacing and recovery originated in [Recuperare le nuove immagini tramite
-MusicBrainz con Spotify come fallback](https://github.com/itsmrma/scrobbl-rs/issues/65).
-The retirement of its Spotify fallback is tracked in [Problema api Spotify](https://github.com/itsmrma/scrobbl-rs/issues/84).
-Coverage of a personal library is not guaranteed by isolated tests. Physical device
-and real-library checks remain part of final release validation.
+Legacy permanent Spotify images remain saved; portable backups and their
+isolated restores omit all Spotify images, and personal images are preserved.
+
+## Upgrading
+
+Migration `0022_artwork_engine` adds the new sources, removes placeholder rows
+without bytes (they hid work), clears saved absences and the old persisted
+pacing keys, and wakes any waiting artwork activity. A user pause is kept.
+Saved settings from older versions move to the new order and keep their
+choices: a disabled legacy source disables its successor.
+
+## Smoke test
 
 A manual public-service smoke test is available for maintainers:
 `cargo test --locked --lib public_artwork_smoke -- --ignored --nocapture`.
-It creates a temporary archive, searches Abbey Road, follows the Beatles' known
-MusicBrainz identity to Commons, downloads the bytes, and checks persistence
-across restart without Spotify authorization. It is excluded from routine CI
-because availability and responses of public services can change. It never opens
-the personal archive.
+It creates a temporary archive with Abbey Road, `狂言` by Ado and a BTS album
+with a featured guest, downloads every album and artist image and prints the
+time each took. It never opens the personal archive and is excluded from
+routine CI because public services can change.

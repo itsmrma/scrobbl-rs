@@ -222,8 +222,10 @@ and UID/GID are host-side choices. Inside the app:
 The bare image defaults to `http://127.0.0.1:3210` for a local Docker quick start;
 set the external origin for all other access. The configured origin is the only
 accepted browser origin. Changing it requires a restart and signing in at the new
-address, plus updating Spotify's registered callback. Other import/polling and
+address, plus updating Spotify's registered callback. Other import and
 optional Spotify credential variables are listed in [README](../README.md).
+Spotify refresh intervals are not environment variables: set them in
+**Settings → Connections → Refresh intervals**.
 For Compose, add extra app variables explicitly to the service's `environment`;
 a host `.env` variable alone is not automatically passed into the container.
 Spotify app credentials and preferences normally belong in Settings. When both

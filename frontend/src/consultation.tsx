@@ -3703,32 +3703,36 @@ export function MusicPage({
             <ArtworkCredits url={result.data.cover_url} />
           </Cover>
           <div className="music-header-content" ref={introduction}>
-            <BackButton
-              fallback={`/rankings/${kind}?${context(selection.params)}`}
-            />
-            <Heading title={result.data.name}>
-              {kind === "albums" && "Album by "}
-              {kind === "tracks" && "Track by "}
-              {result.data.artists.map(
-                (a: { id: string; name: string }, i: number) => (
-                  <span key={a.id}>
-                    {i > 0 && ", "}
-                    <Link to={musicLink("artists", a.id, params)}>
-                      {a.name}
+            <div className="music-title-row">
+              <Heading title={result.data.name}>
+                {kind === "albums" && "Album by "}
+                {kind === "tracks" && "Track by "}
+                {result.data.artists.map(
+                  (a: { id: string; name: string }, i: number) => (
+                    <span key={a.id}>
+                      {i > 0 && ", "}
+                      <Link to={musicLink("artists", a.id, params)}>
+                        {a.name}
+                      </Link>
+                    </span>
+                  ),
+                )}
+                {result.data.album_id && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link
+                      to={musicLink("albums", result.data.album_id, params)}
+                    >
+                      {result.data.album}
                     </Link>
-                  </span>
-                ),
-              )}
-              {result.data.album_id && (
-                <>
-                  {" "}
-                  ·{" "}
-                  <Link to={musicLink("albums", result.data.album_id, params)}>
-                    {result.data.album}
-                  </Link>
-                </>
-              )}
-            </Heading>
+                  </>
+                )}
+              </Heading>
+              <BackButton
+                fallback={`/rankings/${kind}?${context(selection.params)}`}
+              />
+            </div>
             {isPreview ? (
               <div className="music-toolbar">
                 <div className="music-actions">{customizeButton}</div>

@@ -13,7 +13,7 @@ import { SkeletonCardList } from "./skeleton";
 const jobMessage = (code: string) => {
   const messages: Record<string, string> = {
     artwork_provider_wait:
-      "An image provider is unavailable or requested a pause. Other eligible images continue; saved progress and provider waits survive restarts.",
+      "Some images are waiting for a provider that asked for a pause. Other images continue, and the waiting ones retry by themselves.",
     artwork_paused:
       "Downloads are paused. Saved images and progress are kept, including after an application restart.",
     artwork_pacing:
@@ -94,10 +94,10 @@ function ArtworkProviderStatus({ params }: { params: unknown }) {
   const provider = params.current_provider;
   if (typeof provider !== "string") return null;
   const names: Record<string, string> = {
+    deezer: "Deezer",
+    itunes: "Apple iTunes",
     cover_art_archive: "MusicBrainz → Cover Art Archive",
-    musicbrainz_image: "MusicBrainz → Commons image",
-    wikidata: "MusicBrainz → Wikidata → Commons",
-    itunes: "Apple iTunes / Deezer fallback",
+    wikimedia: "MusicBrainz → Wikimedia Commons",
   };
   return <p>Currently using: {names[provider] || provider}</p>;
 }

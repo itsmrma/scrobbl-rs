@@ -1,10 +1,9 @@
 //! Shared Ask query DSL. Rust validates and executes it; the model only emits it.
 //!
-//! The full surface is declared here so later tickets can add execution without
-//! changing the wire contract. Play counts, listening time, distinct
-//! tracks/artists/albums, first/last play, streaks and milestones are executable.
-//! Plays and the distinct metrics can be grouped, sorted and limited; grouping
-//! any other metric is not implemented.
+//! Play counts, listening time, distinct tracks/artists/albums, first/last play,
+//! streaks, milestones, ranking position, share of plays and listening days are
+//! executable. Plays and the distinct metrics can be grouped, sorted and
+//! limited; grouping any other metric is not implemented.
 use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -13,6 +12,10 @@ use ts_rs::TS;
 pub struct Query {
     pub metric: Metric,
     pub entity: Option<Entity>,
+    /// Artist or album whose catalogue the entity name is looked up in, for
+    /// example the artist in "Show by Ado". Used only to resolve the entity.
+    #[serde(default)]
+    pub scope: Option<Entity>,
     pub period: Period,
     /// Chip/API only; never emitted by the grammar.
     pub year: Option<i32>,
@@ -40,6 +43,12 @@ pub enum Metric {
     LastPlay,
     Streak,
     Milestones,
+    /// Position of the entity among entities of its kind, by plays.
+    Rank,
+    /// Entity plays as a share of all plays in the same selection.
+    Share,
+    /// Distinct calendar days with at least one counted play.
+    ListeningDays,
 }
 
 impl Metric {
@@ -54,6 +63,9 @@ impl Metric {
             Self::LastPlay => "Last play",
             Self::Streak => "Listening streak",
             Self::Milestones => "Milestones",
+            Self::Rank => "Ranking position",
+            Self::Share => "Share of plays",
+            Self::ListeningDays => "Listening days",
         }
     }
 }
@@ -97,6 +109,12 @@ pub enum Period {
     LastMonth,
     ThisYear,
     LastYear,
+    #[serde(rename = "last_7_days")]
+    Last7Days,
+    #[serde(rename = "last_30_days")]
+    Last30Days,
+    #[serde(rename = "last_365_days")]
+    Last365Days,
 }
 
 impl Period {
@@ -111,6 +129,9 @@ impl Period {
             Self::LastMonth => "Last month",
             Self::ThisYear => "This year",
             Self::LastYear => "Last year",
+            Self::Last7Days => "Last 7 days",
+            Self::Last30Days => "Last 30 days",
+            Self::Last365Days => "Last 365 days",
         }
     }
 }
@@ -237,6 +258,19 @@ impl Query {
                 return Err(AppError::BadRequest("The entity id is empty.".into()));
             }
         }
+        if let Some(scope) = &self.scope {
+            if scope.kind == EntityKind::Track {
+                return Err(AppError::BadRequest(
+                    "Only an artist or an album can narrow a name.".into(),
+                ));
+            }
+            if scope.name.trim().is_empty() && scope.id.as_deref().is_none_or(str::is_empty) {
+                return Err(AppError::BadRequest("The scope name is empty.".into()));
+            }
+            if scope.name.chars().count() > 300 {
+                return Err(AppError::BadRequest("The scope name is too long.".into()));
+            }
+        }
         if let Some(year) = self.year
             && !(1..=9999).contains(&year)
         {
@@ -273,6 +307,16 @@ impl Query {
                 "entity",
                 entity.kind.label(),
                 entity.name.trim().to_owned(),
+            ));
+        }
+        if let Some(scope) = &self.scope {
+            chips.push(chip(
+                "scope",
+                match scope.kind {
+                    EntityKind::Album => "In album",
+                    _ => "By artist",
+                },
+                scope.name.trim().to_owned(),
             ));
         }
         chips.push(chip("period", "Period", self.period.label()));
@@ -337,6 +381,7 @@ mod tests {
                 name: "Björk".into(),
                 id: None,
             }),
+            scope: None,
             period: Period::ThisYear,
             year: None,
             month: None,

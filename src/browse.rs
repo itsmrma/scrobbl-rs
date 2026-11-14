@@ -93,7 +93,8 @@ pub async fn search(
         "albums" => (
             "albums e JOIN tracks t ON t.album_id=e.id",
             "e.name",
-            "COALESCE((SELECT group_concat(name, ', ') FROM (SELECT DISTINCT a.name FROM artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks at ON at.id=ta.track_id WHERE at.album_id=e.id ORDER BY a.name COLLATE NOCASE)), '')",
+            // Album artists only: primary credits, not guests on one song.
+            "COALESCE((SELECT group_concat(name, ', ') FROM (SELECT a.name FROM artists a JOIN track_artists ta ON ta.artist_id=a.id JOIN tracks at ON at.id=ta.track_id WHERE at.album_id=e.id GROUP BY a.id HAVING MIN(ta.ordinal)=0 ORDER BY COUNT(*) DESC, a.name COLLATE NOCASE)), '')",
         ),
         "tracks" => (
             "tracks e JOIN tracks t ON t.id=e.id LEFT JOIN albums al ON al.id=e.album_id",
@@ -217,7 +218,7 @@ pub async fn music(
     let artists = if kind == "tracks" {
         sqlx::query(sqlx::AssertSqlSafe(format!("{}SELECT a.id,a.name FROM track_artists ta JOIN artists a ON a.id=ta.artist_id WHERE ta.track_id=? ORDER BY ta.ordinal",crate::library::METADATA))).bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
     } else if kind == "albums" {
-        sqlx::query(sqlx::AssertSqlSafe(format!("{}SELECT a.id,a.name FROM tracks t JOIN track_artists ta ON ta.track_id=t.id JOIN artists a ON a.id=ta.artist_id WHERE t.album_id=? GROUP BY a.id ORDER BY MIN(ta.ordinal),a.name,a.id",crate::library::METADATA))).bind(&id).fetch_all(&mut *conn).await?.into_iter().map(|r|crate::db::Artist{id:r.get("id"),name:r.get("name")}).collect()
+        crate::library::album_artists(&mut *conn, &id).await?
     } else {
         Vec::new()
     };

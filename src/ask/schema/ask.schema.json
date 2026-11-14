@@ -1,9 +1,13 @@
 {
-  "$id": "https://scrobbl.rs/schemas/ask.v1.json",
+  "$id": "https://scrobbl.rs/schemas/ask.v2.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Model-facing Ask output. Rust maps it to the shared DSL, validates it and computes every number.",
   "properties": {
+    "artist": {
+      "description": "Literal artist name that narrows a named track or album (\"Show by Ado\"), or whose tracks/albums are counted or grouped (\"my top songs by Ado\"); empty otherwise.",
+      "type": "string"
+    },
     "group_by": {
       "description": "Grouping dimension, or none when the answer is a single value.",
       "enum": [
@@ -43,7 +47,28 @@
         "last_play",
         "streak",
         "milestones",
+        "rank",
+        "share",
+        "listening_days",
         "unsupported"
+      ]
+    },
+    "month": {
+      "description": "Calendar month named by the question, or none.",
+      "enum": [
+        "none",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december"
       ]
     },
     "name": {
@@ -68,7 +93,10 @@
         "this_month",
         "last_month",
         "this_year",
-        "last_year"
+        "last_year",
+        "last_7_days",
+        "last_30_days",
+        "last_365_days"
       ]
     },
     "target": {
@@ -92,18 +120,25 @@
         "saturday",
         "sunday"
       ]
+    },
+    "year": {
+      "description": "Four-digit calendar year named by the question, or 0 when no year is named.",
+      "type": "integer"
     }
   },
   "required": [
+    "artist",
     "group_by",
     "limit",
     "metric",
+    "month",
     "name",
     "order",
     "period",
     "target",
-    "weekday"
+    "weekday",
+    "year"
   ],
-  "title": "Ask model output v1",
+  "title": "Ask model output v2",
   "type": "object"
 }

@@ -3,6 +3,7 @@ pub mod activities;
 pub mod ai;
 pub mod api_keys;
 pub mod artwork;
+pub(crate) mod artwork_http;
 pub mod artwork_settings;
 pub mod artwork_sources;
 pub mod ask;
@@ -70,7 +71,8 @@ impl AppState {
             ask,
             login_attempts: Default::default(),
             artwork_gate: Default::default(),
-            artwork_fetches: Arc::new(tokio::sync::Semaphore::new(1)),
+            // Concurrent provider lookups; each host keeps its own pace.
+            artwork_fetches: Arc::new(tokio::sync::Semaphore::new(8)),
             dashboard_cache: Default::default(),
         }
     }
