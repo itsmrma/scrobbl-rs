@@ -338,19 +338,19 @@ export function getSyncStatus(
   ) {
     return {
       status: "error",
-      label: "Errore sync",
+      label: "Sync error",
       tooltip:
         status?.last_error ||
         status?.now_playing_error ||
         nowError ||
-        "Azione richiesta per Spotify",
+        "Spotify needs your attention",
     };
   }
   if (status?.retry_at_ms && status.retry_at_ms > Date.now()) {
     return {
       status: "syncing",
-      label: "In attesa",
-      tooltip: "Richieste temporaneamente sospese da Spotify",
+      label: "Waiting",
+      tooltip: "Requests temporarily paused by Spotify",
     };
   }
   if (status?.connected) {
@@ -358,19 +358,19 @@ export function getSyncStatus(
       return {
         status: "active",
         label: "Live",
-        tooltip: "Riproduzione attiva e tracciata su Spotify",
+        tooltip: "Playing and tracked on Spotify",
       };
     }
     return {
       status: "active",
-      label: "Pronto",
-      tooltip: "Connesso a Spotify — in attesa di riproduzione",
+      label: "Ready",
+      tooltip: "Connected to Spotify, waiting for playback",
     };
   }
   return {
     status: "idle",
-    label: "Non connesso",
-    tooltip: "Spotify non connesso",
+    label: "Not connected",
+    tooltip: "Spotify not connected",
   };
 }
 
@@ -401,15 +401,15 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
   return (
     <article
       className={`panel padded widget-now-playing ${isPlaying ? "is-playing" : "is-resting"}`}
-      aria-label="In riproduzione"
+      aria-label="Now playing"
     >
       <div className="panel-title">
-        <h2>In riproduzione</h2>
+        <h2>Now playing</h2>
         <div className="panel-actions">
           <div
             className={`sync-status-badge status-${sync.status}`}
             title={sync.tooltip}
-            aria-label={`Stato sincronizzazione: ${sync.label}`}
+            aria-label={`Sync status: ${sync.label}`}
           >
             <span className="sync-status-dot" aria-hidden="true" />
             <span className="sync-status-text">{sync.label}</span>
@@ -420,8 +420,8 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
               target="_blank"
               rel="noreferrer"
               className="icon-button now-external-link"
-              title="Apri su Spotify"
-              aria-label="Apri su Spotify"
+              title="Open on Spotify"
+              aria-label="Open on Spotify"
             >
               <Icon>open_in_new</Icon>
             </a>
@@ -478,7 +478,7 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
           <div className="now-playing-progress-wrap">
             <progress
               className="now-playing-progress-bar"
-              aria-label="Avanzamento riproduzione"
+              aria-label="Playback progress"
               value={progress ?? 0}
               max={data.duration_ms ?? 100}
             />
@@ -494,13 +494,11 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
             <Icon>music_note</Icon>
           </div>
           <div className="now-playing-resting-content">
-            <p className="now-playing-resting-title">
-              Nessuna riproduzione recente
-            </p>
+            <p className="now-playing-resting-title">No recent playback</p>
             <p className="now-playing-resting-subtitle">
               {status?.connected
-                ? "Avvia un brano su Spotify per seguire l'ascolto in tempo reale."
-                : "Connetti Spotify per visualizzare la riproduzione in tempo reale."}
+                ? "Play a track on Spotify to follow it live."
+                : "Connect Spotify to see live playback."}
             </p>
           </div>
         </div>
@@ -777,27 +775,31 @@ export function ImportPage({
             </div>
           )}
         </article>
-        <aside className="panel padded">
+        <aside className="panel padded import-notes">
           <h2>Keep your originals</h2>
-          <p>
-            Upload the entire ZIP without extracting or splitting it. The report
-            inventories every member, including nested folders and excluded
-            content.
-          </p>
-          <p>
-            Keep this page open until receipt is confirmed. After receipt,
-            processing continues with the page closed and resumes after a server
-            restart. Reports remain in Activities.
-          </p>
-          <p>
-            Normalized observations, variant fingerprints and source positions
-            are preserved. Raw JSON is discarded; source files are released
-            after successful import. Keep your own ZIP for future reimports.
-            Reimporting renamed or reformatted files does not multiply listens.
-            Podcast and audiobook rows are excluded. Music below 30 seconds
-            remains in the archive and stays outside valid-listen statistics.
-          </p>
-          <Link to="/activities">View persistent activities</Link>
+          <ul>
+            <li>
+              Upload the whole ZIP. There is no need to extract or split it.
+            </li>
+            <li>
+              Keep this page open until receipt is confirmed. After that,
+              processing continues with the page closed and survives server
+              restarts.
+            </li>
+            <li>
+              Reports stay in <Link to="/activities">Activities</Link>.
+              Reimporting the same data, even renamed or reformatted, never
+              multiplies listens.
+            </li>
+            <li>
+              Raw JSON is discarded and source files are released after a
+              successful import, so keep your own ZIP for future reimports.
+            </li>
+            <li>
+              Podcasts and audiobooks are excluded. Music played under 30
+              seconds is kept but stays out of listening statistics.
+            </li>
+          </ul>
         </aside>
       </div>
       <ListenBrainzImport

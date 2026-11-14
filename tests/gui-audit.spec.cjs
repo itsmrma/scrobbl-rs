@@ -42,19 +42,22 @@ const test = base.extend({
       const request = await playwright.request.newContext({ baseURL });
       try {
         await expect
-          .poll(async () => {
-            if (child.exitCode !== null) throw new Error(logs);
-            try {
-              const bootRes = await request.get("/api/boot-status");
-              if (bootRes.status() === 200) {
-                const b = await bootRes.json();
-                return b.ready ? 200 : 0;
+          .poll(
+            async () => {
+              if (child.exitCode !== null) throw new Error(logs);
+              try {
+                const bootRes = await request.get("/api/boot-status");
+                if (bootRes.status() === 200) {
+                  const b = await bootRes.json();
+                  return b.ready ? 200 : 0;
+                }
+                return (await request.get("/healthz")).status();
+              } catch {
+                return 0;
               }
-              return (await request.get("/healthz")).status();
-            } catch {
-              return 0;
-            }
-          }, { timeout: 20000 })
+            },
+            { timeout: 20000 },
+          )
           .toBe(200);
         const session = await (
           await request.post("/api/setup", {
@@ -240,7 +243,7 @@ test("rankings keep artwork square and long metadata and durations visible", asy
       );
       await expect(items).toHaveCount(3);
       await expect(items.first().locator("img")).toBeVisible();
-      await expect(items.first().locator(".time-composition")).toBeVisible();
+      await expect(items.first().locator(".rank-metrics")).toBeVisible();
       const layout = await items.evaluateAll((nodes) =>
         nodes.map((node) => {
           const frame = node.querySelector(".cover").getBoundingClientRect();
@@ -248,7 +251,7 @@ test("rankings keep artwork square and long metadata and durations visible", asy
             square: Math.abs(frame.width - frame.height) < 1,
             clipped: [
               ...node.querySelectorAll(
-                ".rank-name a, .rank-name small, .rank-value, .time-composition",
+                ".rank-name a, .rank-name small, .rank-value",
               ),
             ].some(
               (el) =>
@@ -711,21 +714,26 @@ test("music listening patterns switch within one compact chart and header filter
         }),
       )
       .toBeLessThan(1);
-    await expect(page.locator(".music-personal > a")).toHaveCount(2);
+    await expect(page.locator(".music-actions > a")).toHaveCount(2);
+    await expect(
+      page.getByRole("link", { name: /Edit details/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /Customize .* template/ }),
+    ).toBeVisible();
+    // One toolbar: every action has the same height and the selects close the
+    // header at the bottom edge of the cover.
     await expect
       .poll(() =>
         cover.evaluate((node) => {
           const controls = node.parentElement.querySelectorAll(
             ".music-period .select-control",
           );
-          const title = node.parentElement.querySelector("h1");
-          const inset = parseFloat(getComputedStyle(title).fontSize) / 4;
           return Math.max(
             ...Array.from(controls, (control) =>
               Math.abs(
                 node.getBoundingClientRect().bottom -
-                  control.getBoundingClientRect().bottom -
-                  inset,
+                  control.getBoundingClientRect().bottom,
               ),
             ),
           );
@@ -734,18 +742,14 @@ test("music listening patterns switch within one compact chart and header filter
       .toBeLessThan(1);
     await expect
       .poll(async () => {
-        const buttons = await page
-          .locator(".music-personal > a")
-          .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect()));
-        const controls = await page
-          .locator(".music-period .select-control")
-          .evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect()));
-        return Math.max(
-          ...buttons.map((b, i) => Math.abs(b.width - controls[i].width)),
-          Math.abs(buttons[1].right - controls[1].right),
-        );
+        const heights = await page
+          .locator(".music-actions > a, .music-actions > button")
+          .evaluateAll((nodes) =>
+            nodes.map((n) => Math.round(n.getBoundingClientRect().height)),
+          );
+        return new Set(heights).size;
       })
-      .toBeLessThan(1);
+      .toBe(1);
     const chart = page.getByRole("article", {
       name: "Listening patterns",
       exact: true,
@@ -1144,9 +1148,11 @@ test("music page back preserves source filters across child filters reload and f
   const coverBox = await page.locator(".music-heading > .cover").boundingBox();
   const headingBox = await page.locator(".music-heading").boundingBox();
   expect(Math.abs(backBox.y - coverBox.y)).toBeLessThan(1);
-  expect(
-    Math.abs(backBox.x + backBox.width - headingBox.x - headingBox.width),
-  ).toBeLessThan(1);
+  // Back sits above the title, beside the cover, never floating at the far edge.
+  expect(backBox.x).toBeGreaterThanOrEqual(coverBox.x + coverBox.width);
+  expect(backBox.x + backBox.width).toBeLessThan(
+    headingBox.x + headingBox.width / 2,
+  );
   await page.screenshot({
     path: `test-results/gui-music-back-right-${browserName}.png`,
     fullPage: true,
@@ -3582,17 +3588,15 @@ test("music header and history disclosure keep their geometry", async ({
           const cover = node
             .querySelector(":scope > .cover")
             .getBoundingClientRect();
-          const title = node
-            .querySelector(".page-heading")
+          const back = node
+            .querySelector(".music-back")
             .getBoundingClientRect();
           const filters = node
             .querySelector(".music-period")
             .getBoundingClientRect();
-          const inset =
-            parseFloat(getComputedStyle(node.querySelector("h1")).fontSize) / 4;
           return Math.max(
-            Math.abs(cover.top - title.top),
-            Math.abs(cover.bottom - filters.bottom - inset),
+            Math.abs(cover.top - back.top),
+            Math.abs(cover.bottom - filters.bottom),
           );
         }),
       )
@@ -4297,7 +4301,6 @@ test("album evidence aligns with closed columns and disclosures animate", async 
   await page.goto("/music/albums/" + archive.rankings.albums[0].id);
   const row = page.locator(".listen-context-albums").first();
   const dateX = (await row.locator(".listen-date").boundingBox()).x;
-  const archiveX = (await row.locator(".listen-archive").boundingBox()).x;
   await expect(row.locator(".listen-artists")).toHaveCount(0);
   const motion = await row.locator("summary").evaluate((summary) => {
     summary.click();
@@ -4322,9 +4325,6 @@ test("album evidence aligns with closed columns and disclosures animate", async 
   expect(motion.middle).toBeLessThan(motion.end);
   expect(
     Math.abs((await row.locator("dl > div").nth(0).boundingBox()).x - dateX),
-  ).toBeLessThan(1);
-  expect(
-    Math.abs((await row.locator("dl > div").nth(4).boundingBox()).x - archiveX),
   ).toBeLessThan(1);
   await row.scrollIntoViewIfNeeded();
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -4931,7 +4931,7 @@ test("long original metadata wraps inside music credits and source-entry control
   }
 });
 
-test("totals widget lays out in a single column with left-aligned labels above values and no overlap on narrow viewports", async ({
+test("totals widget lays out three compact columns with left-aligned labels above values and no overlap on narrow viewports", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -5024,12 +5024,15 @@ test("totals widget lays out in a single column with left-aligned labels above v
       });
     });
 
-    // Verify single-column layout: stats are stacked vertically
+    // Verify compact layout: the three stats sit side by side in one row
     for (let i = 0; i < statsData.length - 1; i++) {
       expect(
-        statsData[i + 1].statBox.top,
-        `Stat ${i + 1} should be below Stat ${i} at ${width}px`,
-      ).toBeGreaterThanOrEqual(statsData[i].statBox.bottom - 1);
+        statsData[i + 1].statBox.left,
+        `Stat ${i + 1} should be beside Stat ${i} at ${width}px`,
+      ).toBeGreaterThanOrEqual(statsData[i].statBox.right - 1);
+      expect(
+        Math.abs(statsData[i + 1].statBox.top - statsData[i].statBox.top),
+      ).toBeLessThan(1);
     }
 
     // Verify label on top, value below, left-aligned, and no overlap
@@ -5091,7 +5094,7 @@ test("totals widget lays out in a single column with left-aligned labels above v
   }
 });
 
-test("mobile baseline: overview header stacks at full width and edit mode hides span controls (< 600px)", async ({
+test("mobile baseline: overview header uses a two-column filter grid, compact Customize button and edit mode hides span controls (< 600px)", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -5114,7 +5117,7 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     await expect(headingActions).toBeVisible();
 
     const customizeBtn = headingActions.getByRole("button", {
-      name: "Personalizza",
+      name: "Customize",
     });
     await expect(customizeBtn).toBeVisible();
 
@@ -5127,11 +5130,10 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     expect(Math.round(custBox.width)).toBeGreaterThanOrEqual(44);
     expect(Math.round(custBox.height)).toBeGreaterThanOrEqual(44);
 
-    // Check full-width stacking of overview heading items:
-    // Heading actions and customize button take full width of container
+    // Customize is a compact button, not a full-width slab.
     const actionsBox = await headingActions.boundingBox();
     expect(actionsBox).not.toBeNull();
-    expect(Math.abs(custBox.width - actionsBox.width)).toBeLessThanOrEqual(4);
+    expect(custBox.width).toBeLessThan(actionsBox.width * 0.7);
 
     // Period filter comboboxes (Period and Sort)
     const filterComboboxes = periodFilters.locator("[role=combobox]");
@@ -5145,20 +5147,21 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
       expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
       expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
 
-      // Comboboxes take full width of filters container
+      // Each combobox fills its half of the two-column filter grid
       const filtersBox = await periodFilters.boundingBox();
-      expect(Math.abs(box.width - filtersBox.width)).toBeLessThanOrEqual(4);
+      expect(Math.abs(box.width - (filtersBox.width - 12) / 2)).toBeLessThan(4);
     }
 
-    // Verify vertical stacking: customize button is above filters
+    // Verify the filters sit above the Customize button
     const filtersBox = await periodFilters.boundingBox();
-    expect(custBox.y + custBox.height).toBeLessThanOrEqual(filtersBox.y + 1);
+    expect(filtersBox.y + filtersBox.height).toBeLessThanOrEqual(custBox.y + 1);
 
-    // Each filter combobox is stacked vertically
+    // Period and Rank by share one row
     for (let i = 0; i < comboCount - 1; i++) {
       const boxA = await filterComboboxes.nth(i).boundingBox();
       const boxB = await filterComboboxes.nth(i + 1).boundingBox();
-      expect(boxA.y + boxA.height).toBeLessThanOrEqual(boxB.y + 1);
+      expect(boxB.x).toBeGreaterThanOrEqual(boxA.x + boxA.width - 1);
+      expect(Math.abs(boxA.y - boxB.y)).toBeLessThan(1);
     }
   }
 
@@ -5172,11 +5175,11 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
   // Enter Edit Mode on mobile (390px)
   const customizeBtn = page
     .locator(".overview-heading-actions")
-    .getByRole("button", { name: "Personalizza" });
+    .getByRole("button", { name: "Customize" });
   await customizeBtn.click();
 
   const editToolbar = page.getByRole("toolbar", {
-    name: "Personalizza dashboard",
+    name: "Customize dashboard",
   });
   await expect(editToolbar).toBeVisible();
 
@@ -5257,8 +5260,8 @@ test("mobile baseline: overview header stacks at full width and edit mode hides 
     .getAttribute("data-widget-id");
   expect(firstIdRestored).toBe(firstIdBefore);
 
-  // Exit edit mode (Annulla with confirmation when dirty)
-  const cancelBtn = editToolbar.getByRole("button", { name: "Annulla" });
+  // Exit edit mode (Cancel with confirmation when dirty)
+  const cancelBtn = editToolbar.getByRole("button", { name: "Cancel" });
   await expect(cancelBtn).toBeVisible();
   page.once("dialog", async (dialog) => {
     await dialog.accept();

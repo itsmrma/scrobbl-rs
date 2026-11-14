@@ -993,7 +993,7 @@ export function Activities({
             <h2>Activity history</h2>
             <div className="activities-toolbar-actions">
               <label>
-                Activity type
+                <span className="visually-hidden">Activity type</span>
                 <Select
                   aria-label="Activity type"
                   value={kind}

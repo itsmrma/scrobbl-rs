@@ -157,13 +157,8 @@ impl DashboardLayout {
     pub fn default_home() -> Self {
         Self {
             version: 0,
+            // Now playing is left to the sidebar card; it stays in the catalog.
             widgets: vec![
-                WidgetConfig {
-                    id: "now_playing".into(),
-                    widget_type: "now_playing".into(),
-                    col_span: 6,
-                    period_override: None,
-                },
                 WidgetConfig {
                     id: "totals".into(),
                     widget_type: "totals".into(),

@@ -88,6 +88,10 @@
   width: 100%;
 }
 
+.dashboard-widget .panel-title {
+  min-height: 44px;
+}
+
 .dashboard-widget button.select-trigger,
 .dashboard-widget .icon-button {
   min-width: 44px;
@@ -318,7 +322,7 @@
   background: transparent;
   border-radius: 0;
   margin: 0;
-  min-height: 120px;
+  min-height: 0;
   gap: 8px;
 }
 
@@ -333,7 +337,7 @@
   align-items: flex-start;
   justify-content: flex-start;
   text-align: left;
-  min-height: 112px;
+  min-height: 0;
 }
 
 .dashboard-widget .widget-totals .stats-grid .stat > span,
@@ -430,10 +434,10 @@
   text-decoration: underline;
 }
 
+/* Slot sized for exactly five rows; longer names scroll instead of growing the card. */
 .widget-ranking-content {
-  height: 424px;
+  height: 456px;
   overflow-y: auto;
-  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -520,11 +524,9 @@
   margin: 0;
 }
 
-/* Paired height with ListeningPatternsWidget so side-by-side span-3 slots match cleanly */
+/* Side-by-side span-3 slots stretch to the taller panel; neither list is clipped mid-row. */
 .widget-patterns-content {
-  height: 332px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -532,12 +534,22 @@
 }
 
 .widget-recent-content {
-  height: 332px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  min-height: 320px;
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+/* Long ranking lists scroll inside their card so a short neighbour never
+   stretches into a tall empty panel. Pagination stays visible below. */
+.dashboard-widget .ranking-results {
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.dashboard-widget .ranking-results .music-grid {
+  align-content: start;
 }
 
 .dashboard-widget .widget-recent-listens .listen-main {
@@ -653,18 +665,17 @@
 }
 
 .dashboard-widget .widget-chart-content {
-  height: 312px;
+  min-height: 264px;
   overflow: auto;
-  scrollbar-gutter: stable;
 }
 
 .chart-readout {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 12px 20px;
-  padding: 12px 14px;
+  gap: 4px 16px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
   background: var(--row-bg);
   border: 1px solid var(--row-border);
@@ -672,14 +683,15 @@
 }
 
 .chart-readout > div {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
   min-width: 0;
 }
 
 .chart-readout > div:last-child {
-  text-align: right;
-  justify-items: end;
+  justify-content: flex-end;
 }
 
 .chart-readout strong {
@@ -688,10 +700,11 @@
   flex-wrap: wrap;
   gap: 8px;
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
 }
 
+.chart-readout small,
 .chart-readout span {
   font-size: 12px;
   color: var(--muted);
@@ -1342,7 +1355,7 @@
   }
 
   .widget-totals .stats-grid {
-    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
   }
 
   .dashboard-widget .widget-totals .stat,
@@ -1423,12 +1436,12 @@
 
   .overview-heading-actions > .button,
   .overview-heading-actions > button {
-    width: 100%;
+    align-self: flex-start;
   }
 
   .overview-heading-actions .filters {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
   }
 
@@ -1460,15 +1473,46 @@
     grid-column: 1 / -1 !important;
   }
 
-  .stats-grid,
   .milestones-row,
   .widget-unified-rankings {
     grid-template-columns: minmax(0, 1fr);
     gap: 10px;
   }
+}
+
+/* Narrow widgets (phones, or a 2-column span on desktop): three compact
+   metrics side by side instead of three tall slabs. */
+@container (max-width: 480px) {
+  .stats-grid {
+    gap: 8px;
+  }
+
+  .stat,
+  .dashboard-widget .stats-grid .stat,
+  .dashboard-widget .widget-totals .stats-grid .stat {
+    min-height: 0;
+    gap: 4px;
+  }
+
+  .panel.stat {
+    padding: 10px 12px;
+  }
+
+  .stat > span {
+    font-size: 11px;
+    gap: 2px 4px;
+  }
+
+  .stat > strong {
+    min-height: 0;
+    font-size: 22px;
+  }
+
+  .stat > strong .skeleton-block {
+    height: 26px !important;
+  }
 
   .chart-readout > div:last-child {
-    text-align: left;
-    justify-items: start;
+    justify-content: flex-start;
   }
 }

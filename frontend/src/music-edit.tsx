@@ -1,7 +1,13 @@
 import { NameGroup } from "./name-groups";
 import { ImageCredits } from "./image-credit";
 import { ImagePickerModal } from "./image-picker";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { api } from "./api";
 import type { Details } from "./generated";
 import { useLoad } from "./load";
@@ -123,8 +129,17 @@ function Stars({
   );
 }
 
-export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
-  const actions = useRef<HTMLDivElement>(null);
+export function MusicActions({
+  kind,
+  id,
+  children,
+  aside,
+}: {
+  kind: Kind;
+  id: string;
+  children?: ReactNode;
+  aside?: ReactNode;
+}) {
   const [version, setVersion] = useState(0);
   const details = useLoad<Details>(
     () => api.libraryDetails(kind, id),
@@ -149,76 +164,73 @@ export function MusicActions({ kind, id }: { kind: Kind; id: string }) {
     };
   }, []);
 
-  useLayoutEffect(() => {
-    const node = actions.current;
-    const header = node?.closest<HTMLElement>(".music-header-content");
-    const buttons = node?.querySelectorAll<HTMLAnchorElement>(":scope > a");
-    if (!header || !buttons?.length) return;
-    const measure = () => {
-      const first = buttons[0].getBoundingClientRect().width;
-      const second = buttons[1]?.getBoundingClientRect().width || first;
-      header.style.setProperty("--music-edit-width", `${first}px`);
-      header.style.setProperty("--music-spotify-width", `${second}px`);
-      header.style.setProperty(
-        "--music-actions-width",
-        `${first + second + 12}px`,
-      );
-    };
-    const observer = new ResizeObserver(measure);
-    buttons.forEach((button) => observer.observe(button));
-    measure();
-    return () => observer.disconnect();
-  }, [details.data?.spotify_url, kind]);
-
   return (
-    <div className="music-personal" ref={actions}>
+    <>
+      {/* Reserve the rating row while details load so the header never shifts. */}
+      {!details.data && !details.error && (
+        <div className="music-personal music-personal-pending" aria-hidden />
+      )}
       {details.data && (
-        <Stars
-          value={details.data.rating}
-          disabled={busy}
-          change={async (rating) => {
-            setBusy(true);
-            setError("");
-            try {
-              await api.editMusic(kind, id, {
-                name:
-                  details.data!.name === details.data!.original_name
-                    ? null
-                    : details.data!.name,
-                rating,
-              });
-              setVersion((v) => v + 1);
-              toast(
-                rating === null
-                  ? "Rating cleared."
-                  : `Rated ${rating} out of 5 stars.`,
-              );
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e));
-            } finally {
-              setBusy(false);
+        <div className="music-personal">
+          <Stars
+            value={details.data.rating}
+            disabled={busy}
+            change={async (rating) => {
+              setBusy(true);
+              setError("");
+              try {
+                await api.editMusic(kind, id, {
+                  name:
+                    details.data!.name === details.data!.original_name
+                      ? null
+                      : details.data!.name,
+                  rating,
+                });
+                setVersion((v) => v + 1);
+                toast(
+                  rating === null
+                    ? "Rating cleared."
+                    : `Rated ${rating} out of 5 stars.`,
+                );
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </div>
+      )}
+      <div className="music-toolbar">
+        <div className="music-actions">
+          <Link
+            className="btn btn-secondary button secondary"
+            to={`/music/${kind}/${id}/edit`}
+            aria-label={
+              kind === "tracks" ? "Edit details" : "Edit details & image"
             }
-          }}
-        />
-      )}
-      <Link
-        className="btn btn-secondary button secondary"
-        to={`/music/${kind}/${id}/edit`}
-      >
-        <Icon>edit</Icon>Edit details{kind !== "tracks" && " & image"}
-      </Link>
-      {details.data?.spotify_url && (
-        <a
-          className="btn btn-secondary spotify-attribution"
-          href={details.data.spotify_url}
-          target="_blank"
-          rel="noreferrer"
-        >
-          View on Spotify<Icon>open_in_new</Icon>
-        </a>
-      )}
+          >
+            <Icon>edit</Icon>Edit
+            <span className="label-long">
+              &nbsp;details{kind !== "tracks" && " & image"}
+            </span>
+          </Link>
+          {children}
+          {details.data?.spotify_url && (
+            <a
+              className="btn btn-secondary spotify-attribution"
+              href={details.data.spotify_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              View on Spotify<Icon>open_in_new</Icon>
+            </a>
+          )}
+        </div>
+        {aside}
+      </div>
       <ErrorText>{error || details.error}</ErrorText>
-    </div>
+    </>
   );
 }
 
@@ -271,16 +283,14 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
               ? "album"
               : "track"}
         </Link>
-        {details.data && (
+        {details.data && kind === "tracks" && (
           <button
             type="button"
             className="btn btn-secondary secondary"
             onClick={() => setPickerOpen(true)}
           >
             <Icon>travel_explore</Icon>
-            {kind === "tracks"
-              ? "Choose release artwork"
-              : "Open visual image picker"}
+            Choose release artwork
           </button>
         )}
       </div>

@@ -46,14 +46,17 @@ const test = base.extend({
     page.on("pageerror", (e) => errors.push(e.message));
     try {
       await expect
-        .poll(async () => {
-          if (child.exitCode !== null) throw new Error(logs);
-          try {
-            return (await context.request.get("/healthz")).status();
-          } catch {
-            return 0;
-          }
-        }, { timeout: 20000 })
+        .poll(
+          async () => {
+            if (child.exitCode !== null) throw new Error(logs);
+            try {
+              return (await context.request.get("/healthz")).status();
+            } catch {
+              return 0;
+            }
+          },
+          { timeout: 20000 },
+        )
         .toBe(200);
       await page.goto("/");
       await page.getByLabel("Username", { exact: true }).fill("owner");
@@ -307,33 +310,34 @@ test.describe("consultation", () => {
     archive: { page },
   }) => {
     // Customization Edit Mode verification
-    const customizeBtn = page.getByRole("button", { name: "Personalizza" });
+    const customizeBtn = page.getByRole("button", { name: "Customize" });
     await expect(customizeBtn).toBeVisible();
     await customizeBtn.click();
 
     // Verify Edit Mode toolbar is displayed
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza dashboard",
+      name: "Customize dashboard",
     });
     await expect(editToolbar).toBeVisible();
     await expect(
-      editToolbar.getByRole("button", { name: "Aggiungi widget" }),
+      editToolbar.getByRole("button", { name: "Add widget" }),
     ).toBeVisible();
     await expect(
-      editToolbar.getByRole("button", { name: "Ripristina predefinito" }),
+      editToolbar.getByRole("button", { name: "Reset to default" }),
     ).toBeVisible();
     await expect(
-      editToolbar.getByRole("button", { name: "Annulla" }),
+      editToolbar.getByRole("button", { name: "Cancel" }),
     ).toBeVisible();
     await expect(
-      editToolbar.getByRole("button", { name: "Salva modifiche" }),
+      editToolbar.getByRole("button", { name: "Save layout" }),
     ).toBeVisible();
 
-    // Verify 8-widget V1 default layout
+    // The default layout leaves Now playing to the sidebar card but keeps it
+    // available in the widget catalog.
     const initialNowPlaying = page.locator(
       ".dashboard-widget[data-widget-type='now_playing']",
     );
-    await expect(initialNowPlaying).toHaveClass(/span-6/);
+    await expect(initialNowPlaying).toHaveCount(0);
     const totalsWidget = page.locator(
       ".dashboard-widget[data-widget-type='totals']",
     );
@@ -372,22 +376,18 @@ test.describe("consultation", () => {
     await spanButton.click();
     await expect(totalsWidget).toHaveClass(/span-2/);
 
-    // Remove now_playing and re-add from catalog
-    await initialNowPlaying.locator(".widget-remove-button").click();
-    await expect(initialNowPlaying).toHaveCount(0);
-
     // Test adding now_playing widget from catalog
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     const catalogDialog = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog).toBeVisible();
     const nowPlayingCard = catalogDialog
       .locator(".catalog-item-card")
-      .filter({ hasText: "In riproduzione" });
+      .filter({ hasText: "Now playing" });
     await expect(nowPlayingCard).toBeVisible();
     await expect(
-      nowPlayingCard.getByText("Brano in ascolto live e avanzamento traccia"),
+      nowPlayingCard.getByText("Live track and playback progress"),
     ).toBeVisible();
-    await nowPlayingCard.getByRole("button", { name: "Aggiungi" }).click();
+    await nowPlayingCard.getByRole("button", { name: "Add" }).click();
     await expect(catalogDialog).toBeHidden();
 
     const nowPlayingWidget = page.locator(
@@ -395,9 +395,9 @@ test.describe("consultation", () => {
     );
     await expect(nowPlayingWidget).toBeVisible();
     await expect(nowPlayingWidget).toHaveClass(/span-3/);
-    await expect(nowPlayingWidget.getByText("In riproduzione")).toBeVisible();
+    await expect(nowPlayingWidget.getByText("Now playing")).toBeVisible();
     await expect(
-      nowPlayingWidget.getByText("Nessuna riproduzione recente"),
+      nowPlayingWidget.getByText("No recent playback"),
     ).toBeVisible();
 
     // Cycle span (3 -> 4)
@@ -406,7 +406,7 @@ test.describe("consultation", () => {
     await expect(nowPlayingWidget).toHaveClass(/span-4/);
 
     // Save changes
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     const alert = editToolbar.getByRole("alert");
     if (await alert.isVisible().catch(() => false))
       console.log("TOOLBAR ALERT WAS:", await alert.innerText());
@@ -424,7 +424,7 @@ test.describe("consultation", () => {
     await expect(nowPlayingReloaded).toBeVisible();
     await expect(nowPlayingReloaded).toHaveClass(/span-4/);
     await expect(
-      nowPlayingReloaded.getByText("Nessuna riproduzione recente"),
+      nowPlayingReloaded.getByText("No recent playback"),
     ).toBeVisible();
 
     // Test active playback state in NowPlayingWidget
@@ -488,7 +488,7 @@ test.describe("consultation", () => {
     await page.unroute("**/api/spotify/status");
 
     // Open catalog and add Top Artists widget
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
     const existingTopArtists = page.locator(
       ".dashboard-widget[data-widget-type='top_artists']",
@@ -496,13 +496,13 @@ test.describe("consultation", () => {
     await existingTopArtists.locator(".widget-remove-button").click();
     await expect(existingTopArtists).toHaveCount(0);
 
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     await expect(catalogDialog).toBeVisible();
     const topArtistsCard = catalogDialog
       .locator(".catalog-item-card")
-      .filter({ hasText: "Top Artisti" });
+      .filter({ hasText: "Top artists" });
     await expect(topArtistsCard).toBeVisible();
-    await topArtistsCard.getByRole("button", { name: "Aggiungi" }).click();
+    await topArtistsCard.getByRole("button", { name: "Add" }).click();
     await expect(catalogDialog).toBeHidden();
 
     const topArtistsWidget = page.locator(
@@ -512,7 +512,7 @@ test.describe("consultation", () => {
     await expect(topArtistsWidget).toHaveClass(/span-2/);
 
     // Save changes with added widget and verify persistence
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
     await page.reload();
     const topArtistsReloaded = page.locator(
@@ -522,7 +522,7 @@ test.describe("consultation", () => {
     await expect(topArtistsReloaded.locator("h2")).toHaveText("Top artists");
 
     // Test adding listening_patterns widget from catalog (#120)
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
     const existingPatterns = page.locator(
       ".dashboard-widget[data-widget-type='listening_patterns']",
@@ -530,13 +530,13 @@ test.describe("consultation", () => {
     await existingPatterns.locator(".widget-remove-button").click();
     await expect(existingPatterns).toHaveCount(0);
 
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     await expect(catalogDialog).toBeVisible();
     const patternCard = catalogDialog
       .locator(".catalog-item-card")
-      .filter({ hasText: "Pattern di ascolto" });
+      .filter({ hasText: "Listening patterns" });
     await expect(patternCard).toBeVisible();
-    await patternCard.getByRole("button", { name: "Aggiungi" }).click();
+    await patternCard.getByRole("button", { name: "Add" }).click();
 
     const patternsWidget = page.locator(
       ".dashboard-widget[data-widget-type='listening_patterns']",
@@ -545,10 +545,10 @@ test.describe("consultation", () => {
     await expect(patternsWidget).toHaveClass(/span-3/);
 
     // Save and verify rendered listening_patterns widget
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
     await expect(
-      patternsWidget.getByRole("heading", { name: "Pattern di ascolto" }),
+      patternsWidget.getByRole("heading", { name: "Listening patterns" }),
     ).toBeVisible();
     await expect(patternsWidget.locator(".pattern-bars")).toBeVisible();
     await expect(
@@ -568,14 +568,14 @@ test.describe("consultation", () => {
     ).toHaveCount(24);
 
     // Cycle span (3 -> 4 -> 6) and verify persistence
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
     const patternSpanBtn = patternsWidget.locator(".widget-span-button");
     await patternSpanBtn.click(); // 3 -> 4
     await expect(patternsWidget).toHaveClass(/span-4/);
     await patternSpanBtn.click(); // 4 -> 6
     await expect(patternsWidget).toHaveClass(/span-6/);
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     await page.reload();
@@ -588,18 +588,18 @@ test.describe("consultation", () => {
     archive: { page },
   }) => {
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza dashboard",
+      name: "Customize dashboard",
     });
     // Add DiscoveryRatioWidget from catalog (#122)
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     const catalogDialog122 = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog122).toBeVisible();
     const addDiscoveryBtn = catalogDialog122
       .locator(".catalog-item-card")
-      .filter({ hasText: "Rapporto scoperte" })
-      .getByRole("button", { name: "Aggiungi" });
+      .filter({ hasText: "Discovery ratio" })
+      .getByRole("button", { name: "Add" });
     await expect(addDiscoveryBtn).toBeVisible();
     await addDiscoveryBtn.click();
     await expect(catalogDialog122).toBeHidden();
@@ -612,11 +612,11 @@ test.describe("consultation", () => {
     await expect(discoveryWidget).toHaveClass(/span-3/);
 
     // Save and verify rendering after save
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
     await expect(
       discoveryWidget.getByRole("heading", {
-        name: "Nuove scoperte vs Riascolti",
+        name: "New vs repeat listens",
       }),
     ).toBeVisible();
     await expect(discoveryWidget.getByRole("progressbar")).toBeVisible();
@@ -631,20 +631,20 @@ test.describe("consultation", () => {
 
     // Ticket #121: Override Locale del Periodo per Singolo Widget
     // 1. Enter edit mode and set periodOverride="30d" on discovery_ratio widget
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
 
     const discoveryWidget121 = page.locator(
       ".dashboard-widget[data-widget-type='discovery_ratio']",
     );
     const discoveryPeriodSelect = discoveryWidget121.getByRole("combobox", {
-      name: "Periodo widget",
+      name: "Widget period",
     });
     await expect(discoveryPeriodSelect).toBeVisible();
     await chooseOption(discoveryPeriodSelect, "30d");
 
     // Save changes
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 2. Verify .pill badge appears indicating the locked period
@@ -692,17 +692,17 @@ test.describe("consultation", () => {
     ).toBeVisible();
 
     // 5. Test periodOverride on a dashboard-slice widget (e.g. totals)
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
     const totalsWidget121 = page.locator(
       ".dashboard-widget[data-widget-type='totals']",
     );
     const totalsPeriodSelect = totalsWidget121.getByRole("combobox", {
-      name: "Periodo widget",
+      name: "Widget period",
     });
     await expect(totalsPeriodSelect).toBeVisible();
     await chooseOption(totalsPeriodSelect, "30d");
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     const totalsBadge = totalsWidget121.locator(".pill.widget-period-badge");
@@ -724,18 +724,16 @@ test.describe("consultation", () => {
     );
 
     // Reset to default
-    await page.getByRole("button", { name: "Personalizza" }).click();
+    await page.getByRole("button", { name: "Customize" }).click();
     await expect(editToolbar).toBeVisible();
-    await editToolbar
-      .getByRole("button", { name: "Ripristina predefinito" })
-      .click();
+    await editToolbar.getByRole("button", { name: "Reset to default" }).click();
     const totalsAfterReset = page.locator(
       ".dashboard-widget[data-widget-type='totals']",
     );
     await expect(totalsAfterReset).toHaveClass(/span-6/);
     await expect(
       page.locator(".dashboard-widget[data-widget-type='now_playing']"),
-    ).toHaveClass(/span-6/);
+    ).toHaveCount(0);
     await expect(
       page.locator(".dashboard-widget[data-widget-type='top_artists']"),
     ).toHaveClass(/span-2/);
@@ -757,7 +755,7 @@ test.describe("consultation", () => {
     await expect(
       page.locator(".dashboard-widget[data-widget-type='discovery_ratio']"),
     ).toHaveCount(0);
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     await page.reload();
@@ -766,7 +764,7 @@ test.describe("consultation", () => {
     ).toHaveClass(/span-6/);
     await expect(
       page.locator(".dashboard-widget[data-widget-type='now_playing']"),
-    ).toHaveClass(/span-6/);
+    ).toHaveCount(0);
     await expect(
       page.locator(".dashboard-widget[data-widget-type='top_artists']"),
     ).toHaveClass(/span-2/);
@@ -819,7 +817,7 @@ test.describe("consultation", () => {
       page.locator(".widget-patterns-content .pattern-row").first(),
     ).toBeVisible();
     const customize = page.getByRole("button", {
-      name: "Personalizza",
+      name: "Customize",
       exact: true,
     });
     for (const width of [320, 390, 601, 768, 1440]) {
@@ -888,7 +886,6 @@ test.describe("consultation", () => {
           ".rank-number",
           ".pattern-readout",
           ".chart-bar-value",
-          ".time-composition",
         ]) {
           await expect(
             page.locator(".dashboard-widget " + selector).first(),
@@ -903,9 +900,7 @@ test.describe("consultation", () => {
           ),
           fullPage: true,
         });
-        await page
-          .getByRole("button", { name: "Annulla", exact: true })
-          .click();
+        await page.getByRole("button", { name: "Cancel", exact: true }).click();
         await expect(customize).toBeFocused();
       }
     }
@@ -951,16 +946,20 @@ test.describe("consultation", () => {
       "0s",
     );
     // The optional catalog widgets use the same anatomy at every supported span.
-    for (const title of ["Classifiche Congiunte", "Rapporto scoperte"]) {
+    for (const title of [
+      "Now playing",
+      "Combined rankings",
+      "Discovery ratio",
+    ]) {
       await page
-        .getByRole("button", { name: "Aggiungi widget", exact: true })
+        .getByRole("button", { name: "Add widget", exact: true })
         .click();
       await page
         .locator(".catalog-item-card")
         .filter({
           has: page.getByRole("heading", { name: title, exact: true }),
         })
-        .getByRole("button", { name: "Aggiungi", exact: true })
+        .getByRole("button", { name: "Add", exact: true })
         .click();
     }
     for (const type of [
@@ -997,9 +996,7 @@ test.describe("consultation", () => {
         ).toBeTruthy();
       }
     }
-    await page
-      .getByRole("button", { name: "Aggiungi widget", exact: true })
-      .click();
+    await page.getByRole("button", { name: "Add widget", exact: true }).click();
     await page.screenshot({
       path: testInfo.outputPath("widget-catalog.png"),
       fullPage: true,
@@ -1160,35 +1157,31 @@ test.describe("consultation", () => {
     await expect(historyWidget).toBeVisible();
     await expect(historyWidget).toHaveClass(/span-6/);
 
-    // 4. Click "Personalizza template artista" action to enter Edit mode
+    // 4. Click "Customize artist template" action to enter Edit mode
     const customizeBtn = page.getByRole("button", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(customizeBtn).toBeVisible();
     await customizeBtn.click();
 
     // 5. Verify toolbar
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(editToolbar).toBeVisible();
     await expect(
-      editToolbar.getByText(/applicate a tutte le pagine artista/i),
+      editToolbar.getByText(/changes apply to every artist page/i),
     ).toBeVisible();
 
     // 6. Verify Catalog Modal does NOT show home-only widgets
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     const catalogDialog = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog).toBeVisible();
     // home-only widgets must NOT be present
-    await expect(catalogDialog.getByText("In riproduzione")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Artisti")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Classifiche Congiunte")).toHaveCount(
-      0,
-    );
-    await catalogDialog
-      .getByRole("button", { name: "Chiudi catalogo" })
-      .click();
+    await expect(catalogDialog.getByText("Now playing")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top artists")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Combined rankings")).toHaveCount(0);
+    await catalogDialog.getByRole("button", { name: "Close catalog" }).click();
     await expect(catalogDialog).toBeHidden();
 
     // 7. Cycle span on top_albums (3 -> 4)
@@ -1203,7 +1196,7 @@ test.describe("consultation", () => {
     ).toHaveCount(0);
 
     // 8. Save changes
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 9. Reload page and assert persistence
@@ -1247,16 +1240,16 @@ test.describe("consultation", () => {
     // 12. Verify Settings entry point for template customization
     await page.goto("/settings/appearance");
     await expect(
-      page.getByRole("heading", { name: "Template pagine musicali" }),
+      page.getByRole("heading", { name: "Music page templates" }),
     ).toBeVisible();
     const settingsCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(settingsCustomizeBtn).toBeVisible();
     await settingsCustomizeBtn.click();
     // Navigates to artist page with editor toolbar open
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template artista" }),
+      page.getByRole("toolbar", { name: "Customize artist template" }),
     ).toBeVisible();
   });
 
@@ -1268,12 +1261,12 @@ test.describe("consultation", () => {
     const firstArtist = page.locator(".rank-name a").first();
     await firstArtist.click();
 
-    // 2. Click "Personalizza template artista"
+    // 2. Click "Customize artist template"
     await page
-      .getByRole("button", { name: "Personalizza template artista" })
+      .getByRole("button", { name: "Customize artist template" })
       .click();
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(editToolbar).toBeVisible();
 
@@ -1291,20 +1284,20 @@ test.describe("consultation", () => {
       dialogMessage = dialog.message();
       await dialog.dismiss();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
-    expect(dialogMessage).toContain("modifiche non salvate");
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
+    expect(dialogMessage).toContain("unsaved changes");
     await expect(editToolbar).toBeVisible();
 
     // When dialog is accepted, exit edit mode and restore
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 4. Test 409 Concurrency Conflict preserving draft
     await page
-      .getByRole("button", { name: "Personalizza template artista" })
+      .getByRole("button", { name: "Customize artist template" })
       .click();
     await expect(editToolbar).toBeVisible();
     // Remove history widget
@@ -1334,7 +1327,7 @@ test.describe("consultation", () => {
       },
     );
 
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     // Conflict message shown
     await expect(
       editToolbar.getByText("Dashboard layout changed in another session"),
@@ -1361,24 +1354,24 @@ test.describe("consultation", () => {
     await page.goto("/settings/appearance");
     await expect(
       page.getByText(
-        "Nessun artista presente nell'archivio. Verrà usata un'anteprima vuota.",
+        "No artists in the archive. An empty preview will be used.",
       ),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: "Personalizza template artista" })
+      .getByRole("button", { name: "Customize artist template" })
       .click();
 
     // Navigates to /music/artists/preview?edit=template with editor open
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template artista" }),
+      page.getByRole("toolbar", { name: "Customize artist template" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Artista di anteprima" }),
+      page.getByRole("heading", { name: "Preview artist" }),
     ).toBeVisible();
     await expect(page.locator(".dashboard-grid")).toBeVisible();
   });
 
-  test("album template customization persists layout, updates across albums, renders Brani dell'album with proportional bars, and isolates home and artist", async ({
+  test("album template customization persists layout, updates across albums, renders Album tracks with proportional bars, and isolates home and artist", async ({
     archive: { page },
   }) => {
     // 1. Navigate to rankings and click an album to open Album consultation page
@@ -1432,44 +1425,40 @@ test.describe("consultation", () => {
     await expect(historyWidget).toBeVisible();
     await expect(historyWidget).toHaveClass(/span-6/);
 
-    // 4. Verify widget "Brani dell'album" with proportional bars
+    // 4. Verify widget "Album tracks" with proportional bars
     await expect(
-      albumTracksWidget.getByRole("heading", { name: "Brani dell'album" }),
+      albumTracksWidget.getByRole("heading", { name: "Album tracks" }),
     ).toBeVisible();
     const bars = albumTracksWidget.locator(".ranking-meter");
     if ((await albumTracksWidget.locator(".ranking-row").count()) > 0) {
       await expect(bars.first()).toBeVisible();
     }
 
-    // 5. Click "Personalizza template album" action to enter Edit mode
+    // 5. Click "Customize album template" action to enter Edit mode
     const customizeBtn = page.getByRole("button", {
-      name: "Personalizza template album",
+      name: "Customize album template",
     });
     await expect(customizeBtn).toBeVisible();
     await customizeBtn.click();
 
     // 6. Verify toolbar
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template album",
+      name: "Customize album template",
     });
     await expect(editToolbar).toBeVisible();
     await expect(
-      editToolbar.getByText(/applicate a tutte le pagine album/i),
+      editToolbar.getByText(/changes apply to every album page/i),
     ).toBeVisible();
 
     // 7. Verify Catalog Modal does NOT show forbidden widgets (top_albums, top_artists, now_playing, unified_rankings)
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     const catalogDialog = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog).toBeVisible();
-    await expect(catalogDialog.getByText("In riproduzione")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Artisti")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Album")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Classifiche Congiunte")).toHaveCount(
-      0,
-    );
-    await catalogDialog
-      .getByRole("button", { name: "Chiudi catalogo" })
-      .click();
+    await expect(catalogDialog.getByText("Now playing")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top artists")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top albums")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Combined rankings")).toHaveCount(0);
+    await catalogDialog.getByRole("button", { name: "Close catalog" }).click();
     await expect(catalogDialog).toBeHidden();
 
     // 8. Cycle span on albumTracksWidget (6 -> 2)
@@ -1478,7 +1467,7 @@ test.describe("consultation", () => {
     await expect(albumTracksWidget).toHaveClass(/span-2/);
 
     // 9. Save changes
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 10. Reload page and assert persistence
@@ -1524,18 +1513,18 @@ test.describe("consultation", () => {
     // 13. Verify Settings entry point for template customization
     await page.goto("/settings/appearance");
     await expect(
-      page.getByRole("heading", { name: "Template pagine musicali" }),
+      page.getByRole("heading", { name: "Music page templates" }),
     ).toBeVisible();
-    await page.getByLabel("Tipo di pagina").click();
-    await page.getByRole("option", { name: "Pagina Album" }).click();
+    await page.getByLabel("Page type").click();
+    await page.getByRole("option", { name: "Album page" }).click();
     const settingsCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza template album",
+      name: "Customize album template",
     });
     await expect(settingsCustomizeBtn).toBeVisible();
     await settingsCustomizeBtn.click();
     // Navigates to album page with editor toolbar open
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template album" }),
+      page.getByRole("toolbar", { name: "Customize album template" }),
     ).toBeVisible();
   });
 
@@ -1547,12 +1536,12 @@ test.describe("consultation", () => {
     const firstAlbum = page.locator(".rank-name a").first();
     await firstAlbum.click();
 
-    // 2. Click "Personalizza template album"
+    // 2. Click "Customize album template"
     await page
-      .getByRole("button", { name: "Personalizza template album" })
+      .getByRole("button", { name: "Customize album template" })
       .click();
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template album",
+      name: "Customize album template",
     });
     await expect(editToolbar).toBeVisible();
 
@@ -1569,19 +1558,19 @@ test.describe("consultation", () => {
       dialogMessage = dialog.message();
       await dialog.dismiss();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
-    expect(dialogMessage).toContain("modifiche non salvate");
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
+    expect(dialogMessage).toContain("unsaved changes");
     await expect(editToolbar).toBeVisible();
 
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 4. Test 409 Concurrency Conflict preserving draft
     await page
-      .getByRole("button", { name: "Personalizza template album" })
+      .getByRole("button", { name: "Customize album template" })
       .click();
     await expect(editToolbar).toBeVisible();
     // Remove history widget
@@ -1611,7 +1600,7 @@ test.describe("consultation", () => {
       },
     );
 
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     // Conflict message shown
     await expect(
       editToolbar.getByText("Dashboard layout changed in another session"),
@@ -1632,7 +1621,7 @@ test.describe("consultation", () => {
       await removeBtns.first().click();
     }
     await expect(albumGrid.locator(".dashboard-widget")).toHaveCount(0);
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // Reload and verify empty layout notice is displayed, while header and customize action remain
@@ -1640,7 +1629,7 @@ test.describe("consultation", () => {
     await expect(page.locator(".dashboard-empty-notice")).toBeVisible();
     await expect(page.locator(".music-heading")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Personalizza template album" }),
+      page.getByRole("button", { name: "Customize album template" }),
     ).toBeVisible();
 
     // 6. Test empty library preview from Settings
@@ -1655,23 +1644,23 @@ test.describe("consultation", () => {
     );
 
     await page.goto("/settings/appearance");
-    await page.getByLabel("Tipo di pagina").click();
-    await page.getByRole("option", { name: "Pagina Album" }).click();
+    await page.getByLabel("Page type").click();
+    await page.getByRole("option", { name: "Album page" }).click();
     await expect(
       page.getByText(
-        "Nessun album presente nell'archivio. Verrà usata un'anteprima vuota.",
+        "No albums in the archive. An empty preview will be used.",
       ),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: "Personalizza template album" })
+      .getByRole("button", { name: "Customize album template" })
       .click();
 
     // Navigates to /music/albums/preview?edit=template with editor open
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template album" }),
+      page.getByRole("toolbar", { name: "Customize album template" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Album di anteprima" }),
+      page.getByRole("heading", { name: "Preview album" }),
     ).toBeVisible();
     await expect(page.locator(".dashboard-grid")).toBeVisible();
   });
@@ -1731,40 +1720,38 @@ test.describe("consultation", () => {
       trackGrid.locator(".dashboard-widget[data-widget-type='top_tracks']"),
     ).toHaveCount(0);
 
-    // 4. Click "Personalizza template brano" action to enter Edit mode
+    // 4. Click "Customize track template" action to enter Edit mode
     const customizeBtn = page.getByRole("button", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(customizeBtn).toBeVisible();
     await customizeBtn.click();
 
     // 5. Verify toolbar
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(editToolbar).toBeVisible();
     await expect(
-      editToolbar.getByText(/applicate a tutte le pagine brano/i),
+      editToolbar.getByText(/changes apply to every track page/i),
     ).toBeVisible();
 
     // 6. Verify Catalog Modal shows only compatible widgets
-    await editToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await editToolbar.getByRole("button", { name: "Add widget" }).click();
     const catalogDialog = page.locator(".widget-catalog-dialog");
     await expect(catalogDialog).toBeVisible();
 
     // Incompatible widgets must NOT be present
-    await expect(catalogDialog.getByText("In riproduzione")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Artisti")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Album")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Top Brani")).toHaveCount(0);
-    await expect(catalogDialog.getByText("Classifiche Congiunte")).toHaveCount(
-      0,
-    );
-    await expect(catalogDialog.getByText("Rapporto scoperte")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Now playing")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top artists")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top albums")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Top tracks")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Combined rankings")).toHaveCount(0);
+    await expect(catalogDialog.getByText("Discovery ratio")).toHaveCount(0);
 
-    // Compatible widget: Ascolti Recenti must be available
+    // Compatible widget: Recent listens must be available
     const addRecentBtn = catalogDialog.getByRole("button", {
-      name: /Ascolti Recenti/i,
+      name: /Recent listens/i,
     });
     await expect(addRecentBtn).toBeVisible();
 
@@ -1783,7 +1770,7 @@ test.describe("consultation", () => {
     await expect(totalsWidget).toHaveClass(/span-2/);
 
     // 9. Save changes
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 10. Reload page and assert persistence
@@ -1840,12 +1827,12 @@ test.describe("consultation", () => {
     const firstTrack = page.locator(".rank-name a").first();
     await firstTrack.click();
 
-    // 2. Click "Personalizza template brano"
+    // 2. Click "Customize track template"
     await page
-      .getByRole("button", { name: "Personalizza template brano" })
+      .getByRole("button", { name: "Customize track template" })
       .click();
     const editToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(editToolbar).toBeVisible();
 
@@ -1862,19 +1849,19 @@ test.describe("consultation", () => {
       dialogMessage = dialog.message();
       await dialog.dismiss();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
-    expect(dialogMessage).toContain("modifiche non salvate");
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
+    expect(dialogMessage).toContain("unsaved changes");
     await expect(editToolbar).toBeVisible();
 
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
     await expect(editToolbar).toBeHidden();
 
     // 4. Test 409 Concurrency Conflict preserving draft
     await page
-      .getByRole("button", { name: "Personalizza template brano" })
+      .getByRole("button", { name: "Customize track template" })
       .click();
     await expect(editToolbar).toBeVisible();
     await trackGrid
@@ -1903,7 +1890,7 @@ test.describe("consultation", () => {
       },
     );
 
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(
       editToolbar.getByText("Dashboard layout changed in another session"),
     ).toBeVisible();
@@ -1918,12 +1905,12 @@ test.describe("consultation", () => {
     page.once("dialog", async (dialog) => {
       await dialog.accept();
     });
-    await editToolbar.getByRole("button", { name: "Annulla" }).click();
+    await editToolbar.getByRole("button", { name: "Cancel" }).click();
     await expect(editToolbar).toBeHidden();
 
     // Re-enter edit mode
     await page
-      .getByRole("button", { name: "Personalizza template brano" })
+      .getByRole("button", { name: "Customize track template" })
       .click();
     // Remove all remaining widgets
     const removeButtons = trackGrid.locator(".widget-remove-button");
@@ -1932,50 +1919,48 @@ test.describe("consultation", () => {
     }
     await expect(trackGrid.locator(".dashboard-widget")).toHaveCount(0);
 
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
 
     // Reload: empty template notice is displayed
     await page.reload();
     await expect(
       page.getByText(
-        'Nessun widget configurato per questo template. Clicca su "Aggiungi widget" per personalizzare la pagina.',
+        'No widgets are configured for this template. Select "Add widget" to customize the page.',
       ),
     ).toBeVisible();
 
     // Restore defaults
     await page
-      .getByRole("button", { name: "Personalizza template brano" })
+      .getByRole("button", { name: "Customize track template" })
       .click();
-    await editToolbar
-      .getByRole("button", { name: "Ripristina predefinito" })
-      .click();
-    await editToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await editToolbar.getByRole("button", { name: "Reset to default" }).click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(editToolbar).toBeHidden();
     await expect(trackGrid.locator(".dashboard-widget")).toHaveCount(4);
 
     // 6. Test Settings entry point for track template customization
     await page.goto("/settings/appearance");
     await expect(
-      page.getByRole("heading", { name: "Template pagine musicali" }),
+      page.getByRole("heading", { name: "Music page templates" }),
     ).toBeVisible();
 
     await chooseOption(
-      page.getByRole("combobox", { name: "Tipo di pagina" }),
+      page.getByRole("combobox", { name: "Page type" }),
       "track",
     );
     await expect(
-      page.getByRole("combobox", { name: "Brano di anteprima" }),
+      page.getByRole("combobox", { name: "Preview track" }),
     ).toBeVisible();
     const settingsCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(settingsCustomizeBtn).toBeVisible();
     await settingsCustomizeBtn.click();
 
     // Navigates to track page with editor toolbar open
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template brano" }),
+      page.getByRole("toolbar", { name: "Customize track template" }),
     ).toBeVisible();
 
     // 7. Test empty track library preview from Settings
@@ -1991,23 +1976,23 @@ test.describe("consultation", () => {
 
     await page.goto("/settings/appearance");
     await chooseOption(
-      page.getByRole("combobox", { name: "Tipo di pagina" }),
+      page.getByRole("combobox", { name: "Page type" }),
       "track",
     );
     await expect(
       page.getByText(
-        "Nessun brano presente nell'archivio. Verrà usata un'anteprima vuota.",
+        "No tracks in the archive. An empty preview will be used.",
       ),
     ).toBeVisible();
     await page
-      .getByRole("button", { name: "Personalizza template brano" })
+      .getByRole("button", { name: "Customize track template" })
       .click();
 
     await expect(
-      page.getByRole("toolbar", { name: "Personalizza template brano" }),
+      page.getByRole("toolbar", { name: "Customize track template" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Brano di anteprima" }),
+      page.getByRole("heading", { name: "Preview track" }),
     ).toBeVisible();
     await expect(page.locator(".dashboard-grid")).toBeVisible();
   });
@@ -2017,23 +2002,23 @@ test.describe("consultation", () => {
     // 1. Home template catalog MUST NOT contain listening_calendar or listening_milestones
     await page.goto("/dashboard");
     const homeCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza",
+      name: "Customize",
     });
     await expect(homeCustomizeBtn).toBeVisible();
     await homeCustomizeBtn.click();
 
     const homeToolbar = page.getByRole("toolbar", {
-      name: "Personalizza dashboard",
+      name: "Customize dashboard",
     });
     await expect(homeToolbar).toBeVisible();
-    await homeToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await homeToolbar.getByRole("button", { name: "Add widget" }).click();
 
     const homeCatalog = page.locator(".widget-catalog-dialog");
     await expect(homeCatalog).toBeVisible();
-    await expect(homeCatalog.getByText("Calendario ascolti")).toHaveCount(0);
-    await expect(homeCatalog.getByText("Traguardi di ascolto")).toHaveCount(0);
-    await homeCatalog.getByRole("button", { name: "Chiudi catalogo" }).click();
-    await homeToolbar.getByRole("button", { name: "Annulla" }).click();
+    await expect(homeCatalog.getByText("Listening calendar")).toHaveCount(0);
+    await expect(homeCatalog.getByText("Listening milestones")).toHaveCount(0);
+    await homeCatalog.getByRole("button", { name: "Close catalog" }).click();
+    await homeToolbar.getByRole("button", { name: "Cancel" }).click();
 
     // 2. Artist template: add listening_calendar, listening_milestones, and discovery_ratio
     await page.goto("/rankings/artists?period=all");
@@ -2047,38 +2032,36 @@ test.describe("consultation", () => {
 
     const artistGrid = page.locator(".dashboard-grid");
     const artistCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(artistCustomizeBtn).toBeVisible();
     await artistCustomizeBtn.click();
 
     const artistToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template artista",
+      name: "Customize artist template",
     });
     await expect(artistToolbar).toBeVisible();
 
     // Open catalog on Artist template
-    await artistToolbar
-      .getByRole("button", { name: "Aggiungi widget" })
-      .click();
+    await artistToolbar.getByRole("button", { name: "Add widget" }).click();
     const artistCatalog = page.locator(".widget-catalog-dialog");
     await expect(artistCatalog).toBeVisible();
 
     // Verify all 3 advanced widgets are present in Artist catalog
     const addCalendarBtn = artistCatalog.getByRole("button", {
-      name: /Calendario ascolti/i,
+      name: /Listening calendar/i,
     });
     await expect(addCalendarBtn).toBeVisible();
     const addMilestonesBtn = artistCatalog.getByRole("button", {
-      name: /Traguardi di ascolto/i,
+      name: /Listening milestones/i,
     });
     await expect(addMilestonesBtn).toBeVisible();
     const addDiscoveryBtn = artistCatalog.getByRole("button", {
-      name: /Rapporto scoperte/i,
+      name: /Discovery ratio/i,
     });
     await expect(addDiscoveryBtn).toBeVisible();
 
-    // Add Calendario ascolti
+    // Add Listening calendar
     await addCalendarBtn.click();
     await expect(artistCatalog).toBeHidden();
     const calendarWidget = artistGrid.locator(
@@ -2088,13 +2071,11 @@ test.describe("consultation", () => {
 
     // Verify calendar has period override select in edit mode
     await expect(
-      calendarWidget.getByRole("combobox", { name: "Periodo widget" }),
+      calendarWidget.getByRole("combobox", { name: "Widget period" }),
     ).toBeVisible();
 
-    // Add Traguardi di ascolto
-    await artistToolbar
-      .getByRole("button", { name: "Aggiungi widget" })
-      .click();
+    // Add Listening milestones
+    await artistToolbar.getByRole("button", { name: "Add widget" }).click();
     await addMilestonesBtn.click();
     await expect(artistCatalog).toBeHidden();
     const milestonesWidget = artistGrid.locator(
@@ -2102,20 +2083,18 @@ test.describe("consultation", () => {
     );
     await expect(milestonesWidget).toBeVisible();
 
-    // Verify milestones widget displays 'Tutto lo storico' badge
+    // Verify milestones widget displays 'All time' badge
     await expect(
       milestonesWidget.locator(".widget-period-badge.all-time"),
-    ).toHaveText("Tutto lo storico");
+    ).toHaveText("All time");
 
     // Verify milestones widget has NO period override selector
     await expect(
-      milestonesWidget.getByRole("combobox", { name: "Periodo widget" }),
+      milestonesWidget.getByRole("combobox", { name: "Widget period" }),
     ).toHaveCount(0);
 
-    // Add Rapporto scoperte
-    await artistToolbar
-      .getByRole("button", { name: "Aggiungi widget" })
-      .click();
+    // Add Discovery ratio
+    await artistToolbar.getByRole("button", { name: "Add widget" }).click();
     await addDiscoveryBtn.click();
     await expect(artistCatalog).toBeHidden();
     const discoveryWidget = artistGrid.locator(
@@ -2124,9 +2103,7 @@ test.describe("consultation", () => {
     await expect(discoveryWidget).toBeVisible();
 
     // Save artist template
-    await artistToolbar
-      .getByRole("button", { name: "Salva modifiche" })
-      .click();
+    await artistToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(artistToolbar).toBeHidden();
 
     // Reload and assert all 3 widgets persist on Artist page
@@ -2155,40 +2132,40 @@ test.describe("consultation", () => {
 
     const trackGrid = page.locator(".dashboard-grid");
     const trackCustomizeBtn = page.getByRole("button", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(trackCustomizeBtn).toBeVisible();
     await trackCustomizeBtn.click();
 
     const trackToolbar = page.getByRole("toolbar", {
-      name: "Personalizza template brano",
+      name: "Customize track template",
     });
     await expect(trackToolbar).toBeVisible();
 
-    await trackToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await trackToolbar.getByRole("button", { name: "Add widget" }).click();
     const trackCatalog = page.locator(".widget-catalog-dialog");
     await expect(trackCatalog).toBeVisible();
 
     // Discovery ratio MUST NOT be present in Track catalog
-    await expect(trackCatalog.getByText("Rapporto scoperte")).toHaveCount(0);
+    await expect(trackCatalog.getByText("Discovery ratio")).toHaveCount(0);
 
     // Calendar and Milestones MUST be present
     const addTrackCalBtn = trackCatalog.getByRole("button", {
-      name: /Calendario ascolti/i,
+      name: /Listening calendar/i,
     });
     await expect(addTrackCalBtn).toBeVisible();
     const addTrackMsBtn = trackCatalog.getByRole("button", {
-      name: /Traguardi di ascolto/i,
+      name: /Listening milestones/i,
     });
     await expect(addTrackMsBtn).toBeVisible();
 
     // Add both to track
     await addTrackCalBtn.click();
-    await trackToolbar.getByRole("button", { name: "Aggiungi widget" }).click();
+    await trackToolbar.getByRole("button", { name: "Add widget" }).click();
     await addTrackMsBtn.click();
 
     // Save track template
-    await trackToolbar.getByRole("button", { name: "Salva modifiche" }).click();
+    await trackToolbar.getByRole("button", { name: "Save layout" }).click();
     await expect(trackToolbar).toBeHidden();
 
     // Reload and assert widgets persist on Track page

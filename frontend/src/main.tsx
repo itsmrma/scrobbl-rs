@@ -266,6 +266,18 @@ function Shell({
       } as Record<string, string>
     )[page] || "Page not found";
 
+  const kindSegment = path.split("/")[2];
+  const musicKind =
+    kindSegment === "artists"
+      ? "Artist"
+      : kindSegment === "albums"
+        ? "Album"
+        : kindSegment === "tracks"
+          ? "Track"
+          : undefined;
+  const breadcrumb =
+    page === "music" && musicKind ? `Music / ${musicKind}` : title;
+
   useEffect(() => {
     document.title = `${title} · ${preferences?.name || "scrobbl.rs"}`;
   }, [title, preferences?.name]);
@@ -455,7 +467,7 @@ function Shell({
             >
               <Icon>menu</Icon>
             </button>
-            <span className="topbar-breadcrumb">Your library / {title}</span>
+            <span className="topbar-breadcrumb">{breadcrumb}</span>
             <div className="topbar-actions">
               {showArtworkPill && (
                 <Link

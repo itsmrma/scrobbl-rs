@@ -130,12 +130,6 @@ export function ListenList({
                 </small>
                 <small>{formatSources(item.sources)}</small>
               </div>
-              {context && (
-                <div className="listen-archive">
-                  <small>Added to archive</small>
-                  {date(item.first_acquired_at_ms, preferences)}
-                </div>
-              )}
               <div className="listen-duration">
                 {context && <small>Time listened</small>}
                 {item.duration_kind === "estimated" && "≈ "}

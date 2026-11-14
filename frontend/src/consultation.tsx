@@ -202,14 +202,15 @@ function Composition({
 }: {
   value: { actual_ms: number; estimated_ms: number; unknown_durations: number };
 }) {
-  return (
-    <small className="time-composition">
-      {duration(value.actual_ms, true)} actual ·{" "}
-      {duration(value.estimated_ms, true)} estimated
-      {value.unknown_durations > 0 &&
-        ` · ${number.format(value.unknown_durations)} with unknown duration`}
-    </small>
-  );
+  // Only worth a line when part of the total is not plain measured time.
+  const parts = [
+    value.estimated_ms > 0 &&
+      `${duration(value.actual_ms, true)} actual · ${duration(value.estimated_ms, true)} estimated`,
+    value.unknown_durations > 0 &&
+      `${number.format(value.unknown_durations)} with unknown duration`,
+  ].filter(Boolean);
+  if (!parts.length) return null;
+  return <small className="time-composition">{parts.join(" · ")}</small>;
 }
 function Stats({
   totals,
@@ -241,7 +242,7 @@ function Stats({
           </span>
           <strong id={ids ? "total-listens" : undefined}>
             {loading ? (
-              <SkeletonBlock width="60%" height={34} />
+              <SkeletonBlock width="60%" height={45} />
             ) : (
               number.format(totals.listens)
             )}
@@ -253,24 +254,18 @@ function Stats({
           </span>
           <strong id={ids ? "total-time" : undefined}>
             {loading ? (
-              <SkeletonBlock width="60%" height={34} />
+              <SkeletonBlock width="60%" height={45} />
             ) : (
               timeValue(totals)
             )}
           </strong>
-          {loading ? (
-            <small className="time-composition">
-              <SkeletonBlock width="80%" height={14} />
-            </small>
-          ) : (
-            <Composition value={totals} />
-          )}
+          {!loading && <Composition value={totals} />}
         </article>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>Different tracks</span>
           <strong id={ids ? "total-tracks" : undefined}>
             {loading ? (
-              <SkeletonBlock width="60%" height={34} />
+              <SkeletonBlock width="60%" height={45} />
             ) : (
               number.format(totals.tracks)
             )}
@@ -385,29 +380,36 @@ function Pager({
   list: ReturnType<typeof useListPreferences>;
   resize: () => void;
 }) {
+  const pages = Math.max(1, Math.ceil(total / pageSize));
   return (
     <div className="list-footer">
       <PageSize list={list} changed={resize} />
-      <div className="pagination">
-        <button
-          className="secondary"
-          disabled={page <= 1}
-          onClick={() => change(page - 1)}
-        >
-          Previous
-        </button>
-        <span>
-          Page {page} of {Math.max(1, Math.ceil(total / pageSize))} ·{" "}
+      {pages === 1 && page === 1 ? (
+        <span className="pagination-summary">
           {number.format(total)} {total === 1 ? "result" : "results"}
         </span>
-        <button
-          className="secondary"
-          disabled={page * pageSize >= total}
-          onClick={() => change(page + 1)}
-        >
-          Next
-        </button>
-      </div>
+      ) : (
+        <div className="pagination">
+          <button
+            className="secondary"
+            disabled={page <= 1}
+            onClick={() => change(page - 1)}
+          >
+            Previous
+          </button>
+          <span>
+            Page {page} of {pages} · {number.format(total)}{" "}
+            {total === 1 ? "result" : "results"}
+          </span>
+          <button
+            className="secondary"
+            disabled={page * pageSize >= total}
+            onClick={() => change(page + 1)}
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -612,7 +614,7 @@ function RankingsPanel({
     });
   return (
     <article
-      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""} ${scrolling ? "scrolling-rankings" : ""}`}
+      className={`panel padded ranking-panel ${standalone ? "rankings-panel" : ""}`}
       aria-label={`${kind} rankings`}
     >
       <div className="ranking-panel-heading">
@@ -671,50 +673,50 @@ function RankingsPanel({
                 : []),
             ]}
           />
-          <div
-            className={`card-size-control ${collage || list.view !== "grid" ? "inactive" : ""}`}
-            aria-hidden={collage || list.view !== "grid"}
-            inert={collage || list.view !== "grid"}
-            role="group"
-            aria-label="Card size"
-          >
-            <button
-              className="icon-button"
-              aria-label="Smaller cards"
-              disabled={cardSize === 100}
-              onClick={() =>
-                setCardSize(
-                  cardSizes[Math.max(0, cardSizes.indexOf(cardSize) - 1)],
-                )
-              }
+          {!collage && list.view === "grid" && (
+            <div
+              className="card-size-control"
+              role="group"
+              aria-label="Card size"
             >
-              <Icon>remove</Icon>
-            </button>
-            <output aria-label="Card size">
-              {cardSize === 100
-                ? "Small"
-                : cardSize === 140
-                  ? "Medium"
-                  : "Large"}
-            </output>
-            <button
-              className="icon-button"
-              aria-label="Larger cards"
-              disabled={cardSize === 220}
-              onClick={() =>
-                setCardSize(
-                  cardSizes[
-                    Math.min(
-                      cardSizes.length - 1,
-                      cardSizes.indexOf(cardSize) + 1,
-                    )
-                  ],
-                )
-              }
-            >
-              <Icon>add</Icon>
-            </button>
-          </div>
+              <button
+                className="icon-button"
+                aria-label="Smaller cards"
+                disabled={cardSize === 100}
+                onClick={() =>
+                  setCardSize(
+                    cardSizes[Math.max(0, cardSizes.indexOf(cardSize) - 1)],
+                  )
+                }
+              >
+                <Icon>remove</Icon>
+              </button>
+              <output aria-label="Card size">
+                {cardSize === 100
+                  ? "Small"
+                  : cardSize === 140
+                    ? "Medium"
+                    : "Large"}
+              </output>
+              <button
+                className="icon-button"
+                aria-label="Larger cards"
+                disabled={cardSize === 220}
+                onClick={() =>
+                  setCardSize(
+                    cardSizes[
+                      Math.min(
+                        cardSizes.length - 1,
+                        cardSizes.indexOf(cardSize) + 1,
+                      )
+                    ],
+                  )
+                }
+              >
+                <Icon>add</Icon>
+              </button>
+            </div>
+          )}
         </div>
       )}
       <ErrorText>{result.error}</ErrorText>
@@ -874,15 +876,10 @@ function Chart({
         </h2>
       </div>
       <p className="subtle">
-        Your archived listening over time. Select a bar to explore that period.
+        Select a bar to explore that period.
+        {grouped && " Quieter periods are combined; each bar shows its range."}
       </p>
       <div className="widget-chart-content">
-        {grouped && (
-          <p className="subtle">
-            Quieter periods are combined to fit this view; each bar shows its
-            exact date range.
-          </p>
-        )}
         {inspectedBucket && (
           <div className="chart-readout" aria-live="polite" aria-atomic="true">
             <div>
@@ -1011,7 +1008,6 @@ function Chart({
 export const DEFAULT_V1_LAYOUT: DashboardLayout = {
   version: 0,
   widgets: [
-    { id: "now_playing", type: "now_playing", colSpan: 6 },
     { id: "totals", type: "totals", colSpan: 6 },
     { id: "top_artists", type: "top_artists", colSpan: 2 },
     { id: "top_albums", type: "top_albums", colSpan: 2 },
@@ -1025,86 +1021,80 @@ export const DEFAULT_V1_LAYOUT: DashboardLayout = {
 const CATALOG_ITEMS = [
   {
     type: "totals",
-    name: "Riepilogo Totali",
-    description:
-      "Ascolti totali, brani distinti e tempo riprodotto effettivo o stimato.",
+    name: "Totals summary",
+    description: "Total listens, distinct tracks and listening time.",
     defaultSpan: 6 as const,
   },
   {
     type: "unified_rankings",
-    name: "Classifiche Congiunte",
-    description:
-      "Le classifiche dei brani, artisti e album più ascoltati nel periodo.",
+    name: "Combined rankings",
+    description: "Top tracks, artists and albums for the period in one panel.",
     defaultSpan: 6 as const,
   },
   {
     type: "top_artists",
-    name: "Top Artisti",
-    description: "Gli artisti più ascoltati nel periodo con avatar e volumi.",
+    name: "Top artists",
+    description: "Most listened artists in the period.",
     defaultSpan: 2 as const,
   },
   {
     type: "top_albums",
-    name: "Top Album",
-    description: "Gli album con il maggior numero di ascolti nel periodo.",
+    name: "Top albums",
+    description: "Most listened albums in the period.",
     defaultSpan: 2 as const,
   },
   {
     type: "top_tracks",
-    name: "Top Brani",
-    description: "I brani più riprodotti nel periodo selezionato.",
+    name: "Top tracks",
+    description: "Most played tracks in the period.",
     defaultSpan: 2 as const,
   },
   {
     type: "activity_chart",
-    name: "Grafico Attività",
-    description:
-      "Istogramma temporale del volume di ascolti nel corso del tempo.",
+    name: "Activity chart",
+    description: "Listens over time as a bar chart.",
     defaultSpan: 6 as const,
   },
   {
     type: "recent_listens",
-    name: "Ascolti Recenti",
-    description:
-      "Elenco cronologico degli ascolti recenti registrati nell'archivio.",
+    name: "Recent listens",
+    description: "Latest listens recorded in the archive.",
     defaultSpan: 6 as const,
   },
   {
     type: "listening_patterns",
-    name: "Pattern di ascolto",
-    description:
-      "Distribuzione degli ascolti per ora del giorno e giorno della settimana.",
+    name: "Listening patterns",
+    description: "Listens by time of day and day of the week.",
     defaultSpan: 3 as const,
   },
   {
     type: "now_playing",
-    name: "In riproduzione",
-    description: "Brano in ascolto live e avanzamento traccia",
+    name: "Now playing",
+    description: "Live track and playback progress",
     defaultSpan: 3 as const,
   },
   {
     type: "discovery_ratio",
-    name: "Rapporto scoperte",
-    description: "Confronto tra brani ascoltati per la prima volta e riascolti",
+    name: "Discovery ratio",
+    description: "First-time tracks compared with repeat listens",
     defaultSpan: 3 as const,
   },
   {
     type: "history",
-    name: "Cronologia ascolti",
-    description: "Elenco cronologico dettagliato con filtri e ricerca.",
+    name: "Listening history",
+    description: "Detailed chronological list with filters and search.",
     defaultSpan: 6 as const,
   },
   {
     type: "listening_calendar",
-    name: "Calendario ascolti",
-    description: "Mappa di calore giornaliera del volume di ascolti nel tempo.",
+    name: "Listening calendar",
+    description: "Daily heatmap of listening volume.",
     defaultSpan: 6 as const,
   },
   {
     type: "listening_milestones",
-    name: "Traguardi di ascolto",
-    description:
-      "Primo e ultimo ascolto, soglie raggiunte e serie consecutive.",
+    name: "Listening milestones",
+    description: "First and last listen, thresholds reached and streaks.",
     defaultSpan: 6 as const,
   },
 ];
@@ -1211,7 +1201,12 @@ export function TopArtistsWidget({
           {loading ? (
             <RankingsSkeleton count={5} label="Loading top artists…" />
           ) : items && items.length > 0 ? (
-            <RankingRows bars items={items} kind="artists" params={params} />
+            <RankingRows
+              bars
+              items={items.slice(0, 5)}
+              kind="artists"
+              params={params}
+            />
           ) : (
             <p className="empty">No listens recorded in this period.</p>
           )}
@@ -1255,7 +1250,12 @@ export function TopAlbumsWidget({
           {loading ? (
             <RankingsSkeleton count={5} label="Loading top albums…" />
           ) : items && items.length > 0 ? (
-            <RankingRows bars items={items} kind="albums" params={params} />
+            <RankingRows
+              bars
+              items={items.slice(0, 5)}
+              kind="albums"
+              params={params}
+            />
           ) : (
             <p className="empty">No listens recorded in this period.</p>
           )}
@@ -1299,7 +1299,12 @@ export function TopTracksWidget({
           {loading ? (
             <RankingsSkeleton count={5} label="Loading top tracks…" />
           ) : items && items.length > 0 ? (
-            <RankingRows bars items={items} kind="tracks" params={params} />
+            <RankingRows
+              bars
+              items={items.slice(0, 5)}
+              kind="tracks"
+              params={params}
+            />
           ) : (
             <p className="empty">No listens recorded in this period.</p>
           )}
@@ -1358,8 +1363,9 @@ export function RecentListensWidget({
     `recent-widget:${historyParams?.toString()}:${preferences.version}`,
     needsFetch && !isPreview,
   );
-  const items =
-    recent !== undefined ? recent : (fetched.data?.items || []).slice(0, 8);
+  const items = (
+    recent !== undefined ? recent : fetched.data?.items || []
+  ).slice(0, 5);
   const isLoading = loading || (needsFetch && fetched.loading);
 
   return (
@@ -1380,7 +1386,7 @@ export function RecentListensWidget({
       </div>
       <div className="widget-recent-content">
         {isLoading ? (
-          <ListenListSkeleton count={8} />
+          <ListenListSkeleton count={5} />
         ) : (
           <ListenList items={items} preferences={preferences} />
         )}
@@ -1438,11 +1444,11 @@ export function ListeningCalendarWidget({
   return (
     <article
       className="panel padded widget-listening-calendar"
-      aria-label="Calendario ascolti"
+      aria-label="Listening calendar"
     >
       <div className="panel-title">
         <h2>
-          Calendario ascolti
+          Listening calendar
           {periodOverride && (
             <span
               className="pill widget-period-badge"
@@ -1456,7 +1462,7 @@ export function ListeningCalendarWidget({
           <div
             className="calendar-year-nav"
             role="group"
-            aria-label="Navigazione anni"
+            aria-label="Year navigation"
           >
             {result.data.years.map((y) => (
               <button
@@ -1472,12 +1478,12 @@ export function ListeningCalendarWidget({
           </div>
         )}
       </div>
-      <p className="subtle">Frequenza e volume di ascolti giornalieri.</p>
+      <p className="subtle">Listens per day.</p>
       <div className="widget-calendar-content">
         {result.error && <ErrorText>{result.error}</ErrorText>}
         {!result.data && !result.error && (
           <div className="skeleton-container" role="status" aria-busy="true">
-            <span className="visually-hidden">Caricamento calendario…</span>
+            <span className="visually-hidden">Loading calendar…</span>
             <div className="calendar-skeleton">
               <SkeletonBlock width="100%" height={120} borderRadius={6} />
             </div>
@@ -1485,7 +1491,7 @@ export function ListeningCalendarWidget({
         )}
         {result.data && result.data.total_listens === 0 && (
           <div className="empty" role="status">
-            <p>Nessun dato di ascolto nel periodo.</p>
+            <p>No listening data in this period.</p>
           </div>
         )}
         {result.data && result.data.total_listens > 0 && (
@@ -1494,7 +1500,7 @@ export function ListeningCalendarWidget({
               className="calendar-heatmap-container"
               tabIndex={0}
               role="region"
-              aria-label="Mappa di calore degli ascolti"
+              aria-label="Listening heatmap"
             >
               <div className="calendar-heatmap">
                 {days.map((day) => {
@@ -1503,21 +1509,21 @@ export function ListeningCalendarWidget({
                     <div
                       key={day.date}
                       className={`calendar-cell level-${level}`}
-                      title={`${day.date}: ${day.count} ${day.count === 1 ? "ascolto" : "ascolti"}`}
-                      aria-label={`${day.date}: ${day.count} ascolti`}
+                      title={`${day.date}: ${day.count} ${day.count === 1 ? "listen" : "listens"}`}
+                      aria-label={`${day.date}: ${day.count} listens`}
                     />
                   );
                 })}
               </div>
             </div>
             <div className="calendar-legend" aria-hidden="true">
-              <span className="subtle">Meno</span>
+              <span className="subtle">Less</span>
               <div className="calendar-cell level-0" />
               <div className="calendar-cell level-1" />
               <div className="calendar-cell level-2" />
               <div className="calendar-cell level-3" />
               <div className="calendar-cell level-4" />
-              <span className="subtle">Più</span>
+              <span className="subtle">More</span>
             </div>
           </div>
         )}
@@ -1546,24 +1552,22 @@ export function ListeningMilestonesWidget({
   return (
     <article
       className="panel padded widget-listening-milestones"
-      aria-label="Traguardi di ascolto"
+      aria-label="Listening milestones"
     >
       <div className="panel-title">
         <h2>
-          Traguardi di ascolto
-          <span className="pill widget-period-badge all-time">
-            Tutto lo storico
-          </span>
+          Listening milestones
+          <span className="pill widget-period-badge all-time">All time</span>
         </h2>
       </div>
       <p className="subtle">
-        Primo e ultimo ascolto documentato, serie e soglie raggiunte.
+        First and last listen, streaks and thresholds reached.
       </p>
       <div className="widget-milestones-content">
         {result.error && <ErrorText>{result.error}</ErrorText>}
         {!result.data && !result.error && (
           <div className="skeleton-container" role="status" aria-busy="true">
-            <span className="visually-hidden">Caricamento traguardi…</span>
+            <span className="visually-hidden">Loading milestones…</span>
             <div className="milestones-skeleton">
               <SkeletonBlock width="100%" height={80} borderRadius={6} />
               <SkeletonBlock width="100%" height={80} borderRadius={6} />
@@ -1572,7 +1576,7 @@ export function ListeningMilestonesWidget({
         )}
         {result.data && result.data.total_listens === 0 && (
           <div className="empty" role="status">
-            <p>Nessun traguardo raggiunto nello storico.</p>
+            <p>No milestones reached yet.</p>
           </div>
         )}
         {result.data && result.data.total_listens > 0 && (
@@ -1581,9 +1585,7 @@ export function ListeningMilestonesWidget({
               <div className="milestones-row">
                 {result.data.first_listen && (
                   <div className="milestone-card">
-                    <span className="milestone-label">
-                      Primo ascolto documentato
-                    </span>
+                    <span className="milestone-label">First listen</span>
                     <strong className="milestone-value">
                       {result.data.first_listen.track_title}
                     </strong>
@@ -1594,7 +1596,7 @@ export function ListeningMilestonesWidget({
                 )}
                 {result.data.last_listen && (
                   <div className="milestone-card">
-                    <span className="milestone-label">Ultimo ascolto</span>
+                    <span className="milestone-label">Last listen</span>
                     <strong className="milestone-value">
                       {result.data.last_listen.track_title}
                     </strong>
@@ -1609,12 +1611,10 @@ export function ListeningMilestonesWidget({
             <div className="milestones-section">
               <div className="milestones-row">
                 <div className="milestone-card">
-                  <span className="milestone-label">Serie più lunga</span>
+                  <span className="milestone-label">Longest streak</span>
                   <strong className="milestone-value tabular-nums">
                     {result.data.longest_streak.days}{" "}
-                    {result.data.longest_streak.days === 1
-                      ? "giorno"
-                      : "giorni"}
+                    {result.data.longest_streak.days === 1 ? "day" : "days"}
                   </strong>
                   {result.data.longest_streak.start_date &&
                     result.data.longest_streak.end_date && (
@@ -1625,18 +1625,16 @@ export function ListeningMilestonesWidget({
                     )}
                 </div>
                 <div className="milestone-card">
-                  <span className="milestone-label">Serie in corso</span>
+                  <span className="milestone-label">Current streak</span>
                   <strong className="milestone-value tabular-nums">
                     {result.data.current_streak.days}{" "}
-                    {result.data.current_streak.days === 1
-                      ? "giorno"
-                      : "giorni"}
+                    {result.data.current_streak.days === 1 ? "day" : "days"}
                   </strong>
                   {result.data.current_streak.days > 0 ? (
-                    <span className="pill streak-active">In corso</span>
+                    <span className="pill streak-active">Active</span>
                   ) : (
                     <span className="milestone-time subtle">
-                      Nessuna serie attiva
+                      No active streak
                     </span>
                   )}
                 </div>
@@ -1644,17 +1642,17 @@ export function ListeningMilestonesWidget({
             </div>
 
             <div className="milestones-section thresholds-section">
-              <span className="milestone-label">Soglie raggiunte</span>
+              <span className="milestone-label">Thresholds reached</span>
               {result.data.thresholds.length === 0 ? (
                 <p className="subtle">
-                  Nessuna soglia raggiunta (prima soglia: 10 ascolti).
+                  No thresholds reached yet (first threshold: 10 listens).
                 </p>
               ) : (
                 <div className="thresholds-chips">
                   {result.data.thresholds.map((t) => (
                     <div key={t.count} className="threshold-chip">
                       <span className="threshold-count tabular-nums">
-                        {number.format(t.count)} ascolti
+                        {number.format(t.count)} listens
                       </span>
                       <span className="threshold-date subtle">
                         {date(t.reached_at_ms, preferences)}
@@ -1691,11 +1689,11 @@ export function DiscoveryRatioWidget({
   return (
     <article
       className="panel padded widget-discovery-ratio"
-      aria-label="Nuove scoperte vs Riascolti"
+      aria-label="New vs repeat listens"
     >
       <div className="panel-title">
         <h2>
-          Nuove scoperte vs Riascolti
+          New vs repeat listens
           {periodOverride && (
             <span
               className="pill widget-period-badge"
@@ -1707,15 +1705,13 @@ export function DiscoveryRatioWidget({
         </h2>
       </div>
       <p className="subtle">
-        Confronto tra brani ascoltati per la prima volta e riascolti.
+        Tracks heard for the first time compared with repeat listens.
       </p>
       <div className="widget-discovery-content">
         {result.error && <ErrorText>{result.error}</ErrorText>}
         {!result.data && !result.error && (
           <div className="skeleton-container" role="status" aria-busy="true">
-            <span className="visually-hidden">
-              Caricamento rapporto scoperte…
-            </span>
+            <span className="visually-hidden">Loading discovery ratio…</span>
             <div className="discovery-ratio-skeleton">
               <div className="skeleton-metrics">
                 <SkeletonBlock width="40%" height={38} borderRadius={4} />
@@ -1746,13 +1742,13 @@ export function DiscoveryRatioWidget({
                 <span className="stat-number tabular-nums">
                   {Math.round(result.data.discovery_percent)}%
                 </span>
-                <span className="stat-label">nuove scoperte</span>
+                <span className="stat-label">new discoveries</span>
               </div>
               <div className="stat-secondary">
                 <span className="tabular-nums">
                   {100 - Math.round(result.data.discovery_percent)}%
                 </span>{" "}
-                <span className="subtle">riascolti</span>
+                <span className="subtle">repeats</span>
               </div>
             </div>
 
@@ -1762,17 +1758,17 @@ export function DiscoveryRatioWidget({
               aria-valuenow={Math.round(result.data.discovery_percent)}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label={`Rapporto scoperte: ${Math.round(result.data.discovery_percent)}% nuove scoperte, ${100 - Math.round(result.data.discovery_percent)}% riascolti`}
+              aria-label={`Discovery ratio: ${Math.round(result.data.discovery_percent)}% new discoveries, ${100 - Math.round(result.data.discovery_percent)}% repeats`}
             >
               <div
                 className="discovery-ratio-segment discoveries"
                 style={{ width: `${result.data.discovery_percent}%` }}
-                title={`Nuove scoperte: ${result.data.discoveries} (${result.data.discovery_percent.toFixed(1)}%)`}
+                title={`New discoveries: ${result.data.discoveries} (${result.data.discovery_percent.toFixed(1)}%)`}
               />
               <div
                 className="discovery-ratio-segment repeats"
                 style={{ width: `${100 - result.data.discovery_percent}%` }}
-                title={`Riascolti: ${result.data.repeats} (${(100 - result.data.discovery_percent).toFixed(1)}%)`}
+                title={`Repeats: ${result.data.repeats} (${(100 - result.data.discovery_percent).toFixed(1)}%)`}
               />
             </div>
 
@@ -1782,7 +1778,7 @@ export function DiscoveryRatioWidget({
                   className="legend-indicator discoveries"
                   aria-hidden="true"
                 />
-                <span className="legend-label">Nuove scoperte:</span>
+                <span className="legend-label">New discoveries:</span>
                 <span className="legend-count tabular-nums">
                   {result.data.discoveries.toLocaleString()}
                 </span>
@@ -1792,7 +1788,7 @@ export function DiscoveryRatioWidget({
               </div>
               <div className="discovery-legend-item">
                 <span className="legend-indicator repeats" aria-hidden="true" />
-                <span className="legend-label">Riascolti:</span>
+                <span className="legend-label">Repeats:</span>
                 <span className="legend-count tabular-nums">
                   {result.data.repeats.toLocaleString()}
                 </span>
@@ -2111,7 +2107,7 @@ export function useLayoutEditor({
     if (isDirty) {
       if (
         !window.confirm(
-          "Ci sono modifiche non salvate al template. Vuoi davvero annullare?",
+          "You have unsaved changes to this layout. Discard them?",
         )
       ) {
         return;
@@ -2243,12 +2239,12 @@ export function DashboardEditToolbar({
 }) {
   const ariaLabel =
     template === "home"
-      ? "Personalizza dashboard"
+      ? "Customize dashboard"
       : template === "artist"
-        ? "Personalizza template artista"
+        ? "Customize artist template"
         : template === "album"
-          ? "Personalizza template album"
-          : "Personalizza template brano";
+          ? "Customize album template"
+          : "Customize track template";
   return (
     <div
       className="dashboard-edit-toolbar panel padded"
@@ -2262,7 +2258,7 @@ export function DashboardEditToolbar({
           disabled={saving}
           onClick={onAddWidget}
         >
-          <Icon>add</Icon> Aggiungi widget
+          <Icon>add</Icon> Add widget
         </button>
         <button
           type="button"
@@ -2270,7 +2266,7 @@ export function DashboardEditToolbar({
           disabled={saving}
           onClick={onReset}
         >
-          <Icon>restart_alt</Icon> Ripristina predefinito
+          <Icon>restart_alt</Icon> Reset to default
         </button>
         <button
           type="button"
@@ -2278,7 +2274,7 @@ export function DashboardEditToolbar({
           disabled={saving}
           onClick={onCancel}
         >
-          Annulla
+          Cancel
         </button>
         <button
           type="button"
@@ -2286,30 +2282,30 @@ export function DashboardEditToolbar({
           onClick={onSave}
           disabled={saving}
         >
-          <Icon>check</Icon> Salva modifiche
+          <Icon>check</Icon> Save layout
         </button>
       </div>
       {template === "artist" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Modifica del template artista: le modifiche verranno
-          applicate a tutte le pagine artista dell'archivio.
+          <Icon>info</Icon> Editing the artist template. Changes apply to every
+          artist page.
         </p>
       )}
       {template === "album" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Modifica del template album: le modifiche verranno
-          applicate a tutte le pagine album dell'archivio.
+          <Icon>info</Icon> Editing the album template. Changes apply to every
+          album page.
         </p>
       )}
       {template === "track" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Modifica del template brano: le modifiche verranno
-          applicate a tutte le pagine brano dell'archivio.
+          <Icon>info</Icon> Editing the track template. Changes apply to every
+          track page.
         </p>
       )}
       {saving && (
         <span className="visually-hidden" role="status">
-          Salvataggio…
+          Saving…
         </span>
       )}
       {saveError && <ErrorText>{saveError}</ErrorText>}
@@ -2351,58 +2347,58 @@ export function WidgetCatalogDialog({
       isWidgetAllowedForTemplate(item.type, template) &&
       !widgets.some((w) => w.type === item.type),
   );
+  const catalogName = (item: (typeof CATALOG_ITEMS)[number]) =>
+    template === "album" && item.type === "top_tracks"
+      ? "Album tracks"
+      : item.name;
 
   return (
     <dialog
       ref={catalogDialogRef}
       className="modal widget-catalog-dialog"
-      aria-label="Aggiungi widget"
+      aria-label="Add widget"
       onClose={onClose}
     >
       <div className="dialog-header">
-        <h2>Aggiungi widget</h2>
+        <h2>Add widget</h2>
         <button
           type="button"
           className="icon-button"
-          aria-label="Chiudi catalogo"
+          aria-label="Close catalog"
           onClick={onClose}
         >
           <Icon>close</Icon>
         </button>
       </div>
       {availableItems.length === 0 ? (
-        <p>Tutti i widget disponibili sono già presenti nella dashboard.</p>
+        <p>Every available widget is already on this page.</p>
       ) : (
         <div className="catalog-items-grid">
           {availableItems.map((item) => (
             <div key={item.type} className="panel padded catalog-item-card">
               <div className="catalog-item-info">
-                <h3>
-                  {template === "album" && item.type === "top_tracks"
-                    ? "Brani dell'album"
-                    : item.name}
-                </h3>
+                <h3>{catalogName(item)}</h3>
                 <p>{item.description}</p>
                 <small>
-                  Dimensione:{" "}
+                  Width:{" "}
                   {template === "artist" &&
                   (item.type === "top_albums" || item.type === "top_tracks")
                     ? 3
                     : template === "album" && item.type === "top_tracks"
                       ? 6
                       : item.defaultSpan}{" "}
-                  colonne
+                  of 6 columns
                 </small>
               </div>
               <button
                 type="button"
                 className="button secondary"
                 aria-label={
-                  template === "home" ? undefined : `Aggiungi ${item.name}`
+                  template === "home" ? undefined : `Add ${catalogName(item)}`
                 }
                 onClick={() => onAdd(item)}
               >
-                <Icon>add</Icon> Aggiungi
+                <Icon>add</Icon> Add
               </button>
             </div>
           ))}
@@ -2437,8 +2433,8 @@ export function WidgetEditControls({
         type="button"
         className="widget-control widget-drag-handle"
         disabled={saving}
-        title="Trascina per riordinare"
-        aria-label="Sposta widget"
+        title="Drag to reorder"
+        aria-label="Move widget"
         draggable={!saving}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/plain", String(index));
@@ -2450,8 +2446,8 @@ export function WidgetEditControls({
       <button
         type="button"
         className="widget-control widget-move-up"
-        title="Sposta prima"
-        aria-label="Sposta widget prima"
+        title="Move earlier"
+        aria-label="Move widget earlier"
         disabled={saving || index === 0}
         onClick={() => onMove(index, -1)}
       >
@@ -2460,8 +2456,8 @@ export function WidgetEditControls({
       <button
         type="button"
         className="widget-control widget-move-down"
-        title="Sposta dopo"
-        aria-label="Sposta widget dopo"
+        title="Move later"
+        aria-label="Move widget later"
         disabled={saving || index === totalWidgets - 1}
         onClick={() => onMove(index, 1)}
       >
@@ -2470,8 +2466,8 @@ export function WidgetEditControls({
       <button
         type="button"
         className="widget-control widget-span-button"
-        title={`Larghezza: ${widget.colSpan} colonne. Clicca per modificare.`}
-        aria-label={`Larghezza: ${widget.colSpan} colonne`}
+        title={`Width: ${widget.colSpan} of 6 columns. Click to change.`}
+        aria-label={`Width: ${widget.colSpan} of 6 columns`}
         disabled={saving}
         onClick={() => onCycleSpan(widget.id)}
       >
@@ -2481,7 +2477,7 @@ export function WidgetEditControls({
       {isTimeSensitiveWidget(widget.type) && onChangePeriod && (
         <div className="widget-period-override-control">
           <Select
-            aria-label="Periodo widget"
+            aria-label="Widget period"
             disabled={saving}
             value={widget.periodOverride || ""}
             onChange={(val) => onChangePeriod(val || undefined)}
@@ -2497,8 +2493,8 @@ export function WidgetEditControls({
       <button
         type="button"
         className="widget-control widget-remove-button"
-        title="Rimuovi widget"
-        aria-label="Rimuovi widget"
+        title="Remove widget"
+        aria-label="Remove widget"
         disabled={saving}
         onClick={() => onRemove(widget.id)}
       >
@@ -2749,6 +2745,7 @@ export function Overview({
           The songs, the repeats, the moments. All yours.
         </Heading>
         <div className="overview-heading-actions">
+          <PeriodFilters selection={selection} />
           <button
             ref={editButtonRef}
             aria-pressed={layoutEditor.editing}
@@ -2758,9 +2755,8 @@ export function Overview({
             disabled={layoutEditor.saving}
             onClick={layoutEditor.handleStartEditing}
           >
-            <Icon>tune</Icon> Personalizza
+            <Icon>tune</Icon> Customize
           </button>
-          <PeriodFilters selection={selection} />
         </div>
       </div>
 
@@ -3412,7 +3408,7 @@ export function HistoryPage({
           />
         </article>
       ) : (
-        !result.error && <ListenListSkeleton count={8} />
+        !result.error && <ListenListSkeleton count={5} />
       )}
     </div>
   );
@@ -3463,17 +3459,17 @@ export function MusicPage({
     id: "preview",
     name:
       kind === "tracks"
-        ? "Brano di anteprima"
+        ? "Preview track"
         : kind === "albums"
-          ? "Album di anteprima"
-          : "Artista di anteprima",
+          ? "Preview album"
+          : "Preview artist",
     kind,
     cover_url: null,
     album_id: null,
     album: null,
     artists:
       kind === "albums"
-        ? [{ id: "preview-artist", name: "Artista di anteprima" }]
+        ? [{ id: "preview-artist", name: "Preview artist" }]
         : [],
     totals: dummyTotals,
   };
@@ -3530,6 +3526,9 @@ export function MusicPage({
     const header = content?.parentElement;
     if (!content || !header) return;
     const resize = () => {
+      // On phones the content box is `display: contents` and the cover size is
+      // fixed in CSS, so there is nothing to measure.
+      if (getComputedStyle(content).display === "contents") return;
       const size = Math.min(
         content.getBoundingClientRect().height,
         header.clientWidth * 0.42,
@@ -3551,87 +3550,6 @@ export function MusicPage({
       cancelAnimationFrame(frame);
     };
   }, [result.data?.id]);
-
-  if (!isMusicTemplate) {
-    return (
-      <>
-        <ErrorText>{result.error}</ErrorText>
-        {result.data ? (
-          <>
-            <div className="music-heading">
-              <Cover url={result.data.cover_url} large>
-                <ArtworkCredits url={result.data.cover_url} />
-              </Cover>
-              <div className="music-header-content" ref={introduction}>
-                <div className="music-title-row">
-                  <Heading title={result.data.name}>
-                    {result.data.artists.map(
-                      (a: { id: string; name: string }, i: number) => (
-                        <span key={a.id}>
-                          {i > 0 && ", "}
-                          <Link to={musicLink("artists", a.id, params)}>
-                            {a.name}
-                          </Link>
-                        </span>
-                      ),
-                    )}
-                    {result.data.album_id && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <Link
-                          to={musicLink("albums", result.data.album_id, params)}
-                        >
-                          {result.data.album}
-                        </Link>
-                      </>
-                    )}
-                  </Heading>
-                  <BackButton
-                    fallback={`/rankings/${kind}?${context(selection.params)}`}
-                  />
-                </div>
-                {!isPreview && <MusicActions kind={kind} id={id} />}
-                <div className="music-period">
-                  <PeriodFilters selection={selection} />
-                </div>
-              </div>
-            </div>
-            {!isPreview && (kind === "artists" || kind === "albums") && (
-              <AskContextPanel
-                key={`${kind}:${result.data.id}`}
-                preferences={preferences}
-                kind={kind}
-                id={result.data.id}
-                name={result.data.name}
-              />
-            )}
-            <Stats totals={result.data.totals} />
-          </>
-        ) : (
-          !result.error && <MusicPageSkeleton />
-        )}
-        <Chart params={params} version={preferences.version} />
-        <ListeningPatterns params={params} version={preferences.version} />
-        <div>
-          <RankingsPanel
-            kind="tracks"
-            params={params}
-            title="Tracks in this period"
-            version={preferences.version}
-          />
-        </div>
-        <h2>Listening history</h2>
-        <HistoryPage
-          preferences={preferences}
-          visible
-          params={params}
-          embedded
-          musicKind={kind}
-        />
-      </>
-    );
-  }
 
   // --- Music Page Consultation with Shared Grid Engine ---
   const renderMusicWidgetContent = (widget: WidgetConfig) => {
@@ -3686,7 +3604,7 @@ export function MusicPage({
             <RankingsPanel
               kind="tracks"
               params={widgetParams}
-              title="Brani dell'album"
+              title="Album tracks"
               version={preferences.version}
               scrolling
               bars
@@ -3760,10 +3678,21 @@ export function MusicPage({
 
   const customizeAriaLabel =
     kind === "tracks"
-      ? "Personalizza template brano"
+      ? "Customize track template"
       : kind === "albums"
-        ? "Personalizza template album"
-        : "Personalizza template artista";
+        ? "Customize album template"
+        : "Customize artist template";
+
+  const customizeButton = !layoutEditor.editing && (
+    <button
+      type="button"
+      className="btn btn-secondary button secondary customize-template-button"
+      aria-label={customizeAriaLabel}
+      onClick={() => layoutEditor.handleStartEditing()}
+    >
+      <Icon>tune</Icon> Customize
+    </button>
+  );
 
   return (
     <>
@@ -3772,77 +3701,76 @@ export function MusicPage({
         <div className="music-heading">
           <Cover url={result.data.cover_url} large>
             <ArtworkCredits url={result.data.cover_url} />
-            {!isPreview && (
-              <button
-                type="button"
-                className="btn btn-icon icon-button cover-picker-trigger"
-                aria-label="Change artwork"
-                title="Change artwork"
-                onClick={() => setPickerOpen(true)}
-              >
-                <Icon>photo_camera</Icon>
-              </button>
-            )}
           </Cover>
           <div className="music-header-content" ref={introduction}>
-            <div className="music-title-row">
-              <Heading title={result.data.name}>
-                {kind === "albums" && "Album by "}
-                {kind === "tracks" && "Track by "}
-                {result.data.artists.map(
-                  (a: { id: string; name: string }, i: number) => (
-                    <span key={a.id}>
-                      {i > 0 && ", "}
-                      <Link to={musicLink("artists", a.id, params)}>
-                        {a.name}
-                      </Link>
-                    </span>
-                  ),
-                )}
-                {result.data.album_id && (
-                  <>
-                    {" "}
-                    ·{" "}
-                    <Link
-                      to={musicLink("albums", result.data.album_id, params)}
-                    >
-                      {result.data.album}
+            <BackButton
+              fallback={`/rankings/${kind}?${context(selection.params)}`}
+            />
+            <Heading title={result.data.name}>
+              {kind === "albums" && "Album by "}
+              {kind === "tracks" && "Track by "}
+              {result.data.artists.map(
+                (a: { id: string; name: string }, i: number) => (
+                  <span key={a.id}>
+                    {i > 0 && ", "}
+                    <Link to={musicLink("artists", a.id, params)}>
+                      {a.name}
                     </Link>
+                  </span>
+                ),
+              )}
+              {result.data.album_id && (
+                <>
+                  {" "}
+                  ·{" "}
+                  <Link to={musicLink("albums", result.data.album_id, params)}>
+                    {result.data.album}
+                  </Link>
+                </>
+              )}
+            </Heading>
+            {isPreview ? (
+              <div className="music-toolbar">
+                <div className="music-actions">{customizeButton}</div>
+                <div className="music-period">
+                  <PeriodFilters selection={selection} />
+                </div>
+              </div>
+            ) : (
+              <MusicActions
+                kind={kind}
+                id={id}
+                aside={
+                  <div className="music-period">
+                    <PeriodFilters selection={selection} />
+                  </div>
+                }
+              >
+                {!layoutEditor.editing && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-secondary button secondary change-artwork-button"
+                      onClick={() => setPickerOpen(true)}
+                      aria-label={
+                        kind === "tracks"
+                          ? "Change release artwork"
+                          : "Change artwork"
+                      }
+                    >
+                      <Icon>photo_library</Icon>
+                      <span className="label-long">
+                        {kind === "tracks"
+                          ? "Change release artwork"
+                          : "Change artwork"}
+                      </span>
+                      <span className="label-short">Artwork</span>
+                    </button>
+                    {customizeButton}
                   </>
                 )}
-              </Heading>
-              <BackButton
-                fallback={`/rankings/${kind}?${context(selection.params)}`}
-              />
-            </div>
-            {!isPreview && <MusicActions kind={kind} id={id} />}
-            {!layoutEditor.editing && (
-              <div className="music-template-toolbar">
-                {!isPreview && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary button secondary change-artwork-button"
-                    onClick={() => setPickerOpen(true)}
-                  >
-                    <Icon>photo_library</Icon>{" "}
-                    {kind === "tracks"
-                      ? "Change release artwork"
-                      : "Change artwork"}
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-secondary button secondary customize-template-button"
-                  aria-label={customizeAriaLabel}
-                  onClick={() => layoutEditor.handleStartEditing()}
-                >
-                  <Icon>tune</Icon> {customizeAriaLabel}
-                </button>
-              </div>
+              </MusicActions>
             )}
-            <div className="music-period">
-              <PeriodFilters selection={selection} />
-            </div>
           </div>
         </div>
       ) : (
@@ -3899,8 +3827,8 @@ export function MusicPage({
         {layoutEditor.layout.widgets.length === 0 ? (
           <div className="dashboard-empty-notice panel padded">
             <p>
-              Nessun widget configurato per questo template. Clicca su
-              &quot;Aggiungi widget&quot; per personalizzare la pagina.
+              No widgets are configured for this template. Select &quot;Add
+              widget&quot; to customize the page.
             </p>
           </div>
         ) : (

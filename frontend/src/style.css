@@ -1472,7 +1472,12 @@ progress::-moz-progress-bar {
   background: transparent;
 }
 
-.password-checks {
+.password-guidance {
+  display: grid;
+  gap: 8px;
+}
+
+.password-guidance ul {
   list-style: none;
   margin: 0;
   padding: 10px 12px;
@@ -1481,17 +1486,20 @@ progress::-moz-progress-bar {
   border: 1px solid var(--row-border);
   display: grid;
   gap: 6px;
-  font-size: 13px;
 }
 
-.password-checks li {
+.password-guidance li {
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--muted);
 }
 
-.password-checks li.met {
+.password-guidance li .material-icons-outlined {
+  font-size: 18px;
+}
+
+.password-guidance li.requirement-met {
   color: var(--success);
 }
 
@@ -2105,8 +2113,7 @@ footer {
   cursor: zoom-in;
 }
 
-.image-credit-trigger,
-.cover-picker-trigger {
+.image-credit-trigger {
   position: absolute;
   bottom: 8px;
   width: 36px !important;
@@ -2123,10 +2130,6 @@ footer {
 
 .image-credit-trigger {
   right: 8px;
-}
-
-.cover-picker-trigger {
-  left: 8px;
 }
 
 .image-credits {
@@ -2322,8 +2325,7 @@ dialog.artwork-lightbox {
   overflow-wrap: anywhere;
 }
 
-.listen-date,
-.listen-archive {
+.listen-date {
   display: grid;
   gap: 1px;
   font-size: 13px;
@@ -2372,16 +2374,19 @@ dialog.artwork-lightbox {
 
 .listen-context-artists {
   --listen-columns: 44px minmax(110px, 1.3fr) minmax(90px, 1fr)
-    minmax(130px, 0.9fr) minmax(120px, 0.85fr) 86px;
+    minmax(130px, 0.9fr) 86px;
 }
 
 .listen-context-albums {
-  --listen-columns: minmax(120px, 1.2fr) minmax(150px, 1fr) minmax(150px, 1fr)
-    84px;
+  --listen-columns: minmax(120px, 1.2fr) minmax(150px, 1fr) 84px;
 }
 
 .listen-context-tracks {
-  --listen-columns: minmax(140px, 1.2fr) minmax(140px, 1fr) 96px;
+  --listen-columns: minmax(0, 1fr) 96px;
+}
+
+.listen-context-tracks .listen-details dl {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .listen-details {
@@ -2485,11 +2490,13 @@ dialog.artwork-lightbox {
 }
 
 .listen-context-albums .listen-details dl > div:nth-child(5) {
-  grid-column: 3 / -1;
+  grid-column: 1;
+  grid-row: 3;
 }
 
 .listen-context-albums .listen-details dl > div:nth-child(6) {
-  grid-column: 3 / -1;
+  grid-column: 2;
+  grid-row: 3;
 }
 
 .listen-context-artists .listen-details dl > div:nth-child(1) {
@@ -2511,9 +2518,14 @@ dialog.artwork-lightbox {
   grid-row: 2;
 }
 
-.listen-context-artists .listen-details dl > div:nth-child(5),
+.listen-context-artists .listen-details dl > div:nth-child(5) {
+  grid-column: 2 / 4;
+  grid-row: 3;
+}
+
 .listen-context-artists .listen-details dl > div:nth-child(6) {
-  grid-column: 5 / -1;
+  grid-column: 4;
+  grid-row: 3;
 }
 
 .listen-details dt {
@@ -2580,7 +2592,7 @@ dialog.artwork-lightbox {
 /* Ranking Rows & Grid Cards */
 .ranking-row {
   display: grid;
-  grid-template-columns: 3.2ch 44px minmax(0, 1.2fr) minmax(0, 0.95fr);
+  grid-template-columns: 3.2ch 44px minmax(0, 1fr) auto;
   gap: 8px 12px;
   align-items: center;
   padding: 10px 14px;
@@ -2647,7 +2659,8 @@ dialog.artwork-lightbox {
 .rank-metrics {
   display: inline-flex;
   align-items: baseline;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  white-space: nowrap;
   justify-content: flex-end;
   gap: 6px;
   font-size: 13px;
@@ -2738,6 +2751,8 @@ dialog.artwork-lightbox {
 }
 
 .music-card .rank-metrics {
+  flex-wrap: wrap;
+  white-space: normal;
   justify-content: flex-start;
   font-size: 12px;
 }
@@ -2780,9 +2795,18 @@ dialog.artwork-lightbox {
 .ranking-period {
   display: flex;
   align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px 16px;
   flex-wrap: wrap;
+}
+
+.ranking-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .ranking-panel-heading {
@@ -2813,6 +2837,11 @@ dialog.artwork-lightbox {
   gap: 8px;
   flex: 1 1 240px;
   min-width: 0;
+}
+
+/* In a column flex container the 240px basis would become a tall empty gap. */
+.name-group-editor > .search-inline {
+  flex: 0 0 auto;
 }
 
 .search-inline > input,
@@ -2846,21 +2875,11 @@ dialog.artwork-lightbox {
   border: 1px solid var(--border);
 }
 
-.card-size-control.inactive {
-  opacity: 0.4;
-}
-
 .card-size-control output {
   min-width: 58px;
   text-align: center;
   font-size: 13px;
   font-weight: 600;
-}
-
-.scrolling-rankings .ranking-results {
-  max-height: 520px;
-  overflow-y: auto;
-  padding-right: 4px;
 }
 
 .list-footer {
@@ -2893,6 +2912,12 @@ dialog.artwork-lightbox {
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-summary {
+  color: var(--muted);
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
@@ -3025,18 +3050,25 @@ dialog.artwork-lightbox {
 
 .music-header-content {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   align-content: space-between;
+  justify-items: start;
   min-width: 0;
-  padding-bottom: calc(var(--music-h1-size) / 4);
 }
 
-.music-title-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+.music-header-content > * {
   min-width: 0;
+  max-width: 100%;
+}
+
+.music-back {
+  margin: 0 0 -4px -10px;
+  padding-inline: 10px 14px;
+  color: var(--muted);
+}
+
+.music-back:hover:not(:disabled) {
+  color: var(--text);
 }
 
 .music-heading .page-heading {
@@ -3062,6 +3094,10 @@ dialog.artwork-lightbox {
   align-items: center;
   gap: 12px;
   min-width: 0;
+}
+
+.music-personal-pending {
+  min-height: 44px;
 }
 
 .music-personal > a {
@@ -3112,36 +3148,23 @@ dialog.artwork-lightbox {
   min-width: 0;
 }
 
-.music-period .filters {
-  display: grid;
-  grid-template-columns: minmax(0, var(--music-edit-width, 160px)) minmax(
-      0,
-      var(--music-spotify-width, 160px)
-    );
-  gap: 12px;
-  width: var(--music-actions-width, 332px);
-  max-width: 100%;
-}
-
-.music-period .filters > label {
-  min-width: 0;
-}
-
-.music-period .filters > .period-rank-filter {
-  grid-row: 1;
-  grid-column: 2;
-}
-
-.music-period .filters > .period-notice {
-  grid-column: 1 / -1;
-  padding-bottom: 0;
-}
-
-.music-template-toolbar {
+.music-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: flex-start;
   flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  width: 100%;
+}
+
+.label-short {
+  display: none;
+}
+
+.music-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
@@ -3697,13 +3720,39 @@ dialog.artwork-lightbox {
 
 .search-result-groups {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
 
-.search-result-groups.single-category {
-  grid-template-columns: minmax(0, 1fr);
+.search-result-groups .search-result-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  align-items: start;
+}
+
+.search-result-group.is-empty {
+  padding: 0;
+  border: none;
+  background: none;
+}
+
+.search-result-group.is-empty .search-group-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.search-no-matches {
+  margin: 0;
+  color: var(--muted);
+}
+
+.search-show-all {
+  justify-self: start;
 }
 
 .search-result-group {
@@ -3825,7 +3874,7 @@ dialog.artwork-lightbox {
 
 .activities-toolbar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
@@ -3971,7 +4020,7 @@ dialog.artwork-lightbox {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr);
   gap: 16px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .two-column > .panel form {
@@ -4364,6 +4413,27 @@ dialog.artwork-lightbox {
   gap: 14px;
 }
 
+.settings-form p {
+  max-width: none;
+}
+
+/* Grid forms must not stretch their action buttons into full-width slabs. */
+.two-column > .panel form > button,
+.listenbrainz-method form > button,
+.settings-form > form > button,
+.settings-form > a.button,
+.settings-form > button {
+  justify-self: start;
+}
+
+.import-notes ul {
+  margin: 0;
+  padding-left: 1.2em;
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -4567,17 +4637,79 @@ dialog.artwork-lightbox {
   flex-shrink: 0;
 }
 
+/* Disclosures: a left-aligned label, a trailing chevron and a hover state. */
+.guide[open] {
+  display: grid;
+  gap: 12px;
+}
+
 .guide > summary,
 .connection-monitor > summary,
 .upload-limits > summary,
 .import-help > summary {
   cursor: pointer;
   font-weight: 600;
-  padding: 8px 0;
+  text-align: left;
+  min-height: 44px;
+  padding: 8px 10px;
+  margin-inline: -10px;
+  border-radius: var(--radius-control);
+  list-style: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.guide > summary:hover,
+.connection-monitor > summary:hover,
+.upload-limits > summary:hover,
+.import-help > summary:hover {
+  background: var(--row-hover);
+}
+
+.guide > summary::-webkit-details-marker,
+.upload-limits > summary::-webkit-details-marker,
+.import-help > summary::-webkit-details-marker {
+  display: none;
+}
+
+.upload-limits > summary::after,
+.import-help > summary::after {
+  content: "expand_more";
+  content: "expand_more" / "";
+  margin-left: auto;
+  font-family: "Material Icons Outlined";
+  font-size: 20px;
+  font-weight: normal;
+  line-height: 1;
+  color: var(--muted);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.upload-limits[open] > summary::after,
+.import-help[open] > summary::after,
+.guide[open] > summary > .material-icons-outlined:last-child,
+.connection-monitor[open] > summary > .material-icons-outlined:last-child {
+  transform: rotate(180deg);
+}
+
+.guide > summary > span:not(.material-icons-outlined) {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.guide > summary small {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.guide > summary > .material-icons-outlined:last-child,
+.connection-monitor > summary > .material-icons-outlined:last-child {
+  margin-left: auto;
+  color: var(--muted);
 }
 
 .connection-monitor {
@@ -4758,28 +4890,6 @@ dialog.artwork-lightbox {
   .listen-main > .listen-album {
     display: none;
   }
-  .listen-context-artists {
-    --listen-columns: 44px minmax(100px, 1.2fr) minmax(90px, 1fr)
-      minmax(130px, 1fr) 80px;
-  }
-  .listen-context-artists .listen-archive {
-    display: none;
-  }
-  .listen-context-albums {
-    --listen-columns: 44px minmax(120px, 1.3fr) minmax(130px, 1fr) 82px;
-  }
-  .listen-context-albums .listen-archive {
-    display: none;
-  }
-  .listen-context-tracks {
-    --listen-columns: minmax(0, 1fr) 92px;
-  }
-  .listen-context-tracks .listen-archive {
-    display: none;
-  }
-  .search-result-groups {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 1150px) {
@@ -4916,26 +5026,68 @@ dialog.artwork-lightbox {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Back on top, cover beside the title, everything else full width. */
   .music-heading {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
+    --music-h1-size: 26px;
+    grid-template-columns: 112px minmax(0, 1fr);
+    gap: 12px 14px;
+  }
+
+  .music-heading > .music-header-content {
+    display: contents;
+  }
+
+  .music-header-content > .music-back {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    justify-self: start;
+    margin: 0 0 -6px -10px;
   }
 
   .music-heading > .cover.large {
-    width: min(180px, 56vw);
-  }
-
-  .music-header-content {
-    padding-bottom: 0;
-  }
-
-  .music-period .filters {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-column: 1;
+    grid-row: 2;
     width: 100%;
   }
 
-  .music-personal > a {
-    flex: 1 1 140px;
+  .music-header-content > .page-heading {
+    grid-column: 2;
+    grid-row: 2;
+    align-self: center;
+  }
+
+  .music-header-content > :not(.music-back):not(.page-heading) {
+    grid-column: 1 / -1;
+  }
+
+  .music-toolbar,
+  .music-actions,
+  .music-period {
+    width: 100%;
+  }
+
+  .music-actions > .button,
+  .music-actions > .btn {
+    flex: 1 1 auto;
+    padding-inline: 10px;
+  }
+
+  /* The page title sits right below; the breadcrumb would only truncate. */
+  .topbar-breadcrumb {
+    display: none;
+  }
+
+  .label-long {
+    display: none;
+  }
+
+  .label-short {
+    display: inline;
+  }
+
+  .music-period .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .listen-main {
@@ -5558,6 +5710,10 @@ dialog.artwork-lightbox {
   margin-bottom: 0;
 }
 
+.ai-settings > .panel > p + p {
+  margin-top: 8px;
+}
+
 .ai-settings-form,
 .ai-advanced {
   display: grid;
@@ -5566,6 +5722,7 @@ dialog.artwork-lightbox {
 
 .ai-toggle {
   display: flex;
+  flex-direction: row;
   align-items: flex-start;
   gap: 12px;
   min-height: 44px;

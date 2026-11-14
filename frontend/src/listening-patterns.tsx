@@ -174,8 +174,8 @@ export function ListeningPatterns({
 }
 
 const widgetViews = [
-  ["hours", "Ore del giorno"],
-  ["weekdays", "Giorni della settimana"],
+  ["hours", "Time of day"],
+  ["weekdays", "Day of week"],
 ] as const;
 
 export function ListeningPatternsWidget({
@@ -208,11 +208,11 @@ export function ListeningPatternsWidget({
   return (
     <article
       className="panel padded widget-listening-patterns listening-patterns"
-      aria-label="Pattern di ascolto"
+      aria-label="Listening patterns"
     >
       <div className="panel-title">
         <h2>
-          Pattern di ascolto
+          Listening patterns
           {periodOverride && (
             <span
               className="pill widget-period-badge"
@@ -224,7 +224,7 @@ export function ListeningPatternsWidget({
         </h2>
         <div className="panel-actions">
           <Select
-            aria-label="Pattern temporale"
+            aria-label="Pattern view"
             value={view}
             onChange={(value) => {
               setView(value as "hours" | "weekdays");
@@ -247,9 +247,7 @@ export function ListeningPatternsWidget({
         {result.data && (
           <>
             {result.data.total === 0 ? (
-              <p className="empty">
-                Nessun dato di ascolto nel periodo selezionato.
-              </p>
+              <p className="empty">No listening data in this period.</p>
             ) : (
               <>
                 {selected && (
@@ -257,7 +255,7 @@ export function ListeningPatternsWidget({
                     {view === "weekdays"
                       ? selected.label.slice(2)
                       : selected.label}{" "}
-                    · {number.format(selected.count)} ascolti ·{" "}
+                    · {number.format(selected.count)} listens ·{" "}
                     {((selected.count / result.data.total) * 100).toFixed(1)}%
                   </p>
                 )}
@@ -265,11 +263,7 @@ export function ListeningPatternsWidget({
                   className={`pattern-bars pattern-temporal pattern-${view}`}
                   style={{ "--pattern-columns": bins.length } as CSSProperties}
                   role="list"
-                  aria-label={
-                    view === "hours"
-                      ? "Ore del giorno"
-                      : "Giorni della settimana"
-                  }
+                  aria-label={view === "hours" ? "Time of day" : "Day of week"}
                 >
                   {bins.map((bin) => {
                     const label =
@@ -287,7 +281,7 @@ export function ListeningPatternsWidget({
                         onMouseEnter={() => setInspected(bin.label)}
                         onClick={() => setInspected(bin.label)}
                         key={bin.label}
-                        aria-label={`${label}: ${number.format(bin.count)} ascolti`}
+                        aria-label={`${label}: ${number.format(bin.count)} listens`}
                       >
                         <span className="pattern-label">{shortLabel}</span>
                         <span className="pattern-track" aria-hidden="true">
