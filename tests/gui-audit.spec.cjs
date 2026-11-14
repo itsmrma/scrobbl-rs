@@ -5105,7 +5105,7 @@ test("totals widget lays out three compact columns with left-aligned labels abov
   }
 });
 
-test("mobile baseline: overview header uses a two-column filter grid, compact Customize button and edit mode hides span controls (< 600px)", async ({
+test("mobile baseline: overview header uses a two-column filter grid, icon-only topbar Customize button and edit mode hides span controls (< 600px)", async ({
   page,
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -5126,25 +5126,31 @@ test("mobile baseline: overview header uses a two-column filter grid, compact Cu
 
     const headingActions = page.locator(".overview-heading-actions");
     await expect(headingActions).toBeVisible();
+    await expect(
+      headingActions.getByRole("button", { name: "Customize" }),
+    ).toHaveCount(0);
 
-    const customizeBtn = headingActions.getByRole("button", {
+    const topbarActions = page.locator(".topbar-actions");
+    const customizeBtn = topbarActions.getByRole("button", {
       name: "Customize",
     });
+    const accountBtn = topbarActions.getByRole("button", {
+      name: "Account menu",
+    });
     await expect(customizeBtn).toBeVisible();
+    await expect(customizeBtn).toContainText("tune");
 
     const periodFilters = page.locator(".overview-heading .filters");
     await expect(periodFilters).toBeVisible();
 
-    // Check touch target of customize button
+    // Check touch target & placement of topbar Customize button immediately left of Account menu
     const custBox = await customizeBtn.boundingBox();
+    const accountBox = await accountBtn.boundingBox();
     expect(custBox).not.toBeNull();
+    expect(accountBox).not.toBeNull();
     expect(Math.round(custBox.width)).toBeGreaterThanOrEqual(44);
     expect(Math.round(custBox.height)).toBeGreaterThanOrEqual(44);
-
-    // Customize is a compact button, not a full-width slab.
-    const actionsBox = await headingActions.boundingBox();
-    expect(actionsBox).not.toBeNull();
-    expect(custBox.width).toBeLessThan(actionsBox.width * 0.7);
+    expect(custBox.x + custBox.width).toBeLessThanOrEqual(accountBox.x + 1);
 
     // Period filter comboboxes (Period and Sort)
     const filterComboboxes = periodFilters.locator("[role=combobox]");
@@ -5163,10 +5169,6 @@ test("mobile baseline: overview header uses a two-column filter grid, compact Cu
       expect(Math.abs(box.width - (filtersBox.width - 12) / 2)).toBeLessThan(4);
     }
 
-    // Verify the filters sit above the Customize button
-    const filtersBox = await periodFilters.boundingBox();
-    expect(filtersBox.y + filtersBox.height).toBeLessThanOrEqual(custBox.y + 1);
-
     // Period and Rank by share one row
     for (let i = 0; i < comboCount - 1; i++) {
       const boxA = await filterComboboxes.nth(i).boundingBox();
@@ -5183,9 +5185,9 @@ test("mobile baseline: overview header uses a two-column filter grid, compact Cu
     .first();
   await chooseOption(periodCombo, "month");
 
-  // Enter Edit Mode on mobile (390px)
+  // Enter Edit Mode on mobile (390px) via the icon-only topbar button
   const customizeBtn = page
-    .locator(".overview-heading-actions")
+    .locator(".topbar-actions")
     .getByRole("button", { name: "Customize" });
   await customizeBtn.click();
 

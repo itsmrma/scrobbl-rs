@@ -107,7 +107,11 @@ function Stars({
             </button>
           ))}
         </div>
-        <output aria-label="Rating in stars" aria-live="polite">
+        <output
+          className="visually-hidden"
+          aria-label="Rating in stars"
+          aria-live="polite"
+        >
           {preview ?? value ?? "Not rated"}
           {(preview ?? value) !== null && " / 5"}
         </output>

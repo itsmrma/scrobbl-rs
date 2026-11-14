@@ -299,4 +299,144 @@ test("gui polish fixes: registration match, account menu, app storage, ai downlo
   await expect(firstCand).toHaveAttribute("aria-selected", "false");
   await expect(secondCand).toHaveAttribute("aria-selected", "true");
   await expect(secondCand).toContainText("Current");
+  await page.getByRole("button", { name: "Cancel" }).click();
+
+  // 8. Bookmark/favorites PNG icons & webmanifest are cacheable and linked
+  for (const iconPath of [
+    "/apple-touch-icon.png",
+    "/apple-touch-icon-precomposed.png",
+    "/favicon-32x32.png",
+    "/icon-192.png",
+    "/favicon.ico",
+    "/site.webmanifest",
+  ]) {
+    const res = await page.request.get(iconPath);
+    expect(res.status(), iconPath).toBe(200);
+    expect(res.headers()["cache-control"], iconPath).toContain("max-age=");
+  }
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+    "href",
+    "/apple-touch-icon.png",
+  );
+
+  // 9. Star rating hides visual label text, mobile Customize moves to topbar, and track listen/filter padding hold on mobile
+  const dashData = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const trackId = dashData.rankings.tracks[0].id;
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/music/tracks/${trackId}`);
+  const ratingOutput = page.getByLabel("Rating in stars");
+  await expect(ratingOutput).toHaveClass(/visually-hidden/);
+  const ratingWidth = await ratingOutput.evaluate(
+    (el) => el.getBoundingClientRect().width,
+  );
+  expect(ratingWidth).toBeLessThanOrEqual(2);
+
+  // Topbar icon-only Customize sits immediately left of Account menu on mobile
+  const topbarCustomize = page
+    .locator(".topbar-actions")
+    .getByRole("button", { name: "Customize track template" });
+  const topbarAccount = page
+    .locator(".topbar-actions")
+    .getByRole("button", { name: "Account menu" });
+  await expect(topbarCustomize).toBeVisible();
+  const cBox = await topbarCustomize.boundingBox();
+  const aBox = await topbarAccount.boundingBox();
+  expect(cBox.x + cBox.width).toBeLessThanOrEqual(aBox.x + 1);
+
+  // Track listen row puts date on the left (not squished into col 2) & expanded filters have padding
+  const trackRow = page.locator(".listen-context-tracks").first();
+  await trackRow.scrollIntoViewIfNeeded();
+  const rowBox = await trackRow.boundingBox();
+  const dateBox = await trackRow.locator(".listen-date").boundingBox();
+  const durBox = await trackRow.locator(".listen-duration").boundingBox();
+  expect(dateBox.x - rowBox.x).toBeLessThan(30);
+  expect(durBox.x).toBeGreaterThan(dateBox.x);
+
+  const filterDisclosure = page.locator(".history-filter-disclosure");
+  await filterDisclosure.locator("summary").click();
+  const filterPad = await page
+    .locator(".history-filters")
+    .evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft));
+  expect(filterPad).toBeGreaterThanOrEqual(14);
+
+  // 10. TimeHelp dismisses on outside tap/click on mobile, Escape globally, lightbox exposes Download artwork, and Account photo controls stack cleanly
+  await page.goto("/");
+  await expect(page.locator("#total-time")).toBeVisible();
+  const timeHelpBtn = page
+    .getByRole("button", { name: "How we calculate listening time" })
+    .first();
+  await timeHelpBtn.click();
+  await expect(
+    page.getByRole("region", { name: "How we calculate listening time" }),
+  ).toBeVisible();
+  await page
+    .getByRole("heading", { name: "Your listening, at a glance" })
+    .click();
+  await expect(timeHelpBtn).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("region", { name: "How we calculate listening time" }),
+  ).toHaveCount(0);
+
+  await timeHelpBtn.click();
+  await expect(
+    page.getByRole("region", { name: "How we calculate listening time" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(timeHelpBtn).toHaveAttribute("aria-expanded", "false");
+  await expect(
+    page.getByRole("region", { name: "How we calculate listening time" }),
+  ).toHaveCount(0);
+
+  await page.goto("/settings/account");
+  await expect(page.locator(".profile-photo-controls")).toBeVisible();
+  const controlsDirection = await page
+    .locator(".profile-photo-controls")
+    .evaluate((el) => getComputedStyle(el).flexDirection);
+  expect(controlsDirection).toBe("column");
+
+  const albumId = dashData.rankings.albums[0].id;
+  await page.route(`**/api/music/albums/${albumId}*`, async (route) => {
+    const res = await route.fetch();
+    const json = await res.json();
+    if (!json.cover_url) {
+      json.cover_url = `/api/v1/artwork/albums/${albumId}`;
+    }
+    await route.fulfill({ status: res.status(), json });
+  });
+  await page.route(`**/api/v1/artwork/albums/${albumId}*`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWukAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    }),
+  );
+  await page.goto(`/music/albums/${albumId}`);
+  const coverButton = page.locator(".music-heading .cover-image");
+  await expect(coverButton).toBeVisible();
+  await coverButton.click();
+  const lightbox = page.getByRole("dialog", { name: "Enlarged artwork" });
+  await expect(lightbox).toBeVisible();
+  const downloadLink = lightbox.getByRole("link", {
+    name: "Download artwork",
+  });
+  await expect(downloadLink).toBeVisible();
+  const dlBox = await downloadLink.boundingBox();
+  const imgBox = await lightbox
+    .locator(".artwork-lightbox-image")
+    .boundingBox();
+  expect(dlBox.y + dlBox.height).toBeLessThanOrEqual(imgBox.y);
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    downloadLink.click(),
+  ]);
+  expect(download.suggestedFilename()).toBeTruthy();
+  await lightbox
+    .getByRole("button", { name: "Close enlarged artwork" })
+    .click();
+  await expect(lightbox).not.toBeVisible();
 });

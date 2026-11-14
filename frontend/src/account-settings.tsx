@@ -201,7 +201,7 @@ export function AccountSettings() {
           <>
             <div className="profile-photo-row">
               <Avatar profile={profile.data} large />
-              <div>
+              <div className="profile-photo-controls">
                 <label className="profile-upload">
                   Profile photo
                   <input
@@ -223,15 +223,18 @@ export function AccountSettings() {
                   PNG, JPEG or WebP · Large photos are resized automatically
                 </small>
                 {profile.data.avatar_url && (
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      void save(api.removeAvatar, "Profile photo removed.")
-                    }
-                  >
-                    <Icon>delete</Icon>Remove photo
-                  </button>
+                  <div className="profile-photo-actions">
+                    <button
+                      type="button"
+                      className="secondary profile-photo-remove"
+                      disabled={busy}
+                      onClick={() =>
+                        void save(api.removeAvatar, "Profile photo removed.")
+                      }
+                    >
+                      <Icon>delete</Icon>Remove photo
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

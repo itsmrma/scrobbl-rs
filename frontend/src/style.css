@@ -1651,12 +1651,30 @@ progress::-moz-progress-bar {
   transition:
     background-color var(--motion-fast) var(--ease-out),
     color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .sidebar nav[aria-label="Main navigation"] a:hover {
   background: var(--row-bg);
   color: var(--text);
+}
+
+.sidebar nav[aria-label="Main navigation"] a:active,
+.sidebar button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.sidebar nav[aria-label="Main navigation"] a:active {
+  background: var(--surface-raised);
+}
+
+.sidebar button {
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
 }
 
 .sidebar nav[aria-label="Main navigation"] a.active {
@@ -1857,6 +1875,12 @@ progress::-moz-progress-bar {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.topbar-customize-button[aria-pressed="true"] {
+  background: color-mix(in oklab, var(--accent) 18%, var(--surface-raised));
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
+  color: var(--text);
 }
 
 /* Prominent #155 Artwork Sync Topbar Pill */
@@ -2300,7 +2324,15 @@ dialog.artwork-lightbox {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  align-items: flex-end;
+  align-items: stretch;
+}
+
+.artwork-lightbox-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
 }
 
 .artwork-lightbox-close {
@@ -2362,14 +2394,14 @@ dialog.artwork-lightbox {
 
 /* Listen Rows */
 .listen-row {
-  --listen-cover-size: min(72px, var(--listen-artwork, 44px));
+  --listen-cover-size: clamp(52px, var(--listen-artwork, 56px), 76px);
   position: relative;
   padding: 10px 14px;
 }
 
 @media (max-width: 600px) {
   .listen-row {
-    --listen-cover-size: min(56px, var(--listen-artwork, 44px));
+    --listen-cover-size: clamp(48px, var(--listen-artwork, 52px), 64px);
   }
 }
 
@@ -2710,14 +2742,19 @@ dialog.artwork-lightbox {
 /* Ranking Rows & Grid Cards */
 .ranking-row {
   display: grid;
-  grid-template-columns: 3.2ch 44px minmax(0, 1fr) auto;
+  grid-template-columns: 3.2ch 56px minmax(0, 1fr) auto;
   gap: 8px 12px;
   align-items: center;
   padding: 10px 14px;
 }
 
 .ranking-row:has(.ranking-meter) {
-  grid-template-columns: 3.2ch 42px minmax(0, 1.25fr) minmax(60px, 0.55fr) auto;
+  grid-template-columns: 3.2ch 56px minmax(0, 1.25fr) minmax(60px, 0.55fr) auto;
+}
+
+.ranking-row > .cover {
+  width: 56px;
+  height: 56px;
 }
 
 .rank-number {
@@ -3879,6 +3916,7 @@ dialog.artwork-lightbox {
 .history-filters {
   display: grid;
   gap: 14px;
+  padding: 16px;
   border-top: 1px solid var(--border);
 }
 
@@ -4051,7 +4089,7 @@ dialog.artwork-lightbox {
 
 .search-autocomplete-item {
   width: 100%;
-  min-height: 52px;
+  min-height: 60px;
   display: grid !important;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -4159,13 +4197,23 @@ dialog.artwork-lightbox {
   gap: 4px;
 }
 
+.search-autocomplete-item .cover {
+  width: 48px;
+  height: 48px;
+}
+
 .search-result-list > li > a {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto auto;
+  grid-template-columns: 60px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 8px 10px;
   text-decoration: none;
+}
+
+.search-result-list > li > a > .cover {
+  width: 60px;
+  height: 60px;
 }
 
 .search-result-copy {
@@ -5357,9 +5405,31 @@ dialog.artwork-lightbox {
 
 .profile-photo-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   flex-wrap: wrap;
   gap: 16px;
+}
+
+.profile-photo-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.profile-photo-controls small {
+  display: block;
+  line-height: 1.45;
+}
+
+.profile-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .api-connection-steps {
@@ -5684,6 +5754,13 @@ dialog.artwork-lightbox {
     grid-column: 2 / -1;
   }
 
+  .listen-context-tracks {
+    --listen-columns: minmax(0, 1fr) auto;
+  }
+  .listen-context-tracks .listen-date {
+    grid-column: 1;
+  }
+
   .listen-context .listen-main::after {
     left: -12px;
     right: -12px;
@@ -5718,9 +5795,24 @@ dialog.artwork-lightbox {
 
   .ranking-row,
   .ranking-row:has(.ranking-meter) {
-    grid-template-columns: 2.5ch 38px minmax(0, 1fr);
+    grid-template-columns: 2.5ch 48px minmax(0, 1fr);
     gap: 6px 10px;
     padding: 10px 12px;
+  }
+
+  .ranking-row > .cover {
+    width: 48px;
+    height: 48px;
+  }
+
+  .search-result-list > li > a {
+    grid-template-columns: 52px minmax(0, 1fr) auto auto;
+    gap: 10px;
+  }
+
+  .search-result-list > li > a > .cover {
+    width: 52px;
+    height: 52px;
   }
 
   .ranking-row .ranking-meter {
@@ -6564,4 +6656,25 @@ dialog.artwork-lightbox {
 
 .about-links .material-icons-outlined {
   font-size: 14px;
+}
+
+@media (max-width: 420px) {
+  .topbar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .topbar-actions {
+    gap: 4px;
+  }
+
+  .artwork-sync-pill {
+    padding: 4px 10px;
+  }
+}
+
+@media (max-width: 360px) {
+  .artwork-sync-pill {
+    display: none;
+  }
 }
