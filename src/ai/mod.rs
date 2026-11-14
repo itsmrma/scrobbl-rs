@@ -210,6 +210,8 @@ pub struct AiDownloadJob {
     pub state: String,
     pub processed_bytes: u64,
     pub expected_bytes: u64,
+    pub bytes_per_second: Option<u64>,
+    pub eta_seconds: Option<u64>,
     pub cancel_requested: bool,
     pub error_code: Option<String>,
 }
@@ -423,20 +425,6 @@ pub async fn settings_post(
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
     tx.commit().await?;
 
-    if !form.enabled {
-        // Turning AI off is an explicit consent withdrawal: stop active model
-        // downloads too, so no further network transfer continues.
-        let jobs: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM jobs WHERE kind=? AND state IN ('queued','running','waiting')",
-        )
-        .bind(download::JOB_KIND)
-        .fetch_all(&state.db)
-        .await?;
-        for job in jobs {
-            let _ = state.storage.cancel(&job).await;
-        }
-    }
-
     let stored = StoredSettings {
         enabled: form.enabled,
         active_model,
@@ -506,13 +494,31 @@ pub async fn catalog_get(
             let installed = installed_entry.is_some_and(|entry| {
                 entry.usable() && entry.file.as_deref() == Some(model.download.file.as_str())
             });
-            let job = latest_jobs.get(&model.id).map(|row| AiDownloadJob {
-                id: row.id.clone(),
-                state: row.state.clone(),
-                processed_bytes: u64::try_from(row.processed).unwrap_or(0),
-                expected_bytes: model.download.size_bytes,
-                cancel_requested: row.cancel_requested,
-                error_code: row.error_code.clone(),
+            let job = latest_jobs.get(&model.id).map(|row| {
+                let processed_bytes = u64::try_from(row.processed).unwrap_or(0);
+                let expected_bytes = model.download.size_bytes;
+                let bytes_per_second = if row.state == "running" {
+                    download::current_speed_bps(&row.id)
+                } else {
+                    None
+                };
+                let eta_seconds = bytes_per_second.and_then(|bps| {
+                    if bps > 0 && expected_bytes > processed_bytes {
+                        Some((expected_bytes - processed_bytes).div_ceil(bps))
+                    } else {
+                        None
+                    }
+                });
+                AiDownloadJob {
+                    id: row.id.clone(),
+                    state: row.state.clone(),
+                    processed_bytes,
+                    expected_bytes,
+                    bytes_per_second,
+                    eta_seconds,
+                    cancel_requested: row.cancel_requested,
+                    error_code: row.error_code.clone(),
+                }
             });
             AiCatalogModel {
                 id: model.id.clone(),
@@ -622,12 +628,6 @@ pub async fn download_start(
 ) -> Result<Json<AiDownloadStarted>> {
     auth::require_write(&state, &headers).await?;
     let id = model_id_from_path(id)?;
-    let stored = read_settings(&state).await?;
-    if !stored.enabled {
-        return Err(AppError::BadRequest(
-            "Enable AI before downloading a model.".into(),
-        ));
-    }
     let Some(model) = catalog::find(&id) else {
         return Err(AppError::NotFound);
     };

@@ -218,6 +218,15 @@ export function AskPage({
 
       {!status && !statusError && (
         <article className="panel padded ask-loading" aria-busy="true">
+          <div className="ask-loading-status" role="status">
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            <span>Checking AI status</span>
+            <span className="loading-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          </div>
           <SkeletonBlock height={18} />
           <SkeletonBlock height={44} />
         </article>
@@ -257,8 +266,13 @@ export function AskPage({
 
       {status?.enabled && status.model_loading && (
         <Notice title="The model is loading" tone="info">
-          Ask will be ready in a moment. Nothing else in the application is
-          blocked.
+          <span className="inline-loading">
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            <span>
+              Ask will be ready in a moment. Nothing else in the application is
+              blocked.
+            </span>
+          </span>
         </Notice>
       )}
 
@@ -279,7 +293,11 @@ export function AskPage({
             variant="primary"
             disabled={disabled || loading || !question.trim()}
           >
-            <Icon>send</Icon>
+            {loading ? (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            ) : (
+              <Icon>send</Icon>
+            )}
             {loading ? "Asking…" : "Ask"}
           </Button>
           <span className="field-hint">
@@ -298,6 +316,15 @@ export function AskPage({
       <div aria-live="polite" aria-atomic="true">
         {loading && (
           <article className="panel padded ask-loading" aria-busy="true">
+            <div className="ask-loading-status" role="status">
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+              <span>Thinking</span>
+              <span className="loading-dots" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </span>
+            </div>
             <SkeletonBlock height={18} />
             <SkeletonBlock height={44} />
             <SkeletonBlock height={120} />

@@ -180,6 +180,9 @@ export function General({
           </p>
         )}
         <button className="primary" disabled={busy || !dirty}>
+          {busy && (
+            <span className="spinner-dot spinner-sm" aria-hidden="true" />
+          )}
           {busy ? "Saving…" : "Save"}
         </button>
       </form>
@@ -240,6 +243,9 @@ export function General({
               disabled={busy || !scope}
               onClick={() => void save(scope)}
             >
+              {busy && (
+                <span className="spinner-dot spinner-sm" aria-hidden="true" />
+              )}
               {busy ? "Saving…" : "Apply calendar"}
             </button>
           </div>

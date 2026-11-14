@@ -40,6 +40,12 @@ pub fn router(state: AppState) -> Router {
         .route("/app.js", get(js))
         .route("/style.css", get(css))
         .route("/favicon.svg", get(icon))
+        .route("/favicon.ico", get(favicon_ico))
+        .route("/favicon-32x32.png", get(favicon_32))
+        .route("/icon-192.png", get(icon_192))
+        .route("/apple-touch-icon.png", get(apple_touch_icon))
+        .route("/apple-touch-icon-precomposed.png", get(apple_touch_icon))
+        .route("/site.webmanifest", get(webmanifest))
         .route("/settings", get(index))
         .route("/settings/{section}", get(index))
         .route("/spotify/connect-result/{attempt}", get(index))
@@ -301,8 +307,59 @@ async fn css() -> impl IntoResponse {
 }
 async fn icon() -> impl IntoResponse {
     (
-        [(header::CONTENT_TYPE, "image/svg+xml")],
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
         include_str!("../static/favicon.svg"),
+    )
+}
+async fn favicon_ico() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/x-icon"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../static/favicon.ico").as_slice(),
+    )
+}
+async fn favicon_32() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../static/favicon-32x32.png").as_slice(),
+    )
+}
+async fn icon_192() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../static/icon-192.png").as_slice(),
+    )
+}
+async fn apple_touch_icon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!("../static/apple-touch-icon.png").as_slice(),
+    )
+}
+async fn webmanifest() -> impl IntoResponse {
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/manifest+json; charset=utf-8",
+            ),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_str!("../static/site.webmanifest"),
     )
 }
 async fn icons_font() -> impl IntoResponse {
@@ -379,7 +436,9 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
     }
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    if !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
     headers.insert(
         header::X_CONTENT_TYPE_OPTIONS,

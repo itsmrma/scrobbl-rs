@@ -43,6 +43,8 @@ import {
   Icon,
   number,
   SegmentedControl,
+  useMediaQuery,
+  useTopbarCustomize,
 } from "./ui";
 import type { Style } from "./ui";
 import {
@@ -70,14 +72,49 @@ import {
 import type { Kind } from "./selection";
 type Selection = ReturnType<typeof useSelection>;
 
-function TimeHelp() {
+function TimeHelp({
+  totals,
+}: {
+  totals?: {
+    actual_ms: number;
+    estimated_ms: number;
+    unknown_durations: number;
+  };
+}) {
   const id = useId();
+  const root = useRef<HTMLSpanElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState<Style>();
   const [pinned, setPinned] = useState(false),
     [hover, setHover] = useState(false),
     [focus, setFocus] = useState(false);
   const open = pinned || hover || focus;
+  useEffect(() => {
+    if (!open) return;
+    function closeAll() {
+      setPinned(false);
+      setHover(false);
+      setFocus(false);
+    }
+    function dismiss(event: PointerEvent) {
+      if (
+        root.current &&
+        event.target instanceof Node &&
+        !root.current.contains(event.target)
+      ) {
+        closeAll();
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeAll();
+    }
+    document.addEventListener("pointerdown", dismiss, true);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss, true);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
   useLayoutEffect(() => {
     if (!open) return;
     function place() {
@@ -122,6 +159,7 @@ function TimeHelp() {
   }, [open]);
   return (
     <span
+      ref={root}
       className="time-help"
       onPointerOver={(event) => setHover(event.pointerType === "mouse")}
       onPointerLeave={() => setHover(false)}
@@ -159,6 +197,24 @@ function TimeHelp() {
           style={position}
         >
           <strong>How we calculate listening time</strong>
+          {totals && (
+            <dl className="time-explanation-breakdown tabular-nums">
+              <div>
+                <dt>Actual</dt>
+                <dd>{duration(totals.actual_ms, true)}</dd>
+              </div>
+              <div>
+                <dt>Estimated</dt>
+                <dd>{duration(totals.estimated_ms, true)}</dd>
+              </div>
+              {totals.unknown_durations > 0 && (
+                <div>
+                  <dt>Unknown duration</dt>
+                  <dd>{number.format(totals.unknown_durations)} listens</dd>
+                </div>
+              )}
+            </dl>
+          )}
           <span>
             Actual time is playback time reported by the source, rather than the
             full track length.
@@ -250,7 +306,7 @@ function Stats({
         </article>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>
-            Listening time <TimeHelp />
+            Listening time <TimeHelp totals={loading ? undefined : totals} />
           </span>
           <strong id={ids ? "total-time" : undefined}>
             {loading ? (
@@ -259,7 +315,6 @@ function Stats({
               timeValue(totals)
             )}
           </strong>
-          {!loading && <Composition value={totals} />}
         </article>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>Different tracks</span>
@@ -2566,14 +2621,59 @@ export function Overview({
   const selection = useSelection(visible, preferences.initial_period),
     { params } = selection;
   const editButtonRef = useRef<HTMLButtonElement>(null);
+  const topbarEditButtonRef = useRef<HTMLButtonElement>(null);
+  const compact = useMediaQuery("(max-width: 600px)");
+  const setTopbarCustomize = useTopbarCustomize();
+
+  const focusEditButton = () => {
+    const target = compact
+      ? topbarEditButtonRef.current
+      : editButtonRef.current;
+    target?.focus();
+    requestAnimationFrame(() => {
+      const currentTarget = compact
+        ? topbarEditButtonRef.current
+        : editButtonRef.current;
+      currentTarget?.focus();
+    });
+  };
 
   const layoutEditor = useLayoutEditor({
     template: "home",
     defaultLayout: DEFAULT_V1_LAYOUT,
     visible,
-    onCancel: () => editButtonRef.current?.focus(),
-    onSaved: () => editButtonRef.current?.focus(),
+    onCancel: focusEditButton,
+    onSaved: focusEditButton,
   });
+
+  const startOverviewEdit = useRef(layoutEditor.handleStartEditing);
+  startOverviewEdit.current = layoutEditor.handleStartEditing;
+
+  useEffect(() => {
+    if (!compact || !visible) {
+      if (visible) setTopbarCustomize(null);
+      return;
+    }
+    setTopbarCustomize({
+      ariaLabel: "Customize",
+      controls: "dashboard-grid",
+      pressed: layoutEditor.editing,
+      disabled: layoutEditor.saving,
+      buttonRef: topbarEditButtonRef,
+      onClick: () => startOverviewEdit.current(),
+    });
+  }, [
+    compact,
+    visible,
+    layoutEditor.editing,
+    layoutEditor.saving,
+    setTopbarCustomize,
+  ]);
+
+  useEffect(
+    () => () => setTopbarCustomize(null),
+    [visible, setTopbarCustomize],
+  );
 
   const requestedWidgets = useMemo(() => {
     return Array.from(
@@ -2746,17 +2846,19 @@ export function Overview({
         </Heading>
         <div className="overview-heading-actions">
           <PeriodFilters selection={selection} />
-          <button
-            ref={editButtonRef}
-            aria-pressed={layoutEditor.editing}
-            aria-controls="dashboard-grid"
-            type="button"
-            className="button secondary"
-            disabled={layoutEditor.saving}
-            onClick={layoutEditor.handleStartEditing}
-          >
-            <Icon>tune</Icon> Customize
-          </button>
+          {!compact && (
+            <button
+              ref={editButtonRef}
+              aria-pressed={layoutEditor.editing}
+              aria-controls="dashboard-grid"
+              type="button"
+              className="button secondary"
+              disabled={layoutEditor.saving}
+              onClick={layoutEditor.handleStartEditing}
+            >
+              <Icon>tune</Icon> Customize
+            </button>
+          )}
         </div>
       </div>
 
@@ -3676,6 +3778,11 @@ export function MusicPage({
     }
   };
 
+  const compact = useMediaQuery("(max-width: 600px)");
+  const setTopbarCustomize = useTopbarCustomize();
+  const musicCustomizeRef = useRef<HTMLButtonElement>(null);
+  const topbarMusicCustomizeRef = useRef<HTMLButtonElement>(null);
+
   const customizeAriaLabel =
     kind === "tracks"
       ? "Customize track template"
@@ -3683,8 +3790,32 @@ export function MusicPage({
         ? "Customize album template"
         : "Customize artist template";
 
-  const customizeButton = !layoutEditor.editing && (
+  const startMusicEdit = useRef(layoutEditor.handleStartEditing);
+  startMusicEdit.current = layoutEditor.handleStartEditing;
+
+  useEffect(() => {
+    if (!compact || !result.data || layoutEditor.editing) {
+      setTopbarCustomize(null);
+      return;
+    }
+    setTopbarCustomize({
+      ariaLabel: customizeAriaLabel,
+      buttonRef: topbarMusicCustomizeRef,
+      onClick: () => startMusicEdit.current(),
+    });
+  }, [
+    compact,
+    result.data,
+    layoutEditor.editing,
+    customizeAriaLabel,
+    setTopbarCustomize,
+  ]);
+
+  useEffect(() => () => setTopbarCustomize(null), [setTopbarCustomize]);
+
+  const customizeButton = !compact && !layoutEditor.editing && (
     <button
+      ref={musicCustomizeRef}
       type="button"
       className="btn btn-secondary button secondary customize-template-button"
       aria-label={customizeAriaLabel}

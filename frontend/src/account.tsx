@@ -329,6 +329,9 @@ export function Auth({
               (setup && (!valid || !confirmation || password !== confirmation))
             }
           >
+            {busy && (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            )}
             {setup ? "Create your archive" : "Sign in"}
           </button>
         </form>

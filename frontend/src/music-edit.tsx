@@ -107,7 +107,11 @@ function Stars({
             </button>
           ))}
         </div>
-        <output aria-label="Rating in stars" aria-live="polite">
+        <output
+          className="visually-hidden"
+          aria-label="Rating in stars"
+          aria-live="polite"
+        >
           {preview ?? value ?? "Not rated"}
           {(preview ?? value) !== null && " / 5"}
         </output>
@@ -210,9 +214,13 @@ export function MusicActions({
               kind === "tracks" ? "Edit details" : "Edit details & image"
             }
           >
-            <Icon>edit</Icon>Edit
-            <span className="label-long">
-              &nbsp;details{kind !== "tracks" && " & image"}
+            <Icon>edit</Icon>
+            <span>
+              Edit
+              <span className="label-long">
+                {" "}
+                details{kind !== "tracks" && " & image"}
+              </span>
             </span>
           </Link>
           {children}

@@ -97,6 +97,12 @@ pub fn router(boot: BootManager) -> Router {
     Router::new()
         .route("/api/boot-status", get(boot_status_handler))
         .route("/favicon.svg", get(favicon_handler))
+        .route("/favicon.ico", get(favicon_handler))
+        .route("/favicon-32x32.png", get(favicon_handler))
+        .route("/icon-192.png", get(favicon_handler))
+        .route("/apple-touch-icon.png", get(favicon_handler))
+        .route("/apple-touch-icon-precomposed.png", get(favicon_handler))
+        .route("/site.webmanifest", get(favicon_handler))
         .fallback(dispatch_handler)
         .with_state(boot)
 }
@@ -112,13 +118,30 @@ async fn favicon_handler(State(boot): State<BootManager>, req: Request<Body>) ->
             .await
             .unwrap_or_else(|infallible| match infallible {})
     } else {
+        let (mime, bytes): (&'static str, &'static [u8]) = match req.uri().path() {
+            "/favicon.ico" => ("image/x-icon", include_bytes!("../static/favicon.ico")),
+            "/favicon-32x32.png" => ("image/png", include_bytes!("../static/favicon-32x32.png")),
+            "/icon-192.png" => ("image/png", include_bytes!("../static/icon-192.png")),
+            "/apple-touch-icon.png" | "/apple-touch-icon-precomposed.png" => (
+                "image/png",
+                include_bytes!("../static/apple-touch-icon.png"),
+            ),
+            "/site.webmanifest" => (
+                "application/manifest+json; charset=utf-8",
+                include_bytes!("../static/site.webmanifest"),
+            ),
+            _ => ("image/svg+xml", include_bytes!("../static/favicon.svg")),
+        };
         (
             StatusCode::OK,
-            [(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("image/svg+xml"),
-            )],
-            include_str!("../static/favicon.svg"),
+            [
+                (header::CONTENT_TYPE, HeaderValue::from_static(mime)),
+                (
+                    header::CACHE_CONTROL,
+                    HeaderValue::from_static("public, max-age=86400"),
+                ),
+            ],
+            bytes,
         )
             .into_response()
     }
@@ -210,7 +233,12 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark light" />
+    <meta name="apple-mobile-web-app-title" content="scrobbl.rs" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon-32x32.png" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <title>scrobbl.rs — Starting</title>
     <style>
       :root {{

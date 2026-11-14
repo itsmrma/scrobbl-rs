@@ -28,8 +28,16 @@ import { Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
-import { Heading, Icon, number, Toasts, Wordmark } from "./ui";
-import type { Style } from "./ui";
+import {
+  Heading,
+  Icon,
+  number,
+  Toasts,
+  TopbarCustomizeContext,
+  useMediaQuery,
+  Wordmark,
+} from "./ui";
+import type { Style, TopbarCustomizeAction } from "./ui";
 import "./style.css";
 import "./dashboard.css";
 import { Auth, UsernameSetup } from "./account";
@@ -72,6 +80,9 @@ function Shell({
   const [mobile, setMobile] = useState(
     () => matchMedia("(max-width: 900px)").matches,
   );
+  const compact = useMediaQuery("(max-width: 600px)");
+  const [topbarCustomize, setTopbarCustomize] =
+    useState<TopbarCustomizeAction | null>(null);
   const sidebar = useRef<HTMLElement>(null);
   const menu = useRef<HTMLButtonElement>(null);
 
@@ -327,306 +338,329 @@ function Shell({
   const showArtworkPill = !!serverArtworkSync || artworkWork.pending > 0;
 
   return (
-    <NowPlayingProvider status={status} statusError={statusError}>
-      <div
-        className={`app-layout ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}
-        style={{ "--sidebar-width": `${width}px` } as Style}
-      >
-        <a className="skip-link" href="#main">
-          Skip to content
-        </a>
-        {mobileOpen && (
-          <button
-            className="sidebar-backdrop"
-            aria-label="Close navigation"
-            onClick={() => setMobileOpen(false)}
-          />
-        )}
-        <aside
-          ref={sidebar}
-          inert={mobile && !mobileOpen}
-          className="sidebar"
-          id="navigation-panel"
+    <TopbarCustomizeContext.Provider value={setTopbarCustomize}>
+      <NowPlayingProvider status={status} statusError={statusError}>
+        <div
+          className={`app-layout ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}
+          style={{ "--sidebar-width": `${width}px` } as Style}
         >
-          <div className="sidebar-heading">
-            <Link to="/dashboard" className="brand">
-              <img src="/favicon.svg" alt="" width="30" height="30" />
-              <span className="nav-copy">
-                <Wordmark name={preferences.name} />
-              </span>
-            </Link>
+          <a className="skip-link" href="#main">
+            Skip to content
+          </a>
+          {mobileOpen && (
             <button
-              className="btn btn-icon icon-button desktop-collapse"
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-expanded={!collapsed}
-              onClick={() => setCollapsed(!collapsed)}
-            >
-              <Icon>{collapsed ? "chevron_right" : "chevron_left"}</Icon>
-            </button>
-            <button
-              className="btn btn-icon icon-button mobile-close"
+              className="sidebar-backdrop"
               aria-label="Close navigation"
               onClick={() => setMobileOpen(false)}
-            >
-              <Icon>close</Icon>
-            </button>
-          </div>
-          <p className="sidebar-section-label nav-copy">Your library</p>
-          <nav aria-label="Main navigation">
-            {nav.map(([to, key, label, icon]) => (
-              <Link
-                key={to}
-                to={to}
-                aria-label={label}
-                className={
-                  page === key || (page === "review" && key === "history")
-                    ? "active"
-                    : ""
-                }
-                aria-current={
-                  page === key || (page === "review" && key === "history")
-                    ? "page"
-                    : undefined
-                }
-              >
-                <Icon>{icon}</Icon>
-                <span className="nav-copy">{label}</span>
-                <span className="collapsed-label">{label}</span>
-              </Link>
-            ))}
-          </nav>
-          <div className="sidebar-bottom">
-            <Now
-              status={status}
-              paused={(collapsed && !mobile) || (mobile && !mobileOpen)}
             />
-          </div>
-        </aside>
-        {!collapsed && (
-          <div
-            className="sidebar-resizer"
-            role="separator"
-            tabIndex={0}
-            aria-label="Sidebar width"
-            aria-orientation="vertical"
-            aria-controls="navigation-panel"
-            aria-valuemin={216}
-            aria-valuemax={360}
-            aria-valuenow={width}
-            onKeyDown={(e) => {
-              if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
-                return;
-              e.preventDefault();
-              setWidth(
-                e.key === "Home"
-                  ? 216
-                  : e.key === "End"
-                    ? 360
-                    : Math.max(
-                        216,
-                        Math.min(
-                          360,
-                          width + (e.key === "ArrowLeft" ? -16 : 16),
-                        ),
-                      ),
-              );
-            }}
-            onPointerDown={(e) => {
-              drag.current = { x: e.clientX, width };
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (drag.current)
-                setWidth(
-                  Math.max(
-                    216,
-                    Math.min(
-                      360,
-                      drag.current.width + e.clientX - drag.current.x,
-                    ),
-                  ),
-                );
-            }}
-            onPointerUp={() => {
-              drag.current = null;
-            }}
-            onPointerCancel={() => {
-              drag.current = null;
-            }}
-          />
-        )}
-        <div className="main-area">
-          <header className="topbar">
-            <button
-              ref={menu}
-              className="btn btn-icon icon-button mobile-menu"
-              aria-label="Open navigation"
-              aria-expanded={mobileOpen}
-              aria-controls="navigation-panel"
-              onClick={() => setMobileOpen(true)}
-            >
-              <Icon>menu</Icon>
-            </button>
-            <span className="topbar-breadcrumb">{breadcrumb}</span>
-            <div className="topbar-actions">
-              {showArtworkPill && (
-                <Link
-                  to="/activities"
-                  className={`artwork-sync-pill ${serverArtworkSync?.paused ? "is-paused" : ""}`}
-                  title="Open artwork sync activity"
-                >
-                  <Icon>
-                    {serverArtworkSync?.paused ? "pause_circle" : "downloading"}
-                  </Icon>
-                  <span className="artwork-sync-pill-text">
-                    {serverArtworkSync
-                      ? serverArtworkSync.paused
-                        ? "Artwork paused"
-                        : serverArtworkSync.expected
-                          ? `Artwork ${number.format(serverArtworkSync.processed)}/${number.format(serverArtworkSync.expected)}`
-                          : "Syncing artwork"
-                      : `Artwork (${number.format(artworkWork.pending)})`}
-                  </span>
-                </Link>
-              )}
-              <LibraryToolsMenu />
-              <ActivityMenu
-                jobs={jobs}
-                work={artworkWork}
-                error={jobsError}
-                loading={jobsLoading}
-              />
-              <AccountMenu logout={logout} />
+          )}
+          <aside
+            ref={sidebar}
+            inert={mobile && !mobileOpen}
+            className="sidebar"
+            id="navigation-panel"
+          >
+            <div className="sidebar-heading">
+              <Link to="/dashboard" className="brand">
+                <img src="/favicon.svg" alt="" width="30" height="30" />
+                <span className="nav-copy">
+                  <Wordmark name={preferences.name} />
+                </span>
+              </Link>
+              <button
+                className="btn btn-icon icon-button desktop-collapse"
+                aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                aria-expanded={!collapsed}
+                onClick={() => setCollapsed(!collapsed)}
+              >
+                <Icon>{collapsed ? "chevron_right" : "chevron_left"}</Icon>
+              </button>
+              <button
+                className="btn btn-icon icon-button mobile-close"
+                aria-label="Close navigation"
+                onClick={() => setMobileOpen(false)}
+              >
+                <Icon>close</Icon>
+              </button>
             </div>
-          </header>
-          <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
-            {page === "search" && (
-              <section className="page-container">
-                <SearchPage />
-              </section>
-            )}
-            <section className="page-container" hidden={page !== "ask"}>
-              <AskPage preferences={preferences} visible={page === "ask"} />
-            </section>
-            <section className="page-container" hidden={page !== "dashboard"}>
-              <Overview
-                preferences={preferences}
-                visible={page === "dashboard"}
+            <p className="sidebar-section-label nav-copy">Your library</p>
+            <nav aria-label="Main navigation">
+              {nav.map(([to, key, label, icon]) => (
+                <Link
+                  key={to}
+                  to={to}
+                  aria-label={label}
+                  className={
+                    page === key || (page === "review" && key === "history")
+                      ? "active"
+                      : ""
+                  }
+                  aria-current={
+                    page === key || (page === "review" && key === "history")
+                      ? "page"
+                      : undefined
+                  }
+                >
+                  <Icon>{icon}</Icon>
+                  <span className="nav-copy">{label}</span>
+                  <span className="collapsed-label">{label}</span>
+                </Link>
+              ))}
+            </nav>
+            <div className="sidebar-bottom">
+              <Now
                 status={status}
+                paused={(collapsed && !mobile) || (mobile && !mobileOpen)}
               />
-            </section>
-            <section className="page-container" hidden={page !== "history"}>
-              <HistoryPage
-                preferences={preferences}
-                visible={page === "history"}
-              />
-            </section>
-            {page === "review" && (
-              <section className="page-container">
-                <ReviewPage preferences={preferences} refresh={refresh} />
-              </section>
-            )}
-            <section className="page-container" hidden={page !== "import"}>
-              <ImportPage
-                refresh={refresh}
-                visible={page === "import"}
-                preferences={preferences}
-              />
-            </section>
-            <section className="page-container" hidden={page !== "settings"}>
-              <Settings
-                section={settingsSection}
-                preferences={preferences}
-                saved={setPreferences}
-                appearance={appearance}
-                status={status}
-                refresh={refresh}
-                statusError={statusError}
-                visible={page === "settings"}
-              />
-            </section>
-            <section className="page-container" hidden={page !== "activities"}>
-              <Activities
-                loading={jobsLoading}
-                jobs={jobs}
-                artworkWork={artworkWork}
-                error={jobsError}
-                path={path}
-                preferences={preferences}
-                refresh={refresh}
-              />
-            </section>
-            {page === "rankings" &&
-              kinds.includes(path.split("/")[2] as Kind) && (
+            </div>
+          </aside>
+          {!collapsed && (
+            <div
+              className="sidebar-resizer"
+              role="separator"
+              tabIndex={0}
+              aria-label="Sidebar width"
+              aria-orientation="vertical"
+              aria-controls="navigation-panel"
+              aria-valuemin={216}
+              aria-valuemax={360}
+              aria-valuenow={width}
+              onKeyDown={(e) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
+                  return;
+                e.preventDefault();
+                setWidth(
+                  e.key === "Home"
+                    ? 216
+                    : e.key === "End"
+                      ? 360
+                      : Math.max(
+                          216,
+                          Math.min(
+                            360,
+                            width + (e.key === "ArrowLeft" ? -16 : 16),
+                          ),
+                        ),
+                );
+              }}
+              onPointerDown={(e) => {
+                drag.current = { x: e.clientX, width };
+                e.currentTarget.setPointerCapture(e.pointerId);
+              }}
+              onPointerMove={(e) => {
+                if (drag.current)
+                  setWidth(
+                    Math.max(
+                      216,
+                      Math.min(
+                        360,
+                        drag.current.width + e.clientX - drag.current.x,
+                      ),
+                    ),
+                  );
+              }}
+              onPointerUp={() => {
+                drag.current = null;
+              }}
+              onPointerCancel={() => {
+                drag.current = null;
+              }}
+            />
+          )}
+          <div className="main-area">
+            <header className="topbar">
+              <button
+                ref={menu}
+                className="btn btn-icon icon-button mobile-menu"
+                aria-label="Open navigation"
+                aria-expanded={mobileOpen}
+                aria-controls="navigation-panel"
+                onClick={() => setMobileOpen(true)}
+              >
+                <Icon>menu</Icon>
+              </button>
+              <span className="topbar-breadcrumb">{breadcrumb}</span>
+              <div className="topbar-actions">
+                {showArtworkPill && (
+                  <Link
+                    to="/activities"
+                    className={`artwork-sync-pill ${serverArtworkSync?.paused ? "is-paused" : ""}`}
+                    title="Open artwork sync activity"
+                  >
+                    <Icon>
+                      {serverArtworkSync?.paused
+                        ? "pause_circle"
+                        : "downloading"}
+                    </Icon>
+                    <span className="artwork-sync-pill-text">
+                      {serverArtworkSync
+                        ? serverArtworkSync.paused
+                          ? "Artwork paused"
+                          : serverArtworkSync.expected
+                            ? `Artwork ${number.format(serverArtworkSync.processed)}/${number.format(serverArtworkSync.expected)}`
+                            : "Syncing artwork"
+                        : `Artwork (${number.format(artworkWork.pending)})`}
+                    </span>
+                  </Link>
+                )}
+                <LibraryToolsMenu />
+                <ActivityMenu
+                  jobs={jobs}
+                  work={artworkWork}
+                  error={jobsError}
+                  loading={jobsLoading}
+                />
+                {compact && topbarCustomize && (
+                  <button
+                    ref={topbarCustomize.buttonRef}
+                    type="button"
+                    className="btn btn-icon icon-button topbar-customize-button"
+                    aria-label={topbarCustomize.ariaLabel}
+                    aria-controls={topbarCustomize.controls}
+                    aria-pressed={topbarCustomize.pressed}
+                    disabled={topbarCustomize.disabled}
+                    onClick={topbarCustomize.onClick}
+                  >
+                    <Icon>tune</Icon>
+                  </button>
+                )}
+                <AccountMenu logout={logout} />
+              </div>
+            </header>
+            <main id="main" tabIndex={-1} inert={mobile && mobileOpen}>
+              {page === "search" && (
                 <section className="page-container">
-                  <RankingsPage
-                    status={status}
-                    preferences={preferences}
-                    kind={path.split("/")[2] as Kind}
-                    key={path}
-                  />
+                  <SearchPage />
                 </section>
               )}
-            {path === "/music/now-playing" && (
-              <section className="page-container">
-                <NowPlayingPage />
+              <section className="page-container" hidden={page !== "ask"}>
+                <AskPage preferences={preferences} visible={page === "ask"} />
               </section>
-            )}
-            {page === "music" &&
-              kinds.includes(path.split("/")[2] as Kind) &&
-              path.split("/")[3] && (
+              <section className="page-container" hidden={page !== "dashboard"}>
+                <Overview
+                  preferences={preferences}
+                  visible={page === "dashboard"}
+                  status={status}
+                />
+              </section>
+              <section className="page-container" hidden={page !== "history"}>
+                <HistoryPage
+                  preferences={preferences}
+                  visible={page === "history"}
+                />
+              </section>
+              {page === "review" && (
                 <section className="page-container">
-                  {path.split("/")[4] === "edit" ? (
-                    <MusicEdit
-                      kind={path.split("/")[2] as Kind}
-                      id={decodeURIComponent(path.split("/")[3])}
-                      key={path}
-                    />
-                  ) : (
-                    <MusicPage
+                  <ReviewPage preferences={preferences} refresh={refresh} />
+                </section>
+              )}
+              <section className="page-container" hidden={page !== "import"}>
+                <ImportPage
+                  refresh={refresh}
+                  visible={page === "import"}
+                  preferences={preferences}
+                />
+              </section>
+              <section className="page-container" hidden={page !== "settings"}>
+                <Settings
+                  section={settingsSection}
+                  preferences={preferences}
+                  saved={setPreferences}
+                  appearance={appearance}
+                  status={status}
+                  refresh={refresh}
+                  statusError={statusError}
+                  visible={page === "settings"}
+                />
+              </section>
+              <section
+                className="page-container"
+                hidden={page !== "activities"}
+              >
+                <Activities
+                  loading={jobsLoading}
+                  jobs={jobs}
+                  artworkWork={artworkWork}
+                  error={jobsError}
+                  path={path}
+                  preferences={preferences}
+                  refresh={refresh}
+                />
+              </section>
+              {page === "rankings" &&
+                kinds.includes(path.split("/")[2] as Kind) && (
+                  <section className="page-container">
+                    <RankingsPage
+                      status={status}
                       preferences={preferences}
                       kind={path.split("/")[2] as Kind}
-                      id={decodeURIComponent(path.split("/")[3])}
                       key={path}
                     />
-                  )}
+                  </section>
+                )}
+              {path === "/music/now-playing" && (
+                <section className="page-container">
+                  <NowPlayingPage />
                 </section>
               )}
-            {![
-              "rankings",
-              "music",
-              "dashboard",
-              "search",
-              "ask",
-              "history",
-              "review",
-              "import",
-              "settings",
-              "activities",
-            ].includes(page) && (
-              <section className="page-container">
-                <Heading title="Page not found" />
-                <Link to="/dashboard" className="btn btn-secondary secondary">
-                  Back to overview
-                </Link>
-              </section>
-            )}
-          </main>
-          <footer>
-            <div className="footer-meta">
-              <a href="/licenses" target="_blank" rel="noreferrer">
-                Licenses
-              </a>
-              <span className="footer-separator" aria-hidden="true">
-                ·
+              {page === "music" &&
+                kinds.includes(path.split("/")[2] as Kind) &&
+                path.split("/")[3] && (
+                  <section className="page-container">
+                    {path.split("/")[4] === "edit" ? (
+                      <MusicEdit
+                        kind={path.split("/")[2] as Kind}
+                        id={decodeURIComponent(path.split("/")[3])}
+                        key={path}
+                      />
+                    ) : (
+                      <MusicPage
+                        preferences={preferences}
+                        kind={path.split("/")[2] as Kind}
+                        id={decodeURIComponent(path.split("/")[3])}
+                        key={path}
+                      />
+                    )}
+                  </section>
+                )}
+              {![
+                "rankings",
+                "music",
+                "dashboard",
+                "search",
+                "ask",
+                "history",
+                "review",
+                "import",
+                "settings",
+                "activities",
+              ].includes(page) && (
+                <section className="page-container">
+                  <Heading title="Page not found" />
+                  <Link to="/dashboard" className="btn btn-secondary secondary">
+                    Back to overview
+                  </Link>
+                </section>
+              )}
+            </main>
+            <footer>
+              <div className="footer-meta">
+                <a href="/licenses" target="_blank" rel="noreferrer">
+                  Licenses
+                </a>
+                <span className="footer-separator" aria-hidden="true">
+                  ·
+                </span>
+                <span>{preferences.name}</span>
+              </div>
+              <span className="footer-tagline">
+                Made for the music you keep.
               </span>
-              <span>{preferences.name}</span>
-            </div>
-            <span className="footer-tagline">Made for the music you keep.</span>
-          </footer>
+            </footer>
+          </div>
         </div>
-      </div>
-    </NowPlayingProvider>
+      </NowPlayingProvider>
+    </TopbarCustomizeContext.Provider>
   );
 }
 

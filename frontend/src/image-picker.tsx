@@ -21,6 +21,101 @@ export interface ImagePickerModalProps {
   onSaved?: () => void;
 }
 
+function CandidateThumbnail({
+  src,
+  providerLabel,
+  selected,
+  isCurrent,
+}: {
+  src: string;
+  providerLabel: string;
+  selected: boolean;
+  isCurrent: boolean;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setErrored(false);
+  }, [src]);
+
+  return (
+    <span
+      className={`image-candidate-thumb ${!loaded && !errored ? "is-loading" : ""}`}
+    >
+      {!loaded && !errored && (
+        <span className="image-thumb-loader" aria-hidden="true">
+          <span className="spinner-dot" />
+        </span>
+      )}
+      {errored ? (
+        <span className="image-thumb-error" aria-hidden="true">
+          <Icon>broken_image</Icon>
+        </span>
+      ) : (
+        <img
+          src={src}
+          alt=""
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          className={loaded ? "is-loaded" : ""}
+          onLoad={() => setLoaded(true)}
+          onError={() => setErrored(true)}
+        />
+      )}
+      <span className="image-candidate-provider">{providerLabel}</span>
+      {isCurrent && <span className="image-candidate-current">Current</span>}
+      {selected && (
+        <span className="image-candidate-check" aria-hidden="true">
+          <Icon>check</Icon>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function UrlPreview({ url }: { url: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+    setErrored(false);
+  }, [url]);
+
+  return (
+    <div className="image-upload-preview">
+      <span
+        className={`image-url-preview-frame ${!loaded && !errored ? "is-loading" : ""}`}
+      >
+        {!loaded && !errored && (
+          <span className="image-thumb-loader" aria-hidden="true">
+            <span className="spinner-dot spinner-sm" />
+          </span>
+        )}
+        {errored ? (
+          <span className="image-thumb-error" aria-hidden="true">
+            <Icon>broken_image</Icon>
+          </span>
+        ) : (
+          <img
+            src={artworkPreviewUrl(url)}
+            alt="URL image preview"
+            className={loaded ? "is-loaded" : ""}
+            onLoad={() => setLoaded(true)}
+            onError={() => setErrored(true)}
+          />
+        )}
+      </span>
+      <div>
+        <strong>Live server-proxied preview</strong>
+        <small>{url}</small>
+      </div>
+    </div>
+  );
+}
+
 export function ImagePickerModal({
   kind,
   id,
@@ -60,7 +155,17 @@ export function ImagePickerModal({
       if (customQuery === undefined) {
         setQuery(response.query);
       }
-      setSelectedCandidate(response.candidates[0] ?? null);
+      const normalizeUrl = (url?: string | null) =>
+        (url || "").trim().replace(/^http:\/\//i, "https://");
+      const currentUrl = normalizeUrl(response.current_image_url);
+      const currentMatch = currentUrl
+        ? (response.candidates.find(
+            (candidate) =>
+              normalizeUrl(candidate.image_url) === currentUrl ||
+              normalizeUrl(candidate.credit.image_url) === currentUrl,
+          ) ?? null)
+        : null;
+      setSelectedCandidate(currentMatch);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -235,6 +340,9 @@ export function ImagePickerModal({
                 className="btn btn-secondary secondary"
                 disabled={searching || busy}
               >
+                {searching && (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                )}
                 {searching ? "Searching…" : "Search"}
               </button>
             </form>
@@ -259,6 +367,13 @@ export function ImagePickerModal({
               >
                 {searchData.candidates.map((candidate) => {
                   const selected = selectedCandidate?.id === candidate.id;
+                  const normalizeUrl = (url?: string | null) =>
+                    (url || "").trim().replace(/^http:\/\//i, "https://");
+                  const currentUrl = normalizeUrl(searchData.current_image_url);
+                  const isCurrent =
+                    Boolean(currentUrl) &&
+                    (normalizeUrl(candidate.image_url) === currentUrl ||
+                      normalizeUrl(candidate.credit.image_url) === currentUrl);
                   return (
                     <button
                       key={candidate.id}
@@ -272,25 +387,12 @@ export function ImagePickerModal({
                         void applyCandidate(candidate);
                       }}
                     >
-                      <span className="image-candidate-thumb">
-                        <img
-                          src={artworkPreviewUrl(candidate.preview_url)}
-                          alt=""
-                          loading="lazy"
-                          referrerPolicy="no-referrer"
-                        />
-                        <span className="image-candidate-provider">
-                          {candidate.provider_label}
-                        </span>
-                        {selected && (
-                          <span
-                            className="image-candidate-check"
-                            aria-hidden="true"
-                          >
-                            <Icon>check</Icon>
-                          </span>
-                        )}
-                      </span>
+                      <CandidateThumbnail
+                        src={artworkPreviewUrl(candidate.preview_url)}
+                        providerLabel={candidate.provider_label}
+                        selected={selected}
+                        isCurrent={isCurrent}
+                      />
                       <span className="image-candidate-meta">
                         <strong>{candidate.title}</strong>
                         <small>{candidate.subtitle}</small>
@@ -378,18 +480,7 @@ export function ImagePickerModal({
               The server downloads and verifies PNG, JPEG or WebP bytes (up to 5
               MB) so your browser never contacts external hosts directly.
             </p>
-            {isHttpsUrl && (
-              <div className="image-upload-preview">
-                <img
-                  src={artworkPreviewUrl(directUrl.trim())}
-                  alt="URL image preview"
-                />
-                <div>
-                  <strong>Live server-proxied preview</strong>
-                  <small>{directUrl.trim()}</small>
-                </div>
-              </div>
-            )}
+            {isHttpsUrl && <UrlPreview url={directUrl.trim()} />}
           </div>
         )}
 
@@ -422,7 +513,11 @@ export function ImagePickerModal({
                 disabled={busy || !selectedCandidate}
                 onClick={() => void applyCandidate()}
               >
-                <Icon>check</Icon>
+                {busy ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>check</Icon>
+                )}
                 {busy ? "Saving…" : "Use selected image"}
               </button>
             )}
@@ -433,7 +528,11 @@ export function ImagePickerModal({
                 disabled={busy || !file}
                 onClick={() => void applyFileUpload()}
               >
-                <Icon>save</Icon>
+                {busy ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>save</Icon>
+                )}
                 {busy ? "Uploading…" : "Save uploaded image"}
               </button>
             )}
@@ -444,7 +543,11 @@ export function ImagePickerModal({
                 disabled={busy || !isHttpsUrl}
                 onClick={() => void applyDirectUrl()}
               >
-                <Icon>download_done</Icon>
+                {busy ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>download_done</Icon>
+                )}
                 {busy ? "Saving…" : "Save image URL"}
               </button>
             )}

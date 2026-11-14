@@ -1,6 +1,11 @@
 import { queueArtwork, useArtworkRevision } from "./artwork-activity";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import type { ButtonHTMLAttributes, CSSProperties, ReactNode } from "react";
+import type {
+  ButtonHTMLAttributes,
+  CSSProperties,
+  ReactNode,
+  RefObject,
+} from "react";
 import type { Preferences } from "./generated";
 
 export function Icon({ children }: { children: string }) {
@@ -113,6 +118,29 @@ export function CopyButton({
   );
 }
 
+export function Spinner({
+  size = "sm",
+}: {
+  size?: "sm" | "md" | "lg";
+} = {}) {
+  return (
+    <span
+      className={`spinner-dot${size !== "md" ? ` spinner-${size}` : ""}`}
+      aria-hidden="true"
+    />
+  );
+}
+
+export function LoadingDots() {
+  return (
+    <span className="loading-dots" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
 export function Cover({
   url,
   large = false,
@@ -209,8 +237,18 @@ export function Cover({
     };
   }, [failed, local]);
 
+  const downloading =
+    local && !failed && ready?.source !== source && cacheMiss === source;
+
   return local && !failed && ready?.source === source ? (
-    <span className={`cover image-frame ${large ? "large" : ""}`}>
+    <span
+      className={`cover image-frame ${large ? "large" : ""} ${!loaded ? "is-loading" : ""}`}
+    >
+      {!loaded && (
+        <span className="cover-loader" aria-hidden="true">
+          <Spinner size={large ? "lg" : "sm"} />
+        </span>
+      )}
       <img
         ref={(node) => {
           marker.current = node;
@@ -262,14 +300,32 @@ export function Cover({
           }}
         >
           <div className="artwork-lightbox-container">
-            <button
-              type="button"
-              className="btn-icon icon-button artwork-lightbox-close"
-              aria-label="Close enlarged artwork"
-              onClick={() => setZoomed(false)}
-            >
-              <Icon>close</Icon>
-            </button>
+            <div className="artwork-lightbox-actions">
+              <a
+                href={ready.src}
+                download="artwork"
+                className="button secondary artwork-lightbox-download"
+                target={
+                  local || ready.src.startsWith("blob:") ? undefined : "_blank"
+                }
+                rel={
+                  local || ready.src.startsWith("blob:")
+                    ? undefined
+                    : "noopener noreferrer"
+                }
+              >
+                <Icon>download</Icon>
+                Download artwork
+              </a>
+              <button
+                type="button"
+                className="btn-icon icon-button artwork-lightbox-close"
+                aria-label="Close enlarged artwork"
+                onClick={() => setZoomed(false)}
+              >
+                <Icon>close</Icon>
+              </button>
+            </div>
             <img src={ready.src} alt="" className="artwork-lightbox-image" />
           </div>
         </dialog>
@@ -280,9 +336,14 @@ export function Cover({
       ref={(node) => {
         marker.current = node;
       }}
-      className={`cover placeholder ${large ? "large" : ""}`}
+      className={`cover placeholder ${large ? "large" : ""} ${downloading ? "is-loading" : ""}`}
+      aria-busy={downloading || undefined}
     >
-      <Icon>music_note</Icon>
+      {downloading ? (
+        <Spinner size={large ? "lg" : "sm"} />
+      ) : (
+        <Icon>music_note</Icon>
+      )}
       {children}
     </span>
   );
@@ -549,3 +610,32 @@ export function SegmentedControl<T extends string = string>({
 }
 
 export type Style = CSSProperties & Record<`--${string}`, string | number>;
+
+export type TopbarCustomizeAction = {
+  ariaLabel: string;
+  onClick: () => void;
+  disabled?: boolean;
+  controls?: string;
+  pressed?: boolean;
+  buttonRef?: RefObject<HTMLButtonElement | null>;
+};
+
+export const TopbarCustomizeContext = createContext<
+  (action: TopbarCustomizeAction | null) => void
+>(() => {});
+
+export function useTopbarCustomize() {
+  return useContext(TopbarCustomizeContext);
+}
+
+export function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = useState(() => matchMedia(query).matches);
+  useEffect(() => {
+    const media = matchMedia(query);
+    setMatches(media.matches);
+    const onChange = () => setMatches(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [query]);
+  return matches;
+}
