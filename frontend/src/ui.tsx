@@ -559,6 +559,8 @@ export function Modal({
 export interface SegmentedOption<T extends string = string> {
   value: T;
   label: ReactNode;
+  /** Shown instead of `label` on phones, where every option shares one row. */
+  shortLabel?: ReactNode;
   icon?: string;
   className?: string;
   ariaLabel?: string;
@@ -587,6 +589,7 @@ export function SegmentedControl<T extends string = string>({
       role="group"
       aria-label={ariaLabel}
       className={`segmented-control ${className}`.trim()}
+      data-count={options.length}
       {...rest}
     >
       {options.map((option) => {
@@ -601,7 +604,18 @@ export function SegmentedControl<T extends string = string>({
             onClick={() => onChange(option.value)}
           >
             {option.icon && <Icon>{option.icon}</Icon>}
-            {option.label}
+            {option.shortLabel !== undefined ? (
+              <>
+                <span className="segmented-label segmented-label-full">
+                  {option.label}
+                </span>
+                <span className="segmented-label segmented-label-short">
+                  {option.shortLabel}
+                </span>
+              </>
+            ) : (
+              <span className="segmented-label">{option.label}</span>
+            )}
           </button>
         );
       })}

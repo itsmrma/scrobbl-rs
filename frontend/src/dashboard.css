@@ -512,15 +512,6 @@
   min-width: 0;
 }
 
-.dashboard-widget .overview-rankings .time-composition {
-  display: block;
-  font-size: 11px;
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .dashboard-widget .overview-rankings .ranking-meter {
   grid-column: 2 / -1;
   grid-row: 3;
@@ -1487,8 +1478,13 @@
 /* Narrow widgets (phones, or a 2-column span on desktop): three compact
    metrics side by side instead of three tall slabs. */
 @container (max-width: 480px) {
+  /* Columns size to their content so a label and its info button never wrap
+     apart, and the three values stay on one baseline. */
   .stats-grid {
-    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, auto));
+    justify-content: space-between;
+    align-items: start;
+    gap: 8px 12px;
   }
 
   .stat,
@@ -1505,11 +1501,15 @@
   .stat > span {
     font-size: 11px;
     gap: 2px 4px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
   }
 
   .stat > strong {
     min-height: 0;
-    font-size: 22px;
+    font-size: 20px;
+    white-space: nowrap;
+    overflow-wrap: normal;
   }
 
   .stat > strong .skeleton-block {
@@ -1518,5 +1518,21 @@
 
   .chart-readout > div:last-child {
     justify-content: flex-start;
+  }
+}
+
+/* Very narrow phones (320px): the widest realistic values (hundreds of hours,
+   six-figure listen counts) still fit in one row without touching. */
+@container (max-width: 300px) {
+  .stats-grid {
+    gap: 8px;
+  }
+
+  .stat > span {
+    font-size: 10.5px;
+  }
+
+  .stat > strong {
+    font-size: 17px;
   }
 }

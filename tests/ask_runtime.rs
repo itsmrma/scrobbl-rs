@@ -92,7 +92,7 @@ fn time_grouping_is_read_chronologically() {
     let output: ModelOutput = serde_json::from_str(
         r#"{
             "group_by": "day",
-            "limit": "ten",
+            "limit": "none",
             "metric": "plays",
             "name": "",
             "order": "asc",
@@ -110,6 +110,29 @@ fn time_grouping_is_read_chronologically() {
     assert_eq!(query.order, SortOrder::Asc);
     assert_eq!(query.period, Period::LastMonth);
     assert!(query.entity.is_none());
+}
+
+#[test]
+fn time_grouping_with_a_limit_is_ranked_by_the_metric() {
+    let output: ModelOutput = serde_json::from_str(
+        r#"{
+            "group_by": "hour",
+            "limit": "one",
+            "metric": "plays",
+            "name": "",
+            "order": "desc",
+            "period": "all_time",
+            "target": "none",
+            "weekday": "any"
+        }"#,
+    )
+    .unwrap();
+    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
+        panic!("expected a query");
+    };
+    assert_eq!(query.group_by, Some(GroupBy::Hour));
+    assert_eq!(query.sort_by, SortBy::Metric);
+    assert_eq!(query.order, SortOrder::Desc);
 }
 
 #[test]

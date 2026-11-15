@@ -570,7 +570,6 @@ function RankingRows({
               </span>
               <Time className="rank-time">{timeValue(item)}</Time>
             </span>
-            <Composition value={item} />
           </div>
         </li>
       ))}

@@ -891,6 +891,14 @@ input.select-search {
     box-shadow var(--motion-fast) var(--ease-out);
 }
 
+.segmented-label {
+  min-width: 0;
+}
+
+.segmented-label-short {
+  display: none;
+}
+
 .segmented-option:hover:not(:disabled) {
   color: var(--text);
 }
@@ -3991,6 +3999,14 @@ dialog.artwork-lightbox {
   white-space: normal !important;
 }
 
+.segment-filter > span:not([class]) {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
 .track-scope-chip,
 .segment-filter {
   display: inline-flex;
@@ -5846,7 +5862,8 @@ dialog.artwork-lightbox {
     gap: 10px;
   }
 
-  .activity-row {
+  .activity-row,
+  .activity-row.artwork-work {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -6676,5 +6693,72 @@ dialog.artwork-lightbox {
 @media (max-width: 360px) {
   .artwork-sync-pill {
     display: none;
+  }
+}
+
+/* Phones: a row of options stays one row. Desktop keeps its layout; here every
+   option shares the width equally and a long label shortens or truncates
+   instead of wrapping to a second line. */
+@media (max-width: 600px) {
+  .segmented-control {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .segmented-option {
+    min-width: 0;
+    padding: 6px 6px;
+    gap: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .segmented-option > .material-icons-outlined,
+  .segmented-option > .material-icons {
+    flex: none;
+    font-size: 18px;
+  }
+
+  .segmented-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .segmented-label-full:has(+ .segmented-label-short) {
+    display: none;
+  }
+
+  .segmented-label-short {
+    display: inline;
+  }
+
+  /* Four or more options leave no room for icons next to the label. */
+  .segmented-control[data-count="4"]
+    .segmented-option
+    > span:first-child:not(.segmented-label),
+  .segmented-control[data-count="5"]
+    .segmented-option
+    > span:first-child:not(.segmented-label) {
+    display: none;
+  }
+
+  /* The period note joins the layout so it can never sit on top of the
+     card below. */
+  .period-notice,
+  .music-period .period-notice {
+    position: static;
+    flex: 1 0 100%;
+    margin-top: 2px;
+  }
+
+  .music-period .filters {
+    padding-bottom: 0;
+  }
+
+  .activity-row-heading > .state-badge {
+    max-width: 100%;
   }
 }
