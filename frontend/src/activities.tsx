@@ -152,7 +152,7 @@ export const phaseLabel = (job: Activity) =>
       }[job.phase] ||
       job.phase?.replaceAll("_", " ") ||
       "Server activity";
-function StateBadge({ job }: { job: Activity }) {
+export function StateBadge({ job }: { job: Activity }) {
   return (
     <span className={`state-badge ${job.state}`}>
       <Icon>

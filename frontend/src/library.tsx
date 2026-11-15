@@ -8,7 +8,9 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import type {
+  Activity,
   ActivityDetail,
+  ActivityMember,
   ImportLimits,
   NowPlaying,
   Preferences,
@@ -28,7 +30,7 @@ import { useLoad } from "./load";
 import { Link } from "./navigation";
 import { musicLink } from "./selection";
 import { ListenBrainzImport } from "./listenbrainz";
-import { phaseLabel, Progress } from "./activities";
+import { phaseLabel, Progress, StateBadge } from "./activities";
 import { triggerArtworkBackfill } from "./artwork-activity";
 import { isBool, useBrowserPreference } from "./preferences";
 import {
@@ -507,6 +509,141 @@ export function NowPlayingWidget({ status }: { status: SpotifyStatus | null }) {
   );
 }
 
+const memberParts = (name: string) => {
+  const match = /^(?:\d+: )?(.+?) \/ \[(\d+)\] (.*)$/.exec(name);
+  if (!match) return { archive: "", order: Infinity, path: name, file: name };
+  const path = match[3];
+  return {
+    archive: match[1],
+    order: Number(match[2]),
+    path,
+    file: path.replace(/\/$/, "").split("/").pop() || path,
+  };
+};
+
+function ImportResult({
+  job,
+  members,
+}: {
+  job: Activity;
+  members?: ActivityMember[];
+}) {
+  const parsed = (members || [])
+    .map((member) => ({ member, ...memberParts(member.member) }))
+    .sort((a, b) => a.order - b.order);
+  const included = parsed.filter((m) => m.member.state !== "excluded");
+  const excluded = parsed.filter((m) => m.member.state === "excluded");
+  const archives = [...new Set(parsed.map((m) => m.archive).filter(Boolean))];
+  const stats: [string, number][] = [
+    ["Added", job.added],
+    ["Already present", job.duplicates],
+    ["Reconciled", job.reconciled],
+    ["New originals", job.originals],
+    ["New variants", job.variants],
+    ["Non-music skipped", job.skipped],
+    ["Below threshold", job.below_threshold],
+    ["Invalid", job.invalid],
+  ];
+  return (
+    <section id="import-result" className="import-result" role="status">
+      <div className="import-result-heading">
+        <h3>
+          {job.outcome === "complete"
+            ? "Import complete"
+            : job.outcome === "no_music"
+              ? "No music found"
+              : `Import ${job.outcome || job.state}`}
+        </h3>
+        <StateBadge job={job} />
+      </div>
+      <p className="import-result-phase">{phaseLabel(job)}</p>
+      <Progress job={job} />
+      <dl className="activity-results import-stats">
+        {stats.map(([label, value]) => (
+          <div key={label}>
+            <dt>{label}</dt>
+            <dd>{number.format(value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="import-result-note">
+        Row and original counts describe source coverage; they are not a sum of
+        new listens.
+      </p>
+      {job.ambiguous > 0 && (
+        <p className="warning">
+          {job.ambiguous} ambiguous matches were kept separate.
+        </p>
+      )}
+      {included.length > 0 && (
+        <div className="import-files">
+          <h4>
+            Files
+            {archives.length === 1 && <small>{archives[0]}</small>}
+          </h4>
+          <ul>
+            {included.map(({ member, file, path, archive }) => (
+              <li key={member.member} title={path}>
+                <div className="import-file-main">
+                  <strong>{file}</strong>
+                  <small>
+                    {number.format(member.processed)} /{" "}
+                    {member.expected_rows === null
+                      ? "unknown"
+                      : number.format(member.expected_rows)}{" "}
+                    rows
+                    {archives.length > 1 && archive ? ` · ${archive}` : ""}
+                  </small>
+                  {member.error_code && (
+                    <p className="form-error">{member.error_code}</p>
+                  )}
+                </div>
+                <span
+                  className={`state-badge ${
+                    member.state === "completed"
+                      ? "completed"
+                      : member.state === "failed"
+                        ? "failed"
+                        : member.state === "processing"
+                          ? "waiting"
+                          : ""
+                  }`}
+                >
+                  {member.state}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {excluded.length > 0 && (
+        <details className="import-excluded">
+          <summary>
+            {excluded.length} {excluded.length === 1 ? "item" : "items"} left
+            out
+          </summary>
+          <ul>
+            {excluded.map(({ member, path }) => (
+              <li key={member.member}>
+                <span>{path}</span>
+                <small>{member.kind}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <div className="import-result-actions">
+        <Link className="button secondary" to={`/activities/${job.id}`}>
+          Open full saved report and retry controls
+        </Link>
+        <Link className="button primary" to="/dashboard">
+          Explore your archive
+        </Link>
+      </div>
+    </section>
+  );
+}
+
 export function ImportPage({
   refresh,
   visible,
@@ -728,52 +865,7 @@ export function ImportPage({
           {jobId && !report.data && !report.error && (
             <SkeletonList count={2} label="Loading import report…" />
           )}
-          {job && (
-            <div id="import-result" role="status">
-              <h3>
-                {job.outcome === "complete"
-                  ? "Import complete"
-                  : job.outcome === "no_music"
-                    ? "No music found"
-                    : `Import ${job.outcome || job.state}`}
-              </h3>
-              <p>{phaseLabel(job)}</p>
-              <Progress job={job} />
-              <p>
-                {number.format(job.added)} added |{" "}
-                {number.format(job.reconciled)} reconciled |{" "}
-                {number.format(job.duplicates)} already present |{" "}
-                {job.originals} new originals | {job.variants} new variants |{" "}
-                {job.skipped} non-music skipped | {job.invalid} invalid |{" "}
-                {job.below_threshold} below threshold
-              </p>
-              <p>
-                Row and original counts describe source coverage; they are not a
-                sum of new listens.
-              </p>
-              {job.ambiguous > 0 && (
-                <p className="warning">
-                  {job.ambiguous} ambiguous matches were kept separate.
-                </p>
-              )}
-              <Link to={`/activities/${job.id}`}>
-                Open full saved report and retry controls
-              </Link>
-              <ul>
-                {report.data?.members.map((m) => (
-                  <li key={m.member}>
-                    <strong>{m.member}</strong>: {m.kind} | {m.state} |{" "}
-                    {m.processed} processed / {m.expected_rows ?? "unknown"}{" "}
-                    rows{" "}
-                    {m.error_code && (
-                      <p className="form-error">{m.error_code}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
-              <Link to="/dashboard">Explore your archive</Link>
-            </div>
-          )}
+          {job && <ImportResult job={job} members={report.data?.members} />}
         </article>
         <aside className="panel padded import-notes">
           <h2>Keep your originals</h2>

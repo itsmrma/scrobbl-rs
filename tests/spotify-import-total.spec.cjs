@@ -43,14 +43,17 @@ const test = base.extend({
     const context = await browser.newContext({ baseURL });
     try {
       await expect
-        .poll(async () => {
-          if (child.exitCode !== null) throw new Error(logs);
-          try {
-            return (await context.request.get("/healthz")).status();
-          } catch {
-            return 0;
-          }
-        }, { timeout: 20000 })
+        .poll(
+          async () => {
+            if (child.exitCode !== null) throw new Error(logs);
+            try {
+              return (await context.request.get("/healthz")).status();
+            } catch {
+              return 0;
+            }
+          },
+          { timeout: 20000 },
+        )
         .toBe(200);
       await use({ page: await context.newPage(), baseURL });
     } finally {
@@ -138,7 +141,12 @@ test("Import and activity detail show the whole total, counting and unavailable 
     "value",
     "2000",
   );
-  await expect(result).toContainText("100 added");
+  await expect(
+    result
+      .locator(".import-stats > div")
+      .filter({ hasText: "Added" })
+      .locator("dd"),
+  ).toHaveText("100");
   await page
     .getByRole("link", { name: "Open full saved report and retry controls" })
     .click();

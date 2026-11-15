@@ -100,12 +100,25 @@ test("owner setup, private history, imports, search, preferences and Spotify con
     buffer: Buffer.from(JSON.stringify(rows)),
   });
   await page.getByRole("button", { name: "Import listening history" }).click();
-  await expect(page.locator("#import-result")).toContainText("4 added");
-  await expect(page.locator("#import-result")).toContainText("0 invalid");
+  await expect(
+    page
+      .locator("#import-result .import-stats > div")
+      .filter({ hasText: "Added" })
+      .locator("dd"),
+  ).toHaveText("4");
+  await expect(
+    page
+      .locator("#import-result .import-stats > div")
+      .filter({ hasText: "Invalid" })
+      .locator("dd"),
+  ).toHaveText("0");
   await page.getByRole("button", { name: "Import listening history" }).click();
-  await expect(page.locator("#import-result")).toContainText(
-    "4 already present",
-  );
+  await expect(
+    page
+      .locator("#import-result .import-stats > div")
+      .filter({ hasText: "Already present" })
+      .locator("dd"),
+  ).toHaveText("4");
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.locator("#total-listens")).toHaveText("3");
   await expect(page.locator("#total-tracks")).toHaveText("3");
