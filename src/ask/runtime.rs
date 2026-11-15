@@ -181,6 +181,24 @@ pub trait Engine: Send {
     fn reset(&mut self) {}
 }
 
+/// Installed when the build has no local inference runtime. It never loads a
+/// model; Ask answers only through a configured remote AI server.
+#[cfg(not(feature = "llama"))]
+pub struct UnavailableEngine;
+
+#[cfg(not(feature = "llama"))]
+impl Engine for UnavailableEngine {
+    fn load(&mut self, _spec: &ModelSpec) -> Result<(), String> {
+        Err("This build does not include the local AI runtime.".into())
+    }
+    fn unload(&mut self) {}
+    fn generate(&mut self, _prompt: &str, _cancel: &CancelToken) -> Result<String, InferenceError> {
+        Err(InferenceError::Failed(
+            "This build does not include the local AI runtime.".into(),
+        ))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RuntimeState {
     pub loaded: bool,

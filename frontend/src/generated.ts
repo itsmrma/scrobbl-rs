@@ -77,7 +77,12 @@ month: number | null, weekday: Weekday | null,
 /**
  * 0..=23, in the listen's assigned calendar timezone.
  */
-hour: number | null, source: string | null, group_by: GroupBy | null, sort_by: SortBy, order: SortOrder, limit: Limit | null, };
+hour: number | null, source: string | null, 
+/**
+ * Inclusive `YYYY-MM-DD` range in the assigned calendar. It replaces the
+ * period and the year when set.
+ */
+from: string | null, to: string | null, group_by: GroupBy | null, sort_by: SortBy, order: SortOrder, limit: Limit | null, };
 export type Metric = "plays" | "time_listened" | "distinct_tracks" | "distinct_artists" | "distinct_albums" | "first_play" | "last_play" | "streak" | "milestones" | "rank" | "share" | "listening_days";
 export type EntityKind = "artist" | "album" | "track";
 export type Entity = { kind: EntityKind, 
@@ -97,7 +102,12 @@ export type SortOrder = "asc" | "desc";
 export type Limit = "one" | "five" | "ten" | "twenty_five" | "fifty" | "hundred";
 export type Chip = { key: string, label: string, value: string, };
 export type AskStatus = "ok" | "unsupported" | "ambiguous" | "model_unavailable" | "model_missing" | "failed";
-export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, };
+export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
+/**
+ * Steps that ran before this one when the question was chained, oldest
+ * first. This response is always the last step that ran.
+ */
+earlier: Array<AskStep>, };
 export type AskResult = { metric: Metric, 
 /**
  * Count, or timestamp in milliseconds for first/last.
@@ -107,6 +117,8 @@ scalar: number | null, time: TimeCoverage | null, rows: Array<ResultRow>, first:
  * Row/result cardinality used by the deterministic card.
  */
 total: number, links: Array<ResultLink>, };
+export type AskStep = { query: Query | null, chips: Array<Chip>, result: AskResult | null, };
+export type AskPrevious = { question: string, chips: Array<Chip>, };
 export type TimeCoverage = { known_ms: number, actual_ms: number, estimated_ms: number, unknown_listens: number, unknown_percent: number, };
 export type ResultRow = { label: string, key: string, plays: number, time: TimeCoverage | null, href: string | null, };
 export type ListenPoint = { played_at_ms: number, title: string, artist: string, album: string | null, track_id: string, };
@@ -115,12 +127,28 @@ export type StreakSpan = { days: number, start: string | null, end: string | nul
 export type MilestonePoint = { count: number, reached_at_ms: number, };
 export type ResultLink = { label: string, href: string, };
 export type EntityCandidate = { id: string, name: string, subtitle: string, kind: EntityKind, };
-export type AskRequest = { question: string, context: AskContext | null, };
+export type AskRequest = { question: string, context: AskContext | null, 
+/**
+ * The answer this question follows up on, when the owner continues from it.
+ */
+previous: AskPrevious | null, };
 export type AskContext = { kind: EntityKind, id: string, };
 export type AskQueryRequest = { query: Query, };
-export type AiSettings = { enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
-export type SaveAiSettings = { enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, };
-export type AiAskStatus = { enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
+export type AiSettings = { 
+/**
+ * `local` or `remote`.
+ */
+provider: string, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { provider: string | null, remote_url: string | null, remote_model: string | null, 
+/**
+ * `None` keeps the stored key, an empty string clears it.
+ */
+remote_key: string | null, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, };
+export type AiAskStatus = { 
+/**
+ * `local` or `remote`.
+ */
+provider: string, remote_model: string | null, enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
 export type AiLicense = { name: string, url: string, };
 export type AiDownload = { repo: string, revision: string, file: string, sha256: string, size_bytes: number, };
 export type AiRequirements = { disk_bytes: number, ram_min_bytes: number, ram_recommended_bytes: number, cpu_cores: number, gpu_optional: boolean, context_tokens: number, };

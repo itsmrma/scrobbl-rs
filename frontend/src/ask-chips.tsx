@@ -105,6 +105,10 @@ function currentValue(query: Query, key: string): string {
       return query.hour === null ? "" : String(query.hour);
     case "source":
       return query.source ?? "";
+    case "from":
+      return query.from ?? "";
+    case "to":
+      return query.to ?? "";
     case "group_by":
       return query.group_by ?? "";
     case "sort_by":
@@ -178,6 +182,12 @@ export function editQuery(query: Query, key: string, value: string): Query {
       break;
     case "source":
       next.source = value.trim() === "" ? null : value.trim();
+      break;
+    case "from":
+      next.from = value.trim() === "" ? null : value.trim();
+      break;
+    case "to":
+      next.to = value.trim() === "" ? null : value.trim();
       break;
     case "group_by":
       next.group_by = value === "" ? null : (value as GroupBy);
@@ -302,6 +312,9 @@ function ChipEditor({
             chip.key === "year" || chip.key === "month" || chip.key === "hour"
               ? "numeric"
               : "text"
+          }
+          placeholder={
+            chip.key === "from" || chip.key === "to" ? "YYYY-MM-DD" : undefined
           }
           aria-label={`Edit ${chip.label}`}
           autoFocus

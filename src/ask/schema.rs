@@ -10,7 +10,7 @@ use crate::{
         dsl::{
             Entity, EntityKind, GroupBy, Limit, Metric, Period, Query, SortBy, SortOrder, Weekday,
         },
-        parser::{ParsedQuestion, unsupported_question_message},
+        parser::{Binding, ParsedQuestion, PlanStep, unsupported_question_message},
     },
     error::Result,
 };
@@ -177,6 +177,198 @@ model_enum! {
         Fifty = "fifty",
         Hundred = "hundred",
     }
+}
+
+model_enum! {
+    pub ModelSource {
+        Any = "any",
+        SpotifyImport = "spotify_import",
+        SpotifyApi = "spotify_api",
+        Listenbrainz = "listenbrainz",
+    }
+}
+
+/// Most steps a plan may have. Each step is one query Rust executes.
+pub const MAX_STEPS: usize = 4;
+
+fn no_hour() -> i64 {
+    -1
+}
+
+fn no_source() -> ModelSource {
+    ModelSource::Any
+}
+
+/// One step of the richer output the "bring your own AI" engine may emit: all
+/// the simple fields, plus an explicit date range, an hour, a source and a
+/// reference to a row of an earlier step. It is still only vocabulary: dates
+/// are validated, references are resolved by Rust and the model never sees any
+/// result.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdvancedStep {
+    #[serde(default)]
+    pub artist: String,
+    pub group_by: ModelGroupBy,
+    pub limit: ModelLimit,
+    pub metric: ModelMetric,
+    #[serde(default = "no_month")]
+    pub month: ModelMonth,
+    #[serde(default)]
+    pub name: String,
+    pub order: ModelOrder,
+    pub period: ModelPeriod,
+    pub target: ModelTarget,
+    pub weekday: ModelWeekday,
+    #[serde(default)]
+    pub year: i64,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default = "no_hour")]
+    pub hour: i64,
+    #[serde(default = "no_source")]
+    pub source: ModelSource,
+    /// Index of an earlier step whose result row this step builds on, or -1.
+    #[serde(default = "no_hour")]
+    pub ref_step: i64,
+    #[serde(default)]
+    pub ref_row: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdvancedOutput {
+    pub steps: Vec<AdvancedStep>,
+}
+
+impl AdvancedOutput {
+    pub fn into_parsed(self) -> Result<ParsedQuestion> {
+        if self.steps.is_empty() || self.steps.len() > MAX_STEPS {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: format!(
+                    "A question can take between 1 and {MAX_STEPS} steps. Try a simpler question."
+                ),
+            });
+        }
+        let mut plan = Vec::new();
+        for (index, step) in self.steps.into_iter().enumerate() {
+            let base = ModelOutput {
+                artist: step.artist,
+                group_by: step.group_by,
+                limit: step.limit,
+                metric: step.metric,
+                month: step.month,
+                name: step.name,
+                order: step.order,
+                period: step.period,
+                target: step.target,
+                weekday: step.weekday,
+                year: step.year,
+            };
+            let mut query = match base.into_parsed()? {
+                ParsedQuestion::Query(query) => query,
+                other => return Ok(other),
+            };
+            let date = |value: &str| -> Option<Option<String>> {
+                let value = value.trim();
+                if value.is_empty() {
+                    return Some(None);
+                }
+                chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                    .ok()
+                    .map(|date| Some(date.to_string()))
+            };
+            let (Some(from), Some(to)) = (date(&step.from), date(&step.to)) else {
+                return Ok(invalid_output());
+            };
+            if from.is_some() || to.is_some() {
+                // An explicit range replaces the relative period and the year.
+                query.from = from;
+                query.to = to;
+                query.period = Period::AllTime;
+                query.year = None;
+            }
+            query.hour = match step.hour {
+                -1 => None,
+                hour @ 0..=23 => Some(hour as u8),
+                _ => return Ok(invalid_output()),
+            };
+            query.source = match step.source {
+                ModelSource::Any => None,
+                other => Some(other.as_str().to_owned()),
+            };
+            let bind = match step.ref_step {
+                -1 => None,
+                earlier if (0..index as i64).contains(&earlier) => Some(Binding {
+                    step: earlier as usize,
+                    row: usize::try_from(step.ref_row.clamp(0, 99)).unwrap_or(0),
+                }),
+                _ => return Ok(invalid_output()),
+            };
+            query.validate()?;
+            plan.push(PlanStep { query, bind });
+        }
+        if plan.len() == 1 && plan[0].bind.is_none() {
+            return Ok(ParsedQuestion::Query(plan.remove(0).query));
+        }
+        Ok(ParsedQuestion::Plan(plan))
+    }
+}
+
+/// The JSON Schema sent to a remote server for strict structured output:
+/// the steps array of the richer step object.
+pub fn advanced_schema() -> Value {
+    let mut properties = match schema_json() {
+        Value::Object(mut object) => match object.remove("properties") {
+            Some(Value::Object(properties)) => properties,
+            _ => Map::new(),
+        },
+        _ => Map::new(),
+    };
+    properties.insert(
+        "from".into(),
+        json!({"type": "string", "description": "Inclusive start date YYYY-MM-DD, or an empty string."}),
+    );
+    properties.insert(
+        "to".into(),
+        json!({"type": "string", "description": "Inclusive end date YYYY-MM-DD, or an empty string."}),
+    );
+    properties.insert(
+        "hour".into(),
+        json!({"type": "integer", "description": "Local hour of day 0-23, or -1 for any."}),
+    );
+    properties.insert(
+        "source".into(),
+        enum_schema(ModelSource::VALUES, "Restrict to one data source, or any."),
+    );
+    properties.insert(
+        "ref_step".into(),
+        json!({"type": "integer", "description": "Zero-based index of an earlier step whose result row this step uses, or -1."}),
+    );
+    properties.insert(
+        "ref_row".into(),
+        json!({"type": "integer", "description": "Zero-based row of that earlier step (0 is the first row)."}),
+    );
+    let mut required: Vec<String> = properties.keys().cloned().collect();
+    required.sort();
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["steps"],
+        "properties": {
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": required,
+                    "properties": properties,
+                },
+            },
+        },
+    })
 }
 
 /// Exactly what the grammar allows the model to emit. Every field is required
@@ -652,6 +844,8 @@ impl ModelOutput {
             weekday: weekday(self.weekday),
             hour: None,
             source: None,
+            from: None,
+            to: None,
             group_by,
             sort_by,
             order: match self.order {

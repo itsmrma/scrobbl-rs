@@ -697,6 +697,8 @@ async fn page_context_scopes_a_named_song_instead_of_replacing_it() {
         weekday: None,
         hour: None,
         source: None,
+        from: None,
+        to: None,
         group_by: None,
         sort_by: SortBy::Metric,
         order: SortOrder::Desc,

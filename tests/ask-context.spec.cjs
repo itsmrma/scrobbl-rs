@@ -127,14 +127,17 @@ const test = base.extend({
     page.on("pageerror", (error) => errors.push(error.message));
     try {
       await expect
-        .poll(async () => {
-          if (child.exitCode !== null) throw new Error(logs);
-          try {
-            return (await context.request.get("/healthz")).status();
-          } catch {
-            return 0;
-          }
-        }, { timeout: 20000 })
+        .poll(
+          async () => {
+            if (child.exitCode !== null) throw new Error(logs);
+            try {
+              return (await context.request.get("/healthz")).status();
+            } catch {
+              return 0;
+            }
+          },
+          { timeout: 20000 },
+        )
         .toBe(200);
       await page.goto("/");
       await page.getByLabel("Username", { exact: true }).fill("owner");
@@ -501,3 +504,53 @@ test("the global Ask page and AI Settings stay usable at 390px without horizonta
   expect(overflow).toBe(false);
 });
 
+test("a remote AI can chain steps and continue from the previous answer", async ({
+  archive: { page, artist, track },
+}) => {
+  await page.route("**/api/v1/ask/status", (route) =>
+    route.fulfill({
+      json: { ...readyStatus, provider: "remote", remote_model: "my-model" },
+    }),
+  );
+  const requests = [];
+  await page.route("**/api/v1/ask", async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    const entity = { kind: "artist", id: artist.id, name: artist.name };
+    const first = okResponse({ ...entity, trackId: track.id });
+    await route.fulfill({
+      json: {
+        ...first,
+        question: body.question,
+        earlier:
+          requests.length === 1
+            ? [{ query: first.query, chips: first.chips, result: first.result }]
+            : [],
+      },
+    });
+  });
+
+  await page.goto("/ask");
+  const input = page.getByLabel("Your question", { exact: true });
+  await input.fill("In my top month, which track?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.getByText("Step 1 of 2")).toBeVisible();
+  await expect(page.getByText("Step 2 of 2")).toBeVisible();
+  expect(requests[0].previous).toBeUndefined();
+
+  // The next question continues from this answer unless the owner opts out.
+  const follow = page.getByLabel("Continue from the previous answer");
+  await expect(follow).toBeChecked();
+  await input.fill("and last year?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".ask-result")).toHaveCount(1);
+  expect(requests[1].previous.question).toBe("In my top month, which track?");
+  expect(requests[1].previous.chips.length).toBeGreaterThan(0);
+  expect(requests[1].previous.results).toBeUndefined();
+
+  await follow.uncheck();
+  await input.fill("something else");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.locator(".ask-result")).toHaveCount(1);
+  expect(requests[2].previous).toBeUndefined();
+});

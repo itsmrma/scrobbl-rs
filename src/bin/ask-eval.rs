@@ -463,6 +463,10 @@ fn observation_from_generation(generation: &Generation) -> Observation {
         Ok(ParsedQuestion::Query(query)) => {
             observation.slots = Slots::from_query(&query);
         }
+        // The local model's schema has no steps.
+        Ok(ParsedQuestion::Plan(_)) => {
+            observation.error = Some("validation: unexpected plan".into());
+        }
         Err(error) => {
             observation.error = Some(format!("validation: {error}"));
         }

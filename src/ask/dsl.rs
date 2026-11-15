@@ -25,6 +25,12 @@ pub struct Query {
     /// 0..=23, in the listen's assigned calendar timezone.
     pub hour: Option<u8>,
     pub source: Option<String>,
+    /// Inclusive `YYYY-MM-DD` range in the assigned calendar. It replaces the
+    /// period and the year when set.
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
     pub group_by: Option<GroupBy>,
     pub sort_by: SortBy,
     pub order: SortOrder,
@@ -296,6 +302,23 @@ impl Query {
                 return Err(AppError::BadRequest("The source is too long.".into()));
             }
         }
+        let parse = |value: &Option<String>, name: &str| -> Result<Option<chrono::NaiveDate>> {
+            value
+                .as_deref()
+                .map(|value| {
+                    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| {
+                        AppError::BadRequest(format!("Use the {name} date as YYYY-MM-DD."))
+                    })
+                })
+                .transpose()
+        };
+        if let (Some(from), Some(to)) = (parse(&self.from, "from")?, parse(&self.to, "to")?)
+            && from > to
+        {
+            return Err(AppError::BadRequest(
+                "The from date must not be after the to date.".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -325,6 +348,12 @@ impl Query {
         }
         if let Some(month) = self.month {
             chips.push(chip("month", "Month", month.to_string()));
+        }
+        if let Some(from) = &self.from {
+            chips.push(chip("from", "From", from.clone()));
+        }
+        if let Some(to) = &self.to {
+            chips.push(chip("to", "To", to.clone()));
         }
         if let Some(weekday) = self.weekday {
             chips.push(chip("weekday", "Weekday", weekday.label()));
@@ -388,6 +417,8 @@ mod tests {
             weekday: None,
             hour: None,
             source: None,
+            from: None,
+            to: None,
             group_by: None,
             sort_by: SortBy::Metric,
             order: SortOrder::Desc,

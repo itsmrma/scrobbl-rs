@@ -6158,6 +6158,26 @@ dialog.artwork-lightbox {
   text-underline-offset: 3px;
 }
 
+.ask-table tbody th a .icon,
+.ask-table tbody th a .material-icons-outlined {
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.ask-chart-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ask-chart-link:hover .bar,
+.ask-chart-link:focus-visible .bar {
+  filter: brightness(1.12);
+}
+
+.ask-table-name::first-letter {
+  text-transform: uppercase;
+}
+
 .ask-table-value {
   text-align: right;
   font-variant-numeric: tabular-nums;
@@ -6908,4 +6928,12 @@ dialog.artwork-lightbox {
     flex: 1 1 100%;
     justify-content: center;
   }
+}
+
+.ask-follow-up {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  font-size: 13px;
 }

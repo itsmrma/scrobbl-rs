@@ -7,6 +7,7 @@ pub mod grouping;
 pub mod names;
 pub mod parser;
 pub mod prompt;
+pub mod remote;
 pub mod runtime;
 pub mod schema;
 pub mod streaks;
@@ -16,7 +17,7 @@ use crate::{
     AppState, ai,
     ask::{
         dsl::{Chip, Entity, EntityKind, Metric, Query},
-        parser::{ParsedQuestion, QueryParser, StubParser, UnavailableParser},
+        parser::{ParsedQuestion, PlanStep, Previous, QueryParser, StubParser, UnavailableParser},
     },
     auth,
     error::Result,
@@ -47,6 +48,27 @@ pub struct AskResponse {
     pub message: Option<String>,
     pub candidates: Vec<EntityCandidate>,
     pub runtime_available: bool,
+    /// Steps that ran before this one when the question was chained, oldest
+    /// first. This response is always the last step that ran.
+    pub earlier: Vec<AskStep>,
+}
+
+/// An answered step of a chained question.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct AskStep {
+    pub query: Option<Query>,
+    pub chips: Vec<Chip>,
+    pub result: Option<AskResult>,
+}
+
+impl From<AskResponse> for AskStep {
+    fn from(response: AskResponse) -> Self {
+        Self {
+            query: response.query,
+            chips: response.chips,
+            result: response.result,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -130,6 +152,34 @@ pub struct AskRequest {
     pub question: String,
     #[serde(default)]
     pub context: Option<AskContext>,
+    /// The answer this question follows up on, when the owner continues from it.
+    #[serde(default)]
+    pub previous: Option<AskPrevious>,
+}
+
+/// The previous question and its interpretation chips. Results are never sent
+/// to the model.
+#[derive(Clone, Debug, Deserialize, TS)]
+pub struct AskPrevious {
+    pub question: String,
+    pub chips: Vec<Chip>,
+}
+
+impl AskPrevious {
+    /// Bounded copy for the prompt: a follow-up cannot be used to smuggle a
+    /// large payload to the AI server.
+    fn sanitized(&self) -> Previous {
+        let clip = |text: &str, max: usize| text.chars().take(max).collect::<String>();
+        Previous {
+            question: clip(self.question.trim(), 500),
+            interpretation: self
+                .chips
+                .iter()
+                .take(20)
+                .map(|chip| (clip(&chip.label, 40), clip(&chip.value, 200)))
+                .collect(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, TS)]
@@ -177,19 +227,13 @@ impl Ask {
     /// or the unavailable parser in a `--no-default-features` build. No model
     /// is loaded here.
     pub fn installed(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
-        #[cfg(feature = "llama")]
-        {
-            Self {
-                parser: Arc::new(parser::ModelParser::local(db, data_dir)),
-                runtime_available: true,
-                model_ready: true,
-                local: true,
-            }
-        }
-        #[cfg(not(feature = "llama"))]
-        {
-            let _ = (db, data_dir);
-            Self::unavailable()
+        Self {
+            parser: Arc::new(parser::ModelParser::local(db, data_dir)),
+            // Without the `llama` feature only a remote AI server can answer;
+            // the gate checks the provider before this flag.
+            runtime_available: cfg!(feature = "llama"),
+            model_ready: true,
+            local: true,
         }
     }
 
@@ -228,6 +272,14 @@ impl Ask {
     pub async fn parse(&self, question: &str) -> Result<ParsedQuestion> {
         self.parser.parse(question).await
     }
+
+    pub async fn parse_follow_up(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+    ) -> Result<ParsedQuestion> {
+        self.parser.parse_follow_up(question, previous).await
+    }
 }
 
 pub async fn ask(
@@ -251,11 +303,21 @@ pub async fn ask(
             message: Some("Please write a question about your music archive.".into()),
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
         }));
     }
-    let parsed = state.ask.parse(&question).await?;
+    let previous = request.previous.as_ref().map(AskPrevious::sanitized);
+    let parsed = state
+        .ask
+        .parse_follow_up(&question, previous.as_ref())
+        .await?;
     let query = match parsed {
         ParsedQuestion::Query(query) => query,
+        ParsedQuestion::Plan(steps) => {
+            return Ok(Json(
+                run_plan(&state, question, steps, request.context).await?,
+            ));
+        }
         ParsedQuestion::Unsupported { reason } => {
             return Ok(Json(AskResponse {
                 status: AskStatus::Unsupported,
@@ -266,6 +328,7 @@ pub async fn ask(
                 message: Some(reason),
                 candidates: Vec::new(),
                 runtime_available: state.ask.runtime_available,
+                earlier: Vec::new(),
             }));
         }
     };
@@ -284,6 +347,130 @@ pub async fn query(
     Ok(Json(run(&state, String::new(), request.query, None).await?))
 }
 
+/// Run a chained question step by step. A step that builds on an earlier one
+/// takes that step's row from the executed result, never from the model.
+async fn run_plan(
+    state: &AppState,
+    question: String,
+    steps: Vec<PlanStep>,
+    context: Option<AskContext>,
+) -> Result<AskResponse> {
+    let total = steps.len();
+    let mut done: Vec<AskResponse> = Vec::new();
+    for (index, step) in steps.into_iter().enumerate() {
+        let mut query = step.query;
+        if let Some(bind) = step.bind
+            && let Err(message) = bind_step(&mut query, done.get(bind.step), bind.step, bind.row)
+        {
+            return Ok(AskResponse {
+                status: AskStatus::Failed,
+                question,
+                chips: query.chips(),
+                query: Some(query),
+                result: None,
+                message: Some(message),
+                candidates: Vec::new(),
+                runtime_available: state.ask.runtime_available,
+                earlier: done.into_iter().map(AskStep::from).collect(),
+            });
+        }
+        let page = if index == 0 { context.clone() } else { None };
+        let mut response = run(state, question.clone(), query, page).await?;
+        if response.status != AskStatus::Ok || index + 1 == total {
+            response.earlier = done.into_iter().map(AskStep::from).collect();
+            return Ok(response);
+        }
+        done.push(response);
+    }
+    Err(crate::error::AppError::Internal)
+}
+
+/// Fill a step's entity or dates from one row of an earlier step's result.
+fn bind_step(
+    query: &mut Query,
+    earlier: Option<&AskResponse>,
+    step: usize,
+    row: usize,
+) -> std::result::Result<(), String> {
+    let number = step + 1;
+    let (Some(source), Some(result)) = (
+        earlier.and_then(|response| response.query.as_ref()),
+        earlier.and_then(|response| response.result.as_ref()),
+    ) else {
+        return Err(format!(
+            "Step {number} did not produce a result to build on."
+        ));
+    };
+    let Some(group) = source.group_by else {
+        return Err(format!(
+            "Step {number} did not group its answer, so there is no row to build on."
+        ));
+    };
+    let Some(found) = result.rows.get(row) else {
+        return Err(format!("Step {number} has no row {} to build on.", row + 1));
+    };
+    // A chained step carries forward what the earlier step filtered on and
+    // this step left unset ("that month" still means that artist's month).
+    if query.entity.is_none() && query.scope.is_none() {
+        query.entity = source.entity.clone();
+    }
+    if query.period == dsl::Period::AllTime
+        && query.year.is_none()
+        && query.from.is_none()
+        && query.to.is_none()
+    {
+        query.period = source.period;
+        query.year = source.year;
+        query.from = source.from.clone();
+        query.to = source.to.clone();
+    }
+    query.month = query.month.or(source.month);
+    query.weekday = query.weekday.or(source.weekday);
+    query.hour = query.hour.or(source.hour);
+    query.source = query.source.clone().or_else(|| source.source.clone());
+    use dsl::GroupBy;
+    match group {
+        GroupBy::Artist | GroupBy::Album | GroupBy::Track => {
+            if found.key == "unknown-album" {
+                return Err(format!("Row {} of step {number} has no album.", row + 1));
+            }
+            query.entity = Some(Entity {
+                kind: match group {
+                    GroupBy::Artist => EntityKind::Artist,
+                    GroupBy::Album => EntityKind::Album,
+                    _ => EntityKind::Track,
+                },
+                name: found.label.clone(),
+                id: Some(found.key.clone()),
+            });
+            query.scope = None;
+        }
+        GroupBy::Day | GroupBy::Month | GroupBy::Year | GroupBy::Week => {
+            let (from, to) = execute::bucket_range(group, &found.label)
+                .ok_or_else(|| format!("Row {} of step {number} is not a date.", row + 1))?;
+            query.from = Some(from);
+            query.to = Some(to);
+            query.period = dsl::Period::AllTime;
+            query.year = None;
+            query.month = None;
+        }
+        GroupBy::Weekday => {
+            query.weekday = serde_json::from_value(serde_json::Value::String(found.key.clone()))
+                .map(Some)
+                .map_err(|_| format!("Row {} of step {number} is not a weekday.", row + 1))?;
+        }
+        GroupBy::Hour => {
+            query.hour = found
+                .label
+                .get(..2)
+                .and_then(|hour| hour.parse::<u8>().ok())
+                .map(Some)
+                .ok_or_else(|| format!("Row {} of step {number} is not an hour.", row + 1))?;
+        }
+    }
+    Ok(())
+}
+
 async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
     let stored = ai::read_settings(state).await?;
     if !stored.enabled {
@@ -292,6 +479,17 @@ async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
             AskStatus::ModelUnavailable,
             "AI is off. Enable it in Settings to ask questions.",
         )));
+    }
+    if stored.uses_remote() {
+        // Your own AI server: nothing to load or install locally.
+        if !stored.remote_configured() {
+            return Ok(Some(refusal(
+                state,
+                AskStatus::ModelMissing,
+                "Enter the address and model name of your AI server in Settings before asking questions.",
+            )));
+        }
+        return Ok(None);
     }
     if !state.ask.runtime_available {
         return Ok(Some(refusal(
@@ -336,6 +534,7 @@ fn refusal(state: &AppState, status: AskStatus, message: &str) -> AskResponse {
         message: Some(message.into()),
         candidates: Vec::new(),
         runtime_available: state.ask.runtime_available,
+        earlier: Vec::new(),
     }
 }
 
@@ -358,6 +557,7 @@ async fn run(
         message: Some(message),
         candidates: Vec::new(),
         runtime_available: state.ask.runtime_available,
+        earlier: Vec::new(),
     };
 
     // The page context is what the owner is looking at. It answers questions
@@ -446,6 +646,7 @@ async fn run(
                     ),
                     candidates,
                     runtime_available: state.ask.runtime_available,
+                    earlier: Vec::new(),
                 });
             }
             names::Resolution::NotFound => {
@@ -509,6 +710,7 @@ async fn run(
                         ),
                         candidates,
                         runtime_available: state.ask.runtime_available,
+                        earlier: Vec::new(),
                     });
                 }
                 names::Resolution::NotFound => {
@@ -544,6 +746,7 @@ async fn run(
             message: Some(message),
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
         }),
         execute::Outcome::Result(result) => Ok(AskResponse {
             status: AskStatus::Ok,
@@ -554,6 +757,7 @@ async fn run(
             message: None,
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
         }),
     }
 }

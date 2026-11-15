@@ -33,6 +33,7 @@ import type {
   DiscoveryRatio,
   ListeningCalendar,
   ListeningMilestones,
+  AskPrevious,
   AskResponse,
   Query,
   AiSettings,
@@ -412,8 +413,16 @@ export const api = {
   milestones: (params: URLSearchParams) =>
     request<ListeningMilestones>(`/api/v1/consultation/milestones?${params}`),
   askStatus: () => request<AiAskStatus>("/api/v1/ask/status"),
-  ask: (question: string, context: { kind: string; id: string } | null) =>
-    post<AskResponse>("/api/v1/ask", { question, context }),
+  ask: (
+    question: string,
+    context: { kind: string; id: string } | null,
+    previous: AskPrevious | null = null,
+  ) =>
+    post<AskResponse>("/api/v1/ask", {
+      question,
+      context,
+      ...(previous ? { previous } : {}),
+    }),
   askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
