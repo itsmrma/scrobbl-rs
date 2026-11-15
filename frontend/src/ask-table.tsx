@@ -7,7 +7,7 @@ import type {
   TimeCoverage,
 } from "./generated";
 import { Link } from "./navigation";
-import { number } from "./ui";
+import { Icon, number } from "./ui";
 
 const temporalGroups: GroupBy[] = [
   "day",
@@ -60,7 +60,7 @@ function formatDate(value: string, options: Intl.DateTimeFormatOptions) {
   return Number.isNaN(date.getTime()) ? value : formatter.format(date);
 }
 
-function bucketLabel(row: ResultRow, groupBy: GroupBy) {
+export function bucketLabel(row: ResultRow, groupBy: GroupBy) {
   switch (groupBy) {
     case "day":
       return formatDate(row.label, {
@@ -96,6 +96,21 @@ export function AskResultRows({
   if (result.rows.length === 0) return null;
   const groupBy = query.group_by;
   if (groupBy && temporalGroups.includes(groupBy)) {
+    // A ranking ("which day…") is a short list to read and open, not a
+    // timeline: only chronological or long results are drawn as bars.
+    if (query.sort_by === "metric" && result.rows.length <= 12) {
+      return (
+        <CategoricalTable
+          rows={result.rows.map((row) => ({
+            ...row,
+            label: bucketLabel(row, groupBy),
+          }))}
+          metric={result.metric}
+          groupBy={groupBy}
+          nameHeader={groupLabels[groupBy]}
+        />
+      );
+    }
     return (
       <TemporalRows
         rows={result.rows}
@@ -117,10 +132,12 @@ function CategoricalTable({
   rows,
   metric,
   groupBy,
+  nameHeader = "Name",
 }: {
   rows: ResultRow[];
   metric: Metric;
   groupBy: GroupBy;
+  nameHeader?: string;
 }) {
   const metricLabel = metricLabels[metric];
   const noun = groupLabels[groupBy];
@@ -137,7 +154,9 @@ function CategoricalTable({
         </caption>
         <thead>
           <tr>
-            <th scope="col">Name</th>
+            <th scope="col" className="ask-table-name">
+              {nameHeader}
+            </th>
             <th scope="col">{metricLabel}</th>
             <th scope="col">Known time</th>
           </tr>
@@ -146,7 +165,14 @@ function CategoricalTable({
           {rows.map((row) => (
             <tr key={row.key}>
               <th scope="row">
-                {row.href ? <Link to={row.href}>{row.label}</Link> : row.label}
+                {row.href ? (
+                  <Link to={row.href}>
+                    {row.label}
+                    <Icon>chevron_right</Icon>
+                  </Link>
+                ) : (
+                  row.label
+                )}
               </th>
               <td className="ask-table-value">{number.format(row.plays)}</td>
               <td className="ask-table-time">{coverageText(row.time)}</td>
@@ -184,13 +210,8 @@ function TemporalRows({
           {rows.map((row) => {
             const label = bucketLabel(row, groupBy);
             const height = Math.max(2, (row.plays / max) * 100);
-            return (
-              <div
-                className="chart-segment"
-                key={row.key}
-                role="group"
-                aria-label={`${label}: ${number.format(row.plays)} ${metricLabels[metric]}`}
-              >
+            const segment = (
+              <>
                 <span className="bar-space">
                   <span className="bar" style={{ height: `${height}%` }}>
                     <span className="actual-bar" style={{ flex: 1 }} />
@@ -200,6 +221,25 @@ function TemporalRows({
                 <small className="chart-bar-value">
                   {number.format(row.plays)}
                 </small>
+              </>
+            );
+            return row.href ? (
+              <Link
+                className="chart-segment ask-chart-link"
+                key={row.key}
+                to={row.href}
+                aria-label={`${label}: ${number.format(row.plays)} ${metricLabels[metric]}. Open these listens`}
+              >
+                {segment}
+              </Link>
+            ) : (
+              <div
+                className="chart-segment"
+                key={row.key}
+                role="group"
+                aria-label={`${label}: ${number.format(row.plays)} ${metricLabels[metric]}`}
+              >
+                {segment}
               </div>
             );
           })}

@@ -593,3 +593,63 @@ async fn ask_query_refuses_grouping_for_unsupported_metrics() {
         );
     }
 }
+
+#[tokio::test]
+async fn grouped_answers_link_to_the_listens_behind_them() {
+    let (_dir, state, token) = setup().await;
+    save(&state.storage, &fixture()).await;
+
+    let href = |body: &Value, row: usize| {
+        body["result"]["rows"][row]["href"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let day = run(&state, &token, grouped("plays", "day")).await;
+    assert_eq!(
+        href(&day, 0),
+        "/history?period=custom&from=2024-01-01&to=2024-01-01"
+    );
+    let month = run(&state, &token, grouped("plays", "month")).await;
+    assert_eq!(
+        href(&month, 1),
+        "/history?period=custom&from=2024-02-01&to=2024-02-29"
+    );
+    let year = run(&state, &token, grouped("plays", "year")).await;
+    assert_eq!(
+        href(&year, 0),
+        "/history?period=custom&from=2024-01-01&to=2024-12-31"
+    );
+    let week = run(&state, &token, grouped("plays", "week")).await;
+    assert!(href(&week, 0).starts_with("/history?period=all&bucket=week&bucket_start="));
+    let weekday = run(&state, &token, grouped("plays", "weekday")).await;
+    assert!(href(&weekday, 0).starts_with("/history?period=all&weekday="));
+
+    // A multi-row answer also links to the whole selection.
+    let links = day["result"]["links"].as_array().unwrap();
+    assert!(
+        links
+            .iter()
+            .any(|link| link["label"] == "See these listens"
+                && link["href"] == "/history?period=all")
+    );
+
+    // The top day of one artist keeps the artist filter.
+    let mut top = grouped("plays", "day");
+    top["entity"] = json!({"kind": "artist", "name": "Björk", "id": null});
+    top["sort_by"] = json!("metric");
+    top["order"] = json!("desc");
+    top["limit"] = json!("one");
+    let body = run(&state, &token, top).await;
+    assert_eq!(body["result"]["rows"].as_array().unwrap().len(), 1);
+    let link = href(&body, 0);
+    assert!(link.starts_with("/history?artist="), "{link}");
+    assert!(link.contains("&period=custom&from="), "{link}");
+    assert!(
+        body["result"]["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|l| l["label"] == "See these listens" && l["href"] == link.as_str())
+    );
+}

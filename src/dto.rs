@@ -394,6 +394,8 @@ mod tests {
             crate::ask::AskStatus::decl(&config),
             crate::ask::AskResponse::decl(&config),
             crate::ask::AskResult::decl(&config),
+            crate::ask::AskStep::decl(&config),
+            crate::ask::AskPrevious::decl(&config),
             crate::ask::TimeCoverage::decl(&config),
             crate::ask::ResultRow::decl(&config),
             crate::ask::ListenPoint::decl(&config),

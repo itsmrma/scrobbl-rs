@@ -15,9 +15,11 @@ is no model load, no inference and no network request related to AI.
 The model never sees archive rows. The Rust prompt contains only the question,
 the supported DSL vocabulary and examples; the model emits DSL JSON constrained
 by a grammar. Rust executes that DSL against the canonical consultation
-selection and computes every number. There is no cloud AI call and no
+selection and computes every number. By default there is no cloud AI call and no
 telemetry. The only additional outbound request is the model file download from
-the pinned catalog URL, started explicitly by the owner. Questions and results
+the pinned catalog URL, started explicitly by the owner. The one exception is
+the opt-in [bring your own AI](#bring-your-own-ai) engine, which sends the
+question text to a server the owner names. Questions and results
 stay in the instance. Model files are treated as untrusted input, are verified
 by SHA-256 before use and cannot inject SQL.
 
@@ -33,6 +35,10 @@ archive writer after `auth::require_write` (owner session + CSRF).
 | `ai_threads` | `"4"` | inference thread count (1–64) |
 | `ai_unload_minutes` | `"15"` | idle unload delay (1–1440 minutes) |
 | `ai_model_dir` | `""` | optional absolute model folder; empty means `<data_dir>/models` |
+| `ai_provider` | `"local"` | `local` (downloaded model) or `remote` (own AI server or API) |
+| `ai_remote_url` | `""` | OpenAI-compatible base URL, e.g. `http://192.168.1.20:11434/v1` |
+| `ai_remote_model` | `""` | model name sent to that server |
+| `ai_remote_key` | `""` | optional API key; stored like the Spotify client secret and never returned (`remote_key_set` only) |
 
 Enabling AI does not download anything. If no model is installed the settings
 response says so explicitly. Disabling AI cancels active model downloads so no
@@ -42,6 +48,68 @@ further network transfer continues.
 and `model_loading`. `model_ready` is filesystem truth for the selected model;
 `model_loading` comes from the live inference worker and is true only while a
 load is in progress.
+
+## Bring your own AI
+
+Instead of downloading a model, the owner can point Ask at an AI server they
+already run or pay for. Choose **My own AI server or API** under Settings → AI,
+then enter the address, the model name and, if needed, an API key. Any server
+that implements the OpenAI `POST {base}/chat/completions` protocol works:
+Ollama, LM Studio, llama.cpp `llama-server`, vLLM, or a hosted API (OpenAI,
+OpenRouter, Groq, Together, ...). Tools that are not themselves an
+OpenAI-compatible server (for example the OpenCode CLI) cannot be used directly;
+use the provider endpoint behind them.
+
+What changes and what does not:
+
+- The server receives the system prompt (the Ask vocabulary and examples) and
+  the question text. It never receives archive rows, names from the library,
+  numbers or results. Rust still validates the reply, resolves names and
+  computes every number, so a remote model can only pick vocabulary, exactly
+  like the local one.
+- The request asks for schema-constrained JSON (`response_format: json_schema`).
+  A server that answers 400/422 is retried with `json_object`, then without
+  `response_format`; the JSON is extracted from the reply even when it comes
+  inside a Markdown fence or after a reasoning block.
+- With the remote engine nothing is downloaded or loaded and the build does not
+  need the llama runtime. Ask works in a `--no-default-features` build.
+- The address must be `http://` or `https://`, may be on the private network and
+  may not contain credentials. The key is sent only as a bearer token to that
+  address and is never returned by the API, logged or echoed in errors.
+- **Test connection** sends one sample question and reports the result.
+
+### What a stronger model can do
+
+The remote engine uses a richer prompt and schema than the local one. The model
+still only emits typed vocabulary; it never reads the archive or any result.
+
+- **Chained questions.** The reply is `{"steps": [...]}` with up to 4 steps. A
+  step may set `ref_step` and `ref_row` to build on one row of an earlier step:
+  the artist, album or track when that step grouped by artist, album or track,
+  or the dates, weekday or hour when it grouped by day, week, month, year,
+  weekday or hour. Rust executes the steps in order, reads the row itself and
+  fills the entity or range. A step also inherits the earlier step's filters
+  that it leaves unset ("that month" keeps meaning that artist). Example: "in
+  the month I listened to Ado the most, what was my top track?" is two steps.
+  A step that cannot bind (the earlier one was not grouped, or has no such row)
+  fails with an explanation and the earlier steps stay visible.
+- **Precise questions.** Besides the usual fields a step can carry an inclusive
+  `from`/`to` date range (`YYYY-MM-DD`, validated), an `hour` (0-23, local
+  time) and a `source` (`spotify_import`, `spotify_api`, `listenbrainz`). The
+  range replaces the period and the year and appears as editable chips.
+- **Follow-ups.** After an answer, "Continue from the previous answer" (on by
+  default with a remote AI) sends the previous question and its interpretation
+  chips, so "and last year?" or "what about Radiohead?" work. Results are never
+  sent; the question is clipped to 500 characters and at most 20 chips are
+  sent.
+- Every answer, including each step, links to the listens it was computed from.
+  Editing a chip re-runs that single step.
+
+A reply that is a single flat interpretation (what the local model emits) is
+still accepted. The local model keeps its smaller grammar and does not chain.
+- Quality depends on the model. Small models may misread a question; the
+  interpretation chips stay editable. A hosted provider sees every question you
+  ask, so enabling it is an explicit, saved consent.
 
 ## Curated catalog
 
@@ -388,3 +456,7 @@ target verdict are in the [evaluation report](reports/ask-eval.md).
 - `POST /api/v1/ai/test` — reports runtime/model readiness without loading or
   running inference.
 - `GET /api/v1/ask/status` — enabled/runtime/model-ready state for the Ask page.
+- `POST /api/v1/ai/settings` also accepts `provider`, `remote_url`,
+  `remote_model` and `remote_key` (omit it to keep the stored key, send `""` to
+  clear it). `POST /api/v1/ai/test` contacts the remote server when
+  `provider` is `remote`.

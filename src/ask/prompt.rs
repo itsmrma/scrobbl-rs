@@ -11,7 +11,7 @@ pub const THINKING_PREFIX: &str = "<|im_start|>assistant\n<think>\n\n</think>\n\
 
 /// The schema without descriptions and metadata: the rules below explain each
 /// field, and the grammar enforces the full schema anyway.
-fn compact_schema() -> serde_json::Value {
+pub fn response_schema() -> serde_json::Value {
     let mut schema = schema::schema_json();
     if let Some(object) = schema.as_object_mut() {
         for key in ["$id", "$schema", "title", "description"] {
@@ -32,7 +32,7 @@ fn compact_schema() -> serde_json::Value {
 }
 
 pub fn system_prompt() -> String {
-    let schema = compact_schema();
+    let schema = response_schema();
     format!(
         "You translate exactly one music-listening question into exactly one JSON object.\n\
          The listening archive is never shown to you. You never write SQL, code, prose or explanations, and you cannot read raw rows.\n\
@@ -73,6 +73,160 @@ pub fn system_prompt() -> String {
          Q: Scrivi una poesia sui miei ascolti oppure elenca le righe in SQL.\n\
          A: {{\"artist\":\"\",\"group_by\":\"none\",\"limit\":\"none\",\"metric\":\"unsupported\",\"month\":\"none\",\"name\":\"\",\"order\":\"desc\",\"period\":\"all_time\",\"target\":\"none\",\"weekday\":\"any\",\"year\":0}}\n"
     )
+}
+
+/// The naming and refusal rules both engines share, taken from the compact
+/// prompt so the two can never drift apart.
+fn shared_rules() -> String {
+    let prompt = system_prompt();
+    let start = prompt.find("Rules:\n").unwrap_or(0);
+    let end = prompt.find("Examples:\n").unwrap_or(prompt.len());
+    prompt[start..end].trim_end().to_owned()
+}
+
+/// One example step in the richer output, written out in full.
+#[allow(clippy::too_many_arguments)]
+fn example_step(
+    group_by: &str,
+    limit: &str,
+    metric: &str,
+    name: &str,
+    target: &str,
+    year: i64,
+    range: (&str, &str),
+    hour: i64,
+    reference: (i64, i64),
+) -> serde_json::Value {
+    serde_json::json!({
+        "artist": "", "group_by": group_by, "limit": limit, "metric": metric,
+        "month": "none", "name": name, "order": "desc", "period": "all_time",
+        "target": target, "weekday": "any", "year": year,
+        "from": range.0, "to": range.1, "hour": hour, "source": "any",
+        "ref_step": reference.0, "ref_row": reference.1,
+    })
+}
+
+fn example(question: &str, steps: Vec<serde_json::Value>) -> String {
+    format!(
+        "Q: {question}\nA: {}\n",
+        serde_json::json!({ "steps": steps })
+    )
+}
+
+/// The system prompt for the stronger "bring your own AI" engine. It may emit
+/// several steps, an explicit date range, an hour, a source and references to
+/// earlier steps, and it can see the previous question for follow-ups.
+pub fn remote_system_prompt() -> String {
+    let rules = shared_rules();
+    let max = schema::MAX_STEPS;
+    let vocabulary = serde_json::to_string(&vocabulary_schema()).unwrap_or_default();
+    let none = ("", "");
+    let examples = [
+        example(
+            "How many times did I listen to Björk?",
+            vec![example_step(
+                "none",
+                "none",
+                "plays",
+                "Björk",
+                "artist",
+                0,
+                none,
+                -1,
+                (-1, 0),
+            )],
+        ),
+        example(
+            "In the month I listened to Ado the most, what was my top track?",
+            vec![
+                example_step(
+                    "month",
+                    "one",
+                    "plays",
+                    "Ado",
+                    "artist",
+                    0,
+                    none,
+                    -1,
+                    (-1, 0),
+                ),
+                example_step("track", "one", "plays", "", "none", 0, none, -1, (0, 0)),
+            ],
+        ),
+        example(
+            "Compare my plays of Ado in 2023 and 2024.",
+            vec![
+                example_step(
+                    "none",
+                    "none",
+                    "plays",
+                    "Ado",
+                    "artist",
+                    2023,
+                    none,
+                    -1,
+                    (-1, 0),
+                ),
+                example_step(
+                    "none",
+                    "none",
+                    "plays",
+                    "Ado",
+                    "artist",
+                    2024,
+                    none,
+                    -1,
+                    (-1, 0),
+                ),
+            ],
+        ),
+        example(
+            "Top 5 songs between 3 March and 9 April 2024, after 10pm.",
+            vec![example_step(
+                "track",
+                "five",
+                "plays",
+                "",
+                "none",
+                0,
+                ("2024-03-03", "2024-04-09"),
+                22,
+                (-1, 0),
+            )],
+        ),
+    ]
+    .concat();
+    format!(
+        "You translate one music-listening question into a JSON object {{\"steps\": [...]}} of 1 to {max} steps.\n\
+         The listening archive is never shown to you. You never write SQL, code, prose or explanations, and you cannot read raw rows or results. A step is a query that the application runs itself and answers with exact numbers.\n\
+         Output JSON only. Every step has all of these fields: artist, group_by, limit, metric, month, name, order, period, target, weekday, year, from, to, hour, source, ref_step, ref_row. Schema: {vocabulary}\n\
+         {rules}\n\
+         Steps:\n\
+         - Use one step whenever one query answers the question. Use more only to chain: when a later question depends on the answer of an earlier one, or to compare several things.\n\
+         - ref_step is -1 unless the step depends on an earlier step; then it is the zero-based index of that step and ref_row the zero-based row (0 is the top row). The application replaces the artist, album or track with that row when the earlier step grouped by artist, album or track, and the dates, weekday or hour with that row when it grouped by day, week, month, year, weekday or hour. Such a step leaves name empty and artist empty, and wherever it leaves them unset it inherits the artist, album, track, period and other filters of the step it references, so do not repeat them.\n\
+         - To get the top row of an earlier step, make that step a top-N: group_by set, limit \"one\" (or larger for the n-th row), order \"desc\".\n\
+         - To compare two things (two artists, two years), use one step for each, without references.\n\
+         - from and to are inclusive YYYY-MM-DD dates for an explicit range (\"between 3 March and 9 April 2024\", \"since January 2023\"); leave both empty when a period, year or month is enough. hour is 0-23 in the listener's local time, or -1. source is any unless the question names Spotify import, Spotify collection (spotify_api) or ListenBrainz.\n\
+         - A \"Previous question\" may be shown with its interpretation. If the new question is a follow-up that needs it (\"and last year?\", \"what about Radiohead?\", \"and by month?\"), output the complete new interpretation: keep what still applies and change only what the follow-up changes. If the new question stands on its own, ignore the previous one.\n\
+         Examples (Q: question, A: answer):\n\
+         {examples}"
+    )
+}
+
+/// The richer schema without descriptions, to keep the prompt short.
+fn vocabulary_schema() -> serde_json::Value {
+    let mut schema = schema::advanced_schema();
+    if let Some(properties) = schema
+        .pointer_mut("/properties/steps/items/properties")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for property in properties.values_mut() {
+            if let Some(property) = property.as_object_mut() {
+                property.remove("description");
+            }
+        }
+    }
+    schema
 }
 
 /// Build the complete ChatML prompt. The empty thinking block is part of the

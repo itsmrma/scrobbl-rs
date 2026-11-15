@@ -29,8 +29,39 @@ pub fn runtime_available() -> bool {
     cfg!(feature = "llama")
 }
 
+/// Where questions are interpreted: the downloaded local model, or an
+/// OpenAI-compatible server the owner already runs or pays for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Provider {
+    #[default]
+    Local,
+    Remote,
+}
+
+impl Provider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Remote => "remote",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "remote" => Some(Self::Remote),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
+    pub provider: Provider,
+    pub remote_url: Option<String>,
+    pub remote_model: Option<String>,
+    /// Never sent to the browser; only whether one is set.
+    pub remote_key: Option<String>,
     pub enabled: bool,
     pub active_model: Option<String>,
     pub threads: u32,
@@ -41,6 +72,10 @@ pub struct StoredSettings {
 impl Default for StoredSettings {
     fn default() -> Self {
         Self {
+            provider: Provider::Local,
+            remote_url: None,
+            remote_model: None,
+            remote_key: None,
             enabled: false,
             active_model: None,
             threads: DEFAULT_THREADS,
@@ -72,13 +107,49 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
     let model_dir = setting("ai_model_dir")
         .await?
         .filter(|value| !value.trim().is_empty());
+    let provider = setting("ai_provider")
+        .await?
+        .and_then(|value| Provider::parse(&value))
+        .unwrap_or_default();
+    let remote_url = setting("ai_remote_url")
+        .await?
+        .filter(|value| !value.trim().is_empty());
+    let remote_model = setting("ai_remote_model")
+        .await?
+        .filter(|value| !value.trim().is_empty());
+    let remote_key = setting("ai_remote_key")
+        .await?
+        .filter(|value| !value.is_empty());
     Ok(StoredSettings {
+        provider,
+        remote_url,
+        remote_model,
+        remote_key,
         enabled,
         active_model,
         threads,
         unload_minutes,
         model_dir,
     })
+}
+
+impl StoredSettings {
+    pub fn uses_remote(&self) -> bool {
+        self.provider == Provider::Remote
+    }
+
+    /// The remote server address and model name are both set.
+    pub fn remote_configured(&self) -> bool {
+        self.remote_url.is_some() && self.remote_model.is_some()
+    }
+
+    pub fn remote_config(&self) -> Option<crate::ask::remote::RemoteConfig> {
+        Some(crate::ask::remote::RemoteConfig {
+            base_url: self.remote_url.clone()?,
+            model: self.remote_model.clone()?,
+            api_key: self.remote_key.clone(),
+        })
+    }
 }
 
 pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
@@ -125,6 +196,11 @@ pub async fn selected_model_readiness(
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiSettings {
+    /// `local` or `remote`.
+    pub provider: String,
+    pub remote_url: Option<String>,
+    pub remote_model: Option<String>,
+    pub remote_key_set: bool,
     pub enabled: bool,
     pub active_model: Option<String>,
     pub threads: u32,
@@ -139,6 +215,15 @@ pub struct AiSettings {
 
 #[derive(Clone, Debug, Deserialize, TS)]
 pub struct SaveAiSettings {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    #[serde(default)]
+    pub remote_model: Option<String>,
+    /// `None` keeps the stored key, an empty string clears it.
+    #[serde(default)]
+    pub remote_key: Option<String>,
     pub enabled: bool,
     pub active_model: Option<String>,
     pub threads: u32,
@@ -148,6 +233,9 @@ pub struct SaveAiSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiAskStatus {
+    /// `local` or `remote`.
+    pub provider: String,
+    pub remote_model: Option<String>,
     pub enabled: bool,
     pub runtime_available: bool,
     pub model_ready: bool,
@@ -308,6 +396,11 @@ fn settings_message(
     if !stored.enabled {
         return None;
     }
+    if stored.uses_remote() {
+        return (!stored.remote_configured()).then(|| {
+            "AI is enabled, but the AI server address or model name is missing.".to_string()
+        });
+    }
     match (&stored.active_model, installed) {
         (None, _) => Some(
             "AI is enabled, but no model is selected. Download a model and select it before asking questions."
@@ -333,8 +426,17 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
     let (root, readiness) = selected_model_state(state, &stored).await?;
     let installed = readiness.installed;
     let selected_available = readiness.selected_available;
-    let ready = stored.enabled && installed && selected_available;
+    let ready = stored.enabled
+        && if stored.uses_remote() {
+            stored.remote_configured()
+        } else {
+            installed && selected_available
+        };
     Ok(AiSettings {
+        provider: stored.provider.as_str().to_owned(),
+        remote_url: stored.remote_url.clone(),
+        remote_model: stored.remote_model.clone(),
+        remote_key_set: stored.remote_key.is_some(),
         enabled: stored.enabled,
         active_model: stored.active_model.clone(),
         threads: stored.threads,
@@ -386,6 +488,51 @@ pub async fn settings_post(
         ));
     }
     let model_dir = validate_model_dir(form.model_dir.as_deref())?;
+    let previous = read_settings(&state).await?;
+    let provider = match form.provider.as_deref().map(str::trim) {
+        None | Some("") => previous.provider,
+        Some(value) => Provider::parse(value)
+            .ok_or_else(|| AppError::BadRequest("Unknown AI provider.".into()))?,
+    };
+    let remote_url = form
+        .remote_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    if let Some(url) = remote_url.as_deref() {
+        crate::ask::remote::endpoint(url)?;
+    }
+    let remote_model = form
+        .remote_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    if remote_model
+        .as_deref()
+        .is_some_and(|model| model.chars().count() > 200 || model.chars().any(char::is_control))
+    {
+        return Err(AppError::BadRequest("Use a valid model name.".into()));
+    }
+    let remote_key = match form.remote_key.as_deref() {
+        None => previous.remote_key.clone(),
+        Some(key) => {
+            let key = key.trim();
+            if key.chars().count() > 500 || key.chars().any(char::is_control) {
+                return Err(AppError::BadRequest("Use a valid API key.".into()));
+            }
+            (!key.is_empty()).then(|| key.to_owned())
+        }
+    };
+    if provider == Provider::Remote
+        && form.enabled
+        && (remote_url.is_none() || remote_model.is_none())
+    {
+        return Err(AppError::BadRequest(
+            "Enter the AI server address and the model name to use your own AI.".into(),
+        ));
+    }
     let active_model = form
         .active_model
         .as_deref()
@@ -423,9 +570,32 @@ pub async fn settings_post(
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
+    crate::db::set_setting(&mut tx, "ai_provider", provider.as_str()).await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_remote_url",
+        remote_url.as_deref().unwrap_or(""),
+    )
+    .await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_remote_model",
+        remote_model.as_deref().unwrap_or(""),
+    )
+    .await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_remote_key",
+        remote_key.as_deref().unwrap_or(""),
+    )
+    .await?;
     tx.commit().await?;
 
     let stored = StoredSettings {
+        provider,
+        remote_url,
+        remote_model,
+        remote_key,
         enabled: form.enabled,
         active_model,
         threads: form.threads,
@@ -441,8 +611,21 @@ pub async fn ask_status(
 ) -> Result<Json<AiAskStatus>> {
     auth::session(&state, &headers).await?;
     let stored = read_settings(&state).await?;
+    if stored.uses_remote() {
+        // Your own AI needs no local runtime and loads nothing here.
+        return Ok(Json(AiAskStatus {
+            provider: stored.provider.as_str().to_owned(),
+            remote_model: stored.remote_model.clone(),
+            enabled: stored.enabled,
+            runtime_available: true,
+            model_ready: stored.enabled && stored.remote_configured(),
+            model_loading: false,
+        }));
+    }
     let readiness = selected_model_readiness(&state, &stored).await?;
     Ok(Json(AiAskStatus {
+        provider: stored.provider.as_str().to_owned(),
+        remote_model: None,
         enabled: stored.enabled,
         // The build feature and the installed parser must both be present: a
         // test or a future fallback may install a stub/unavailable parser.
@@ -763,6 +946,9 @@ pub async fn model_test(
 ) -> Result<Json<AiTestResult>> {
     auth::require_write(&state, &headers).await?;
     let stored = read_settings(&state).await?;
+    if stored.uses_remote() {
+        return Ok(Json(remote_test(&stored).await));
+    }
     let runtime = runtime_available();
     if !runtime {
         return Ok(Json(AiTestResult {
@@ -789,6 +975,44 @@ pub async fn model_test(
         model_ready: usable,
         message: message.to_string(),
     }))
+}
+
+/// Send one real question to the configured server, so a wrong address, model
+/// name or key shows up here rather than on the first question.
+async fn remote_test(stored: &StoredSettings) -> AiTestResult {
+    let result = |ok: bool, message: String| AiTestResult {
+        runtime_available: true,
+        model_loaded: false,
+        model_ready: ok,
+        message,
+    };
+    let Some(config) = stored.remote_config() else {
+        return result(
+            false,
+            "Enter the AI server address and the model name first.".into(),
+        );
+    };
+    let raw = crate::ask::remote::infer(
+        &config,
+        "How many times did I listen to Björk?",
+        None,
+        crate::ask::parser::inference_timeout(),
+    )
+    .await;
+    match raw {
+        Err(error) => result(false, error.to_string()),
+        Ok(text) => match crate::ask::parser::interpret_remote(&text, "") {
+            Ok(_) => result(
+                true,
+                format!("Connected. {} understood a test question.", config.model),
+            ),
+            Err(_) => result(
+                false,
+                "The server answered, but not in the format Ask needs. Try a more capable model."
+                    .into(),
+            ),
+        },
+    }
 }
 
 /// Startup scan: tolerate orphan/corrupt directories and leave an explicit

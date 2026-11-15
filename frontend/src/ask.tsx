@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type {
+  AskPrevious,
   AskResponse,
+  AskStep,
   AiAskStatus,
   EntityCandidate,
   Preferences,
@@ -9,7 +11,7 @@ import type {
 } from "./generated";
 import { api } from "./api";
 import { applyCandidate, InterpretationChips } from "./ask-chips";
-import { AskResultRows } from "./ask-table";
+import { AskResultRows, bucketLabel } from "./ask-table";
 import { AskTimeCard } from "./ask-time";
 import { StreakResultCard } from "./ask-streak";
 import { Link } from "./navigation";
@@ -77,6 +79,36 @@ export function sharePercent(plays: number, total: number): string {
   return `${(Math.round((plays / total) * 1000) / 10).toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
 }
 
+const temporalWhere: Record<string, (label: string) => string> = {
+  day: (label) => `on ${label}`,
+  week: (label) => `in the ${label.charAt(0).toLowerCase()}${label.slice(1)}`,
+  month: (label) => `in ${label}`,
+  year: (label) => `in ${label}`,
+  hour: (label) => `at ${label}`,
+  weekday: (label) => `on ${label}s`,
+};
+
+/** A plain sentence for "which day/month/… had the most?" questions. */
+function rankedHeadline(response: AskResponse, entity: string): string | null {
+  const query = response.query;
+  const result = response.result;
+  const group = query?.group_by;
+  if (!query || !result || !group || !temporalWhere[group]) return null;
+  if (query.sort_by !== "metric" || result.rows.length === 0) return null;
+  const top = result.rows[0];
+  const label = bucketLabel(top, group);
+  const count = number.format(top.plays);
+  const what = query.metric.startsWith("distinct_")
+    ? `${count} distinct ${query.metric.replace("distinct_", "")}`
+    : `${count} ${top.plays === 1 ? "play" : "plays"}`;
+  const extreme = query.order === "asc" ? "least" : "most";
+  const subject = query.entity ? entity : "music";
+  if (result.rows.length === 1) {
+    return `You listened to ${subject} the ${extreme} ${temporalWhere[group](label)}: ${what}.`;
+  }
+  return `Your ${extreme} listened ${groupCopy[group]}s for ${subject}: ${label} comes first, with ${what}.`;
+}
+
 function headline(response: AskResponse, preferences: Preferences): string {
   const query = response.query;
   const result = response.result;
@@ -85,7 +117,10 @@ function headline(response: AskResponse, preferences: Preferences): string {
   const period = periodCopy[query.period] ?? "in this period";
   const value = result.scalar;
   if (query.group_by) {
-    return `${metricCopy[query.metric] ?? query.metric} by ${groupCopy[query.group_by] ?? query.group_by}, ${period}.`;
+    const ranked = rankedHeadline(response, entity);
+    if (ranked) return ranked;
+    const subject = query.entity ? ` for ${entity}` : "";
+    return `${metricCopy[query.metric] ?? query.metric} by ${groupCopy[query.group_by] ?? query.group_by}${subject}, ${period}.`;
   }
   if (query.metric.startsWith("distinct_")) {
     const noun = query.metric.replace("distinct_", "");
@@ -136,6 +171,8 @@ export function AskPage({
   const [response, setResponse] = useState<AskResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [followUp, setFollowUp] = useState(true);
+  const [asked, setAsked] = useState("");
 
   useEffect(() => {
     if (!visible) return;
@@ -175,7 +212,14 @@ export function AskPage({
     setLoading(true);
     setError("");
     try {
-      setResponse(await api.ask(question.trim(), null));
+      // A follow-up sends the last question and how it was understood,
+      // never its results.
+      const previous: AskPrevious | null =
+        followUp && canFollowUp && response?.chips.length
+          ? { question: asked, chips: response.chips }
+          : null;
+      setResponse(await api.ask(question.trim(), null, previous));
+      setAsked(question.trim());
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -200,6 +244,10 @@ export function AskPage({
     void runQuery(applyCandidate(response.query, candidate));
   }
 
+  // Older or mocked answers may omit the steps.
+  const earlier = response?.earlier ?? [];
+  const remote = status?.provider === "remote";
+  const canFollowUp = remote && response?.status === "ok";
   const unavailable =
     !status ||
     !status.enabled ||
@@ -211,7 +259,10 @@ export function AskPage({
     <>
       <Heading title="Ask">
         Ask your listening archive a question. Every number is computed locally
-        from your own listens.
+        from your own listens
+        {status?.provider === "remote" && status.remote_model
+          ? `; ${status.remote_model} only interprets the question.`
+          : "."}
       </Heading>
 
       {statusError && <Notice title="Ask is unavailable">{statusError}</Notice>}
@@ -254,7 +305,9 @@ export function AskPage({
 
       {status?.enabled && status.runtime_available && !status.model_ready && (
         <Notice title="No model is ready" tone="warning">
-          Download and select a model in AI settings before asking questions.
+          {status.provider === "remote"
+            ? "Enter the address and model name of your AI server in AI settings before asking questions."
+            : "Download and select a model in AI settings before asking questions."}
           <div className="ask-notice-action">
             <Link to="/settings/ai" className="btn btn-secondary secondary">
               <Icon>settings</Icon>
@@ -282,7 +335,13 @@ export function AskPage({
           <input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="How many times did I listen to Björk?"
+            placeholder={
+              canFollowUp && followUp
+                ? "Ask a follow-up, for example: and last year?"
+                : remote
+                  ? "In the month I listened to Ado the most, which track?"
+                  : "How many times did I listen to Björk?"
+            }
             autoComplete="off"
             disabled={disabled}
           />
@@ -305,7 +364,19 @@ export function AskPage({
             and last plays, streaks, milestones and grouped top lists are
             available. Grouping covers plays and distinct counts; listening time
             cannot be grouped yet.
+            {remote &&
+              " Your AI can also chain questions, use exact date ranges and build on the previous answer."}
           </span>
+          {canFollowUp && (
+            <label className="ask-follow-up">
+              <input
+                type="checkbox"
+                checked={followUp}
+                onChange={(event) => setFollowUp(event.target.checked)}
+              />
+              <span>Continue from the previous answer</span>
+            </label>
+          )}
         </div>
       </form>
 
@@ -414,11 +485,30 @@ export function AskPage({
               </Notice>
             )}
 
+            {earlier.map(
+              (step, index) =>
+                step.result &&
+                step.query && (
+                  <ResultCard
+                    key={index}
+                    response={stepResponse(step)}
+                    query={step.query}
+                    preferences={preferences}
+                    label={`Step ${index + 1} of ${earlier.length + 1}`}
+                  />
+                ),
+            )}
+
             {response.status === "ok" && response.result && response.query && (
               <ResultCard
                 response={response}
                 query={response.query}
                 preferences={preferences}
+                label={
+                  earlier.length > 0
+                    ? `Step ${earlier.length + 1} of ${earlier.length + 1}`
+                    : undefined
+                }
               />
             )}
           </>
@@ -428,14 +518,31 @@ export function AskPage({
   );
 }
 
+/** An earlier step of a chained question, shaped like a full answer. */
+function stepResponse(step: AskStep): AskResponse {
+  return {
+    status: "ok",
+    question: "",
+    query: step.query,
+    chips: step.chips,
+    result: step.result,
+    message: null,
+    candidates: [],
+    runtime_available: true,
+    earlier: [],
+  };
+}
+
 export function ResultCard({
   response,
   query,
   preferences,
+  label,
 }: {
   response: AskResponse;
   query: Query;
   preferences: Preferences;
+  label?: string;
 }) {
   const result = response.result!;
   if (query.metric === "streak" || query.metric === "milestones") {
@@ -452,7 +559,7 @@ export function ResultCard({
   const isTime = query.metric === "time_listened";
   return (
     <article className="panel padded ask-result">
-      <p className="ask-eyebrow">Result</p>
+      <p className="ask-eyebrow">{label ?? "Result"}</p>
       <p className="ask-result-headline">{headline(response, preferences)}</p>
       {!isPoint && !isTime && !query.group_by && (
         <p className="ask-result-value" aria-label="Result value">

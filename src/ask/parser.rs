@@ -18,11 +18,51 @@ pub type ParseFuture<'a> = Pin<Box<dyn Future<Output = Result<ParsedQuestion>> +
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParsedQuestion {
     Query(Query),
-    Unsupported { reason: String },
+    /// Several queries run in order; a later step may take its entity or its
+    /// dates from one row of an earlier step. Only the stronger "bring your
+    /// own AI" engine produces plans.
+    Plan(Vec<PlanStep>),
+    Unsupported {
+        reason: String,
+    },
+}
+
+/// One step of a plan. The model never sees step results: `bind` only names
+/// which row of an earlier step Rust should read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanStep {
+    pub query: Query,
+    pub bind: Option<Binding>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binding {
+    /// Zero-based index of an earlier step.
+    pub step: usize,
+    /// Zero-based row of that step's result.
+    pub row: usize,
+}
+
+/// What the previous answer was, so a follow-up ("and last year?") can build
+/// on it. Only the question and its interpretation, never results.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Previous {
+    pub question: String,
+    pub interpretation: Vec<(String, String)>,
 }
 
 pub trait QueryParser: Send + Sync {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a>;
+
+    /// Parse with the previous answer in view. Parsers that cannot use it
+    /// (the small local model, the stub) ignore it.
+    fn parse_follow_up<'a>(
+        &'a self,
+        question: &'a str,
+        _previous: Option<&'a Previous>,
+    ) -> ParseFuture<'a> {
+        self.parse(question)
+    }
 
     /// True while the real runtime is loading a model. Stub and unavailable
     /// parsers never load anything.
@@ -267,6 +307,8 @@ fn default_query(metric: Metric) -> Query {
         weekday: None,
         hour: None,
         source: None,
+        from: None,
+        to: None,
         group_by: None,
         sort_by: SortBy::Metric,
         order: SortOrder::Desc,
@@ -297,14 +339,17 @@ pub struct ModelParser {
 }
 
 impl ModelParser {
-    #[cfg(feature = "llama")]
+    /// The parser installed at startup. Without the `llama` feature the local
+    /// engine only reports itself unavailable, while a configured remote AI
+    /// server still answers questions.
     pub fn local(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
-        Self::new(
-            db,
-            data_dir,
-            Runtime::spawn(Box::new(crate::ask::runtime::LlamaEngine::new()), 4),
-            inference_timeout(),
-        )
+        #[cfg(feature = "llama")]
+        let engine: Box<dyn crate::ask::runtime::Engine> =
+            Box::new(crate::ask::runtime::LlamaEngine::new());
+        #[cfg(not(feature = "llama"))]
+        let engine: Box<dyn crate::ask::runtime::Engine> =
+            Box::new(crate::ask::runtime::UnavailableEngine);
+        Self::new(db, data_dir, Runtime::spawn(engine, 4), inference_timeout())
     }
 
     pub fn new(
@@ -325,12 +370,25 @@ impl ModelParser {
         self.runtime.state()
     }
 
-    async fn parse_model(&self, question: &str) -> Result<ParsedQuestion> {
+    async fn parse_model(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+    ) -> Result<ParsedQuestion> {
         let stored = crate::ai::read_settings_from(&self.db).await?;
         if !stored.enabled {
             return Ok(ParsedQuestion::Unsupported {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             });
+        }
+        if stored.uses_remote() {
+            let Some(config) = stored.remote_config() else {
+                return Ok(ParsedQuestion::Unsupported {
+                    reason: "Enter the AI server address and the model name in Settings.".into(),
+                });
+            };
+            let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
+            return interpret_remote(&raw, question);
         }
         let Some(model_id) = stored.active_model else {
             return Ok(ParsedQuestion::Unsupported {
@@ -382,15 +440,37 @@ impl ModelParser {
             .await
             .map_err(runtime_error)?;
 
-        let mut output: ModelOutput = serde_json::from_str(output.trim()).map_err(|_| {
-            AppError::BadRequest(
-                "The local model returned an interpretation that does not match the question format. Try rephrasing the question."
-                    .into(),
-            )
-        })?;
-        output.apply_question_hints(question);
-        output.into_parsed()
+        interpret(&output, question)
     }
+}
+
+/// The remote engine answers with a list of steps; a flat single interpretation
+/// (what the local model emits) is accepted too.
+pub fn interpret_remote(raw: &str, question: &str) -> Result<ParsedQuestion> {
+    if raw.contains("\"steps\"") {
+        let output: crate::ask::schema::AdvancedOutput =
+            serde_json::from_str(raw.trim()).map_err(|_| {
+                AppError::BadRequest(
+                    "The AI model returned steps that do not match the question format. Try rephrasing the question."
+                        .into(),
+                )
+            })?;
+        return output.into_parsed();
+    }
+    interpret(raw, question)
+}
+
+/// Turn the model's JSON into the shared DSL. The model, local or remote, only
+/// ever picks vocabulary; Rust resolves names and computes every number.
+fn interpret(raw: &str, question: &str) -> Result<ParsedQuestion> {
+    let mut output: ModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
+        AppError::BadRequest(
+            "The AI model returned an interpretation that does not match the question format. Try rephrasing the question."
+                .into(),
+        )
+    })?;
+    output.apply_question_hints(question);
+    output.into_parsed()
 }
 
 fn runtime_error(error: RuntimeError) -> AppError {
@@ -413,7 +493,15 @@ fn runtime_error(error: RuntimeError) -> AppError {
 
 impl QueryParser for ModelParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question).await })
+        Box::pin(async move { self.parse_model(question, None).await })
+    }
+
+    fn parse_follow_up<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move { self.parse_model(question, previous).await })
     }
 
     fn model_loading(&self) -> bool {

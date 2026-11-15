@@ -9,7 +9,7 @@
 use crate::{
     ask::{
         AskResult, ListenPoint, ResultLink,
-        dsl::{EntityKind, Metric, Period, Query, Weekday},
+        dsl::{EntityKind, GroupBy, Metric, Period, Query, Weekday},
         grouping, time,
     },
     consultation::{Filters, selection_at},
@@ -25,6 +25,14 @@ pub enum Outcome {
 }
 
 pub async fn execute(conn: &mut SqliteConnection, query: &Query, now: i64) -> Result<Outcome> {
+    let mut outcome = execute_metric(conn, query, now).await?;
+    if let Outcome::Result(result) = &mut outcome {
+        decorate(query, result);
+    }
+    Ok(outcome)
+}
+
+async fn execute_metric(conn: &mut SqliteConnection, query: &Query, now: i64) -> Result<Outcome> {
     if !matches!(
         query.metric,
         Metric::Plays
@@ -318,7 +326,7 @@ fn point_result(query: &Query, entry: Option<ListenPointWithDate>) -> AskResult 
         if !entry.local_date.is_empty() {
             links.push(ResultLink {
                 label: format!("Played on {}", entry.local_date),
-                href: format!("/history?from={date}&to={date}", date = entry.local_date),
+                href: history_path(query, &Window::Dates(&entry.local_date, &entry.local_date)),
             });
         }
     }
@@ -341,6 +349,173 @@ fn point_result(query: &Query, entry: Option<ListenPointWithDate>) -> AskResult 
     }
 }
 
+/// Which listens a History link shows besides the entity filter.
+enum Window<'a> {
+    /// The period, year, month, weekday and source the question used.
+    Question,
+    /// One calendar range, replacing the question's period.
+    Dates(&'a str, &'a str),
+    /// One assigned-calendar week, by the date its week starts on.
+    Week(&'a str),
+    /// The question's selection narrowed to one weekday.
+    Weekday(&'a str),
+}
+
+fn encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// A Listening history address that shows exactly the listens an answer was
+/// computed from. It reuses the History filters, so the list always matches
+/// the Ask selection (the hour is the one filter History cannot express).
+fn history_path(query: &Query, window: &Window) -> String {
+    let mut params: Vec<(&str, String)> = Vec::new();
+    if let Some(entity) = &query.entity
+        && let Some(id) = entity.id.as_deref().filter(|id| !id.is_empty())
+    {
+        let key = match entity.kind {
+            EntityKind::Artist => "artist",
+            EntityKind::Album => "album",
+            EntityKind::Track => "track",
+        };
+        params.push((key, id.to_owned()));
+    }
+    match window {
+        Window::Dates(from, to) => {
+            params.push(("period", "custom".into()));
+            params.push(("from", (*from).to_owned()));
+            params.push(("to", (*to).to_owned()));
+        }
+        Window::Week(start) => {
+            params.push(("period", "all".into()));
+            params.push(("bucket", "week".into()));
+            params.push(("bucket_start", (*start).to_owned()));
+        }
+        Window::Question | Window::Weekday(_) => {
+            if query.from.is_some() || query.to.is_some() {
+                params.push(("period", "custom".into()));
+                if let Some(from) = &query.from {
+                    params.push(("from", from.clone()));
+                }
+                if let Some(to) = &query.to {
+                    params.push(("to", to.clone()));
+                }
+            } else if let Some(year) = query.year {
+                params.push(("year", year.to_string()));
+            } else {
+                params.push(("period", period_key(query.period).to_owned()));
+            }
+            if let Some(month) = query.month {
+                params.push(("month", month.to_string()));
+            }
+            match window {
+                Window::Weekday(day) => params.push(("weekday", (*day).to_owned())),
+                _ => {
+                    if let Some(day) = query.weekday {
+                        params.push(("weekday", weekday_key(day).to_owned()));
+                    }
+                }
+            }
+        }
+    }
+    if let Some(source) = query.source.as_deref().filter(|s| !s.is_empty()) {
+        params.push(("source", source.to_owned()));
+    }
+    let query_string = params
+        .iter()
+        .map(|(key, value)| format!("{key}={}", encode(value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("/history?{query_string}")
+}
+
+/// The first and last calendar day of a grouped bucket label, when the label
+/// is a day, a month or a year.
+fn bucket_dates(group: GroupBy, label: &str) -> Option<(String, String)> {
+    use chrono::{Datelike, NaiveDate};
+    match group {
+        GroupBy::Day => NaiveDate::parse_from_str(label, "%Y-%m-%d")
+            .ok()
+            .map(|day| (day.to_string(), day.to_string())),
+        GroupBy::Month => {
+            let first = NaiveDate::parse_from_str(&format!("{label}-01"), "%Y-%m-%d").ok()?;
+            let next = if first.month() == 12 {
+                NaiveDate::from_ymd_opt(first.year() + 1, 1, 1)?
+            } else {
+                NaiveDate::from_ymd_opt(first.year(), first.month() + 1, 1)?
+            };
+            Some((first.to_string(), next.pred_opt()?.to_string()))
+        }
+        GroupBy::Year => {
+            let year: i32 = label.parse().ok()?;
+            Some((format!("{year:04}-01-01"), format!("{year:04}-12-31")))
+        }
+        _ => None,
+    }
+}
+
+/// The inclusive date range of a bucket label, including a week that starts on
+/// the label's date.
+pub(crate) fn bucket_range(group: GroupBy, label: &str) -> Option<(String, String)> {
+    if group == GroupBy::Week {
+        let start = chrono::NaiveDate::parse_from_str(label, "%Y-%m-%d").ok()?;
+        return Some((
+            start.to_string(),
+            (start + chrono::Days::new(6)).to_string(),
+        ));
+    }
+    bucket_dates(group, label)
+}
+
+/// Every answer points at the listens behind it: the whole selection, and for
+/// day, week, month, year and weekday groupings each bucket on its own.
+fn decorate(query: &Query, result: &mut AskResult) {
+    for row in &mut result.rows {
+        if row.href.is_some() {
+            continue;
+        }
+        row.href = match query.group_by {
+            Some(group @ (GroupBy::Day | GroupBy::Month | GroupBy::Year)) => {
+                bucket_dates(group, &row.label)
+                    .map(|(from, to)| history_path(query, &Window::Dates(&from, &to)))
+            }
+            Some(GroupBy::Week) => Some(history_path(query, &Window::Week(&row.label))),
+            Some(GroupBy::Weekday) => Some(history_path(query, &Window::Weekday(&row.key))),
+            _ => None,
+        };
+    }
+    let has_point = matches!(query.metric, Metric::FirstPlay | Metric::LastPlay);
+    if query.hour.is_none() && !has_point && query.group_by.is_none() {
+        result.links.push(ResultLink {
+            label: "See these listens".into(),
+            href: history_path(query, &Window::Question),
+        });
+    }
+    if let [only] = result.rows.as_slice()
+        && let Some(href) = only.href.as_deref().filter(|h| h.starts_with("/history?"))
+    {
+        let href = href.to_owned();
+        result.links.push(ResultLink {
+            label: "See these listens".into(),
+            href,
+        });
+    }
+    if query.hour.is_none() && query.group_by.is_some() && result.rows.len() > 1 {
+        result.links.push(ResultLink {
+            label: "See these listens".into(),
+            href: history_path(query, &Window::Question),
+        });
+    }
+}
+
 fn filters_for(query: &Query) -> Result<Filters> {
     let mut filters = Filters {
         period: Some(period_key(query.period).to_owned()),
@@ -349,6 +524,8 @@ fn filters_for(query: &Query) -> Result<Filters> {
         weekday: query.weekday.map(weekday_key).map(str::to_owned),
         hour: query.hour,
         source: query.source.clone(),
+        from: query.from.clone(),
+        to: query.to.clone(),
         ..Filters::default()
     };
     if let Some(entity) = &query.entity {
