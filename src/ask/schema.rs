@@ -419,6 +419,110 @@ fn limit(limit: ModelLimit) -> Option<Limit> {
     })
 }
 
+fn contains_any(question: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| question.contains(needle))
+}
+
+/// The calendar dimension a "which day/month/…" question asks about.
+fn temporal_dimension(question: &str) -> Option<ModelGroupBy> {
+    // The weekday wording contains the day wording, so it is checked first.
+    if contains_any(
+        question,
+        &[
+            "giorno della settimana",
+            "giorni della settimana",
+            "day of the week",
+            "days of the week",
+            "which weekday",
+            "what weekday",
+        ],
+    ) {
+        Some(ModelGroupBy::Weekday)
+    } else if contains_any(
+        question,
+        &[
+            "che ora ",
+            "che ore ",
+            "quale ora",
+            "quali ore",
+            "a che ora",
+            "what hour",
+            "which hour",
+            "what time of day",
+            "which time of day",
+        ],
+    ) {
+        Some(ModelGroupBy::Hour)
+    } else if contains_any(
+        question,
+        &[
+            "che giorno",
+            "quale giorno",
+            "quali giorni",
+            "which day",
+            "what day",
+            "which days",
+        ],
+    ) {
+        Some(ModelGroupBy::Day)
+    } else if contains_any(
+        question,
+        &[
+            "che settimana",
+            "quale settimana",
+            "quali settimane",
+            "which week",
+            "what week",
+        ],
+    ) {
+        Some(ModelGroupBy::Week)
+    } else if contains_any(
+        question,
+        &[
+            "che mese",
+            "quale mese",
+            "quali mesi",
+            "which month",
+            "what month",
+        ],
+    ) {
+        Some(ModelGroupBy::Month)
+    } else if contains_any(
+        question,
+        &[
+            "che anno",
+            "quale anno",
+            "quali anni",
+            "which year",
+            "what year",
+        ],
+    ) {
+        Some(ModelGroupBy::Year)
+    } else {
+        None
+    }
+}
+
+fn mentions_least(question: &str) -> bool {
+    contains_any(question, &[" meno", "least", "fewest", "lowest", "minimo"])
+}
+
+fn mentions_most(question: &str) -> bool {
+    contains_any(
+        question,
+        &[
+            " più",
+            "maggior",
+            "massimo",
+            "most",
+            "highest",
+            "more times",
+            "the more",
+            "biggest",
+        ],
+    )
+}
+
 fn invalid_output() -> ParsedQuestion {
     ParsedQuestion::Unsupported {
         reason: "The local model produced an interpretation that does not match the question format. Try rephrasing the question.".into(),
@@ -426,6 +530,31 @@ fn invalid_output() -> ParsedQuestion {
 }
 
 impl ModelOutput {
+    /// Repair what the small local model most often misses: a question that
+    /// asks *which* day, month, hour, weekday, week or year is a grouped
+    /// top-N, not one total. Only an ungrouped plays question is touched, and
+    /// only when the wording is unambiguous, so a correct model answer is
+    /// never overridden.
+    pub fn apply_question_hints(&mut self, question: &str) {
+        if self.metric != ModelMetric::Plays || self.group_by != ModelGroupBy::None {
+            return;
+        }
+        let question = question.to_lowercase();
+        let Some(group_by) = temporal_dimension(&question) else {
+            return;
+        };
+        self.group_by = group_by;
+        if self.limit == ModelLimit::None {
+            if mentions_least(&question) {
+                self.limit = ModelLimit::One;
+                self.order = ModelOrder::Asc;
+            } else if mentions_most(&question) {
+                self.limit = ModelLimit::One;
+                self.order = ModelOrder::Desc;
+            }
+        }
+    }
+
     /// Map validated model output onto the shared DSL. Model output that is
     /// internally inconsistent becomes an explicit refusal instead of a
     /// guessed query.
@@ -491,8 +620,11 @@ impl ModelOutput {
         };
 
         let group_by = group_by(self.group_by);
-        // A grouped time series is read chronologically; a top-N is read by
-        // the metric. `sort_by` is deliberately not part of the model schema.
+        // A grouped time series is read chronologically; a top-N ("which day
+        // did I listen the most") is read by the metric, otherwise the newest
+        // or oldest bucket would win. `sort_by` is deliberately not part of the
+        // model schema.
+        let limit = limit(self.limit);
         let sort_by = match group_by {
             Some(
                 GroupBy::Day
@@ -501,7 +633,7 @@ impl ModelOutput {
                 | GroupBy::Year
                 | GroupBy::Hour
                 | GroupBy::Weekday,
-            ) => SortBy::Date,
+            ) if limit.is_none() => SortBy::Date,
             _ => SortBy::Metric,
         };
 
@@ -526,7 +658,7 @@ impl ModelOutput {
                 ModelOrder::Asc => SortOrder::Asc,
                 ModelOrder::Desc => SortOrder::Desc,
             },
-            limit: limit(self.limit),
+            limit,
         };
         query.validate()?;
         Ok(ParsedQuestion::Query(query))
@@ -588,5 +720,79 @@ mod tests {
             assert!(ModelMetric::parse_value(value).is_some(), "{value}");
         }
         assert!(ModelMetric::parse_value("top").is_none());
+    }
+
+    fn plays_output(group_by: ModelGroupBy) -> ModelOutput {
+        ModelOutput {
+            artist: String::new(),
+            group_by,
+            limit: ModelLimit::None,
+            metric: ModelMetric::Plays,
+            month: ModelMonth::None,
+            name: "BTS".into(),
+            order: ModelOrder::Desc,
+            period: ModelPeriod::AllTime,
+            target: ModelTarget::Artist,
+            weekday: ModelWeekday::Any,
+            year: 0,
+        }
+    }
+
+    #[test]
+    fn which_day_question_becomes_a_grouped_top_one() {
+        for (question, expected) in [
+            (
+                "In che giorno ho ascoltato più volte i BTS?",
+                ModelGroupBy::Day,
+            ),
+            ("Which day did I play BTS the most?", ModelGroupBy::Day),
+            (
+                "In quale giorno della settimana ascolto di più i BTS?",
+                ModelGroupBy::Weekday,
+            ),
+            ("A che ora ascolto più BTS?", ModelGroupBy::Hour),
+            (
+                "What month did I listen to BTS the most?",
+                ModelGroupBy::Month,
+            ),
+            ("In che anno ho ascoltato di più i BTS?", ModelGroupBy::Year),
+        ] {
+            let mut output = plays_output(ModelGroupBy::None);
+            output.apply_question_hints(question);
+            assert_eq!(output.group_by, expected, "{question}");
+            assert_eq!(output.limit, ModelLimit::One, "{question}");
+            assert_eq!(output.order, ModelOrder::Desc, "{question}");
+        }
+    }
+
+    #[test]
+    fn the_hint_is_a_top_n_ranked_by_the_metric() {
+        let mut output = plays_output(ModelGroupBy::None);
+        output.apply_question_hints("In che giorno ho ascoltato più volte i BTS?");
+        let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
+            panic!("expected a query");
+        };
+        assert_eq!(query.group_by, Some(GroupBy::Day));
+        assert_eq!(query.sort_by, SortBy::Metric);
+        assert_eq!(query.order, SortOrder::Desc);
+        assert_eq!(query.limit, Some(Limit::One));
+        assert_eq!(query.entity.map(|entity| entity.name), Some("BTS".into()));
+    }
+
+    #[test]
+    fn the_hint_never_overrides_a_grouped_or_unrelated_answer() {
+        let mut grouped = plays_output(ModelGroupBy::Artist);
+        grouped.apply_question_hints("In che giorno ho ascoltato più volte i BTS?");
+        assert_eq!(grouped.group_by, ModelGroupBy::Artist);
+
+        let mut total = plays_output(ModelGroupBy::None);
+        total.apply_question_hints("Quante volte ho ascoltato i BTS?");
+        assert_eq!(total.group_by, ModelGroupBy::None);
+        assert_eq!(total.limit, ModelLimit::None);
+
+        let mut refusal = plays_output(ModelGroupBy::None);
+        refusal.metric = ModelMetric::Unsupported;
+        refusal.apply_question_hints("Which day is it?");
+        assert_eq!(refusal.group_by, ModelGroupBy::None);
     }
 }

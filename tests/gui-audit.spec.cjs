@@ -6133,3 +6133,56 @@ test("startup screen (#158), interactive image picker modal (#155), and signatur
   await picker.getByRole("button", { name: "Cancel" }).click();
   await expect(picker).toBeHidden();
 });
+
+test("phones keep option rows on one line, give activity cards the full width and keep breakdowns out of rankings", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 360, height: 844 });
+  await page.route("**/api/dashboard?*", async (route) => {
+    const data = await (await route.fetch()).json();
+    for (const kind of ["artists", "albums", "tracks"]) {
+      data.rankings[kind] = data.rankings[kind].map((item) => ({
+        ...item,
+        actual_ms: 60000,
+        estimated_ms: 180000,
+      }));
+    }
+    await route.fulfill({ json: data });
+  });
+  await login(page);
+  await expect(page.locator(".ranking-row").first()).toBeVisible();
+  // The actual/estimated split lives in the (i) of a detail page, not in rows.
+  await expect(page.locator(".ranking-row .time-composition")).toHaveCount(0);
+
+  await page.goto("/activities");
+  const card = page.locator(".artwork-work");
+  await expect(card).toBeVisible();
+  const [cardBox, contentBox] = await Promise.all([
+    card.boundingBox(),
+    card.locator(".activity-content").boundingBox(),
+  ]);
+  expect(contentBox.width).toBeGreaterThan(cardBox.width - 48);
+
+  await page.goto("/rankings/artists?period=all");
+  await page.locator(".ranking-row .music-item-link").first().click();
+  await page.locator(".change-artwork-button").click();
+  const options = page.locator(
+    "dialog.image-picker-dialog[open] .segmented-option",
+  );
+  await expect(options).toHaveCount(3);
+  const tops = await options.evaluateAll((items) =>
+    items.map((item) => Math.round(item.getBoundingClientRect().top)),
+  );
+  expect(new Set(tops).size).toBe(1);
+
+  await page.goto("/history?period=all&bucket=month&bucket_start=2025-03-01");
+  const gap = await page
+    .locator(".segment-filter > span:not([class])")
+    .evaluate((span) => {
+      const [label, value] = span.children;
+      return (
+        value.getBoundingClientRect().left - label.getBoundingClientRect().right
+      );
+    });
+  expect(gap).toBeGreaterThanOrEqual(6);
+});

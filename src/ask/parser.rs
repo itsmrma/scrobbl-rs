@@ -382,12 +382,13 @@ impl ModelParser {
             .await
             .map_err(runtime_error)?;
 
-        let output: ModelOutput = serde_json::from_str(output.trim()).map_err(|_| {
+        let mut output: ModelOutput = serde_json::from_str(output.trim()).map_err(|_| {
             AppError::BadRequest(
                 "The local model returned an interpretation that does not match the question format. Try rephrasing the question."
                     .into(),
             )
         })?;
+        output.apply_question_hints(question);
         output.into_parsed()
     }
 }

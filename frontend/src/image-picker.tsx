@@ -302,10 +302,21 @@ export function ImagePickerModal({
               {
                 value: "search",
                 label: "Search providers",
+                shortLabel: "Search",
                 icon: "travel_explore",
               },
-              { value: "upload", label: "Upload file", icon: "upload_file" },
-              { value: "url", label: "Image URL", icon: "link" },
+              {
+                value: "upload",
+                label: "Upload file",
+                shortLabel: "Upload",
+                icon: "upload_file",
+              },
+              {
+                value: "url",
+                label: "Image URL",
+                shortLabel: "URL",
+                icon: "link",
+              },
             ]}
           />
         </div>
