@@ -1980,7 +1980,12 @@ test("extended-history drop selects actual files without opening a browser dialo
     "Import complete",
     { timeout: 15000 },
   );
-  await expect(page.locator("#import-result")).toContainText("1 added");
+  await expect(
+    page
+      .locator("#import-result .import-stats > div")
+      .filter({ hasText: "Added" })
+      .locator("dd"),
+  ).toHaveText("1");
   await transfer.dispose();
 });
 

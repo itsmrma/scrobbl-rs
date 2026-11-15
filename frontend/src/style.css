@@ -6762,3 +6762,150 @@ dialog.artwork-lightbox {
     max-width: 100%;
   }
 }
+
+/* Import result */
+.import-result {
+  display: grid;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.import-result-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.import-result h3,
+.import-result h4 {
+  margin: 0;
+}
+
+.import-result-phase,
+.import-result-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.import-result-note {
+  font-size: 12px;
+}
+
+.import-stats {
+  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.import-stats > div {
+  padding: 12px 14px;
+}
+
+.import-stats dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.import-stats dd {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-files {
+  display: grid;
+  gap: 8px;
+}
+
+.import-files h4 {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 16px;
+}
+
+.import-files h4 small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+
+.import-files ul,
+.import-excluded ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.import-files li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--row-border);
+}
+
+.import-file-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.import-file-main strong {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.import-file-main small {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.import-files .state-badge {
+  flex: none;
+}
+
+.import-excluded summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+.import-excluded li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.import-excluded li span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.import-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .import-result-actions > a.button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
