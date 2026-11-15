@@ -564,14 +564,16 @@ test.describe("now playing disclosure", () => {
     browserName,
   }) => {
     await page.route("**/api/spotify/status", async (route) => {
-      const response = await route.fetch();
-      await route.fulfill({
-        json: {
-          ...(await response.json()),
-          connected: true,
-          now_playing_seconds: 1,
-        },
-      });
+      try {
+        const response = await route.fetch();
+        const body = await response.json();
+        await route.fulfill({
+          json: { ...body, connected: true, now_playing_seconds: 1 },
+        });
+      } catch {
+        // The page can navigate or close while the request is in flight.
+        await route.abort().catch(() => {});
+      }
     });
     await page.route("**/api/v1/artwork/albums/sidebar*", (route) =>
       route.fulfill({
