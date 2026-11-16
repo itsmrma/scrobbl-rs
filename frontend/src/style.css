@@ -5758,6 +5758,31 @@ dialog.artwork-lightbox {
     grid-column: 2 / -1;
   }
 
+  /* Rows with artwork: the title takes the whole width beside the cover and
+     the time sits next to the date, instead of on a row of its own. */
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-title {
+    grid-column: 2 / -1;
+  }
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-date {
+    grid-column: 2;
+  }
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-duration {
+    grid-row: 2;
+    grid-column: 3;
+    align-self: end;
+  }
+  /* "Time listened" would collide with the date in a narrow column; the
+     value and its Actual/Estimated line already say what it is. */
+  .listen-context .listen-duration > small:first-child {
+    display: none;
+  }
+
   .listen-context-albums {
     --listen-columns: minmax(0, 1fr) auto;
   }

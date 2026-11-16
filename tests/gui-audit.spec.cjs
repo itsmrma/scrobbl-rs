@@ -443,17 +443,23 @@ test("mobile hourly pattern labels remain readable without split digits", async 
   });
   const historyTitle = page.locator(".embedded-history .listen-title").first();
   expect((await historyTitle.boundingBox()).width).toBeGreaterThan(100);
-  const separators = await page
+  // Rows are separated by their own card; there is no divider under each one.
+  const dividers = await page
     .locator(".listen-context .listen-main")
-    .evaluateAll((nodes) =>
-      nodes.map((node) => {
-        const box = node.getBoundingClientRect(),
-          row = node.closest(".listen-row").getBoundingClientRect();
-        const line = getComputedStyle(node, "::after");
-        return box.right - parseFloat(line.right) - row.right;
-      }),
+    .evaluateAll(
+      (nodes) =>
+        nodes.filter((node) => {
+          const content = getComputedStyle(node, "::after").content;
+          return content !== "none" && content !== "normal";
+        }).length,
     );
-  for (const overflow of separators) expect(overflow).toBeLessThanOrEqual(1);
+  expect(dividers).toBe(0);
+  const historyRow = page.locator(".embedded-history .listen-row").first();
+  const [cover, title] = await Promise.all([
+    historyRow.locator(".cover").boundingBox(),
+    historyRow.locator(".listen-title").boundingBox(),
+  ]);
+  expect(title.x).toBeGreaterThanOrEqual(cover.x + cover.width + 8);
 });
 
 test("mobile ranking controls use the available width and keep search on one row", async ({
