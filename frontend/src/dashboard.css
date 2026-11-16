@@ -1559,3 +1559,8 @@
     font-size: 17px;
   }
 }
+
+.widget-period-override-control button.select-trigger > span:first-child {
+  line-height: 1.5;
+  padding-block: 2px;
+}
