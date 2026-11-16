@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --output /distribution
 
-FROM debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 # libstdc++6 is the C++ runtime linked by llama.cpp. libgomp1 is intentionally
 # absent because the runtime is built without OpenMP; no GPU libraries either.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
