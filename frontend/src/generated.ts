@@ -107,7 +107,7 @@ export type ColumnFormat = "count" | "duration_ms" | "date" | "datetime" | "perc
 export type SandboxRule = "empty_sql" | "sql_too_long" | "nul_byte" | "not_select" | "multiple_statements" | "non_read_only" | "unauthorized_action" | "unauthorized_table" | "unauthorized_column" | "timeout" | "blob_not_allowed" | "sql_error" | "projection_unavailable";
 export type SqlValue = null | number | number | string;
 export type SqlColumn = { name: string, format: ColumnFormat, };
-export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, };
+export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, as_of_ms?: number, };
 export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
 /**
  * Steps that ran before this one when the question was chained, oldest

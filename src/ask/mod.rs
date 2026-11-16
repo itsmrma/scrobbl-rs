@@ -58,6 +58,9 @@ pub struct SqlAnswer {
     pub rows: Vec<Vec<SqlValue>>,
     pub truncated: bool,
     pub rule_code: Option<SandboxRule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub as_of_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -231,7 +234,7 @@ pub struct Ask {
     pub model_ready: bool,
     /// True when this Ask is backed by the real runtime rather than a stub.
     pub local: bool,
-    projection: projection::ProjectionGate,
+    pub projection: projection::ProjectionGate,
 }
 
 impl Default for Ask {
@@ -619,12 +622,14 @@ async fn run_sql(
     output: SqlModelOutput,
     local_engine: bool,
 ) -> Result<AskResponse> {
-    let proj_path = projection::ensure(&state.storage, &state.ask.projection).await?;
+    let proj_path = projection::for_query(&state.storage, &state.ask.projection).await?;
     let sql_text = output.sql.clone();
-    let outcome = {
+    let (as_of_ms, outcome) = {
         let _read = state.ask.projection.read_lock().await;
         tokio::task::spawn_blocking(move || {
-            sandbox::execute(&proj_path, &sql_text, SandboxLimits::default())
+            let as_of_ms = projection::read_built_at_ms(&proj_path);
+            let outcome = sandbox::execute(&proj_path, &sql_text, SandboxLimits::default());
+            (as_of_ms, outcome)
         })
         .await
         .map_err(|_| AppError::Internal)?
@@ -651,6 +656,7 @@ async fn run_sql(
                     rows: table.rows,
                     truncated: table.truncated,
                     rule_code: None,
+                    as_of_ms,
                 }),
             })
         }
@@ -686,6 +692,7 @@ async fn run_sql(
                     rows: Vec::new(),
                     truncated: false,
                     rule_code: Some(rejection.rule),
+                    as_of_ms,
                 }),
             })
         }

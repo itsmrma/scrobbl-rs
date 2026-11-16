@@ -427,6 +427,10 @@ function AboutApplication() {
             <dd>{size(data.models_bytes)}</dd>
           </div>
           <div>
+            <dt>Ask projection on disk</dt>
+            <dd>{size(data.projection_bytes)}</dd>
+          </div>
+          <div>
             <dt>Backups on disk</dt>
             <dd>{size(data.backups_bytes)}</dd>
           </div>

@@ -375,17 +375,22 @@ fn authorize(ctx: AuthContext<'_>, denied: &DeniedState) -> Authorization {
             table_name,
             column_name,
         } => {
+            if ctx
+                .database_name
+                .is_none_or(|db| db.eq_ignore_ascii_case("main"))
+                && (table_name.eq_ignore_ascii_case("json_each")
+                    || table_name.eq_ignore_ascii_case("json_tree"))
+            {
+                // Eponymous JSON table-valued functions are explicitly allow-listed.
+                return Authorization::Allow;
+            }
             if ctx.database_name.is_none()
                 && !table_name.to_ascii_lowercase().starts_with("sqlite_")
                 && !table_name.to_ascii_lowercase().starts_with("pragma_")
                 && !table_name.eq_ignore_ascii_case("_projection_meta")
             {
-                // Transient CTEs (such as recursive CTE self-references) and
-                // eponymous functions (json_each/json_tree) have no backing DB.
-                if table_name.eq_ignore_ascii_case("json_each")
-                    || table_name.eq_ignore_ascii_case("json_tree")
-                    || column_name.is_empty()
-                {
+                // Transient CTEs (such as recursive CTE self-references) have no backing DB.
+                if column_name.is_empty() {
                     return Authorization::Allow;
                 }
             }
@@ -638,7 +643,7 @@ mod tests {
     fn fixture_projection() -> NamedTempFile {
         let file = NamedTempFile::new().unwrap();
         let conn = Connection::open(file.path()).unwrap();
-        conn.execute_batch(projection::DDL).unwrap();
+        conn.execute_batch(&projection::ddl()).unwrap();
         conn.execute(
             "INSERT INTO artists(id, name) VALUES ('a1', 'Björk'), ('a2', 'Ado')",
             [],
@@ -650,7 +655,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO tracks(id, title, album_id, duration_ms) VALUES ('t1', 'Jóga', 'al1', 305000)",
+            "INSERT INTO tracks(id, title, album_id, duration_ms, edition_key) VALUES ('t1', 'Jóga', 'al1', 305000, 'joga:a1')",
             [],
         )
         .unwrap();
@@ -660,7 +665,12 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO listens(id, track_id, played_at_ms, local_date, week_date, local_year, local_month, weekday, local_hour, listened_ms, duration_kind, counted, needs_review) VALUES ('l1', 't1', 1704880800000, '2024-01-10', '2024-01-08', 2024, 1, 3, 11, 305000, 'actual', 1, 0)",
+            "INSERT INTO album_artists(album_id, artist_id, ordinal) VALUES ('al1', 'a1', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO listens(id, track_id, played_at_ms, played_at_local, local_date, week_date, local_year, local_month, weekday, week_start, local_hour, listened_ms, duration_kind, counted, needs_review, sources) VALUES ('l1', 't1', 1704880800000, '2024-01-10 11:00:00', '2024-01-10', '2024-01-08', 2024, 1, 3, 0, 11, 305000, 'actual', 1, 0, '[\"spotify_api\"]')",
             [],
         )
         .unwrap();

@@ -668,6 +668,13 @@ pub async fn settings_post(
     .await?;
     tx.commit().await?;
 
+    if form.enabled {
+        state.ask.projection.notify();
+    } else {
+        crate::ask::projection::remove(&state.storage.directory, &state.ask.projection).await?;
+        state.ask.projection.notify();
+    }
+
     let stored = StoredSettings {
         provider,
         local_answer_mode,
@@ -1131,5 +1138,8 @@ pub async fn worker(state: AppState) {
             }
         }
     }
-    download::worker(state).await;
+    tokio::join!(
+        download::worker(state.clone()),
+        crate::ask::projection::worker(state),
+    );
 }

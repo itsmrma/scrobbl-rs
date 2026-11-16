@@ -257,7 +257,7 @@ pub fn build_sql_prompt(question: &str, today: &str) -> String {
 /// projection schema, counting rules, today's date and examples — never any
 /// archive values.
 pub fn remote_sql_system_prompt(today: &str) -> String {
-    let schema = projection::SCHEMA_DESCRIPTION;
+    let schema = projection::schema_description();
     let contract = serde_json::to_string(&schema::sql_schema()).unwrap_or_default();
     format!(
         "You translate one personal music-listening question into one read-only SQLite SELECT (or WITH ... SELECT) query.\n\
@@ -268,7 +268,10 @@ pub fn remote_sql_system_prompt(today: &str) -> String {
          - Use `counted = 1` for play counts and statistics unless the question specifically asks about short/skipped plays (`counted = 0`) or all attempts.\n\
          - `listened_ms` is NULL when `duration_kind = 'unknown'`. Never treat unknown duration as 0; report known listening time with `SUM(listened_ms)` and count `duration_kind = 'unknown'` separately when relevant.\n\
          - A track can credit multiple artists via `track_artists`. When counting plays without filtering to one artist, use `COUNT(DISTINCT l.id)` so multi-artist tracks are not double-counted.\n\
-         - `tracks.album_id` may be NULL; use `LEFT JOIN albums` when album names are optional.\n\
+         - Use `album_artists` when asking for an album's main artists (single-track guests are excluded), and `track_artists` for every artist credited on a track.\n\
+         - `tracks.album_id` may be NULL; use `LEFT JOIN albums` when album names are optional. Use `tracks.edition_key` to group editions of the same song (single + album + deluxe), or `tracks.id` for individual track editions.\n\
+         - `listens.sources` is a JSON array (`[\"spotify_api\",\"spotify_import\"]`); filter by source with `EXISTS (SELECT 1 FROM json_each(l.sources) WHERE value = 'spotify_import')`.\n\
+         - Use the `calendar` table (`local_date`, `week_date`, `year`, `month`, `day`, `weekday`) for gap/streak calculations without recursive CTEs, and `meta` for the active `timezone`, `week_start`, and `revision`.\n\
          - Match artist, album and track names case-insensitively (`LOWER(a.name) = LOWER('...')` or `LIKE`) and copy names literally from the question without translating or altering them.\n\
          - Write a single SQLite `SELECT` or `WITH` statement with no multiple statements, no PRAGMA, no writes and no `sqlite_*` tables.\n\
          - Output JSON only, matching this schema: {contract}\n\

@@ -765,6 +765,11 @@ function SqlResultCard({
           </table>
         </div>
       )}
+      {sql.as_of_ms != null && (
+        <p className="ask-coverage">
+          Projection as of {date(sql.as_of_ms, preferences)}
+        </p>
+      )}
       <SqlDisclosure sql={sql.sql} />
     </article>
   );
