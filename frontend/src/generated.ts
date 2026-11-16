@@ -149,8 +149,8 @@ export type AiSettings = {
 /**
  * `local` or `remote`.
  */
-provider: string, answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
-export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, remote_url: string | null, remote_model: string | null, 
+provider: string, answer_mode: AnswerMode, local_answer_mode: AnswerMode, remote_answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, local_answer_mode?: AnswerMode, remote_answer_mode?: AnswerMode, remote_url: string | null, remote_model: string | null, 
 /**
  * `None` keeps the stored key, an empty string clears it.
  */

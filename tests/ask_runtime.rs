@@ -694,3 +694,140 @@ fn prompt_fits_the_context_window() {
         "prompt is about {estimated_tokens} tokens"
     );
 }
+
+#[test]
+fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
+    let prompt = prompt::build_sql_prompt("What are my top tracks in 2024?", "2026-11-16");
+    let estimated_tokens = prompt.chars().count() / 3;
+    assert!(
+        estimated_tokens as i32 + runtime::MAX_SQL_NEW_TOKENS <= runtime::SQL_CONTEXT_TOKENS as i32,
+        "sql prompt is about {estimated_tokens} tokens"
+    );
+
+    let grammar = grammar::to_gbnf(&schema::sql_schema()).unwrap();
+    assert!(grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"));
+}
+
+struct RecordingGrammarEngine {
+    seen: Arc<Mutex<Vec<(String, runtime::GrammarKind)>>>,
+    reply: String,
+}
+
+impl runtime::Engine for RecordingGrammarEngine {
+    fn load(&mut self, _spec: &runtime::ModelSpec) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn unload(&mut self) {}
+
+    fn generate(
+        &mut self,
+        prompt: &str,
+        _cancel: &runtime::CancelToken,
+    ) -> Result<String, runtime::InferenceError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((prompt.to_string(), runtime::GrammarKind::Guided));
+        Ok(self.reply.clone())
+    }
+
+    fn generate_with_grammar(
+        &mut self,
+        prompt: &str,
+        grammar: runtime::GrammarKind,
+        _cancel: &runtime::CancelToken,
+    ) -> Result<String, runtime::InferenceError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((prompt.to_string(), grammar));
+        Ok(self.reply.clone())
+    }
+}
+
+#[cfg(feature = "llama")]
+#[tokio::test]
+async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
+    let id = "qwen3-1.7b-q4_k_m";
+    let catalog = scrobbl_rs::ai::catalog::find(id).unwrap();
+    let model_dir = dir.path().join("models").join(id);
+    std::fs::create_dir_all(&model_dir).unwrap();
+    let target = model_dir.join(&catalog.download.file);
+    std::fs::write(&target, b"dummy gguf bytes").unwrap();
+    let metadata = serde_json::json!({
+        "catalog_id": id,
+        "file": catalog.download.file,
+        "sha256": "0".repeat(64),
+        "size_bytes": 16,
+        "installed_at_ms": 1_760_000_000_000_i64,
+        "license": "Apache-2.0",
+        "checksum_verified": true,
+    });
+    std::fs::write(
+        model_dir.join("metadata.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    for (key, value) in [
+        ("ai_enabled", "1"),
+        ("ai_provider", "local"),
+        ("ai_answer_mode_local", "sql"),
+        ("ai_active_model", id),
+    ] {
+        sqlx::query("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)")
+            .bind(key)
+            .bind(value)
+            .execute(&storage.writer)
+            .await
+            .unwrap();
+    }
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let engine = RecordingGrammarEngine {
+        seen: seen.clone(),
+        reply: serde_json::json!({
+            "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+            "title": "Plays",
+            "computed": "Total counted plays.",
+            "answer_kind": "value",
+            "columns": [{"name": "plays", "format": "count"}]
+        })
+        .to_string(),
+    };
+    let rt = Runtime::spawn(Box::new(engine), 4);
+    let parser = ModelParser::new(
+        storage.writer.clone(),
+        dir.path().to_path_buf(),
+        rt,
+        Duration::from_secs(5),
+    );
+    let parsed = parser.parse("How many plays?").await.unwrap();
+    assert!(matches!(parsed, ParsedQuestion::Sql(_)), "{parsed:?}");
+    {
+        let recorded = seen.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].1, runtime::GrammarKind::Sql);
+        assert!(recorded[0].0.contains("listens("));
+    }
+
+    // Malformed output from the local model in SQL mode suggests guided questions or a larger model.
+    let bad_seen = Arc::new(Mutex::new(Vec::new()));
+    let bad_engine = RecordingGrammarEngine {
+        seen: bad_seen,
+        reply: "not json".to_string(),
+    };
+    let bad_rt = Runtime::spawn(Box::new(bad_engine), 4);
+    let bad_parser = ModelParser::new(
+        storage.writer.clone(),
+        dir.path().to_path_buf(),
+        bad_rt,
+        Duration::from_secs(5),
+    );
+    let err = bad_parser.parse("How many plays?").await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("Guided questions"), "{msg}");
+    assert!(msg.contains("larger model"), "{msg}");
+}

@@ -803,3 +803,108 @@ async fn page_context_scopes_a_named_song_instead_of_replacing_it() {
     let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": days})).await;
     assert_eq!(body["result"]["scalar"], 3);
 }
+
+#[tokio::test]
+async fn stub_local_sql_mode_runs_through_sandbox_and_guided_stays_unchanged() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    // 1. Capture guided answer when local mode is guided (default).
+    let (status, guided_before) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{guided_before}");
+    assert_eq!(guided_before["status"], "ok");
+    assert_eq!(guided_before["result"]["scalar"], 3);
+    assert!(guided_before.get("sql").is_none());
+
+    // 2. Switch local engine to SQL mode via settings API.
+    let (status, saved) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "local",
+            "answer_mode": "sql",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["answer_mode"], "sql");
+
+    // 3. Free questions run end-to-end through the projection and sandbox.
+    let (status, sql_bjork) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sql_bjork}");
+    assert_eq!(sql_bjork["status"], "ok", "{sql_bjork}");
+    assert_eq!(sql_bjork["sql"]["rows"], json!([[3]]));
+    assert!(sql_bjork["result"].is_null());
+
+    let (status, sql_total) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many plays?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sql_total}");
+    assert_eq!(sql_total["status"], "ok", "{sql_total}");
+    assert_eq!(sql_total["sql"]["rows"], json!([[4]]));
+
+    // 4. Failed local free question suggests guided questions or a larger model.
+    let (status, failed_sql) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "Show me settings", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{failed_sql}");
+    assert_eq!(failed_sql["status"], "failed", "{failed_sql}");
+    assert_eq!(failed_sql["sql"]["rule_code"], "unauthorized_table");
+    let msg = failed_sql["message"].as_str().unwrap();
+    assert!(msg.contains("Guided questions"), "{msg}");
+    assert!(msg.contains("larger model"), "{msg}");
+
+    // 5. Switch back to guided: guided response is byte-for-byte unchanged.
+    let (status, _) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "local",
+            "answer_mode": "guided",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, guided_after) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({"question": "How many times did I listen to Björk?", "context": null}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(guided_after, guided_before);
+}

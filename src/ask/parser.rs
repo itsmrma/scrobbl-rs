@@ -4,10 +4,11 @@
 //! object-safe `QueryParser` trait and return only DSL, never SQL, rows or IDs.
 //! CI and the current app use `StubParser`, a deterministic phrase map.
 use crate::{
+    ai::AnswerMode,
     ask::{
         dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
-        runtime::{ModelSpec, Runtime, RuntimeError},
-        schema::{ModelOutput, SqlAnswerKind, SqlModelOutput},
+        runtime::{GrammarKind, ModelSpec, Runtime, RuntimeError},
+        schema::{ColumnFormat, ModelOutput, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     error::{AppError, Result},
 };
@@ -65,6 +66,17 @@ pub trait QueryParser: Send + Sync {
         self.parse(question)
     }
 
+    /// Parse using the active answer mode. Parsers that only support one mode
+    /// inherit `parse_follow_up`.
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        _mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        self.parse_follow_up(question, previous)
+    }
+
     /// True while the real runtime is loading a model. Stub and unavailable
     /// parsers never load anything.
     fn model_loading(&self) -> bool {
@@ -78,6 +90,20 @@ pub struct StubParser;
 impl QueryParser for StubParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
         Box::pin(async move { Ok(stub_parse(question)) })
+    }
+
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        _previous: Option<&'a Previous>,
+        mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move {
+            Ok(match mode {
+                AnswerMode::Guided => stub_parse(question),
+                AnswerMode::Sql => stub_parse_sql(question),
+            })
+        })
     }
 }
 
@@ -203,6 +229,99 @@ pub fn stub_parse(question: &str) -> ParsedQuestion {
     // refusal, not an empty answer.
     ParsedQuestion::Unsupported {
         reason: unsupported_question_message(),
+    }
+}
+
+/// Deterministic SQL-mode stub used when testing local SQL mode without a GGUF model.
+pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
+    let normalised = normalise(question);
+    if normalised.is_empty()
+        || contains_any(
+            &normalised,
+            &["weather", "meteo", "poem", "poesia", "capital of"],
+        )
+    {
+        return ParsedQuestion::Unsupported {
+            reason: "I can only answer questions about your listening archive.".into(),
+        };
+    }
+    if contains_any(&normalised, &["show me settings", "read settings"]) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT value FROM settings".into(),
+            title: "Settings".into(),
+            computed: "Attempted to read settings.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: Vec::new(),
+        });
+    }
+    if contains_any(&normalised, &["invalid sql", "broken sql"]) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT * FROM nonexistent_table".into(),
+            title: "Broken query".into(),
+            computed: "Attempted to query a missing table.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: Vec::new(),
+        });
+    }
+    if contains_any(
+        &normalised,
+        &["top tracks", "brani più ascoltati", "canzoni più ascoltate"],
+    ) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC".into(),
+            title: "Top tracks".into(),
+            computed: "Counted plays per track across all time.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: vec![
+                SqlColumnSpec {
+                    name: "track".into(),
+                    format: ColumnFormat::Track,
+                },
+                SqlColumnSpec {
+                    name: "plays".into(),
+                    format: ColumnFormat::Count,
+                },
+            ],
+        });
+    }
+    for prefix in [
+        "how many times did i listen to ",
+        "how many times did i play ",
+        "quante volte ho ascoltato ",
+    ] {
+        if let Some(name) = normalised.strip_prefix(prefix) {
+            let escaped = name.trim().replace('\'', "''");
+            return ParsedQuestion::Sql(SqlModelOutput {
+                sql: format!(
+                    "SELECT COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND LOWER(a.name) = LOWER('{escaped}')"
+                ),
+                title: format!("Plays for {}", name.trim()),
+                computed: format!("Counted plays for artist {} across all time.", name.trim()),
+                answer_kind: SqlAnswerKind::Value,
+                columns: vec![SqlColumnSpec {
+                    name: "plays".into(),
+                    format: ColumnFormat::Count,
+                }],
+            });
+        }
+    }
+    if contains_any(
+        &normalised,
+        &["how many plays", "how many listens", "quanti ascolti"],
+    ) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1".into(),
+            title: "Total plays".into(),
+            computed: "Total counted plays across all time.".into(),
+            answer_kind: SqlAnswerKind::Value,
+            columns: vec![SqlColumnSpec {
+                name: "plays".into(),
+                format: ColumnFormat::Count,
+            }],
+        });
+    }
+    ParsedQuestion::Unsupported {
+        reason: "I couldn't translate that question in stub SQL mode. Try \"What are my top tracks?\" or \"How many plays?\".".into(),
     }
 }
 
@@ -397,6 +516,7 @@ impl ModelParser {
             let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
             return interpret_remote(&raw, question);
         }
+        let answer_mode = stored.effective_answer_mode();
         let Some(model_id) = stored.active_model else {
             return Ok(ParsedQuestion::Unsupported {
                 reason: "Download and select an AI model in Settings before asking questions."
@@ -440,6 +560,16 @@ impl ModelParser {
             stored.threads.clamp(1, 64),
             stored.unload_minutes.clamp(1, 1440),
         );
+        if answer_mode == AnswerMode::Sql {
+            let today = active_calendar_today(&self.db).await;
+            let prompt = crate::ask::prompt::build_sql_prompt(question, &today);
+            let output = self
+                .runtime
+                .infer_with_grammar(&spec, &prompt, GrammarKind::Sql, self.timeout)
+                .await
+                .map_err(local_sql_runtime_error)?;
+            return interpret_local_sql(&output);
+        }
         let prompt = crate::ask::prompt::build_prompt(question);
         let output = self
             .runtime
@@ -467,12 +597,22 @@ async fn active_calendar_today(db: &sqlx::SqlitePool) -> String {
 }
 
 pub fn interpret_remote_sql(raw: &str) -> Result<ParsedQuestion> {
-    let output: SqlModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
-        AppError::BadRequest(
-            "The AI model returned a SQL interpretation that does not match the expected format. Try rephrasing the question."
-                .into(),
-        )
-    })?;
+    interpret_sql_with_message(
+        raw,
+        "The AI model returned a SQL interpretation that does not match the expected format. Try rephrasing the question.",
+    )
+}
+
+pub fn interpret_local_sql(raw: &str) -> Result<ParsedQuestion> {
+    interpret_sql_with_message(
+        raw,
+        "The local model returned a SQL interpretation that does not match the expected format. Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
+    )
+}
+
+fn interpret_sql_with_message(raw: &str, error_message: &str) -> Result<ParsedQuestion> {
+    let output: SqlModelOutput =
+        serde_json::from_str(raw.trim()).map_err(|_| AppError::BadRequest(error_message.into()))?;
     if output.answer_kind == SqlAnswerKind::Unsupported {
         let reason = if output.computed.trim().is_empty() {
             "I can only answer questions about your listening archive.".to_owned()
@@ -528,6 +668,19 @@ fn runtime_error(error: RuntimeError) -> AppError {
         RuntimeError::Failed(message) => AppError::BadRequest(format!(
             "The local model could not answer: {message}. Check the selected model in Settings."
         )),
+    }
+}
+
+fn local_sql_runtime_error(error: RuntimeError) -> AppError {
+    match error {
+        RuntimeError::Timeout => AppError::BadRequest(
+            "The local model did not answer in time. Try Guided questions in Settings → AI or a larger model."
+                .into(),
+        ),
+        RuntimeError::Failed(message) => AppError::BadRequest(format!(
+            "The local model could not answer: {message}. Try Guided questions in Settings → AI or a larger model."
+        )),
+        other => runtime_error(other),
     }
 }
 

@@ -87,10 +87,20 @@ impl Generator {
             Some("string") => Ok("string".to_string()),
             Some("integer") => Ok("integer".to_string()),
             Some("boolean") => Ok("(\"true\" | \"false\")".to_string()),
+            Some("array") => self.array_body(schema, name),
             Some("object") => self.object_body(schema, name),
             Some(other) => Err(format!("unsupported schema type {other:?} in {name}")),
             None => Err(format!("schema node {name} has neither type nor enum")),
         }
+    }
+
+    fn array_body(&mut self, schema: &Value, name: &str) -> Result<String, String> {
+        let items = schema
+            .get("items")
+            .ok_or_else(|| format!("array {name} has no items"))?;
+        let item_name = format!("{name}_item");
+        let item = self.expr(items, &item_name)?;
+        Ok(format!("\"[\" ws ({item} (ws \",\" ws {item})*)? ws \"]\""))
     }
 
     fn object_body(&mut self, schema: &Value, name: &str) -> Result<String, String> {
@@ -231,5 +241,28 @@ mod tests {
         schema["additionalProperties"] = json!(true);
         let error = to_gbnf(&schema).unwrap_err();
         assert!(error.contains("additionalProperties"), "{error}");
+    }
+
+    #[test]
+    fn sql_schema_generates_gbnf_with_free_sql_string_and_columns_array() {
+        let grammar = to_gbnf(&crate::ask::schema::sql_schema()).unwrap();
+        assert!(grammar.starts_with("root ::= "), "{grammar}");
+        assert!(
+            grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"),
+            "sql field must be a free JSON string: {grammar}"
+        );
+        assert!(
+            grammar.contains("\"\\\"columns\\\"\" ws \":\" ws \"[\""),
+            "{grammar}"
+        );
+        assert!(grammar.contains("root_columns_item ::= "), "{grammar}");
+        assert!(
+            grammar.contains(&gbnf_json_string("unsupported")),
+            "{grammar}"
+        );
+        assert!(
+            grammar.contains(&gbnf_json_string("duration_ms")),
+            "{grammar}"
+        );
     }
 }
