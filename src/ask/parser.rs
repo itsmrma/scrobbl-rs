@@ -7,7 +7,7 @@ use crate::{
     ask::{
         dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
         runtime::{ModelSpec, Runtime, RuntimeError},
-        schema::ModelOutput,
+        schema::{ModelOutput, SqlAnswerKind, SqlModelOutput},
     },
     error::{AppError, Result},
 };
@@ -22,6 +22,7 @@ pub enum ParsedQuestion {
     /// dates from one row of an earlier step. Only the stronger "bring your
     /// own AI" engine produces plans.
     Plan(Vec<PlanStep>),
+    Sql(SqlModelOutput),
     Unsupported {
         reason: String,
     },
@@ -387,6 +388,12 @@ impl ModelParser {
                     reason: "Enter the AI server address and the model name in Settings.".into(),
                 });
             };
+            if stored.effective_answer_mode() == crate::ai::AnswerMode::Sql {
+                let today = active_calendar_today(&self.db).await;
+                let raw =
+                    crate::ask::remote::infer_sql(&config, question, &today, self.timeout).await?;
+                return interpret_remote_sql(&raw);
+            }
             let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
             return interpret_remote(&raw, question);
         }
@@ -442,6 +449,39 @@ impl ModelParser {
 
         interpret(&output, question)
     }
+}
+
+async fn active_calendar_today(db: &sqlx::SqlitePool) -> String {
+    let tz_name: Option<String> = sqlx::query_scalar(
+        "SELECT c.timezone FROM calendars c JOIN settings s ON s.value = c.id WHERE s.key = 'calendar_id'",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    let now = chrono::Utc::now();
+    if let Some(tz) = tz_name.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        return now.with_timezone(&tz).format("%Y-%m-%d").to_string();
+    }
+    now.format("%Y-%m-%d").to_string()
+}
+
+pub fn interpret_remote_sql(raw: &str) -> Result<ParsedQuestion> {
+    let output: SqlModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
+        AppError::BadRequest(
+            "The AI model returned a SQL interpretation that does not match the expected format. Try rephrasing the question."
+                .into(),
+        )
+    })?;
+    if output.answer_kind == SqlAnswerKind::Unsupported {
+        let reason = if output.computed.trim().is_empty() {
+            "I can only answer questions about your listening archive.".to_owned()
+        } else {
+            output.computed.trim().to_owned()
+        };
+        return Ok(ParsedQuestion::Unsupported { reason });
+    }
+    Ok(ParsedQuestion::Sql(output))
 }
 
 /// The remote engine answers with a list of steps; a flat single interpretation

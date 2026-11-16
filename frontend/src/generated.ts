@@ -102,12 +102,22 @@ export type SortOrder = "asc" | "desc";
 export type Limit = "one" | "five" | "ten" | "twenty_five" | "fifty" | "hundred";
 export type Chip = { key: string, label: string, value: string, };
 export type AskStatus = "ok" | "unsupported" | "ambiguous" | "model_unavailable" | "model_missing" | "failed";
+export type SqlAnswerKind = "value" | "table" | "series" | "ranking" | "unsupported";
+export type ColumnFormat = "count" | "duration_ms" | "date" | "datetime" | "percent" | "text" | "artist" | "album" | "track";
+export type SandboxRule = "empty_sql" | "sql_too_long" | "nul_byte" | "not_select" | "multiple_statements" | "non_read_only" | "unauthorized_action" | "unauthorized_table" | "unauthorized_column" | "timeout" | "blob_not_allowed" | "sql_error" | "projection_unavailable";
+export type SqlValue = null | number | number | string;
+export type SqlColumn = { name: string, format: ColumnFormat, };
+export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, };
 export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
 /**
  * Steps that ran before this one when the question was chained, oldest
  * first. This response is always the last step that ran.
  */
-earlier: Array<AskStep>, };
+earlier: Array<AskStep>, 
+/**
+ * Free-question (SQL mode) answer or rejection details, present only in SQL mode.
+ */
+sql?: SqlAnswer, };
 export type AskResult = { metric: Metric, 
 /**
  * Count, or timestamp in milliseconds for first/last.
@@ -134,12 +144,13 @@ export type AskRequest = { question: string, context: AskContext | null,
 previous: AskPrevious | null, };
 export type AskContext = { kind: EntityKind, id: string, };
 export type AskQueryRequest = { query: Query, };
+export type AnswerMode = "guided" | "sql";
 export type AiSettings = { 
 /**
  * `local` or `remote`.
  */
-provider: string, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
-export type SaveAiSettings = { provider: string | null, remote_url: string | null, remote_model: string | null, 
+provider: string, answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, remote_url: string | null, remote_model: string | null, 
 /**
  * `None` keeps the stored key, an empty string clears it.
  */
@@ -148,7 +159,7 @@ export type AiAskStatus = {
 /**
  * `local` or `remote`.
  */
-provider: string, remote_model: string | null, enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
+provider: string, answer_mode: AnswerMode, remote_model: string | null, enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
 export type AiLicense = { name: string, url: string, };
 export type AiDownload = { repo: string, revision: string, file: string, sha256: string, size_bytes: number, };
 export type AiRequirements = { disk_bytes: number, ram_min_bytes: number, ram_recommended_bytes: number, cpu_cores: number, gpu_optional: boolean, context_tokens: number, };

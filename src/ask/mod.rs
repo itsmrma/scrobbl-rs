@@ -6,9 +6,11 @@ pub mod grammar;
 pub mod grouping;
 pub mod names;
 pub mod parser;
+pub mod projection;
 pub mod prompt;
 pub mod remote;
 pub mod runtime;
+pub mod sandbox;
 pub mod schema;
 pub mod streaks;
 pub mod time;
@@ -18,9 +20,11 @@ use crate::{
     ask::{
         dsl::{Chip, Entity, EntityKind, Metric, Query},
         parser::{ParsedQuestion, PlanStep, Previous, QueryParser, StubParser, UnavailableParser},
+        sandbox::{SandboxLimits, SandboxRule, SqlValue},
+        schema::{ColumnFormat, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     auth,
-    error::Result,
+    error::{AppError, Result},
 };
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
@@ -39,6 +43,24 @@ pub enum AskStatus {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SqlColumn {
+    pub name: String,
+    pub format: ColumnFormat,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SqlAnswer {
+    pub title: String,
+    pub computed: String,
+    pub answer_kind: SqlAnswerKind,
+    pub sql: String,
+    pub columns: Vec<SqlColumn>,
+    pub rows: Vec<Vec<SqlValue>>,
+    pub truncated: bool,
+    pub rule_code: Option<SandboxRule>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AskResponse {
     pub status: AskStatus,
     pub question: String,
@@ -51,6 +73,10 @@ pub struct AskResponse {
     /// Steps that ran before this one when the question was chained, oldest
     /// first. This response is always the last step that ran.
     pub earlier: Vec<AskStep>,
+    /// Free-question (SQL mode) answer or rejection details, present only in SQL mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sql: Option<SqlAnswer>,
 }
 
 /// An answered step of a chained question.
@@ -205,6 +231,7 @@ pub struct Ask {
     pub model_ready: bool,
     /// True when this Ask is backed by the real runtime rather than a stub.
     pub local: bool,
+    projection: projection::ProjectionGate,
 }
 
 impl Default for Ask {
@@ -220,6 +247,7 @@ impl Ask {
             runtime_available: false,
             model_ready: false,
             local: false,
+            projection: projection::ProjectionGate::default(),
         }
     }
 
@@ -234,6 +262,7 @@ impl Ask {
             runtime_available: cfg!(feature = "llama"),
             model_ready: true,
             local: true,
+            projection: projection::ProjectionGate::default(),
         }
     }
 
@@ -243,6 +272,7 @@ impl Ask {
             runtime_available: true,
             model_ready: true,
             local: false,
+            projection: projection::ProjectionGate::default(),
         }
     }
 
@@ -257,6 +287,7 @@ impl Ask {
             runtime_available,
             model_ready,
             local,
+            projection: projection::ProjectionGate::default(),
         }
     }
 
@@ -304,6 +335,7 @@ pub async fn ask(
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
             earlier: Vec::new(),
+            sql: None,
         }));
     }
     let previous = request.previous.as_ref().map(AskPrevious::sanitized);
@@ -318,6 +350,9 @@ pub async fn ask(
                 run_plan(&state, question, steps, request.context).await?,
             ));
         }
+        ParsedQuestion::Sql(output) => {
+            return Ok(Json(run_sql(&state, question, output).await?));
+        }
         ParsedQuestion::Unsupported { reason } => {
             return Ok(Json(AskResponse {
                 status: AskStatus::Unsupported,
@@ -329,6 +364,7 @@ pub async fn ask(
                 candidates: Vec::new(),
                 runtime_available: state.ask.runtime_available,
                 earlier: Vec::new(),
+                sql: None,
             }));
         }
     };
@@ -372,6 +408,7 @@ async fn run_plan(
                 candidates: Vec::new(),
                 runtime_available: state.ask.runtime_available,
                 earlier: done.into_iter().map(AskStep::from).collect(),
+                sql: None,
             });
         }
         let page = if index == 0 { context.clone() } else { None };
@@ -535,6 +572,100 @@ fn refusal(state: &AppState, status: AskStatus, message: &str) -> AskResponse {
         candidates: Vec::new(),
         runtime_available: state.ask.runtime_available,
         earlier: Vec::new(),
+        sql: None,
+    }
+}
+
+fn match_columns(actual: &[String], declared: &[SqlColumnSpec]) -> Vec<SqlColumn> {
+    actual
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let format = declared
+                .iter()
+                .find(|spec| spec.name.eq_ignore_ascii_case(name))
+                .or_else(|| {
+                    (declared.len() == actual.len())
+                        .then(|| declared.get(index))
+                        .flatten()
+                })
+                .map(|spec| spec.format)
+                .unwrap_or(ColumnFormat::Text);
+            SqlColumn {
+                name: name.clone(),
+                format,
+            }
+        })
+        .collect()
+}
+
+async fn run_sql(
+    state: &AppState,
+    question: String,
+    output: SqlModelOutput,
+) -> Result<AskResponse> {
+    let proj_path = projection::ensure(&state.storage, &state.ask.projection).await?;
+    let sql_text = output.sql.clone();
+    let outcome = {
+        let _read = state.ask.projection.read_lock().await;
+        tokio::task::spawn_blocking(move || {
+            sandbox::execute(&proj_path, &sql_text, SandboxLimits::default())
+        })
+        .await
+        .map_err(|_| AppError::Internal)?
+    };
+    match outcome {
+        Ok(table) => {
+            let columns = match_columns(&table.columns, &output.columns);
+            Ok(AskResponse {
+                status: AskStatus::Ok,
+                question,
+                query: None,
+                chips: Vec::new(),
+                result: None,
+                message: None,
+                candidates: Vec::new(),
+                runtime_available: state.ask.runtime_available,
+                earlier: Vec::new(),
+                sql: Some(SqlAnswer {
+                    title: output.title,
+                    computed: output.computed,
+                    answer_kind: output.answer_kind,
+                    sql: output.sql,
+                    columns,
+                    rows: table.rows,
+                    truncated: table.truncated,
+                    rule_code: None,
+                }),
+            })
+        }
+        Err(rejection) => {
+            eprintln!(
+                "Ask SQL rejected ({:?}): {}",
+                rejection.rule, rejection.detail
+            );
+            Ok(AskResponse {
+                status: AskStatus::Failed,
+                question,
+                query: None,
+                chips: Vec::new(),
+                result: None,
+                message: Some(rejection.message),
+                candidates: Vec::new(),
+                runtime_available: state.ask.runtime_available,
+                earlier: Vec::new(),
+                sql: Some(SqlAnswer {
+                    title: output.title,
+                    computed: output.computed,
+                    answer_kind: output.answer_kind,
+                    sql: output.sql,
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    truncated: false,
+                    rule_code: Some(rejection.rule),
+                }),
+            })
+        }
     }
 }
 
@@ -558,6 +689,7 @@ async fn run(
         candidates: Vec::new(),
         runtime_available: state.ask.runtime_available,
         earlier: Vec::new(),
+        sql: None,
     };
 
     // The page context is what the owner is looking at. It answers questions
@@ -647,6 +779,7 @@ async fn run(
                     candidates,
                     runtime_available: state.ask.runtime_available,
                     earlier: Vec::new(),
+                    sql: None,
                 });
             }
             names::Resolution::NotFound => {
@@ -711,6 +844,7 @@ async fn run(
                         candidates,
                         runtime_available: state.ask.runtime_available,
                         earlier: Vec::new(),
+                        sql: None,
                     });
                 }
                 names::Resolution::NotFound => {
@@ -747,6 +881,7 @@ async fn run(
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
             earlier: Vec::new(),
+            sql: None,
         }),
         execute::Outcome::Result(result) => Ok(AskResponse {
             status: AskStatus::Ok,
@@ -758,6 +893,7 @@ async fn run(
             candidates: Vec::new(),
             runtime_available: state.ask.runtime_available,
             earlier: Vec::new(),
+            sql: None,
         }),
     }
 }

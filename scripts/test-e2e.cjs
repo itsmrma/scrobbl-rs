@@ -28,6 +28,7 @@ const isolatedFiles = [
   "tests/skeleton.spec.cjs",
   "tests/api-keys.spec.cjs",
   "tests/ask-context.spec.cjs",
+  "tests/ask-free.spec.cjs",
   "tests/artwork-providers.spec.cjs",
   "tests/consultation.spec.cjs",
   "tests/gui-audit.spec.cjs",
