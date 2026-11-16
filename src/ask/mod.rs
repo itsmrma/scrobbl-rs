@@ -661,10 +661,6 @@ async fn run_sql(
             })
         }
         Err(rejection) => {
-            eprintln!(
-                "Ask SQL rejected ({:?}): {}",
-                rejection.rule, rejection.detail
-            );
             let message = if local_engine {
                 format!(
                     "{} Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
