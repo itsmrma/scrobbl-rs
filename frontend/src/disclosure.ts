@@ -1,5 +1,10 @@
 import { useEffect } from "react";
 
+const VERTICAL_CLIP =
+  typeof CSS !== "undefined" && CSS.supports("overflow", "visible clip")
+    ? "visible clip"
+    : "hidden";
+
 function disclosureBody(details: HTMLDetailsElement) {
   if (details.classList.contains("listen-details"))
     return details.querySelector<HTMLElement>("dl");
@@ -41,7 +46,10 @@ export function useDisclosureMotion() {
       details.open = true;
       const fullHeight = body.getBoundingClientRect().height;
       const overflow = previous?.overflow ?? body.style.overflow;
-      body.style.overflow = "hidden";
+      // Clip only the growing edge. Clipping both axes would also cut the
+      // summary's hover highlight, which bleeds past the details sideways,
+      // and it would snap back to full width when the animation ends.
+      body.style.overflow = VERTICAL_CLIP;
       const animation = body.animate(
         [
           { height: from + "px" },

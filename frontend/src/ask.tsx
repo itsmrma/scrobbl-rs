@@ -30,6 +30,8 @@ const periodCopy: Record<string, string> = {
   last_year: "last year",
   last_7_days: "in the last 7 days",
   last_30_days: "in the last 30 days",
+  last_90_days: "in the last 90 days",
+  last_180_days: "in the last 180 days",
   last_365_days: "in the last 365 days",
 };
 

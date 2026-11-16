@@ -96,7 +96,11 @@ fn body(config: &RemoteConfig, question: &str, previous: Option<&Previous>, mode
         "temperature": 0,
         "max_tokens": 1200,
         "messages": [
-            {"role": "system", "content": prompt::remote_system_prompt()},
+            {"role": "system", "content": format!(
+                "{}\nToday is {} (UTC). Use it only to turn relative ranges the periods do not cover (\"the last two weeks\", \"since the summer\", \"the last 4 months\") into from and to dates.",
+                prompt::remote_system_prompt(),
+                chrono::Utc::now().format("%Y-%m-%d"),
+            )},
             {"role": "user", "content": user_message(question, previous)},
         ],
     });

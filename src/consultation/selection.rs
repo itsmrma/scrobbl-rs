@@ -125,6 +125,8 @@ pub(crate) async fn selection_at(
             "last_year" => crate::calendar::Period::LastYear,
             "7d" => crate::calendar::Period::RollingDays(7),
             "30d" => crate::calendar::Period::RollingDays(30),
+            "90d" => crate::calendar::Period::RollingDays(90),
+            "180d" => crate::calendar::Period::RollingDays(180),
             "365d" => crate::calendar::Period::RollingDays(365),
             _ => return Err(AppError::BadRequest("Unknown period.".into())),
         }

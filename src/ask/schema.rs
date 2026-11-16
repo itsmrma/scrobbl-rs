@@ -110,6 +110,8 @@ model_enum! {
         LastYear = "last_year",
         Last7Days = "last_7_days",
         Last30Days = "last_30_days",
+        Last90Days = "last_90_days",
+        Last180Days = "last_180_days",
         Last365Days = "last_365_days",
     }
 }
@@ -549,6 +551,8 @@ fn period(period: ModelPeriod) -> Period {
         ModelPeriod::LastYear => Period::LastYear,
         ModelPeriod::Last7Days => Period::Last7Days,
         ModelPeriod::Last30Days => Period::Last30Days,
+        ModelPeriod::Last90Days => Period::Last90Days,
+        ModelPeriod::Last180Days => Period::Last180Days,
         ModelPeriod::Last365Days => Period::Last365Days,
     }
 }
