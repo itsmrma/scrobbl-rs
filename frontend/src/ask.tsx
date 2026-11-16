@@ -336,6 +336,15 @@ export function AskPage({
       )}
 
       <form className="ask-form panel padded" onSubmit={submitQuestion}>
+        {status && (
+          <div className="ask-mode-bar" role="status">
+            <span>
+              <strong>Answer mode:</strong>{" "}
+              {sqlMode ? "Free questions (SQL)" : "Guided questions"}
+            </span>
+            <Link to="/settings/ai">Change mode</Link>
+          </div>
+        )}
         <label>
           Your question
           <input
@@ -344,9 +353,11 @@ export function AskPage({
             placeholder={
               canFollowUp && followUp
                 ? "Ask a follow-up, for example: and last year?"
-                : remote
-                  ? "In the month I listened to Ado the most, which track?"
-                  : "How many times did I listen to Björk?"
+                : sqlMode
+                  ? "What are my top 5 albums by listening time in 2024?"
+                  : remote
+                    ? "In the month I listened to Ado the most, which track?"
+                    : "How many times did I listen to Björk?"
             }
             autoComplete="off"
             disabled={disabled}
@@ -367,7 +378,7 @@ export function AskPage({
           </Button>
           <span className="field-hint">
             {sqlMode ? (
-              "Ask any question about your listening history. Your AI writes a read-only SQL query over your listening projection and scrobbl.rs runs it in a sandbox."
+              "Ask any question about your listening history. The AI writes a read-only SQL query over your listening projection and scrobbl.rs runs it in a sandbox."
             ) : (
               <>
                 Play counts, listening time, distinct tracks/artists/albums,
@@ -393,7 +404,16 @@ export function AskPage({
       </form>
 
       {error && (
-        <Notice title="The question could not be answered">{error}</Notice>
+        <Notice title="The question could not be answered">
+          {error}
+          {!remote && sqlMode && (
+            <p className="ask-hint">
+              Local catalog models can struggle with free SQL questions. Try
+              switching to <Link to="/settings/ai">Guided questions</Link> or a
+              larger model.
+            </p>
+          )}
+        </Notice>
       )}
 
       <div aria-live="polite" aria-atomic="true">
@@ -494,6 +514,14 @@ export function AskPage({
             {response.status === "failed" && (
               <Notice title="I couldn't answer that" tone="error">
                 {response.message}
+                {!remote && sqlMode && (
+                  <p className="ask-hint">
+                    Local catalog models can struggle with free SQL questions.
+                    Try switching to{" "}
+                    <Link to="/settings/ai">Guided questions</Link> or a larger
+                    model.
+                  </p>
+                )}
                 {response.sql?.sql && <SqlDisclosure sql={response.sql.sql} />}
               </Notice>
             )}

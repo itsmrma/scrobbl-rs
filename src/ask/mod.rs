@@ -311,6 +311,15 @@ impl Ask {
     ) -> Result<ParsedQuestion> {
         self.parser.parse_follow_up(question, previous).await
     }
+
+    pub async fn parse_for_mode(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+        mode: ai::AnswerMode,
+    ) -> Result<ParsedQuestion> {
+        self.parser.parse_for_mode(question, previous, mode).await
+    }
 }
 
 pub async fn ask(
@@ -320,10 +329,13 @@ pub async fn ask(
 ) -> Result<Json<AskResponse>> {
     auth::session(&state, &headers).await?;
     let question = request.question.trim().to_owned();
-    if let Some(mut refusal) = gate(&state).await? {
-        refusal.question = question;
-        return Ok(Json(refusal));
-    }
+    let stored = match gate(&state).await? {
+        Ok(stored) => stored,
+        Err(mut refusal) => {
+            refusal.question = question;
+            return Ok(Json(refusal));
+        }
+    };
     if question.is_empty() || !question.chars().any(char::is_alphanumeric) {
         return Ok(Json(AskResponse {
             status: AskStatus::Unsupported,
@@ -341,7 +353,7 @@ pub async fn ask(
     let previous = request.previous.as_ref().map(AskPrevious::sanitized);
     let parsed = state
         .ask
-        .parse_follow_up(&question, previous.as_ref())
+        .parse_for_mode(&question, previous.as_ref(), stored.effective_answer_mode())
         .await?;
     let query = match parsed {
         ParsedQuestion::Query(query) => query,
@@ -351,7 +363,9 @@ pub async fn ask(
             ));
         }
         ParsedQuestion::Sql(output) => {
-            return Ok(Json(run_sql(&state, question, output).await?));
+            return Ok(Json(
+                run_sql(&state, question, output, !stored.uses_remote()).await?,
+            ));
         }
         ParsedQuestion::Unsupported { reason } => {
             return Ok(Json(AskResponse {
@@ -377,7 +391,7 @@ pub async fn query(
     Json(request): Json<AskQueryRequest>,
 ) -> Result<Json<AskResponse>> {
     auth::session(&state, &headers).await?;
-    if let Some(refusal) = gate(&state).await? {
+    if let Err(refusal) = gate(&state).await? {
         return Ok(Json(refusal));
     }
     Ok(Json(run(&state, String::new(), request.query, None).await?))
@@ -508,10 +522,10 @@ fn bind_step(
     Ok(())
 }
 
-async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
+async fn gate(state: &AppState) -> Result<std::result::Result<ai::StoredSettings, AskResponse>> {
     let stored = ai::read_settings(state).await?;
     if !stored.enabled {
-        return Ok(Some(refusal(
+        return Ok(Err(refusal(
             state,
             AskStatus::ModelUnavailable,
             "AI is off. Enable it in Settings to ask questions.",
@@ -520,23 +534,23 @@ async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
     if stored.uses_remote() {
         // Your own AI server: nothing to load or install locally.
         if !stored.remote_configured() {
-            return Ok(Some(refusal(
+            return Ok(Err(refusal(
                 state,
                 AskStatus::ModelMissing,
                 "Enter the address and model name of your AI server in Settings before asking questions.",
             )));
         }
-        return Ok(None);
+        return Ok(Ok(stored));
     }
     if !state.ask.runtime_available {
-        return Ok(Some(refusal(
+        return Ok(Err(refusal(
             state,
             AskStatus::ModelUnavailable,
             "The AI runtime is not available in this build.",
         )));
     }
     if state.ask.model_loading() {
-        return Ok(Some(refusal(
+        return Ok(Err(refusal(
             state,
             AskStatus::ModelUnavailable,
             "The AI model is loading. Try again in a moment.",
@@ -545,20 +559,20 @@ async fn gate(state: &AppState) -> Result<Option<AskResponse>> {
     if state.ask.local {
         let readiness = ai::selected_model_readiness(state, &stored).await?;
         if !(readiness.installed && readiness.selected_available) {
-            return Ok(Some(refusal(
+            return Ok(Err(refusal(
                 state,
                 AskStatus::ModelMissing,
                 "Download and select an AI model in Settings before asking questions.",
             )));
         }
     } else if !state.ask.model_ready {
-        return Ok(Some(refusal(
+        return Ok(Err(refusal(
             state,
             AskStatus::ModelMissing,
             "Download and select an AI model in Settings before asking questions.",
         )));
     }
-    Ok(None)
+    Ok(Ok(stored))
 }
 
 fn refusal(state: &AppState, status: AskStatus, message: &str) -> AskResponse {
@@ -603,6 +617,7 @@ async fn run_sql(
     state: &AppState,
     question: String,
     output: SqlModelOutput,
+    local_engine: bool,
 ) -> Result<AskResponse> {
     let proj_path = projection::ensure(&state.storage, &state.ask.projection).await?;
     let sql_text = output.sql.clone();
@@ -644,13 +659,21 @@ async fn run_sql(
                 "Ask SQL rejected ({:?}): {}",
                 rejection.rule, rejection.detail
             );
+            let message = if local_engine {
+                format!(
+                    "{} Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
+                    rejection.message
+                )
+            } else {
+                rejection.message
+            };
             Ok(AskResponse {
                 status: AskStatus::Failed,
                 question,
                 query: None,
                 chips: Vec::new(),
                 result: None,
-                message: Some(rejection.message),
+                message: Some(message),
                 candidates: Vec::new(),
                 runtime_available: state.ask.runtime_available,
                 earlier: Vec::new(),

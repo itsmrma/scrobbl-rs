@@ -235,3 +235,122 @@ test("a free question with remote AI shows the computed sentence, a table and th
   await expect(page.locator(".notice")).toContainText("unauthorized_table");
   await expect(page.locator(".ask-table")).toHaveCount(0);
 });
+
+test("answer mode defaults, per-engine persistence, local warning, and active mode on Ask", async ({
+  harness: { page },
+}) => {
+  await page.goto("/settings/ai");
+
+  // Local defaults to guided, with explanatory lines and no warning.
+  const modeGroup = page.getByLabel("Answer mode");
+  await expect(modeGroup).toHaveAttribute("data-value", "guided");
+  await expect(page.getByText(/Guided questions:/)).toBeVisible();
+  await expect(page.getByText(/Free questions \(SQL\):/)).toBeVisible();
+  await expect(
+    page.getByText(/answers can be wrong but plausible/i),
+  ).toHaveCount(0);
+
+  // Choosing Free questions (SQL) with local engine shows the warning.
+  await page.getByRole("button", { name: "Free questions (SQL)" }).click();
+  await expect(modeGroup).toHaveAttribute("data-value", "sql");
+  await expect(
+    page.getByText(/answers can be wrong but plausible/i),
+  ).toBeVisible();
+
+  // Switching to remote defaults remote to sql and hides the local-only warning.
+  await chooseOption(page.getByLabel("AI engine"), "remote");
+  await expect(modeGroup).toHaveAttribute("data-value", "sql");
+  await expect(
+    page.getByText(/answers can be wrong but plausible/i),
+  ).toHaveCount(0);
+
+  // Switch remote to guided, then switch back to local -> local's sql choice is restored with warning.
+  await page.getByRole("button", { name: "Guided questions" }).click();
+  await expect(modeGroup).toHaveAttribute("data-value", "guided");
+  await chooseOption(page.getByLabel("AI engine"), "local");
+  await expect(modeGroup).toHaveAttribute("data-value", "sql");
+  await expect(
+    page.getByText(/answers can be wrong but plausible/i),
+  ).toBeVisible();
+
+  // Save local in sql mode and check the active mode on Ask.
+  await page.getByLabel("Enable AI").check();
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  await page.goto("/ask");
+  const modeBar = page.locator(".ask-mode-bar");
+  await expect(modeBar).toContainText("Free questions (SQL)");
+  const changeLink = modeBar.getByRole("link", { name: "Change mode" });
+  await expect(changeLink).toHaveAttribute("href", "/settings/ai");
+
+  // Follow the link back, switch to Guided questions, save, and verify on Ask.
+  await changeLink.click();
+  await expect(page).toHaveURL(/\/settings\/ai$/);
+  await expect(page.getByLabel("Answer mode")).toHaveAttribute(
+    "data-value",
+    "sql",
+  );
+  await page.getByRole("button", { name: "Guided questions" }).click();
+  await expect(
+    page.getByText(/answers can be wrong but plausible/i),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  await page.goto("/ask");
+  await expect(page.locator(".ask-mode-bar")).toContainText("Guided questions");
+
+  // A failed free question with a local catalog model suggests guided questions or a larger model.
+  await page.route("**/api/v1/ask/status", (route) =>
+    route.fulfill({
+      json: {
+        provider: "local",
+        answer_mode: "sql",
+        remote_model: null,
+        enabled: true,
+        runtime_available: true,
+        model_ready: true,
+        model_loading: false,
+      },
+    }),
+  );
+  await page.route("**/api/v1/ask", (route) =>
+    route.fulfill({
+      json: {
+        status: "failed",
+        question: "Complex question",
+        query: null,
+        chips: [],
+        result: null,
+        message: "SQL syntax error near FROM.",
+        candidates: [],
+        runtime_available: true,
+        earlier: [],
+        sql: {
+          title: "Broken",
+          computed: "Attempted query.",
+          answer_kind: "table",
+          sql: "SELECT FROM",
+          columns: [],
+          rows: [],
+          truncated: false,
+          rule_code: "sql_error",
+        },
+      },
+    }),
+  );
+  await page.reload();
+  await expect(page.locator(".ask-mode-bar")).toContainText(
+    "Free questions (SQL)",
+  );
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("Complex question");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.getByText("I couldn't answer that")).toBeVisible();
+  await expect(page.locator(".notice")).toContainText(/Guided questions/i);
+  await expect(page.locator(".notice")).toContainText(/larger model/i);
+  await page.unroute("**/api/v1/ask");
+  await page.unroute("**/api/v1/ask/status");
+});

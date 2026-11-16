@@ -83,6 +83,7 @@ impl AnswerMode {
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
     pub provider: Provider,
+    pub local_answer_mode: AnswerMode,
     pub remote_answer_mode: AnswerMode,
     pub remote_url: Option<String>,
     pub remote_model: Option<String>,
@@ -99,6 +100,7 @@ impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             provider: Provider::Local,
+            local_answer_mode: AnswerMode::Guided,
             remote_answer_mode: AnswerMode::Sql,
             remote_url: None,
             remote_model: None,
@@ -147,12 +149,17 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
     let remote_key = setting("ai_remote_key")
         .await?
         .filter(|value| !value.is_empty());
+    let local_answer_mode = setting("ai_answer_mode_local")
+        .await?
+        .and_then(|value| AnswerMode::parse(&value))
+        .unwrap_or(AnswerMode::Guided);
     let remote_answer_mode = setting("ai_answer_mode_remote")
         .await?
         .and_then(|value| AnswerMode::parse(&value))
         .unwrap_or(AnswerMode::Sql);
     Ok(StoredSettings {
         provider,
+        local_answer_mode,
         remote_answer_mode,
         remote_url,
         remote_model,
@@ -172,8 +179,8 @@ impl StoredSettings {
 
     pub fn effective_answer_mode(&self) -> AnswerMode {
         match self.provider {
+            Provider::Local => self.local_answer_mode,
             Provider::Remote => self.remote_answer_mode,
-            Provider::Local => AnswerMode::Guided,
         }
     }
 
@@ -238,6 +245,8 @@ pub struct AiSettings {
     /// `local` or `remote`.
     pub provider: String,
     pub answer_mode: AnswerMode,
+    pub local_answer_mode: AnswerMode,
+    pub remote_answer_mode: AnswerMode,
     pub remote_url: Option<String>,
     pub remote_model: Option<String>,
     pub remote_key_set: bool,
@@ -259,6 +268,12 @@ pub struct SaveAiSettings {
     pub provider: Option<String>,
     #[serde(default)]
     pub answer_mode: Option<AnswerMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub local_answer_mode: Option<AnswerMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub remote_answer_mode: Option<AnswerMode>,
     #[serde(default)]
     pub remote_url: Option<String>,
     #[serde(default)]
@@ -478,6 +493,8 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
     Ok(AiSettings {
         provider: stored.provider.as_str().to_owned(),
         answer_mode: stored.effective_answer_mode(),
+        local_answer_mode: stored.local_answer_mode,
+        remote_answer_mode: stored.remote_answer_mode,
         remote_url: stored.remote_url.clone(),
         remote_model: stored.remote_model.clone(),
         remote_key_set: stored.remote_key.is_some(),
@@ -598,10 +615,14 @@ pub async fn settings_post(
         // installed file through the select endpoint.
     }
 
-    let remote_answer_mode = match provider {
+    let local_answer_mode = form.local_answer_mode.unwrap_or(match provider {
+        Provider::Local => form.answer_mode.unwrap_or(previous.local_answer_mode),
+        Provider::Remote => previous.local_answer_mode,
+    });
+    let remote_answer_mode = form.remote_answer_mode.unwrap_or(match provider {
         Provider::Remote => form.answer_mode.unwrap_or(previous.remote_answer_mode),
         Provider::Local => previous.remote_answer_mode,
-    };
+    });
 
     let mut tx = state.db.begin().await?;
     crate::db::set_setting(&mut tx, "ai_enabled", if form.enabled { "1" } else { "0" }).await?;
@@ -620,6 +641,7 @@ pub async fn settings_post(
     .await?;
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
     crate::db::set_setting(&mut tx, "ai_provider", provider.as_str()).await?;
+    crate::db::set_setting(&mut tx, "ai_answer_mode_local", local_answer_mode.as_str()).await?;
     crate::db::set_setting(
         &mut tx,
         "ai_answer_mode_remote",
@@ -648,6 +670,7 @@ pub async fn settings_post(
 
     let stored = StoredSettings {
         provider,
+        local_answer_mode,
         remote_answer_mode,
         remote_url,
         remote_model,

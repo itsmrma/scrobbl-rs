@@ -243,6 +243,16 @@ pub fn build_prompt(question: &str) -> String {
     )
 }
 
+/// Build the ChatML prompt for local free questions (SQL mode).
+pub fn build_sql_prompt(question: &str, today: &str) -> String {
+    format!(
+        "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n{}",
+        remote_sql_system_prompt(today),
+        question.trim(),
+        THINKING_PREFIX
+    )
+}
+
 /// System prompt for free questions (SQL mode): carries only the documented
 /// projection schema, counting rules, today's date and examples — never any
 /// archive values.
@@ -309,5 +319,15 @@ mod tests {
         let prompt = build_prompt("Quante volte ho ascoltato Björk, 坂本龍一 e Sigur Rós?");
         assert!(prompt.ends_with(THINKING_PREFIX), "{prompt}");
         assert!(prompt.contains("Björk, 坂本龍一 e Sigur Rós"), "{prompt}");
+    }
+
+    #[test]
+    fn local_sql_prompt_includes_projection_schema_today_and_thinking_prefix() {
+        let prompt = build_sql_prompt("What are my top tracks?", "2026-11-16");
+        assert!(prompt.ends_with(THINKING_PREFIX), "{prompt}");
+        assert!(prompt.contains("2026-11-16"), "{prompt}");
+        assert!(prompt.contains("listens("), "{prompt}");
+        assert!(prompt.contains("counted = 1"), "{prompt}");
+        assert!(prompt.contains("What are my top tracks?"), "{prompt}");
     }
 }

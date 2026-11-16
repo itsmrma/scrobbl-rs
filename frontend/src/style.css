@@ -6997,3 +6997,34 @@ dialog.artwork-lightbox {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+.ask-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.ai-answer-mode {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-answer-mode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ai-mode-explanations {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-mode-explanations .field-hint {
+  margin: 0;
+}

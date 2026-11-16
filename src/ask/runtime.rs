@@ -158,12 +158,30 @@ impl CancelToken {
     }
 }
 
+/// Which GBNF grammar constrains the local model's JSON output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GrammarKind {
+    #[default]
+    Guided,
+    Sql,
+}
+
 /// The thing that owns a loaded model. Implementations must not panic on a
 /// missing or corrupt file; they return an explicit error instead.
 pub trait Engine: Send {
     fn load(&mut self, spec: &ModelSpec) -> Result<(), String>;
     fn unload(&mut self);
     fn generate(&mut self, prompt: &str, cancel: &CancelToken) -> Result<String, InferenceError>;
+    /// Generate with an explicit grammar mode. Simple engines that do not
+    /// distinguish grammars inherit the guided default.
+    fn generate_with_grammar(
+        &mut self,
+        prompt: &str,
+        _grammar: GrammarKind,
+        cancel: &CancelToken,
+    ) -> Result<String, InferenceError> {
+        self.generate(prompt, cancel)
+    }
     /// One generation with timings. Adapters with real measurements override
     /// this; the default keeps simple engines (and tests) working unchanged.
     fn generate_timed(
@@ -210,6 +228,7 @@ pub struct RuntimeState {
 struct Job {
     spec: ModelSpec,
     prompt: String,
+    grammar: GrammarKind,
     cancel: CancelToken,
     reply: oneshot::Sender<Result<String, InferenceError>>,
 }
@@ -312,7 +331,23 @@ impl Runtime {
         prompt: &str,
         timeout: Duration,
     ) -> Result<String, RuntimeError> {
-        self.infer_with_cancel(spec, prompt, CancelToken::new(timeout))
+        self.infer_with_grammar_and_cancel(
+            spec,
+            prompt,
+            GrammarKind::Guided,
+            CancelToken::new(timeout),
+        )
+        .await
+    }
+
+    pub async fn infer_with_grammar(
+        &self,
+        spec: &ModelSpec,
+        prompt: &str,
+        grammar: GrammarKind,
+        timeout: Duration,
+    ) -> Result<String, RuntimeError> {
+        self.infer_with_grammar_and_cancel(spec, prompt, grammar, CancelToken::new(timeout))
             .await
     }
 
@@ -320,6 +355,17 @@ impl Runtime {
         &self,
         spec: &ModelSpec,
         prompt: &str,
+        cancel: CancelToken,
+    ) -> Result<String, RuntimeError> {
+        self.infer_with_grammar_and_cancel(spec, prompt, GrammarKind::Guided, cancel)
+            .await
+    }
+
+    pub async fn infer_with_grammar_and_cancel(
+        &self,
+        spec: &ModelSpec,
+        prompt: &str,
+        grammar: GrammarKind,
         cancel: CancelToken,
     ) -> Result<String, RuntimeError> {
         if self.inner.shutdown.load(Ordering::SeqCst) {
@@ -333,6 +379,7 @@ impl Runtime {
         let job = Box::new(Job {
             spec: spec.clone(),
             prompt: prompt.to_string(),
+            grammar,
             cancel,
             reply,
         });
@@ -400,6 +447,7 @@ fn worker(
         let Job {
             spec,
             prompt,
+            grammar,
             cancel,
             reply,
         } = *job;
@@ -443,7 +491,7 @@ fn worker(
         }
 
         *lock(&active) = Some(cancel.clone());
-        let result = engine.generate(&prompt, &cancel);
+        let result = engine.generate_with_grammar(&prompt, grammar, &cancel);
         if result.is_err() {
             // A timeout, cancellation or engine failure must never leave a
             // partially decoded sequence available to the next question.
@@ -486,10 +534,13 @@ mod llama {
 
     pub const CONTEXT_TOKENS: u32 = 3072;
     pub const MAX_NEW_TOKENS: i32 = 256;
+    pub const MAX_SQL_NEW_TOKENS: i32 = 512;
     const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 
     static GRAMMAR: LazyLock<Result<String, String>> =
         LazyLock::new(|| grammar::to_gbnf(&schema::schema_json()));
+    static SQL_GRAMMAR: LazyLock<Result<String, String>> =
+        LazyLock::new(|| grammar::to_gbnf(&schema::sql_schema()));
     static LOGS: Once = Once::new();
 
     /// CPU-only llama.cpp engine. The backend and model stay loaded between
@@ -512,52 +563,11 @@ mod llama {
                 debug,
             }
         }
-    }
 
-    impl Default for LlamaEngine {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl Engine for LlamaEngine {
-        fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
-            if !spec.path.is_file() {
-                return Err("The selected model file is missing.".into());
-            }
-            if !self.debug {
-                LOGS.call_once(|| {
-                    send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
-                });
-            }
-            let backend = LlamaBackend::init()
-                .map_err(|error| format!("Could not start the llama backend: {error}"))?;
-            let model =
-                LlamaModel::load_from_file(&backend, &spec.path, &LlamaModelParams::default())
-                    .map_err(|error| format!("Could not load the model file: {error}"))?;
-            self.backend = Some(backend);
-            self.model = Some(model);
-            self.threads = spec.threads.clamp(1, 64);
-            Ok(())
-        }
-
-        fn unload(&mut self) {
-            self.model = None;
-            self.backend = None;
-        }
-
-        fn generate(
+        pub fn generate_timed_with_grammar(
             &mut self,
             prompt: &str,
-            cancel: &CancelToken,
-        ) -> Result<String, InferenceError> {
-            self.generate_timed(prompt, cancel)
-                .map(|generation| generation.text)
-        }
-
-        fn generate_timed(
-            &mut self,
-            prompt: &str,
+            grammar_kind: GrammarKind,
             cancel: &CancelToken,
         ) -> Result<Generation, InferenceError> {
             let started = Instant::now();
@@ -571,9 +581,15 @@ mod llama {
             let backend = self.backend.as_ref().ok_or_else(|| {
                 InferenceError::Failed("The llama backend is not loaded.".to_string())
             })?;
-            let grammar = GRAMMAR
-                .as_ref()
-                .map_err(|error| InferenceError::Failed(error.clone()))?;
+            let grammar = match grammar_kind {
+                GrammarKind::Guided => GRAMMAR.as_ref(),
+                GrammarKind::Sql => SQL_GRAMMAR.as_ref(),
+            }
+            .map_err(|error| InferenceError::Failed(error.clone()))?;
+            let max_new_tokens = match grammar_kind {
+                GrammarKind::Guided => MAX_NEW_TOKENS,
+                GrammarKind::Sql => MAX_SQL_NEW_TOKENS,
+            };
 
             let mut params = LlamaContextParams::default()
                 .with_n_ctx(Some(
@@ -597,7 +613,7 @@ mod llama {
                     "The model tokenizer produced an empty prompt.".to_string(),
                 ));
             }
-            if tokens.len() as i32 + MAX_NEW_TOKENS > context.n_ctx() as i32 {
+            if tokens.len() as i32 + max_new_tokens > context.n_ctx() as i32 {
                 return Err(InferenceError::Failed(format!(
                     "The question is too long for the model context ({} prompt tokens, {} context tokens).",
                     tokens.len(),
@@ -655,7 +671,7 @@ mod llama {
                     ));
                 }
                 generated += 1;
-                if generated >= MAX_NEW_TOKENS {
+                if generated >= max_new_tokens {
                     break;
                 }
                 batch.clear();
@@ -699,10 +715,70 @@ mod llama {
             })
         }
     }
+
+    impl Default for LlamaEngine {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl Engine for LlamaEngine {
+        fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
+            if !spec.path.is_file() {
+                return Err("The selected model file is missing.".into());
+            }
+            if !self.debug {
+                LOGS.call_once(|| {
+                    send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+                });
+            }
+            let backend = LlamaBackend::init()
+                .map_err(|error| format!("Could not start the llama backend: {error}"))?;
+            let model =
+                LlamaModel::load_from_file(&backend, &spec.path, &LlamaModelParams::default())
+                    .map_err(|error| format!("Could not load the model file: {error}"))?;
+            self.backend = Some(backend);
+            self.model = Some(model);
+            self.threads = spec.threads.clamp(1, 64);
+            Ok(())
+        }
+
+        fn unload(&mut self) {
+            self.model = None;
+            self.backend = None;
+        }
+
+        fn generate(
+            &mut self,
+            prompt: &str,
+            cancel: &CancelToken,
+        ) -> Result<String, InferenceError> {
+            self.generate_timed(prompt, cancel)
+                .map(|generation| generation.text)
+        }
+
+        fn generate_with_grammar(
+            &mut self,
+            prompt: &str,
+            grammar: GrammarKind,
+            cancel: &CancelToken,
+        ) -> Result<String, InferenceError> {
+            self.generate_timed_with_grammar(prompt, grammar, cancel)
+                .map(|generation| generation.text)
+        }
+
+        fn generate_timed(
+            &mut self,
+            prompt: &str,
+            cancel: &CancelToken,
+        ) -> Result<Generation, InferenceError> {
+            self.generate_timed_with_grammar(prompt, GrammarKind::Guided, cancel)
+        }
+    }
 }
 
 #[cfg(feature = "llama")]
-pub use llama::{CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS};
+pub use llama::{CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS, MAX_SQL_NEW_TOKENS};
 
 /// A loaded engine reused for many prompts. Offline tools (the eval harness)
 /// use it to measure one model across a corpus without reloading the weights;
