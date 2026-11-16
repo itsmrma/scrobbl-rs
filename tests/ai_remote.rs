@@ -79,6 +79,7 @@ fn settings(url: &str, extra: Value) -> Value {
     let mut body = json!({
         "enabled": true,
         "provider": "remote",
+        "answer_mode": "guided",
         "remote_url": url,
         "remote_model": "my-model",
         "active_model": null,
@@ -92,7 +93,7 @@ fn settings(url: &str, extra: Value) -> Value {
     body
 }
 
-async fn setup(url: &str) -> (tempfile::TempDir, AppState, String) {
+async fn setup_with(url: &str, extra: Value) -> (tempfile::TempDir, AppState, String) {
     let dir = tempfile::tempdir().unwrap();
     let storage = db::open(dir.path()).await.unwrap();
     let config = Config {
@@ -128,11 +129,15 @@ async fn setup(url: &str) -> (tempfile::TempDir, AppState, String) {
         &token,
         "POST",
         "/api/v1/ai/settings",
-        Some(settings(url, json!({"remote_key": "sk-secret-key"}))),
+        Some(settings(url, extra)),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     (dir, state, token)
+}
+
+async fn setup(url: &str) -> (tempfile::TempDir, AppState, String) {
+    setup_with(url, json!({"remote_key": "sk-secret-key"})).await
 }
 
 async fn request(
@@ -527,4 +532,266 @@ async fn impossible_plans_are_refused_or_fail_clearly() {
         "{body}"
     );
     assert_eq!(body["earlier"].as_array().unwrap().len(), 1);
+}
+
+// ---- Free questions (SQL mode) tracer bullet ------------------------------
+
+async fn setup_sql_default(url: &str) -> (tempfile::TempDir, AppState, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let config = Config {
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        port: 3210,
+        data_dir: dir.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let token = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'test-csrf',9999999999999)")
+        .bind(auth::digest(&token))
+        .execute(&storage.private)
+        .await
+        .unwrap();
+    let mut state = AppState::new(storage, config);
+    state.ask = Ask::with_parser(
+        Arc::new(ModelParser::local(
+            state.db.clone(),
+            dir.path().to_path_buf(),
+        )),
+        false,
+        true,
+        true,
+    );
+    // Omit `answer_mode` so remote defaults to `sql`.
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ai/settings",
+        Some(json!({
+            "enabled": true,
+            "provider": "remote",
+            "remote_url": url,
+            "remote_model": "my-model",
+            "remote_key": "sk-secret-key",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    (dir, state, token)
+}
+
+#[tokio::test]
+async fn remote_defaults_to_sql_mode_while_local_stays_guided() {
+    let mock = Mock::default();
+    let url = serve(mock).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+
+    let (_, ai) = request(&state, &token, "GET", "/api/v1/ai/settings", None).await;
+    assert_eq!(ai["answer_mode"], "sql", "{ai}");
+
+    let (_, ask_status) = request(&state, &token, "GET", "/api/v1/ask/status", None).await;
+    assert_eq!(ask_status["answer_mode"], "sql", "{ask_status}");
+
+    // Switching to local keeps local on guided; switching back preserves remote's choice.
+    let (status, local_ai) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ai/settings",
+        Some(json!({
+            "enabled": true,
+            "provider": "local",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{local_ai}");
+    assert_eq!(local_ai["answer_mode"], "guided", "{local_ai}");
+    let (_, local_status) = request(&state, &token, "GET", "/api/v1/ask/status", None).await;
+    assert_eq!(local_status["answer_mode"], "guided", "{local_status}");
+}
+
+#[tokio::test]
+async fn remote_sql_mode_executes_valid_query_against_projection_and_hides_archive_values() {
+    let mock = Mock::default();
+    *mock.reply.lock().unwrap() = json!({
+        "sql": "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC",
+        "title": "Top tracks",
+        "computed": "Counted plays per track across all time.",
+        "answer_kind": "table",
+        "columns": [
+            {"name": "track", "format": "track"},
+            {"name": "plays", "format": "count"}
+        ]
+    })
+    .to_string();
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    // Seed an extra track/artist with a distinct secret-like fixture name to verify privacy.
+    let extra = play(
+        99,
+        "2024-03-01T10:00:00Z",
+        "fixture-ar99",
+        "PrivateFixtureArtist99",
+        "PrivateFixtureTrack99",
+    );
+    let mut tx = state.storage.writer.begin().await.unwrap();
+    scrobbl_rs::db::ingest(&mut tx, &[extra]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "What are my top tracks?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["sql"]["title"], "Top tracks");
+    assert_eq!(
+        body["sql"]["computed"],
+        "Counted plays per track across all time."
+    );
+    assert_eq!(body["sql"]["answer_kind"], "table");
+    assert_eq!(
+        body["sql"]["columns"],
+        json!([
+            {"name": "track", "format": "track"},
+            {"name": "plays", "format": "count"}
+        ])
+    );
+    assert_eq!(
+        body["sql"]["rows"],
+        json!([
+            ["Hunter", 2],
+            ["Jóga", 2],
+            ["Creep", 1],
+            ["PrivateFixtureTrack99", 1]
+        ])
+    );
+    assert_eq!(body["sql"]["truncated"], false);
+
+    // Privacy: prompt carries projection schema, counting rules, today's date, and NO archive values.
+    let seen = mock.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    let sent = seen[0].1.to_string();
+    assert!(sent.contains("listens("), "{sent}");
+    assert!(sent.contains("counted = 1"), "{sent}");
+    for secret in [
+        "PrivateFixtureArtist99",
+        "PrivateFixtureTrack99",
+        "Radiohead",
+        "Jóga",
+        "Hunter",
+        "Creep",
+        "sk-secret-key",
+    ] {
+        assert!(!sent.contains(secret), "prompt leaked `{secret}`: {sent}");
+    }
+}
+
+#[tokio::test]
+async fn remote_sql_mode_rejects_unsafe_queries_with_rule_code_and_no_data() {
+    let mock = Mock::default();
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    for (sql, expected_rule) in [
+        ("DELETE FROM listens", "not_select"),
+        ("SELECT 1; DROP TABLE listens", "multiple_statements"),
+        ("SELECT value FROM settings", "unauthorized_table"),
+    ] {
+        *mock.reply.lock().unwrap() = json!({
+            "sql": sql,
+            "title": "Unsafe",
+            "computed": "Should be rejected.",
+            "answer_kind": "table",
+            "columns": []
+        })
+        .to_string();
+
+        let (status, body) = request(
+            &state,
+            &token,
+            "POST",
+            "/api/v1/ask",
+            Some(json!({"question": "Give me everything"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "failed", "{sql}: {body}");
+        assert_eq!(body["sql"]["rule_code"], expected_rule, "{sql}: {body}");
+        assert_eq!(body["sql"]["rows"], json!([]), "{sql}: {body}");
+    }
+}
+
+#[tokio::test]
+async fn remote_sql_mode_handles_unsupported_question_without_running_sql() {
+    let mock = Mock::default();
+    *mock.reply.lock().unwrap() = json!({
+        "sql": "",
+        "title": "",
+        "computed": "I can only answer questions about your listening archive.",
+        "answer_kind": "unsupported",
+        "columns": []
+    })
+    .to_string();
+    let url = serve(mock).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "What is the weather?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "unsupported", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("listening archive"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn remote_connection_test_accepts_sql_mode_response() {
+    let mock = Mock::default();
+    *mock.reply.lock().unwrap() = json!({
+        "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+        "title": "Plays",
+        "computed": "Total counted plays.",
+        "answer_kind": "value",
+        "columns": [{"name": "plays", "format": "count"}]
+    })
+    .to_string();
+    let url = serve(mock).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+
+    let (status, test) = request(&state, &token, "POST", "/api/v1/ai/test", None).await;
+    assert_eq!(status, StatusCode::OK, "{test}");
+    assert_eq!(test["model_ready"], true, "{test}");
+    assert!(test["message"].as_str().unwrap().contains("Connected"));
 }

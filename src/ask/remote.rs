@@ -90,18 +90,21 @@ New question: {question}",
     )
 }
 
-fn body(config: &RemoteConfig, question: &str, previous: Option<&Previous>, mode: Mode) -> Value {
+fn body(
+    config: &RemoteConfig,
+    system: &str,
+    user: &str,
+    schema_name: &str,
+    schema: Value,
+    mode: Mode,
+) -> Value {
     let mut body = json!({
         "model": config.model,
         "temperature": 0,
         "max_tokens": 1200,
         "messages": [
-            {"role": "system", "content": format!(
-                "{}\nToday is {} (UTC). Use it only to turn relative ranges the periods do not cover (\"the last two weeks\", \"since the summer\", \"the last 4 months\") into from and to dates.",
-                prompt::remote_system_prompt(),
-                chrono::Utc::now().format("%Y-%m-%d"),
-            )},
-            {"role": "user", "content": user_message(question, previous)},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     });
     match mode {
@@ -109,9 +112,9 @@ fn body(config: &RemoteConfig, question: &str, previous: Option<&Previous>, mode
             body["response_format"] = json!({
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "scrobbl_ask",
+                    "name": schema_name,
                     "strict": true,
-                    "schema": schema::advanced_schema(),
+                    "schema": schema,
                 },
             });
         }
@@ -160,11 +163,56 @@ fn server_message(body: &str) -> String {
         .unwrap_or_else(|| short(body))
 }
 
-/// Ask the server to interpret `question`. Returns the JSON text of the reply.
+/// Ask the server to interpret `question` in guided mode. Returns the JSON text of the reply.
 pub async fn infer(
     config: &RemoteConfig,
     question: &str,
     previous: Option<&Previous>,
+    timeout: Duration,
+) -> Result<String> {
+    let system = format!(
+        "{}\nToday is {} (UTC). Use it only to turn relative ranges the periods do not cover (\"the last two weeks\", \"since the summer\", \"the last 4 months\") into from and to dates.",
+        prompt::remote_system_prompt(),
+        chrono::Utc::now().format("%Y-%m-%d"),
+    );
+    let user = user_message(question, previous);
+    infer_with(
+        config,
+        &system,
+        &user,
+        "scrobbl_ask",
+        schema::advanced_schema(),
+        timeout,
+    )
+    .await
+}
+
+/// Ask the server to translate `question` into a read-only SQL query over the
+/// Ask projection. Returns the JSON text of the reply.
+pub async fn infer_sql(
+    config: &RemoteConfig,
+    question: &str,
+    today: &str,
+    timeout: Duration,
+) -> Result<String> {
+    let system = prompt::remote_sql_system_prompt(today);
+    infer_with(
+        config,
+        &system,
+        question.trim(),
+        "scrobbl_ask_sql",
+        schema::sql_schema(),
+        timeout,
+    )
+    .await
+}
+
+async fn infer_with(
+    config: &RemoteConfig,
+    system: &str,
+    user: &str,
+    schema_name: &str,
+    schema: Value,
     timeout: Duration,
 ) -> Result<String> {
     let url = endpoint(&config.base_url)?;
@@ -178,9 +226,14 @@ pub async fn infer(
 
     let mut last_problem = String::new();
     for (index, mode) in MODES.iter().enumerate() {
-        let mut request = client
-            .post(url.clone())
-            .json(&body(config, question, previous, *mode));
+        let mut request = client.post(url.clone()).json(&body(
+            config,
+            system,
+            user,
+            schema_name,
+            schema.clone(),
+            *mode,
+        ));
         if let Some(key) = config.api_key.as_deref().filter(|key| !key.is_empty()) {
             request = request.bearer_auth(key);
         }

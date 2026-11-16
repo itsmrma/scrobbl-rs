@@ -4,6 +4,7 @@ import type {
   AiCatalogModel,
   AiInstalledModel,
   AiSettings,
+  AnswerMode,
 } from "./generated";
 import { api } from "./api";
 import { Select } from "./select";
@@ -307,6 +308,7 @@ export function AiSettingsSection() {
   const [threads, setThreads] = useState("4");
   const [unload, setUnload] = useState("15");
   const [provider, setProvider] = useState("local");
+  const [answerMode, setAnswerMode] = useState<AnswerMode>("sql");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteModel, setRemoteModel] = useState("");
   const [remoteKey, setRemoteKey] = useState("");
@@ -326,6 +328,9 @@ export function AiSettingsSection() {
     setThreads(String(next.threads));
     setUnload(String(next.unload_minutes));
     setProvider(next.provider);
+    if (next.provider === "remote") {
+      setAnswerMode(next.answer_mode);
+    }
     setRemoteUrl(next.remote_url ?? "");
     setRemoteModel(next.remote_model ?? "");
     setRemoteKey("");
@@ -388,6 +393,7 @@ export function AiSettingsSection() {
         unload_minutes: Number(unload),
         model_dir: settings?.model_dir ?? null,
         provider,
+        answer_mode: remote ? answerMode : null,
         remote_url: remoteUrl.trim() || null,
         remote_model: remoteModel.trim() || null,
         // null keeps the stored key, an empty string removes it.
@@ -542,6 +548,17 @@ export function AiSettingsSection() {
           </label>
           {remote && (
             <>
+              <label>
+                Answer mode
+                <Select
+                  aria-label="Answer mode"
+                  value={answerMode}
+                  onChange={(value) => setAnswerMode(value as AnswerMode)}
+                >
+                  <option value="sql">Free questions (SQL)</option>
+                  <option value="guided">Guided questions</option>
+                </Select>
+              </label>
               <label>
                 Server address
                 <input

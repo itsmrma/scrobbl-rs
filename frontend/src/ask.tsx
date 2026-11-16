@@ -5,9 +5,12 @@ import type {
   AskResponse,
   AskStep,
   AiAskStatus,
+  ColumnFormat,
   EntityCandidate,
   Preferences,
   Query,
+  SqlAnswer,
+  SqlValue,
 } from "./generated";
 import { api } from "./api";
 import { applyCandidate, InterpretationChips } from "./ask-chips";
@@ -16,7 +19,7 @@ import { AskTimeCard } from "./ask-time";
 import { StreakResultCard } from "./ask-streak";
 import { Link } from "./navigation";
 import { SkeletonBlock } from "./skeleton";
-import { Button, Heading, Icon, Notice, date, number } from "./ui";
+import { Button, Heading, Icon, Notice, date, duration, number } from "./ui";
 
 const periodCopy: Record<string, string> = {
   all_time: "all time",
@@ -249,7 +252,8 @@ export function AskPage({
   // Older or mocked answers may omit the steps.
   const earlier = response?.earlier ?? [];
   const remote = status?.provider === "remote";
-  const canFollowUp = remote && response?.status === "ok";
+  const sqlMode = status?.answer_mode === "sql";
+  const canFollowUp = remote && !sqlMode && response?.status === "ok";
   const unavailable =
     !status ||
     !status.enabled ||
@@ -362,12 +366,18 @@ export function AskPage({
             {loading ? "Asking…" : "Ask"}
           </Button>
           <span className="field-hint">
-            Play counts, listening time, distinct tracks/artists/albums, first
-            and last plays, streaks, milestones and grouped top lists are
-            available. Grouping covers plays and distinct counts; listening time
-            cannot be grouped yet.
-            {remote &&
-              " Your AI can also chain questions, use exact date ranges and build on the previous answer."}
+            {sqlMode ? (
+              "Ask any question about your listening history. Your AI writes a read-only SQL query over your listening projection and scrobbl.rs runs it in a sandbox."
+            ) : (
+              <>
+                Play counts, listening time, distinct tracks/artists/albums,
+                first and last plays, streaks, milestones and grouped top lists
+                are available. Grouping covers plays and distinct counts;
+                listening time cannot be grouped yet.
+                {remote &&
+                  " Your AI can also chain questions, use exact date ranges and build on the previous answer."}
+              </>
+            )}
           </span>
           {canFollowUp && (
             <label className="ask-follow-up">
@@ -484,6 +494,7 @@ export function AskPage({
             {response.status === "failed" && (
               <Notice title="I couldn't answer that" tone="error">
                 {response.message}
+                {response.sql?.sql && <SqlDisclosure sql={response.sql.sql} />}
               </Notice>
             )}
 
@@ -499,6 +510,10 @@ export function AskPage({
                     label={`Step ${index + 1} of ${earlier.length + 1}`}
                   />
                 ),
+            )}
+
+            {response.status === "ok" && response.sql && (
+              <SqlResultCard sql={response.sql} preferences={preferences} />
             )}
 
             {response.status === "ok" && response.result && response.query && (
@@ -616,6 +631,113 @@ export function ResultCard({
           ))}
         </div>
       )}
+    </article>
+  );
+}
+
+function isNumericFormat(
+  value: SqlValue,
+  format: ColumnFormat | undefined,
+): boolean {
+  if (typeof value !== "number") return false;
+  return (
+    format === "count" ||
+    format === "duration_ms" ||
+    format === "percent" ||
+    format === undefined
+  );
+}
+
+function formatSqlCell(
+  value: SqlValue,
+  format: ColumnFormat | undefined,
+  preferences: Preferences,
+): string {
+  if (value === null) return "—";
+  if (typeof value === "number") {
+    if (format === "duration_ms") return duration(value, true);
+    if (format === "percent") {
+      return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+    }
+    if (format === "datetime") return date(value, preferences);
+    return number.format(value);
+  }
+  return String(value);
+}
+
+function SqlDisclosure({ sql }: { sql: string }) {
+  if (!sql.trim()) return null;
+  return (
+    <details className="ask-sql-disclosure">
+      <summary>Show SQL</summary>
+      <pre className="ask-sql-code">
+        <code>{sql}</code>
+      </pre>
+    </details>
+  );
+}
+
+function SqlResultCard({
+  sql,
+  preferences,
+}: {
+  sql: SqlAnswer;
+  preferences: Preferences;
+}) {
+  return (
+    <article className="panel padded ask-result">
+      <p className="ask-eyebrow">Result</p>
+      {sql.title && <p className="ask-result-headline">{sql.title}</p>}
+      {sql.computed && (
+        <p className="ask-sql-computed">
+          <strong>Computed:</strong> {sql.computed}
+        </p>
+      )}
+      {sql.truncated && (
+        <p className="ask-coverage">
+          Showing the first {number.format(sql.rows.length)} rows (result
+          truncated).
+        </p>
+      )}
+      {sql.rows.length === 0 ? (
+        <p className="ask-empty">No matching rows.</p>
+      ) : (
+        <div className="ask-table-wrap" tabIndex={0}>
+          <table className="ask-table">
+            <thead>
+              <tr>
+                {sql.columns.map((column, index) => (
+                  <th key={`${column.name}-${index}`} scope="col">
+                    {column.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sql.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => {
+                    const format = sql.columns[cellIndex]?.format;
+                    return (
+                      <td
+                        key={cellIndex}
+                        className={
+                          isNumericFormat(cell, format)
+                            ? "ask-table-value"
+                            : undefined
+                        }
+                      >
+                        {formatSqlCell(cell, format, preferences)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <SqlDisclosure sql={sql.sql} />
     </article>
   );
 }
