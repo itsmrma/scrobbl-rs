@@ -521,11 +521,24 @@
 
 /* Side-by-side span-3 slots stretch to the taller panel; neither list is clipped mid-row. */
 .widget-patterns-content {
+  flex: 1 1 auto;
   min-height: 320px;
   display: flex;
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+}
+
+/* The bars grow with the card, so a taller neighbour in the same row never
+   leaves an empty band under the chart. */
+.widget-patterns-content > .pattern-temporal {
+  flex: 1 1 auto;
+}
+
+.widget-patterns-content > .pattern-temporal .pattern-track {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 122px;
 }
 
 .widget-recent-content {
@@ -547,15 +560,23 @@
   align-content: start;
 }
 
+.dashboard-widget .widget-recent-listens .listen-row {
+  --listen-cover-size: 52px;
+}
+
 .dashboard-widget .widget-recent-listens .listen-main {
-  grid-template-columns: 52px minmax(0, 1fr);
+  grid-template-columns: var(--listen-cover-size) minmax(0, 1fr);
   gap: 12px;
   min-width: 0;
 }
 
-.dashboard-widget .widget-recent-listens .listen-main > .cover {
-  width: 52px;
-  height: 52px;
+/* The compact row shows one line per column: the timezone, source and
+   evidence lines would only be truncated next to the date and duration. */
+.dashboard-widget
+  .widget-recent-listens
+  :is(.listen-date, .listen-duration)
+  small {
+  display: none;
 }
 
 .dashboard-widget
@@ -584,7 +605,9 @@
 
 @container (min-width: 720px) {
   .dashboard-widget .widget-recent-listens .listen-main {
-    grid-template-columns: 38px minmax(0, 1.3fr) minmax(0, 1fr) 150px 80px;
+    grid-template-columns:
+      var(--listen-cover-size) minmax(0, 1.3fr) minmax(0, 1fr)
+      140px 64px;
   }
 
   .dashboard-widget

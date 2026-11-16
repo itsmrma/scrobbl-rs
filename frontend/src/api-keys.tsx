@@ -114,9 +114,6 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                     API base URL
                     <input readOnly value={settings.base_url} />
                   </label>
-                  <CopyButton value={settings.base_url} disabled={busy}>
-                    Copy API URL
-                  </CopyButton>
                   {!settings.base_url.startsWith("https://") ? (
                     <p className="warning">
                       This instance uses HTTP. Configure the external HTTPS
@@ -131,6 +128,9 @@ export function ApiKeys({ preferences }: { preferences: Preferences }) {
                       addresses.
                     </p>
                   )}
+                  <CopyButton value={settings.base_url} disabled={busy}>
+                    Copy API URL
+                  </CopyButton>
                 </div>
               </div>
 

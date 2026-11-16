@@ -94,7 +94,7 @@ name: string,
  * Set after resolution or by an explicit candidate/context choice.
  */
 id: string | null, };
-export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year" | "last_7_days" | "last_30_days" | "last_365_days";
+export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year" | "last_7_days" | "last_30_days" | "last_90_days" | "last_180_days" | "last_365_days";
 export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
 export type GroupBy = "day" | "week" | "month" | "year" | "hour" | "weekday" | "artist" | "album" | "track";
 export type SortBy = "metric" | "date";

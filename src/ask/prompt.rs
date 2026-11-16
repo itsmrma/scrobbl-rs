@@ -45,6 +45,7 @@ pub fn system_prompt() -> String {
          - \"this artist\", \"this song\", \"questo brano\" and similar references keep the target with name \"\".\n\
          - Use target \"none\" and name \"\" when nothing is named. Use artist \"\", month \"none\", year 0 and weekday \"any\" when they are not mentioned.\n\
          - A named year goes in year with period \"all_time\". A named month goes in month.\n\
+         - Rolling ranges: \"last 3 months\" or \"ultimi 3 mesi\" is \"last_90_days\", \"last 6 months\" is \"last_180_days\", \"last 12 months\" is \"last_365_days\". Never shorten a range of several months to \"last_month\".\n\
          - For first_play and last_play use period \"all_time\" unless the question also names a period.\n\
          - rank answers \"where does X rank\" or \"what position\"; share answers \"what percentage of my plays\"; listening_days answers \"on how many days\".\n\
          - For a single \"most played\" or \"most listened\" question set group_by to artist, album or track, order \"desc\" and limit \"one\". Use another limit only when the user asks for a top-N.\n\
@@ -62,6 +63,8 @@ pub fn system_prompt() -> String {
          A: {{\"artist\":\"\",\"group_by\":\"none\",\"limit\":\"none\",\"metric\":\"plays\",\"month\":\"none\",\"name\":\"\",\"order\":\"desc\",\"period\":\"last_month\",\"target\":\"none\",\"weekday\":\"any\",\"year\":0}}\n\
          Q: Qual è il mio artista più ascoltato del 2023?\n\
          A: {{\"artist\":\"\",\"group_by\":\"artist\",\"limit\":\"one\",\"metric\":\"plays\",\"month\":\"none\",\"name\":\"\",\"order\":\"desc\",\"period\":\"all_time\",\"target\":\"none\",\"weekday\":\"any\",\"year\":2023}}\n\
+         Q: Chi è l'artista che ho ascoltato di più negli ultimi 3 mesi?\n\
+         A: {{\"artist\":\"\",\"group_by\":\"artist\",\"limit\":\"one\",\"metric\":\"plays\",\"month\":\"none\",\"name\":\"\",\"order\":\"desc\",\"period\":\"last_90_days\",\"target\":\"none\",\"weekday\":\"any\",\"year\":0}}\n\
          Q: Quali sono le mie 5 canzoni più ascoltate di Ado a marzo?\n\
          A: {{\"artist\":\"Ado\",\"group_by\":\"track\",\"limit\":\"five\",\"metric\":\"plays\",\"month\":\"march\",\"name\":\"\",\"order\":\"desc\",\"period\":\"all_time\",\"target\":\"none\",\"weekday\":\"any\",\"year\":0}}\n\
          Q: In che giorno ho ascoltato più volte i BTS?\n\

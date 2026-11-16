@@ -6,7 +6,9 @@ use crate::{
 use axum::{Json, extract::State, http::HeaderMap};
 use sqlx::SqliteConnection;
 
-pub const PERIODS: &[&str] = &["all", "today", "week", "month", "year", "7d", "30d", "365d"];
+pub const PERIODS: &[&str] = &[
+    "all", "today", "week", "month", "year", "7d", "30d", "90d", "180d", "365d",
+];
 pub async fn read(conn: &mut SqliteConnection) -> Result<Preferences> {
     let calendar = calendar::current(conn).await?;
     async fn value(conn: &mut SqliteConnection, key: &str, default: &str) -> Result<String> {

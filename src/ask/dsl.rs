@@ -119,6 +119,12 @@ pub enum Period {
     Last7Days,
     #[serde(rename = "last_30_days")]
     Last30Days,
+    /// Rolling three months: "last 3 months", "ultimi tre mesi".
+    #[serde(rename = "last_90_days")]
+    Last90Days,
+    /// Rolling six months: "last 6 months", "ultimi sei mesi".
+    #[serde(rename = "last_180_days")]
+    Last180Days,
     #[serde(rename = "last_365_days")]
     Last365Days,
 }
@@ -137,6 +143,8 @@ impl Period {
             Self::LastYear => "Last year",
             Self::Last7Days => "Last 7 days",
             Self::Last30Days => "Last 30 days",
+            Self::Last90Days => "Last 90 days",
+            Self::Last180Days => "Last 180 days",
             Self::Last365Days => "Last 365 days",
         }
     }

@@ -118,6 +118,27 @@ pub async fn list(
             hydrated.insert(id, item);
         }
     }
+    // Spotify export details tell apart rows of the same track and second:
+    // the device, whether it was offline and how the playback ended.
+    for chunk in all_ids.chunks(500) {
+        let mut query = sqlx::QueryBuilder::new(
+            "SELECT o.listen_id, json_group_array(json(v.context_json)) AS contexts FROM observations o JOIN observation_variants v ON v.observation_id=o.id WHERE o.source='spotify_import' AND o.listen_id IN (",
+        );
+        let mut separated = query.separated(",");
+        for id in chunk {
+            separated.push_bind(*id);
+        }
+        separated.push_unseparated(") GROUP BY o.listen_id");
+        let rows: Vec<(String, String)> = query.build_query_as().fetch_all(&mut *conn).await?;
+        for (listen_id, contexts) in rows {
+            let Some(item) = hydrated.get_mut(&listen_id) else {
+                continue;
+            };
+            let contexts: Vec<Value> =
+                serde_json::from_str(&contexts).map_err(|_| AppError::Internal)?;
+            item["playback"] = playback_context(&contexts);
+        }
+    }
     let groups: Vec<Value> = clusters
         .into_iter()
         .map(|(seed, ids)| {
@@ -136,6 +157,24 @@ pub async fn list(
     Ok(Json(
         json!({"total":total,"page":page.page,"groups":groups,"recent":recent,"decisions_total":decisions_total}),
     ))
+}
+
+/// One value per field when every export variant agrees; null otherwise.
+fn playback_context(contexts: &[Value]) -> Value {
+    let agreed = |key: &str| -> Value {
+        let mut values = contexts.iter().map(|context| &context[key]);
+        match values.next() {
+            Some(first) if !first.is_null() && values.all(|value| value == first) => first.clone(),
+            _ => Value::Null,
+        }
+    };
+    json!({
+        "device": agreed("platform"),
+        "offline": agreed("offline"),
+        "skipped": agreed("skipped"),
+        "reason_start": agreed("reason_start"),
+        "reason_end": agreed("reason_end"),
+    })
 }
 
 #[derive(Serialize, Deserialize)]

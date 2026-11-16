@@ -72,6 +72,29 @@ For a known Spotify track, equal export timestamp and listened duration preserve
 with all original variants. Changed times/durations stay distinct. Uncertain identities use
 semantic-payload evidence instead of merging changed metadata by name. Missing track identity
 and conflicting durations at exactly the same export timestamp remain reviewable in history.
+
+### Offline plays and same-second rows
+
+`ts` is when the row was logged, not when the play happened. For rows with
+`offline: true`, Spotify logs a whole offline session when the device syncs, so
+every play of that session shares one `ts`; the real start is
+`offline_timestamp` (milliseconds in older exports, seconds in newer ones). An
+offline row whose `offline_timestamp` falls within the 90 days before `ts`
+starts at that time, and its key includes it, so a song repeated offline counts
+once per play. Other rows keep `ts - ms_played`. Rows imported before this rule
+stored offline plays under the session's shared key; a reimport recognises
+those exact rows there and adds nothing.
+
+Rows of one track that end in the same second with different `ms_played` (for
+example 55 ms and 780 ms, or a phone and the Connect speaker it controlled)
+overlap and stay flagged as possible duplicates. On request, automatic review
+keeps the row with the longest playback and moves the others to trash, keeps
+offline-session rows as separate plays, and leaves mixed online/offline groups
+or groups without device details for manual review. The comparison shows the
+device, online/offline state and how each playback ended. Measured on a real
+2019–2026 export (164,834 rows): a fresh import flags 353 records and automatic
+review resolves all of them; an archive imported with the previous rule flagged
+483, of which 448 resolve automatically.
 Reimport preserves assigned calendar and trash state. API/export reconciliation still uses the
 approved provisional policy; the separate real overlapping-export check remains required.
 

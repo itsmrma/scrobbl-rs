@@ -76,6 +76,45 @@ pub fn spotify_uri(value: &str) -> bool {
         .strip_prefix("spotify:track:")
         .is_some_and(|id| id.len() == 22 && id.bytes().all(|c| c.is_ascii_alphanumeric()))
 }
+/// Start of a play recorded offline. Spotify stamps every row of an offline
+/// session with the time the device synced (`ts`), so a whole session shares
+/// one end time; `offline_timestamp` is when that play actually started, in
+/// milliseconds in older exports and seconds in newer ones. Values after the
+/// sync or more than 90 days before it are not trusted.
+fn offline_start(row: &Value, end: i64) -> Option<i64> {
+    if row.get("offline").and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let raw = row.get("offline_timestamp").and_then(Value::as_i64)?;
+    let start = if raw < 100_000_000_000 {
+        raw.checked_mul(1000)?
+    } else {
+        raw
+    };
+    (start > 0 && start <= end && end - start <= 90 * 86_400_000).then_some(start)
+}
+
+/// The key an offline row had before offline plays were placed at their own
+/// start time. A reimport of an archive imported with that key must recognise
+/// its rows instead of adding every offline play again.
+pub(crate) fn has_offline_start(event: &Event) -> bool {
+    event.source == "spotify_import"
+        && offline_start(&event.raw, event.source_timestamp_ms).is_some()
+}
+
+pub(crate) fn legacy_offline_key(event: &Event) -> Option<String> {
+    if event.source != "spotify_import" || !event.track.id.starts_with("spotify:track:") {
+        return None;
+    }
+    let end = event.source_timestamp_ms;
+    let ms = event.listened_ms?;
+    offline_start(&event.raw, end)?;
+    Some(db::metadata_id(
+        "event",
+        &[&event.track.id, &end.to_string(), &ms.to_string()],
+    ))
+}
+
 pub fn parse_row(row: Value) -> SourceRow {
     if row.get("spotify_episode_uri").is_some_and(|v| !v.is_null())
         || row
@@ -113,10 +152,20 @@ pub fn parse_row(row: Value) -> SourceRow {
                 &[title, artist, album.as_deref().unwrap_or("")],
             )
         });
-        let key = if uri.is_some() {
-            db::metadata_id("event", &[&id, &end.to_string(), &ms.to_string()])
-        } else {
-            db::metadata_id("uncertain-event", &[&db::payload_fingerprint(&row)])
+        let offline = offline_start(&row, end);
+        let key = match (uri.is_some(), offline) {
+            (true, Some(start)) => db::metadata_id(
+                "event",
+                &[
+                    &id,
+                    &end.to_string(),
+                    &ms.to_string(),
+                    "offline",
+                    &start.to_string(),
+                ],
+            ),
+            (true, None) => db::metadata_id("event", &[&id, &end.to_string(), &ms.to_string()]),
+            (false, _) => db::metadata_id("uncertain-event", &[&db::payload_fingerprint(&row)]),
         };
         let album_id = album
             .as_deref()
@@ -125,7 +174,7 @@ pub fn parse_row(row: Value) -> SourceRow {
             source: "spotify_import",
             source_key: key,
             source_timestamp_ms: end,
-            played_at_ms: end - ms,
+            played_at_ms: offline.unwrap_or(end - ms),
             listened_ms: Some(ms),
             duration_kind: db::DurationKind::Actual,
             counted: ms >= 30_000,
@@ -253,4 +302,65 @@ async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(row: Value) -> Event {
+        match parse_row(row) {
+            SourceRow::Event(event) => *event,
+            _ => panic!("expected an event"),
+        }
+    }
+
+    fn row(offline: bool, offline_timestamp: Value) -> Value {
+        json!({
+            "ts": "2025-06-01T12:00:00Z", "ms_played": 200000,
+            "master_metadata_track_name": "Song",
+            "master_metadata_album_artist_name": "Artist",
+            "spotify_track_uri": "spotify:track:0000000000000000000001",
+            "offline": offline, "offline_timestamp": offline_timestamp,
+        })
+    }
+
+    #[test]
+    fn offline_plays_start_at_their_own_time_in_seconds_or_milliseconds() {
+        let end = 1_748_779_200_000;
+        let seconds = event(row(true, json!(1_748_772_000)));
+        assert_eq!(seconds.played_at_ms, 1_748_772_000_000);
+        assert_eq!(seconds.source_timestamp_ms, end);
+        let millis = event(row(true, json!(1_748_772_000_123_i64)));
+        assert_eq!(millis.played_at_ms, 1_748_772_000_123);
+        assert_ne!(seconds.source_key, millis.source_key);
+        // The key the row had before keeps reimports of older archives idempotent.
+        assert_eq!(
+            legacy_offline_key(&seconds),
+            Some(db::metadata_id(
+                "event",
+                &[
+                    "spotify:track:0000000000000000000001",
+                    &end.to_string(),
+                    "200000"
+                ],
+            ))
+        );
+    }
+
+    #[test]
+    fn online_rows_and_untrusted_offline_times_keep_end_minus_duration() {
+        let end = 1_748_779_200_000;
+        for row in [
+            row(false, json!(1_748_772_000)),
+            row(true, json!(1_900_000_000)),
+            row(true, json!(1_740_000_000)),
+            row(true, Value::Null),
+        ] {
+            let event = event(row);
+            assert_eq!(event.played_at_ms, end - 200_000);
+            assert_eq!(legacy_offline_key(&event), None);
+            assert!(!has_offline_start(&event));
+        }
+    }
 }

@@ -195,11 +195,25 @@ export type ConnectOutcome = {
   message: string | null;
 };
 
+/** Spotify export details, when every export variant of the listen agrees. */
+export type PlaybackContext = {
+  device: string | null;
+  offline: boolean | null;
+  skipped: boolean | null;
+  reason_start: string | null;
+  reason_end: string | null;
+};
+
+export type ReviewRecord = Listen & {
+  revision: number;
+  playback?: PlaybackContext;
+};
+
 export type ReviewPage = {
   total: number;
   page: number;
   decisions_total: number;
-  groups: { id: string; items: (Listen & { revision: number })[] }[];
+  groups: { id: string; items: ReviewRecord[] }[];
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 
@@ -277,6 +291,8 @@ export const api = {
       token: string;
       groups: number;
       records: number;
+      trash: number;
+      separate: number;
       remaining: number;
     }>("/api/v1/review/automatic"),
   executeAutomaticReview: (token: string) =>

@@ -96,7 +96,14 @@ still only emits typed vocabulary; it never reads the archive or any result.
 - **Precise questions.** Besides the usual fields a step can carry an inclusive
   `from`/`to` date range (`YYYY-MM-DD`, validated), an `hour` (0-23, local
   time) and a `source` (`spotify_import`, `spotify_api`, `listenbrainz`). The
-  range replaces the period and the year and appears as editable chips.
+  range replaces the period and the year and appears as editable chips. The
+  system prompt states today's date (UTC) so the model can turn relative
+  ranges such as "the last two weeks" into dates; nothing else about the
+  archive is added.
+- **Rolling periods.** Both engines can choose `last_90_days` ("last 3
+  months") and `last_180_days` ("last 6 months") besides 7, 30 and 365 days.
+  Before these existed, "last 3 months" could only be mapped to "last month"
+  ([#201](https://github.com/itsmrma/scrobbl-rs/issues/201)).
 - **Follow-ups.** After an answer, "Continue from the previous answer" (on by
   default with a remote AI) sends the previous question and its interpretation
   chips, so "and last year?" or "what about Radiohead?" work. Results are never
