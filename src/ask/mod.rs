@@ -707,36 +707,30 @@ async fn run_sql(
                 history_href,
             }),
         }),
-        Err(rejection) => {
-            eprintln!(
-                "Ask SQL rejected ({:?}): {}",
-                rejection.rule, rejection.detail
-            );
-            Ok(AskResponse {
-                status: AskStatus::Failed,
-                question,
-                query: None,
-                chips: Vec::new(),
-                result: None,
-                message: Some(rejection.message),
-                candidates: Vec::new(),
-                runtime_available: state.ask.runtime_available,
-                earlier: Vec::new(),
-                sql: Some(SqlAnswer {
-                    title: output.title,
-                    computed: output.computed,
-                    answer_kind: output.answer_kind,
-                    sql: output.sql,
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    truncated: false,
-                    rule_code: Some(rejection.rule),
-                    as_of_ms,
-                    cell_links: Vec::new(),
-                    history_href: None,
-                }),
-            })
-        }
+        Err(rejection) => Ok(AskResponse {
+            status: AskStatus::Failed,
+            question,
+            query: None,
+            chips: Vec::new(),
+            result: None,
+            message: Some(rejection.message),
+            candidates: Vec::new(),
+            runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
+            sql: Some(SqlAnswer {
+                title: output.title,
+                computed: output.computed,
+                answer_kind: output.answer_kind,
+                sql: output.sql,
+                columns: Vec::new(),
+                rows: Vec::new(),
+                truncated: false,
+                rule_code: Some(rejection.rule),
+                as_of_ms,
+                cell_links: Vec::new(),
+                history_href: None,
+            }),
+        }),
     }
 }
 
