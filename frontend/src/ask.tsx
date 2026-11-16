@@ -178,6 +178,7 @@ export function AskPage({
   const [error, setError] = useState("");
   const [followUp, setFollowUp] = useState(true);
   const [asked, setAsked] = useState("");
+  const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
 
   useEffect(() => {
     if (!visible) return;
@@ -216,6 +217,7 @@ export function AskPage({
     if (!question.trim() || loading) return;
     setLoading(true);
     setError("");
+    setSqlEditorOpen(false);
     try {
       // A follow-up sends the last question and how it was understood,
       // never its results.
@@ -237,6 +239,31 @@ export function AskPage({
     setError("");
     try {
       setResponse(await api.askQuery(query));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runEditedSql(editedSql: string, current?: SqlAnswer | null) {
+    if (!editedSql.trim() || loading) return;
+    setLoading(true);
+    setError("");
+    setSqlEditorOpen(true);
+    try {
+      setResponse(
+        await api.askSql({
+          sql: editedSql,
+          title: current?.title ?? null,
+          computed: null,
+          answer_kind:
+            current && current.answer_kind !== "unsupported"
+              ? current.answer_kind
+              : null,
+          columns: current?.columns ?? [],
+        }),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -494,7 +521,22 @@ export function AskPage({
             {response.status === "failed" && (
               <Notice title="I couldn't answer that" tone="error">
                 {response.message}
-                {response.sql?.sql && <SqlDisclosure sql={response.sql.sql} />}
+                {response.sql?.rule_code &&
+                  !response.message?.includes(response.sql.rule_code) && (
+                    <p className="ask-coverage">
+                      Rule: {response.sql.rule_code}
+                    </p>
+                  )}
+                {response.sql?.sql && (
+                  <SqlDisclosure
+                    sql={response.sql.sql}
+                    running={loading}
+                    defaultOpen={sqlEditorOpen}
+                    onRunSql={(edited) =>
+                      void runEditedSql(edited, response.sql)
+                    }
+                  />
+                )}
               </Notice>
             )}
 
@@ -513,7 +555,13 @@ export function AskPage({
             )}
 
             {response.status === "ok" && response.sql && (
-              <SqlResultCard sql={response.sql} preferences={preferences} />
+              <SqlResultCard
+                sql={response.sql}
+                preferences={preferences}
+                running={loading}
+                defaultSqlOpen={sqlEditorOpen}
+                onRunSql={(edited) => void runEditedSql(edited, response.sql)}
+              />
             )}
 
             {response.status === "ok" && response.result && response.query && (
@@ -635,6 +683,35 @@ export function ResultCard({
   );
 }
 
+const SQL_PAGE_SIZE = 100;
+
+const sqlDateFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const sqlMonthFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  month: "short",
+  year: "numeric",
+});
+const sqlDateTzFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function formatDateOnly(ms: number, timezone: string): string {
+  let formatter = sqlDateTzFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+    sqlDateTzFormatters.set(timezone, formatter);
+  }
+  return formatter.format(ms);
+}
+
 function isNumericFormat(
   value: SqlValue,
   format: ColumnFormat | undefined,
@@ -644,6 +721,7 @@ function isNumericFormat(
     format === "count" ||
     format === "duration_ms" ||
     format === "percent" ||
+    format === "text" ||
     format === undefined
   );
 }
@@ -655,35 +733,329 @@ function formatSqlCell(
 ): string {
   if (value === null) return "—";
   if (typeof value === "number") {
-    if (format === "duration_ms") return duration(value, true);
+    if (format === "duration_ms") {
+      return duration(value, value >= 60_000 || value === 0);
+    }
     if (format === "percent") {
-      return `${value.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+      return `${value.toLocaleString("en-GB", { maximumFractionDigits: 1 })}%`;
     }
     if (format === "datetime") return date(value, preferences);
+    if (format === "date") return formatDateOnly(value, preferences.timezone);
     return number.format(value);
   }
-  return String(value);
+  const text = String(value);
+  if (format === "date") {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+      const parsed = new Date(`${text}T00:00:00Z`);
+      if (!Number.isNaN(parsed.getTime()))
+        return sqlDateFormatter.format(parsed);
+    }
+    if (/^\d{4}-\d{2}$/.test(text)) {
+      const parsed = new Date(`${text}-01T00:00:00Z`);
+      if (!Number.isNaN(parsed.getTime()))
+        return sqlMonthFormatter.format(parsed);
+    }
+  }
+  if (format === "datetime") {
+    if (
+      /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:?\d{2})$/.test(
+        text,
+      )
+    ) {
+      const parsed = Date.parse(text);
+      if (!Number.isNaN(parsed)) return date(parsed, preferences);
+    }
+    const localMatch = text.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+    if (localMatch) {
+      const parsed = new Date(`${localMatch[1]}T00:00:00Z`);
+      if (!Number.isNaN(parsed.getTime())) {
+        return `${sqlDateFormatter.format(parsed)}, ${localMatch[2]}`;
+      }
+    }
+  }
+  return text;
 }
 
-function SqlDisclosure({ sql }: { sql: string }) {
+function renderSqlCell(
+  value: SqlValue,
+  format: ColumnFormat | undefined,
+  href: string | null | undefined,
+  preferences: Preferences,
+) {
+  const text = formatSqlCell(value, format, preferences);
+  return href ? <Link to={href}>{text}</Link> : text;
+}
+
+function chartColumns(
+  sql: SqlAnswer,
+): { labelCol: number; valueCol: number } | null {
+  if (sql.columns.length < 2 || sql.rows.length === 0) return null;
+  const numericIndices: number[] = [];
+  for (let i = 0; i < sql.columns.length; i += 1) {
+    if (sql.rows.some((row) => typeof row[i] === "number")) {
+      numericIndices.push(i);
+    }
+  }
+  const preferredValue = numericIndices.find((idx) => {
+    const fmt = sql.columns[idx]?.format;
+    return fmt === "count" || fmt === "duration_ms" || fmt === "percent";
+  });
+  const valueCol = preferredValue ?? numericIndices[numericIndices.length - 1];
+  if (valueCol === undefined) return null;
+
+  let labelCol = sql.columns.findIndex((col, idx) => {
+    if (idx === valueCol) return false;
+    return (
+      col.format === "artist" ||
+      col.format === "album" ||
+      col.format === "track" ||
+      col.format === "date" ||
+      col.format === "datetime" ||
+      col.format === "text"
+    );
+  });
+  if (labelCol === -1) {
+    labelCol = sql.columns.findIndex((_, idx) => idx !== valueCol);
+  }
+  if (labelCol === -1) return null;
+  return { labelCol, valueCol };
+}
+
+function SqlDisclosure({
+  sql,
+  running,
+  defaultOpen,
+  onRunSql,
+}: {
+  sql: string;
+  running: boolean;
+  defaultOpen: boolean;
+  onRunSql: (editedSql: string) => void;
+}) {
+  const [draft, setDraft] = useState(sql);
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => {
+    setDraft(sql);
+  }, [sql]);
+  useEffect(() => {
+    setOpen(defaultOpen);
+  }, [defaultOpen, sql]);
   if (!sql.trim()) return null;
   return (
-    <details className="ask-sql-disclosure">
+    <details
+      className="ask-sql-disclosure"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary>Show SQL</summary>
-      <pre className="ask-sql-code">
-        <code>{sql}</code>
-      </pre>
+      <div className="ask-sql-editor">
+        <textarea
+          className="ask-sql-code"
+          aria-label="SQL query"
+          rows={4}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          spellCheck={false}
+          disabled={running}
+        />
+        <div className="ask-sql-actions">
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={running || !draft.trim()}
+            onClick={() => onRunSql(draft)}
+          >
+            {running ? "Running…" : "Run"}
+          </Button>
+          {draft !== sql && (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={running}
+              onClick={() => setDraft(sql)}
+            >
+              Reset
+            </Button>
+          )}
+        </div>
+      </div>
     </details>
+  );
+}
+
+function SqlTable({
+  sql,
+  pageRows,
+  pageLinks,
+  preferences,
+}: {
+  sql: SqlAnswer;
+  pageRows: SqlValue[][];
+  pageLinks: (string | null)[][];
+  preferences: Preferences;
+}) {
+  return (
+    <div className="ask-table-wrap" tabIndex={0}>
+      <table className="ask-table">
+        <thead>
+          <tr>
+            {sql.columns.map((column, index) => (
+              <th key={`${column.name}-${index}`} scope="col">
+                {column.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {pageRows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, cellIndex) => {
+                const format = sql.columns[cellIndex]?.format;
+                const href = pageLinks[rowIndex]?.[cellIndex];
+                return (
+                  <td
+                    key={cellIndex}
+                    className={
+                      isNumericFormat(cell, format)
+                        ? "ask-table-value"
+                        : undefined
+                    }
+                  >
+                    {renderSqlCell(cell, format, href, preferences)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SqlChart({
+  sql,
+  pageRows,
+  pageLinks,
+  labelCol,
+  valueCol,
+  preferences,
+}: {
+  sql: SqlAnswer;
+  pageRows: SqlValue[][];
+  pageLinks: (string | null)[][];
+  labelCol: number;
+  valueCol: number;
+  preferences: Preferences;
+}) {
+  const max = Math.max(
+    1,
+    ...pageRows.map((row) => {
+      const n = row[valueCol];
+      return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+    }),
+  );
+  const labelFormat = sql.columns[labelCol]?.format;
+  const valueFormat = sql.columns[valueCol]?.format;
+  return (
+    <div className="ask-chart">
+      <div
+        className="chart-scroll"
+        tabIndex={0}
+        aria-label={sql.title || "Chart result"}
+      >
+        <div className="chart-bars">
+          {pageRows.map((row, rowIndex) => {
+            const label = formatSqlCell(
+              row[labelCol],
+              labelFormat,
+              preferences,
+            );
+            const valueText = formatSqlCell(
+              row[valueCol],
+              valueFormat,
+              preferences,
+            );
+            const rawNum = row[valueCol];
+            const num =
+              typeof rawNum === "number" &&
+              Number.isFinite(rawNum) &&
+              rawNum > 0
+                ? rawNum
+                : 0;
+            const height = Math.max(2, (num / max) * 100);
+            const href = pageLinks[rowIndex]?.[labelCol];
+            const segment = (
+              <>
+                <span className="bar-space">
+                  <span className="bar" style={{ height: `${height}%` }}>
+                    <span className="actual-bar" style={{ flex: 1 }} />
+                  </span>
+                </span>
+                <small title={label}>{label}</small>
+                <small className="chart-bar-value">{valueText}</small>
+              </>
+            );
+            return href ? (
+              <Link
+                key={rowIndex}
+                to={href}
+                className="chart-segment ask-chart-link"
+                aria-label={`${label}: ${valueText}`}
+              >
+                {segment}
+              </Link>
+            ) : (
+              <div
+                key={rowIndex}
+                className="chart-segment"
+                role="group"
+                aria-label={`${label}: ${valueText}`}
+              >
+                {segment}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
 function SqlResultCard({
   sql,
   preferences,
+  running,
+  defaultSqlOpen,
+  onRunSql,
 }: {
   sql: SqlAnswer;
   preferences: Preferences;
+  running: boolean;
+  defaultSqlOpen: boolean;
+  onRunSql: (editedSql: string) => void;
 }) {
+  const [page, setPage] = useState(1);
+  useEffect(() => {
+    setPage(1);
+  }, [sql]);
+
+  const totalRows = sql.rows.length;
+  const totalPages = Math.max(1, Math.ceil(totalRows / SQL_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * SQL_PAGE_SIZE;
+  const pageRows = sql.rows.slice(start, start + SQL_PAGE_SIZE);
+  const pageLinks = (sql.cell_links ?? []).slice(start, start + SQL_PAGE_SIZE);
+
+  const isSingleValue =
+    sql.answer_kind === "value" &&
+    sql.rows.length === 1 &&
+    sql.columns.length >= 1;
+  const chartCols =
+    sql.answer_kind === "series" || sql.answer_kind === "ranking"
+      ? chartColumns(sql)
+      : null;
+
   return (
     <article className="panel padded ask-result">
       <p className="ask-eyebrow">Result</p>
@@ -693,51 +1065,107 @@ function SqlResultCard({
           <strong>Computed:</strong> {sql.computed}
         </p>
       )}
+      {sql.rows.length === 0 ? (
+        <p className="ask-empty">No matching rows.</p>
+      ) : isSingleValue ? (
+        <>
+          <p className="ask-result-value" aria-label="Result value">
+            {renderSqlCell(
+              sql.rows[0][0],
+              sql.columns[0]?.format,
+              sql.cell_links?.[0]?.[0],
+              preferences,
+            )}
+          </p>
+          {sql.columns.length > 1 && (
+            <p className="ask-listen-meta">
+              {sql.columns.slice(1).map((col, idx) => (
+                <span key={`${col.name}-${idx}`}>
+                  {idx > 0 ? " · " : ""}
+                  {col.name}:{" "}
+                  {renderSqlCell(
+                    sql.rows[0][idx + 1],
+                    col.format,
+                    sql.cell_links?.[0]?.[idx + 1],
+                    preferences,
+                  )}
+                </span>
+              ))}
+            </p>
+          )}
+        </>
+      ) : chartCols ? (
+        <>
+          <SqlChart
+            sql={sql}
+            pageRows={pageRows}
+            pageLinks={pageLinks}
+            labelCol={chartCols.labelCol}
+            valueCol={chartCols.valueCol}
+            preferences={preferences}
+          />
+          {sql.columns.length > 2 && (
+            <SqlTable
+              sql={sql}
+              pageRows={pageRows}
+              pageLinks={pageLinks}
+              preferences={preferences}
+            />
+          )}
+        </>
+      ) : (
+        <SqlTable
+          sql={sql}
+          pageRows={pageRows}
+          pageLinks={pageLinks}
+          preferences={preferences}
+        />
+      )}
+      {totalRows > SQL_PAGE_SIZE && (
+        <div className="pagination">
+          <button
+            type="button"
+            className="secondary"
+            disabled={safePage <= 1}
+            onClick={() => setPage(safePage - 1)}
+          >
+            Previous
+          </button>
+          <span>
+            Page {safePage} of {totalPages} · {number.format(totalRows)} rows
+          </span>
+          <button
+            type="button"
+            className="secondary"
+            disabled={safePage >= totalPages}
+            onClick={() => setPage(safePage + 1)}
+          >
+            Next
+          </button>
+        </div>
+      )}
       {sql.truncated && (
         <p className="ask-coverage">
           Showing the first {number.format(sql.rows.length)} rows (result
           truncated).
         </p>
       )}
-      {sql.rows.length === 0 ? (
-        <p className="ask-empty">No matching rows.</p>
-      ) : (
-        <div className="ask-table-wrap" tabIndex={0}>
-          <table className="ask-table">
-            <thead>
-              <tr>
-                {sql.columns.map((column, index) => (
-                  <th key={`${column.name}-${index}`} scope="col">
-                    {column.name}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sql.rows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {row.map((cell, cellIndex) => {
-                    const format = sql.columns[cellIndex]?.format;
-                    return (
-                      <td
-                        key={cellIndex}
-                        className={
-                          isNumericFormat(cell, format)
-                            ? "ask-table-value"
-                            : undefined
-                        }
-                      >
-                        {formatSqlCell(cell, format, preferences)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {sql.built_at_ms !== null && sql.built_at_ms !== undefined && (
+        <p className="ask-coverage">
+          Projection as of {date(sql.built_at_ms, preferences)}.
+        </p>
+      )}
+      {sql.history_href && (
+        <div className="ask-result-links">
+          <Link to={sql.history_href}>See these listens</Link>
         </div>
       )}
-      <SqlDisclosure sql={sql.sql} />
+      <SqlDisclosure
+        sql={sql.sql}
+        running={running}
+        defaultOpen={defaultSqlOpen}
+        onRunSql={onRunSql}
+      />
     </article>
   );
 }

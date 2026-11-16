@@ -35,6 +35,7 @@ import type {
   ListeningMilestones,
   AskPrevious,
   AskResponse,
+  AskSqlRequest,
   Query,
   AiSettings,
   SaveAiSettings,
@@ -440,6 +441,8 @@ export const api = {
       ...(previous ? { previous } : {}),
     }),
   askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
+  askSql: (payload: AskSqlRequest) =>
+    post<AskResponse>("/api/v1/ask/sql", payload),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),

@@ -6048,6 +6048,7 @@ dialog.artwork-lightbox {
 .ask-result {
   display: grid;
   gap: 10px;
+  min-width: 0;
   margin-bottom: 18px;
 }
 
@@ -6175,7 +6176,8 @@ dialog.artwork-lightbox {
   overflow-wrap: anywhere;
 }
 
-.ask-table tbody th a {
+.ask-table tbody th a,
+.ask-table tbody td a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
@@ -6985,15 +6987,48 @@ dialog.artwork-lightbox {
   color: var(--muted);
 }
 
+.ask-sql-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .ask-sql-code {
-  margin: 4px 0 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--surface-alt, var(--bg));
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
-  overflow-x: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
+  resize: vertical;
+}
+
+.ask-sql-code:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ask-sql-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-result-value a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 600px) {
+  .ask-sql-actions .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
 }
