@@ -59,8 +59,9 @@ pub struct SqlAnswer {
     pub rows: Vec<Vec<SqlValue>>,
     pub truncated: bool,
     pub rule_code: Option<SandboxRule>,
-    #[serde(default)]
-    pub built_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub as_of_ms: Option<i64>,
     #[serde(default)]
     pub cell_links: Vec<Vec<Option<String>>>,
     #[serde(default)]
@@ -251,7 +252,7 @@ pub struct Ask {
     pub model_ready: bool,
     /// True when this Ask is backed by the real runtime rather than a stub.
     pub local: bool,
-    projection: projection::ProjectionGate,
+    pub projection: projection::ProjectionGate,
 }
 
 impl Default for Ask {
@@ -660,23 +661,23 @@ async fn run_sql(
     question: String,
     output: SqlModelOutput,
 ) -> Result<AskResponse> {
-    let proj_path = projection::ensure(&state.storage, &state.ask.projection).await?;
+    let proj_path = projection::for_query(&state.storage, &state.ask.projection).await?;
     let sql_text = output.sql.clone();
     let declared_columns = output.columns.clone();
-    let (built_at_ms, outcome) = {
+    let (as_of_ms, outcome) = {
         let _read = state.ask.projection.read_lock().await;
         tokio::task::spawn_blocking(move || {
-            let built_at_ms = projection::as_of_ms(&proj_path);
+            let as_of_ms = projection::read_built_at_ms(&proj_path);
             let outcome =
                 sandbox::execute(&proj_path, &sql_text, SandboxLimits::default()).map(|table| {
                     let columns = match_columns(&table.columns, &declared_columns);
                     let cell_links =
-                        projection::resolve_cell_links(&proj_path, &columns, &table.rows);
+                        history_link::resolve_cell_links(&proj_path, &columns, &table.rows);
                     let history_href =
                         history_link::resolve(&proj_path, &sql_text, output.answer_kind);
                     (table, columns, cell_links, history_href)
                 });
-            (built_at_ms, outcome)
+            (as_of_ms, outcome)
         })
         .await
         .map_err(|_| AppError::Internal)?
@@ -701,7 +702,7 @@ async fn run_sql(
                 rows: table.rows,
                 truncated: table.truncated,
                 rule_code: None,
-                built_at_ms,
+                as_of_ms,
                 cell_links,
                 history_href,
             }),
@@ -730,7 +731,7 @@ async fn run_sql(
                     rows: Vec::new(),
                     truncated: false,
                     rule_code: Some(rejection.rule),
-                    built_at_ms,
+                    as_of_ms,
                     cell_links: Vec::new(),
                     history_href: None,
                 }),

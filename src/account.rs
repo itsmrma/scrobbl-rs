@@ -277,10 +277,12 @@ pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> R
         Err(_) => 0,
     };
     let backups_bytes = crate::ai::models::directory_size(&state.storage.directory.join("backups"));
+    let projection_bytes = crate::ask::projection::size_bytes(&state.storage.directory);
     let total_storage_bytes = u64::try_from(archive_bytes)
         .unwrap_or(0)
         .saturating_add(models_bytes)
-        .saturating_add(backups_bytes);
+        .saturating_add(backups_bytes)
+        .saturating_add(projection_bytes);
     Ok(Json(json!({
         "boot_id": state.application.boot_id,
         "version": env!("CARGO_PKG_VERSION"),
@@ -292,6 +294,7 @@ pub async fn application(State(state): State<AppState>, headers: HeaderMap) -> R
         "listens_bytes": listens_bytes,
         "models_bytes": models_bytes,
         "backups_bytes": backups_bytes,
+        "projection_bytes": projection_bytes,
         "total_storage_bytes": total_storage_bytes,
         "listens": listens,
         "tracks": tracks,

@@ -937,7 +937,7 @@ async fn ask_sql_executes_valid_sql_and_rejects_unsafe_sql_with_rule_code() {
         json!([{"name": "plays", "format": "count"}])
     );
     assert!(
-        body["sql"]["built_at_ms"].as_i64().is_some_and(|ms| ms > 0),
+        body["sql"]["as_of_ms"].as_i64().is_some_and(|ms| ms > 0),
         "{body}"
     );
 

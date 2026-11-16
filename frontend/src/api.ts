@@ -81,6 +81,7 @@ export type ApplicationInfo = {
   listens_bytes: number;
   models_bytes: number;
   backups_bytes: number;
+  projection_bytes: number;
   total_storage_bytes: number;
   listens: number;
   tracks: number;

@@ -3,7 +3,11 @@
 //! Any query whose filters cannot be represented losslessly by `/history`
 //! (such as `local_hour`, `OR`, `LIKE`, `HAVING`, `WITH`, subqueries, or
 //! conflicting predicates) returns `None` rather than approximating.
-use crate::ask::schema::SqlAnswerKind;
+use crate::ask::{
+    SqlColumn,
+    sandbox::SqlValue,
+    schema::{ColumnFormat, SqlAnswerKind},
+};
 use chrono::{Days, NaiveDate};
 use rusqlite::{Connection, OpenFlags};
 use std::{collections::HashMap, fmt::Write as _, path::Path};
@@ -939,4 +943,237 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
         .collect::<Vec<_>>()
         .join("&");
     Some(format!("/history?{query}"))
+}
+
+fn music_href(segment: &str, id: &str) -> String {
+    format!("/music/{segment}/{}", encode(id))
+}
+
+fn text_at(row: &[SqlValue], col: Option<usize>) -> Option<&str> {
+    match col.and_then(|idx| row.get(idx)) {
+        Some(SqlValue::Text(s)) if !s.is_empty() => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+fn unique_query(conn: &Connection, sql: &str, params: &[&dyn rusqlite::ToSql]) -> Option<String> {
+    let mut stmt = conn.prepare_cached(sql).ok()?;
+    let mut rows = stmt.query(params).ok()?;
+    let first: String = rows.next().ok()??.get(0).ok()?;
+    if rows.next().ok()?.is_some() {
+        return None;
+    }
+    Some(first)
+}
+
+/// Resolve `/music/{artists|albums|tracks}/{id}` links for `artist`, `album`,
+/// and `track` columns using the projection's link keys. Ambiguous names without
+/// an ID or disambiguating column in the same row stay unlinked (`None`).
+pub fn resolve_cell_links(
+    projection_path: &Path,
+    columns: &[SqlColumn],
+    rows: &[Vec<SqlValue>],
+) -> Vec<Vec<Option<String>>> {
+    if rows.is_empty()
+        || !columns.iter().any(|c| {
+            matches!(
+                c.format,
+                ColumnFormat::Artist | ColumnFormat::Album | ColumnFormat::Track
+            )
+        })
+    {
+        return Vec::new();
+    }
+    let Ok(conn) = Connection::open_with_flags(
+        projection_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+
+    let entity_cols = columns
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.format,
+                ColumnFormat::Artist | ColumnFormat::Album | ColumnFormat::Track
+            )
+        })
+        .count();
+    let find_col = |name: &str| {
+        columns
+            .iter()
+            .position(|c| c.name.eq_ignore_ascii_case(name))
+    };
+    let id_col = find_col("id").filter(|_| entity_cols == 1);
+    let artist_id_col = find_col("artist_id").or_else(|| {
+        columns
+            .iter()
+            .any(|c| c.format == ColumnFormat::Artist)
+            .then_some(id_col)
+            .flatten()
+    });
+    let album_id_col = find_col("album_id").or_else(|| {
+        columns
+            .iter()
+            .any(|c| c.format == ColumnFormat::Album)
+            .then_some(id_col)
+            .flatten()
+    });
+    let track_id_col = find_col("track_id").or_else(|| {
+        columns
+            .iter()
+            .any(|c| c.format == ColumnFormat::Track)
+            .then_some(id_col)
+            .flatten()
+    });
+    let artist_name_col = columns
+        .iter()
+        .position(|c| c.format == ColumnFormat::Artist);
+    let album_name_col = columns.iter().position(|c| c.format == ColumnFormat::Album);
+
+    type LinkCacheKey = (u8, String, Option<String>, Option<String>);
+    let mut id_cache: HashMap<(&'static str, String), Option<String>> = HashMap::new();
+    let mut name_cache: HashMap<LinkCacheKey, Option<String>> = HashMap::new();
+
+    rows.iter()
+        .map(|row| {
+            columns
+                .iter()
+                .enumerate()
+                .map(|(idx, col)| {
+                    let text = match row.get(idx) {
+                        Some(SqlValue::Text(s)) if !s.is_empty() => s.as_str(),
+                        _ => return None,
+                    };
+                    match col.format {
+                        ColumnFormat::Artist => {
+                            if let Some(id) = text_at(row, artist_id_col) {
+                                return id_cache
+                                    .entry(("artists", id.to_owned()))
+                                    .or_insert_with(|| {
+                                        unique_query(
+                                            &conn,
+                                            "SELECT id FROM artists WHERE id = ?1 LIMIT 1",
+                                            &[&id],
+                                        )
+                                        .map(|found| music_href("artists", &found))
+                                    })
+                                    .clone();
+                            }
+                            let key = (0u8, text.to_owned(), None, None);
+                            name_cache
+                                .entry(key)
+                                .or_insert_with(|| {
+                                    unique_query(
+                                        &conn,
+                                        "SELECT id FROM artists WHERE name = ?1 LIMIT 2",
+                                        &[&text],
+                                    )
+                                    .map(|found| music_href("artists", &found))
+                                })
+                                .clone()
+                        }
+                        ColumnFormat::Album => {
+                            if let Some(id) = text_at(row, album_id_col) {
+                                return id_cache
+                                    .entry(("albums", id.to_owned()))
+                                    .or_insert_with(|| {
+                                        unique_query(
+                                            &conn,
+                                            "SELECT id FROM albums WHERE id = ?1 LIMIT 1",
+                                            &[&id],
+                                        )
+                                        .map(|found| music_href("albums", &found))
+                                    })
+                                    .clone();
+                            }
+                            let artist = text_at(row, artist_name_col).map(str::to_owned);
+                            let key = (1u8, text.to_owned(), artist.clone(), None);
+                            name_cache
+                                .entry(key)
+                                .or_insert_with(|| {
+                                    unique_query(
+                                        &conn,
+                                        "SELECT id FROM albums WHERE name = ?1 LIMIT 2",
+                                        &[&text],
+                                    )
+                                    .or_else(|| {
+                                        let ar = artist.as_deref()?;
+                                        unique_query(
+                                            &conn,
+                                            "SELECT DISTINCT al.id FROM albums al \
+                                             JOIN tracks t ON t.album_id = al.id \
+                                             JOIN track_artists ta ON ta.track_id = t.id \
+                                             JOIN artists ar ON ar.id = ta.artist_id \
+                                             WHERE al.name = ?1 AND ar.name = ?2 LIMIT 2",
+                                            &[&text, &ar],
+                                        )
+                                    })
+                                    .map(|found| music_href("albums", &found))
+                                })
+                                .clone()
+                        }
+                        ColumnFormat::Track => {
+                            if let Some(id) = text_at(row, track_id_col) {
+                                return id_cache
+                                    .entry(("tracks", id.to_owned()))
+                                    .or_insert_with(|| {
+                                        unique_query(
+                                            &conn,
+                                            "SELECT id FROM tracks WHERE id = ?1 LIMIT 1",
+                                            &[&id],
+                                        )
+                                        .map(|found| music_href("tracks", &found))
+                                    })
+                                    .clone();
+                            }
+                            let artist = text_at(row, artist_name_col).map(str::to_owned);
+                            let album = text_at(row, album_name_col).map(str::to_owned);
+                            let key = (2u8, text.to_owned(), artist.clone(), album.clone());
+                            name_cache
+                                .entry(key)
+                                .or_insert_with(|| {
+                                    unique_query(
+                                        &conn,
+                                        "SELECT id FROM tracks WHERE title = ?1 LIMIT 2",
+                                        &[&text],
+                                    )
+                                    .or_else(|| match (artist.as_deref(), album.as_deref()) {
+                                        (Some(ar), Some(al)) => unique_query(
+                                            &conn,
+                                            "SELECT DISTINCT t.id FROM tracks t \
+                                             JOIN albums al ON al.id = t.album_id \
+                                             JOIN track_artists ta ON ta.track_id = t.id \
+                                             JOIN artists ar ON ar.id = ta.artist_id \
+                                             WHERE t.title = ?1 AND ar.name = ?2 AND al.name = ?3 LIMIT 2",
+                                            &[&text, &ar, &al],
+                                        ),
+                                        (Some(ar), None) => unique_query(
+                                            &conn,
+                                            "SELECT DISTINCT t.id FROM tracks t \
+                                             JOIN track_artists ta ON ta.track_id = t.id \
+                                             JOIN artists ar ON ar.id = ta.artist_id \
+                                             WHERE t.title = ?1 AND ar.name = ?2 LIMIT 2",
+                                            &[&text, &ar],
+                                        ),
+                                        (None, Some(al)) => unique_query(
+                                            &conn,
+                                            "SELECT DISTINCT t.id FROM tracks t \
+                                             JOIN albums al ON al.id = t.album_id \
+                                             WHERE t.title = ?1 AND al.name = ?2 LIMIT 2",
+                                            &[&text, &al],
+                                        ),
+                                        (None, None) => None,
+                                    })
+                                    .map(|found| music_href("tracks", &found))
+                                })
+                                .clone()
+                        }
+                        _ => None,
+                    }
+                })
+                .collect()
+        })
+        .collect()
 }

@@ -1150,9 +1150,9 @@ function SqlResultCard({
           truncated).
         </p>
       )}
-      {sql.built_at_ms !== null && sql.built_at_ms !== undefined && (
+      {sql.as_of_ms != null && (
         <p className="ask-coverage">
-          Projection as of {date(sql.built_at_ms, preferences)}.
+          Projection as of {date(sql.as_of_ms, preferences)}.
         </p>
       )}
       {sql.history_href && (

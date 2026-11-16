@@ -213,6 +213,7 @@ test("a free question with remote AI shows the computed sentence, a table and th
   await expect(card).toContainText(
     "Computed: Counted plays per track across all time.",
   );
+  await expect(card).toContainText("Projection as of ");
 
   const table = card.locator(".ask-table");
   await expect(table.locator("thead th")).toHaveText(["track", "plays"]);
@@ -259,6 +260,26 @@ test("a free question with remote AI shows the computed sentence, a table and th
   await expect(page.getByText("I couldn't answer that")).toBeVisible();
   await expect(page.locator(".notice")).toContainText("unauthorized_table");
   await expect(page.locator(".ask-table")).toHaveCount(0);
+
+  // Storage settings reports Ask projection disk size while AI is enabled, and 0 KB after disabling AI.
+  await page.goto("/settings/application");
+  const projRow = page.locator("dl.connection-facts div", {
+    hasText: "Ask projection on disk",
+  });
+  await expect(projRow).toBeVisible();
+  await expect(projRow).not.toContainText("0 KB");
+
+  await page.goto("/settings/ai");
+  await page.getByLabel("Enable AI").uncheck();
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  await page.goto("/settings/application");
+  await expect(
+    page.locator("dl.connection-facts div", {
+      hasText: "Ask projection on disk",
+    }),
+  ).toContainText("0 KB");
 });
 
 test("free results render value, table, series, ranking, entity/history links, pagination and editable SQL across themes and mobile", async ({
