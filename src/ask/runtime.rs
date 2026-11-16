@@ -533,6 +533,7 @@ mod llama {
     };
 
     pub const CONTEXT_TOKENS: u32 = 3072;
+    pub const SQL_CONTEXT_TOKENS: u32 = 4096;
     pub const MAX_NEW_TOKENS: i32 = 256;
     pub const MAX_SQL_NEW_TOKENS: i32 = 512;
     const MAX_OUTPUT_BYTES: usize = 16 * 1024;
@@ -586,6 +587,10 @@ mod llama {
                 GrammarKind::Sql => SQL_GRAMMAR.as_ref(),
             }
             .map_err(|error| InferenceError::Failed(error.clone()))?;
+            let context_tokens = match grammar_kind {
+                GrammarKind::Guided => CONTEXT_TOKENS,
+                GrammarKind::Sql => SQL_CONTEXT_TOKENS,
+            };
             let max_new_tokens = match grammar_kind {
                 GrammarKind::Guided => MAX_NEW_TOKENS,
                 GrammarKind::Sql => MAX_SQL_NEW_TOKENS,
@@ -593,7 +598,7 @@ mod llama {
 
             let mut params = LlamaContextParams::default()
                 .with_n_ctx(Some(
-                    NonZeroU32::new(CONTEXT_TOKENS).expect("constant context size is non-zero"),
+                    NonZeroU32::new(context_tokens).expect("constant context size is non-zero"),
                 ))
                 .with_n_threads(i32::try_from(self.threads).unwrap_or(4))
                 .with_n_threads_batch(i32::try_from(self.threads).unwrap_or(4));
@@ -778,7 +783,9 @@ mod llama {
 }
 
 #[cfg(feature = "llama")]
-pub use llama::{CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS, MAX_SQL_NEW_TOKENS};
+pub use llama::{
+    CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS, MAX_SQL_NEW_TOKENS, SQL_CONTEXT_TOKENS,
+};
 
 /// A loaded engine reused for many prompts. Offline tools (the eval harness)
 /// use it to measure one model across a corpus without reloading the weights;

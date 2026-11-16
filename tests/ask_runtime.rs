@@ -700,7 +700,7 @@ fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
     let prompt = prompt::build_sql_prompt("What are my top tracks in 2024?", "2026-11-16");
     let estimated_tokens = prompt.chars().count() / 3;
     assert!(
-        estimated_tokens as i32 + runtime::MAX_SQL_NEW_TOKENS <= runtime::CONTEXT_TOKENS as i32,
+        estimated_tokens as i32 + runtime::MAX_SQL_NEW_TOKENS <= runtime::SQL_CONTEXT_TOKENS as i32,
         "sql prompt is about {estimated_tokens} tokens"
     );
 
