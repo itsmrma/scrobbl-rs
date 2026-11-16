@@ -908,3 +908,394 @@ async fn stub_local_sql_mode_runs_through_sandbox_and_guided_stays_unchanged() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(guided_after, guided_before);
 }
+
+#[tokio::test]
+async fn ask_sql_requires_owner_session_csrf_and_rejects_read_api_keys() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    let (status, key_body) = post(
+        &state,
+        &token,
+        "/api/v1/api-keys",
+        json!({"name": "reader", "application": "test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{key_body}");
+    let api_key = key_body["secret"].as_str().unwrap().to_owned();
+
+    let payload =
+        serde_json::to_vec(&json!({"sql": "SELECT COUNT(*) AS plays FROM listens"})).unwrap();
+
+    // Missing session -> 401 Unauthorized.
+    let no_session = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/sql")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_session.status(), StatusCode::UNAUTHORIZED);
+
+    // Missing CSRF token -> 403 Forbidden.
+    let no_csrf = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/sql")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+
+    // Wrong Origin -> 403 Forbidden.
+    let bad_origin = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/sql")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "https://evil.example")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad_origin.status(), StatusCode::FORBIDDEN);
+
+    // Read API key alone -> 403 Forbidden.
+    let read_key_only = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/sql")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_key_only.status(), StatusCode::FORBIDDEN);
+
+    // Read API key even alongside owner cookie & CSRF -> 403 Forbidden.
+    let read_key_with_cookie = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/sql")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_key_with_cookie.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn ask_sql_executes_valid_sql_and_rejects_unsafe_sql_with_rule_code() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+            "title": "Total plays",
+            "answer_kind": "value",
+            "columns": [{"name": "plays", "format": "count"}]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["sql"]["answer_kind"], "value");
+    assert_eq!(body["sql"]["title"], "Total plays");
+    assert_eq!(body["sql"]["rows"], json!([[4]]));
+    assert_eq!(
+        body["sql"]["columns"],
+        json!([{"name": "plays", "format": "count"}])
+    );
+    assert!(
+        body["sql"]["as_of_ms"].as_i64().is_some_and(|ms| ms > 0),
+        "{body}"
+    );
+
+    // Forbidden SQL is rejected with its sandbox rule and no rows.
+    for (sql, expected_rule) in [
+        ("SELECT value FROM settings", "unauthorized_table"),
+        ("DELETE FROM listens", "not_select"),
+    ] {
+        let (status, body) = post(&state, &token, "/api/v1/ask/sql", json!({"sql": sql})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "failed", "{sql}: {body}");
+        assert_eq!(body["sql"]["rule_code"], expected_rule, "{sql}: {body}");
+        assert_eq!(body["sql"]["sql"], sql, "{sql}: {body}");
+        assert_eq!(body["sql"]["rows"], json!([]), "{sql}: {body}");
+        assert!(
+            !body["message"].as_str().unwrap_or("").is_empty(),
+            "{sql}: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ask_sql_resolves_entity_links_through_projection_keys() {
+    let (_dir, state, token) = setup(true).await;
+    // Two distinct tracks sharing the same title "Intro" by different artists/albums,
+    // plus a unique track whose title contains HTML and SQL.
+    let events = vec![
+        event(
+            10,
+            at("2024-05-03T10:00:00Z"),
+            Some(180_000),
+            DurationKind::Actual,
+            "ar-alpha",
+            "Alpha",
+            "al-one",
+            "First Album",
+            "Intro",
+        ),
+        event(
+            11,
+            at("2024-05-03T11:00:00Z"),
+            Some(180_000),
+            DurationKind::Actual,
+            "ar-beta",
+            "Beta",
+            "al-two",
+            "Second Album",
+            "Intro",
+        ),
+        event(
+            12,
+            at("2024-05-03T12:00:00Z"),
+            Some(180_000),
+            DurationKind::Actual,
+            "ar-gamma",
+            "Gamma",
+            "al-three",
+            "Third Album",
+            "<img src=x onerror=alert(1)>'; DROP TABLE listens;--",
+        ),
+    ];
+    save(&state.storage, &events).await;
+
+    // Unique artist, album, and track (including HTML+SQL title) resolve to /music/... links
+    // even when the SQL query does not project ID columns.
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT ar.name AS artist, al.name AS album, t.title AS track, COUNT(*) AS plays \
+                    FROM listens l \
+                    JOIN tracks t ON t.id = l.track_id \
+                    JOIN albums al ON al.id = t.album_id \
+                    JOIN track_artists ta ON ta.track_id = t.id \
+                    JOIN artists ar ON ar.id = ta.artist_id \
+                    WHERE l.counted = 1 AND ar.name = 'Gamma' \
+                    GROUP BY t.id",
+            "columns": [
+                {"name": "artist", "format": "artist"},
+                {"name": "album", "format": "album"},
+                {"name": "track", "format": "track"},
+                {"name": "plays", "format": "count"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let links = body["sql"]["cell_links"].as_array().unwrap();
+    assert_eq!(links.len(), 1, "{body}");
+    let cells = links[0].as_array().unwrap();
+    assert!(
+        cells[0].as_str().unwrap().starts_with("/music/artists/"),
+        "{cells:?}"
+    );
+    assert!(
+        cells[1].as_str().unwrap().starts_with("/music/albums/"),
+        "{cells:?}"
+    );
+    assert!(
+        cells[2].as_str().unwrap().starts_with("/music/tracks/"),
+        "{cells:?}"
+    );
+    assert!(cells[3].is_null(), "{cells:?}");
+
+    // Ambiguous title "Intro" without artist/album/id is NOT guessed (null link).
+    let (_, ambig) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT t.title AS track FROM tracks t WHERE t.title = 'Intro'",
+            "columns": [{"name": "track", "format": "track"}]
+        }),
+    )
+    .await;
+    assert_eq!(ambig["sql"]["cell_links"], json!([[null], [null]]));
+
+    // Disambiguating by artist in the same row resolves each "Intro" to its own track page.
+    let (_, by_artist) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT ar.name AS artist, t.title AS track \
+                    FROM tracks t JOIN track_artists ta ON ta.track_id = t.id JOIN artists ar ON ar.id = ta.artist_id \
+                    WHERE t.title = 'Intro' ORDER BY ar.name ASC",
+            "columns": [
+                {"name": "artist", "format": "artist"},
+                {"name": "track", "format": "track"}
+            ]
+        }),
+    )
+    .await;
+    let by_artist_links = by_artist["sql"]["cell_links"].as_array().unwrap();
+    assert_ne!(by_artist_links[0][1], by_artist_links[1][1]);
+    assert!(
+        by_artist_links[0][1]
+            .as_str()
+            .unwrap()
+            .starts_with("/music/tracks/")
+    );
+    assert!(
+        by_artist_links[1][1]
+            .as_str()
+            .unwrap()
+            .starts_with("/music/tracks/")
+    );
+
+    // Including an explicit track_id column also resolves to that exact track ID.
+    let (_, disambig) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT t.id AS track_id, ar.name AS artist, t.title AS track \
+                    FROM tracks t JOIN track_artists ta ON ta.track_id = t.id JOIN artists ar ON ar.id = ta.artist_id \
+                    WHERE t.title = 'Intro' ORDER BY ar.name ASC",
+            "columns": [
+                {"name": "track_id", "format": "text"},
+                {"name": "artist", "format": "artist"},
+                {"name": "track", "format": "track"}
+            ]
+        }),
+    )
+    .await;
+    let rows = disambig["sql"]["rows"].as_array().unwrap();
+    let dlinks = disambig["sql"]["cell_links"].as_array().unwrap();
+    assert_eq!(
+        dlinks[0][2].as_str().unwrap(),
+        format!("/music/tracks/{}", rows[0][0].as_str().unwrap())
+    );
+    assert_eq!(
+        dlinks[1][2].as_str().unwrap(),
+        format!("/music/tracks/{}", rows[1][0].as_str().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn ask_sql_maps_exact_history_filters_and_omits_unmappable_queries() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    let (_, bjork) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT COUNT(DISTINCT l.id) AS plays FROM listens l \
+                    JOIN track_artists ta ON ta.track_id = l.track_id \
+                    JOIN artists a ON a.id = ta.artist_id \
+                    WHERE l.counted = 1 AND LOWER(a.name) = LOWER('Björk')"
+        }),
+    )
+    .await;
+    let bjork_href = bjork["sql"]["history_href"].as_str().unwrap();
+    assert!(bjork_href.starts_with("/history?"), "{bjork_href}");
+    assert!(bjork_href.contains("period=all"), "{bjork_href}");
+    assert!(bjork_href.contains("status=counted"), "{bjork_href}");
+    assert!(bjork_href.contains("artist="), "{bjork_href}");
+
+    for (sql, expected) in [
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+            "/history?period=all&status=counted",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens",
+            "/history?period=all&status=all",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2024",
+            "/history?period=all&year=2024&status=counted",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_date >= '2024-05-01' AND local_date <= '2024-05-02'",
+            "/history?period=custom&from=2024-05-01&to=2024-05-02&status=counted",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_month = 5 AND weekday = 3",
+            "/history?period=all&month=5&weekday=wednesday&status=counted",
+        ),
+    ] {
+        let (status, body) = post(&state, &token, "/api/v1/ask/sql", json!({"sql": sql})).await;
+        assert_eq!(status, StatusCode::OK, "{sql}: {body}");
+        assert_eq!(
+            body["sql"]["history_href"].as_str(),
+            Some(expected),
+            "{sql}: {body}"
+        );
+    }
+
+    // Queries whose filters do not map exactly to /history filters must omit the link.
+    for unmappable in [
+        "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_hour = 0",
+        "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 OR needs_review = 1",
+        "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id HAVING COUNT(*) > 1",
+        "SELECT COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE t.title LIKE '%Jóga%'",
+        "WITH c AS (SELECT * FROM listens WHERE counted = 1) SELECT COUNT(*) FROM c",
+        "SELECT COUNT(*) AS plays FROM listens WHERE local_year IN (2023, 2024)",
+        "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND duration_kind = 'actual'",
+    ] {
+        let (status, body) = post(
+            &state,
+            &token,
+            "/api/v1/ask/sql",
+            json!({"sql": unmappable}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{unmappable}: {body}");
+        assert!(
+            body["sql"]["history_href"].is_null(),
+            "expected no history link for `{unmappable}`, got {body}"
+        );
+    }
+}

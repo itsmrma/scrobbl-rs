@@ -413,6 +413,7 @@ mod tests {
             crate::ask::AskRequest::decl(&config),
             crate::ask::AskContext::decl(&config),
             crate::ask::AskQueryRequest::decl(&config),
+            crate::ask::AskSqlRequest::decl(&config),
             crate::ai::AnswerMode::decl(&config),
             crate::ai::AiSettings::decl(&config),
             crate::ai::SaveAiSettings::decl(&config),

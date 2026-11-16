@@ -4,6 +4,7 @@ pub mod dsl;
 pub mod execute;
 pub mod grammar;
 pub mod grouping;
+pub mod history_link;
 pub mod names;
 pub mod parser;
 pub mod projection;
@@ -61,6 +62,10 @@ pub struct SqlAnswer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub as_of_ms: Option<i64>,
+    #[serde(default)]
+    pub cell_links: Vec<Vec<Option<String>>>,
+    #[serde(default)]
+    pub history_href: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -220,6 +225,19 @@ pub struct AskContext {
 #[derive(Clone, Debug, Deserialize, TS)]
 pub struct AskQueryRequest {
     pub query: Query,
+}
+
+#[derive(Clone, Debug, Deserialize, TS)]
+pub struct AskSqlRequest {
+    pub sql: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub computed: Option<String>,
+    #[serde(default)]
+    pub answer_kind: Option<SqlAnswerKind>,
+    #[serde(default)]
+    pub columns: Vec<SqlColumn>,
 }
 
 /// The Ask service seam. `AppState::new` installs the local model parser when
@@ -398,6 +416,42 @@ pub async fn query(
         return Ok(Json(refusal));
     }
     Ok(Json(run(&state, String::new(), request.query, None).await?))
+}
+
+/// Execute owner-edited SQL directly through the Ask SQL sandbox.
+pub async fn sql(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<AskSqlRequest>,
+) -> Result<Json<AskResponse>> {
+    auth::session(&state, &headers).await?;
+    let stored = ai::read_settings(&state).await?;
+    if !stored.enabled {
+        return Ok(Json(refusal(
+            &state,
+            AskStatus::ModelUnavailable,
+            "AI is off. Enable it in Settings to ask questions.",
+        )));
+    }
+    let answer_kind = match request.answer_kind {
+        Some(SqlAnswerKind::Unsupported) | None => SqlAnswerKind::Table,
+        Some(kind) => kind,
+    };
+    let output = SqlModelOutput {
+        sql: request.sql,
+        title: request.title.unwrap_or_default(),
+        computed: request.computed.unwrap_or_default(),
+        answer_kind,
+        columns: request
+            .columns
+            .into_iter()
+            .map(|col| SqlColumnSpec {
+                name: col.name,
+                format: col.format,
+            })
+            .collect(),
+    };
+    Ok(Json(run_sql(&state, String::new(), output, false).await?))
 }
 
 /// Run a chained question step by step. A step that builds on an earlier one
@@ -624,42 +678,50 @@ async fn run_sql(
 ) -> Result<AskResponse> {
     let proj_path = projection::for_query(&state.storage, &state.ask.projection).await?;
     let sql_text = output.sql.clone();
+    let declared_columns = output.columns.clone();
     let (as_of_ms, outcome) = {
         let _read = state.ask.projection.read_lock().await;
         tokio::task::spawn_blocking(move || {
             let as_of_ms = projection::read_built_at_ms(&proj_path);
-            let outcome = sandbox::execute(&proj_path, &sql_text, SandboxLimits::default());
+            let outcome =
+                sandbox::execute(&proj_path, &sql_text, SandboxLimits::default()).map(|table| {
+                    let columns = match_columns(&table.columns, &declared_columns);
+                    let cell_links =
+                        history_link::resolve_cell_links(&proj_path, &columns, &table.rows);
+                    let history_href =
+                        history_link::resolve(&proj_path, &sql_text, output.answer_kind);
+                    (table, columns, cell_links, history_href)
+                });
             (as_of_ms, outcome)
         })
         .await
         .map_err(|_| AppError::Internal)?
     };
     match outcome {
-        Ok(table) => {
-            let columns = match_columns(&table.columns, &output.columns);
-            Ok(AskResponse {
-                status: AskStatus::Ok,
-                question,
-                query: None,
-                chips: Vec::new(),
-                result: None,
-                message: None,
-                candidates: Vec::new(),
-                runtime_available: state.ask.runtime_available,
-                earlier: Vec::new(),
-                sql: Some(SqlAnswer {
-                    title: output.title,
-                    computed: output.computed,
-                    answer_kind: output.answer_kind,
-                    sql: output.sql,
-                    columns,
-                    rows: table.rows,
-                    truncated: table.truncated,
-                    rule_code: None,
-                    as_of_ms,
-                }),
-            })
-        }
+        Ok((table, columns, cell_links, history_href)) => Ok(AskResponse {
+            status: AskStatus::Ok,
+            question,
+            query: None,
+            chips: Vec::new(),
+            result: None,
+            message: None,
+            candidates: Vec::new(),
+            runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
+            sql: Some(SqlAnswer {
+                title: output.title,
+                computed: output.computed,
+                answer_kind: output.answer_kind,
+                sql: output.sql,
+                columns,
+                rows: table.rows,
+                truncated: table.truncated,
+                rule_code: None,
+                as_of_ms,
+                cell_links,
+                history_href,
+            }),
+        }),
         Err(rejection) => {
             let message = if local_engine {
                 format!(
@@ -689,6 +751,8 @@ async fn run_sql(
                     truncated: false,
                     rule_code: Some(rejection.rule),
                     as_of_ms,
+                    cell_links: Vec::new(),
+                    history_href: None,
                 }),
             })
         }
