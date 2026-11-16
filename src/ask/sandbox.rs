@@ -5,7 +5,7 @@
 //! and returns typed columns and rows or a structured rejection with a rule code.
 use crate::ask::projection;
 use rusqlite::{
-    Connection, OpenFlags,
+    Connection, InterruptHandle, OpenFlags,
     config::DbConfig,
     hooks::{AuthAction, AuthContext, Authorization},
     limits::Limit,
@@ -14,20 +14,28 @@ use rusqlite::{
 use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use ts_rs::TS;
 
 pub const MAX_SQL_BYTES: usize = 8 * 1024;
 pub const DEFAULT_ROW_LIMIT: usize = 1000;
+pub const DEFAULT_OUTPUT_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
+pub const DEFAULT_INSTRUCTION_BUDGET: u64 = 5_000_000;
+const PROGRESS_STEP_INTERVAL: i32 = 1000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SandboxLimits {
     pub timeout: Duration,
     pub max_rows: usize,
+    pub max_bytes: usize,
     pub max_sql_bytes: usize,
+    pub max_instructions: u64,
 }
 
 impl Default for SandboxLimits {
@@ -35,8 +43,85 @@ impl Default for SandboxLimits {
         Self {
             timeout: DEFAULT_TIMEOUT,
             max_rows: DEFAULT_ROW_LIMIT,
+            max_bytes: DEFAULT_OUTPUT_BYTES,
             max_sql_bytes: MAX_SQL_BYTES,
+            max_instructions: DEFAULT_INSTRUCTION_BUDGET,
         }
+    }
+}
+
+/// Cancellation handle shared with an in-flight sandbox execution. Calling
+/// [`SandboxCancel::cancel`] flips the cancellation flag and immediately
+/// interrupts the underlying SQLite connection.
+#[derive(Clone, Default)]
+pub struct SandboxCancel {
+    cancelled: Arc<AtomicBool>,
+    interrupt: Arc<Mutex<Option<InterruptHandle>>>,
+}
+
+impl std::fmt::Debug for SandboxCancel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxCancel")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
+impl SandboxCancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_flag(cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            cancelled,
+            interrupt: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
+        if let Some(handle) = self
+            .interrupt
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .as_ref()
+        {
+            handle.interrupt();
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
+
+struct InterruptRegistration<'a>(&'a SandboxCancel);
+
+impl<'a> InterruptRegistration<'a> {
+    fn register(cancel: &'a SandboxCancel, handle: InterruptHandle) -> Self {
+        {
+            let mut slot = cancel
+                .interrupt
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            *slot = Some(handle);
+        }
+        if cancel.is_cancelled() {
+            cancel.cancel();
+        }
+        Self(cancel)
+    }
+}
+
+impl Drop for InterruptRegistration<'_> {
+    fn drop(&mut self) {
+        let mut slot = self
+            .0
+            .interrupt
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *slot = None;
     }
 }
 
@@ -48,12 +133,16 @@ pub enum SandboxRule {
     NulByte,
     NotSelect,
     MultipleStatements,
+    BoundParameters,
     NonReadOnly,
     UnauthorizedAction,
     UnauthorizedTable,
     UnauthorizedColumn,
     Timeout,
+    InstructionLimit,
+    Cancelled,
     BlobNotAllowed,
+    OutputTooLarge,
     SqlError,
     ProjectionUnavailable,
 }
@@ -77,17 +166,32 @@ pub struct SandboxOutput {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxRejection {
     pub rule: SandboxRule,
+    /// Owner-facing explanation naming the rule code, never containing projection values.
     pub message: String,
+    /// Sanitized error safe to send back to the model for repair: carries only
+    /// the error class and offending identifiers from the model's own SQL.
+    pub model_error: String,
+    /// Local log detail naming the rule/class, never containing projection values.
     pub detail: String,
 }
 
 impl SandboxRejection {
-    fn new(rule: SandboxRule, message: impl Into<String>, detail: impl Into<String>) -> Self {
+    fn new(
+        rule: SandboxRule,
+        message: impl Into<String>,
+        model_error: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             rule,
             message: message.into(),
+            model_error: model_error.into(),
             detail: detail.into(),
         }
+    }
+
+    pub fn rule_name(&self) -> &'static str {
+        rule_name(self.rule)
     }
 }
 
@@ -196,20 +300,23 @@ fn is_allowed_function(name: &str) -> bool {
         .any(|allowed| allowed.eq_ignore_ascii_case(name))
 }
 
-/// Skip leading whitespace and SQL comments (`-- ...` and `/* ... */`) and
-/// verify the statement starts with `SELECT` or `WITH`.
-fn static_check(sql: &str, max_bytes: usize) -> Result<&str, SandboxRejection> {
+/// Skip leading ASCII whitespace and SQL comments (`-- ...` and `/* ... */`)
+/// and verify the statement starts with `SELECT` or `WITH`, contains no bound
+/// parameter placeholders, and contains at most one statement.
+fn static_check(sql: &str, max_bytes: usize) -> Result<Vec<String>, SandboxRejection> {
     if sql.contains('\0') {
         return Err(SandboxRejection::new(
             SandboxRule::NulByte,
-            "The SQL query cannot contain NUL bytes.",
+            "The SQL query cannot contain NUL bytes (rule `nul_byte`).",
+            "nul_byte: query contains a NUL byte",
             "nul_byte",
         ));
     }
     if sql.len() > max_bytes {
         return Err(SandboxRejection::new(
             SandboxRule::SqlTooLong,
-            format!("The SQL query exceeds the {max_bytes}-byte limit."),
+            format!("The SQL query exceeds the {max_bytes}-byte limit (rule `sql_too_long`)."),
+            format!("sql_too_long: query exceeds {max_bytes}-byte limit"),
             "sql_too_long",
         ));
     }
@@ -217,37 +324,41 @@ fn static_check(sql: &str, max_bytes: usize) -> Result<&str, SandboxRejection> {
     if trimmed.is_empty() {
         return Err(SandboxRejection::new(
             SandboxRule::EmptySql,
-            "The SQL query is empty.",
+            "The SQL query is empty (rule `empty_sql`).",
+            "empty_sql: query is empty",
             "empty_sql",
         ));
     }
     if !starts_with_keyword(trimmed, "SELECT") && !starts_with_keyword(trimmed, "WITH") {
         return Err(SandboxRejection::new(
             SandboxRule::NotSelect,
-            "Only SELECT or WITH queries are allowed.",
+            "Only SELECT or WITH queries are allowed (rule `not_select`).",
+            "not_select: only SELECT or WITH queries are allowed",
             "not_select",
         ));
     }
-    if has_multiple_statements(trimmed) {
-        return Err(SandboxRejection::new(
-            SandboxRule::MultipleStatements,
-            "Only a single SQL statement is allowed (rule `multiple_statements`).",
-            "multiple_statements",
-        ));
-    }
-    Ok(trimmed)
+    scan_static_safety(trimmed)?;
+    Ok(extract_cte_names(trimmed))
 }
 
-/// Detect any `;` followed by non-whitespace/non-comment tokens outside SQL
-/// string/identifier literals and comments.
-fn has_multiple_statements(sql: &str) -> bool {
+/// Scan SQL outside literals, quoted identifiers, and comments for multiple
+/// statements and bound parameter placeholders (`?`, `:x`, `@x`, `$x`).
+fn scan_static_safety(sql: &str) -> Result<(), SandboxRejection> {
     let bytes = sql.as_bytes();
     let mut i = 0;
     let mut saw_semi = false;
     while i < bytes.len() {
         if saw_semi {
             let rest = skip_leading_ws_and_comments(&sql[i..]);
-            return !rest.is_empty();
+            if !rest.is_empty() {
+                return Err(SandboxRejection::new(
+                    SandboxRule::MultipleStatements,
+                    "Only a single SQL statement is allowed (rule `multiple_statements`).",
+                    "multiple_statements: only a single SQL statement is allowed",
+                    "multiple_statements",
+                ));
+            }
+            return Ok(());
         }
         match bytes[i] {
             b'-' if bytes.get(i + 1) == Some(&b'-') => {
@@ -285,6 +396,14 @@ fn has_multiple_statements(sql: &str) -> bool {
                 }
                 i = (i + 1).min(bytes.len());
             }
+            b'?' | b':' | b'@' | b'$' => {
+                return Err(SandboxRejection::new(
+                    SandboxRule::BoundParameters,
+                    "Bound parameter placeholders are not allowed in Ask SQL (rule `bound_parameters`).",
+                    "bound_parameters: bound parameter placeholders are not allowed",
+                    "bound_parameters",
+                ));
+            }
             b';' => {
                 saw_semi = true;
                 i += 1;
@@ -294,12 +413,124 @@ fn has_multiple_statements(sql: &str) -> bool {
             }
         }
     }
-    false
+    Ok(())
+}
+
+/// Extract CTE names declared in `WITH [RECURSIVE] ...` clauses so the
+/// authorizer can distinguish them from compiled-in eponymous virtual tables.
+fn extract_cte_names(sql: &str) -> Vec<String> {
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    let mut names = Vec::new();
+    let mut in_with = false;
+    let mut expect_cte_name = false;
+    let mut with_depth: usize = 0;
+    let mut paren_depth: usize = 0;
+
+    while i < bytes.len() {
+        let rest = &sql[i..];
+        let trimmed = skip_leading_ws_and_comments(rest);
+        i += rest.len() - trimmed.len();
+        if i >= bytes.len() {
+            break;
+        }
+        match bytes[i] {
+            b'\'' | b'"' | b'`' => {
+                let quote = bytes[i];
+                i += 1;
+                let mut unescaped = String::new();
+                while i < bytes.len() {
+                    if bytes[i] == quote {
+                        if bytes.get(i + 1) == Some(&quote) {
+                            unescaped.push(quote as char);
+                            i += 2;
+                            continue;
+                        }
+                        i += 1;
+                        break;
+                    }
+                    unescaped.push(bytes[i] as char);
+                    i += 1;
+                }
+                if in_with && paren_depth == with_depth && expect_cte_name && quote != b'\'' {
+                    names.push(unescaped);
+                    expect_cte_name = false;
+                }
+            }
+            b'[' => {
+                let start = i + 1;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b']' {
+                    i += 1;
+                }
+                if in_with && paren_depth == with_depth && expect_cte_name {
+                    names.push(sql[start..i].to_owned());
+                    expect_cte_name = false;
+                }
+                i = (i + 1).min(bytes.len());
+            }
+            b'(' => {
+                paren_depth += 1;
+                i += 1;
+            }
+            b')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                if in_with && paren_depth < with_depth {
+                    in_with = false;
+                    expect_cte_name = false;
+                }
+                i += 1;
+            }
+            b',' if in_with && paren_depth == with_depth => {
+                expect_cte_name = true;
+                i += 1;
+            }
+            b if b.is_ascii_alphanumeric() || b == b'_' => {
+                let start = i;
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                let word = &sql[start..i];
+                if !in_with {
+                    if word.eq_ignore_ascii_case("WITH") {
+                        in_with = true;
+                        expect_cte_name = true;
+                        with_depth = paren_depth;
+                    }
+                } else if paren_depth == with_depth {
+                    if expect_cte_name {
+                        if word.eq_ignore_ascii_case("RECURSIVE") {
+                            continue;
+                        }
+                        if matches!(
+                            word.to_ascii_uppercase().as_str(),
+                            "SELECT" | "VALUES" | "INSERT" | "UPDATE" | "DELETE"
+                        ) {
+                            in_with = false;
+                            expect_cte_name = false;
+                        } else {
+                            names.push(word.to_owned());
+                            expect_cte_name = false;
+                        }
+                    } else if matches!(
+                        word.to_ascii_uppercase().as_str(),
+                        "SELECT" | "VALUES" | "INSERT" | "UPDATE" | "DELETE"
+                    ) {
+                        in_with = false;
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    names
 }
 
 fn skip_leading_ws_and_comments(mut s: &str) -> &str {
     loop {
-        s = s.trim_start();
+        s = s.trim_start_matches(|c: char| c.is_ascii_whitespace());
         if let Some(rest) = s.strip_prefix("--") {
             match rest.find('\n') {
                 Some(idx) => s = &rest[idx + 1..],
@@ -334,7 +565,9 @@ fn configure_connection(conn: &Connection, limits: SandboxLimits) -> rusqlite::R
         "PRAGMA query_only = ON;\
          PRAGMA trusted_schema = OFF;\
          PRAGMA temp_store = MEMORY;\
-         PRAGMA cache_size = -2000;",
+         PRAGMA temp.max_page_count = 1024;\
+         PRAGMA cache_size = -2000;\
+         PRAGMA cell_size_check = ON;",
     )?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false)?;
@@ -342,6 +575,21 @@ fn configure_connection(conn: &Connection, limits: SandboxLimits) -> rusqlite::R
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_VIEW, false)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, false)?;
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DDL, false)?;
+    // Explicitly disable SQL/C extension loading at the SQLite db_config level.
+    unsafe {
+        let rc = libsqlite3_sys::sqlite3_db_config(
+            conn.handle(),
+            libsqlite3_sys::SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION,
+            0 as std::ffi::c_int,
+            std::ptr::null_mut::<std::ffi::c_int>(),
+        );
+        if rc != libsqlite3_sys::SQLITE_OK {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rc),
+                Some("failed to disable extension loading".into()),
+            ));
+        }
+    }
 
     conn.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 0)?;
     conn.set_limit(Limit::SQLITE_LIMIT_VARIABLE_NUMBER, 0)?;
@@ -355,12 +603,14 @@ fn configure_connection(conn: &Connection, limits: SandboxLimits) -> rusqlite::R
     conn.set_limit(Limit::SQLITE_LIMIT_LIKE_PATTERN_LENGTH, 256)?;
     conn.set_limit(Limit::SQLITE_LIMIT_COLUMN, 64)?;
     conn.set_limit(Limit::SQLITE_LIMIT_LENGTH, 1_048_576)?;
+    conn.set_limit(Limit::SQLITE_LIMIT_WORKER_THREADS, 0)?;
+    conn.set_limit(Limit::SQLITE_LIMIT_VDBE_OP, 25_000)?;
     Ok(())
 }
 
 type DeniedState = Arc<Mutex<Option<(SandboxRule, String)>>>;
 
-fn authorize(ctx: AuthContext<'_>, denied: &DeniedState) -> Authorization {
+fn authorize(ctx: AuthContext<'_>, cte_names: &[String], denied: &DeniedState) -> Authorization {
     let record = |rule: SandboxRule, detail: String| {
         let mut slot = denied.lock().unwrap();
         if slot.is_none() {
@@ -375,20 +625,6 @@ fn authorize(ctx: AuthContext<'_>, denied: &DeniedState) -> Authorization {
             table_name,
             column_name,
         } => {
-            if ctx.database_name.is_none()
-                && !table_name.to_ascii_lowercase().starts_with("sqlite_")
-                && !table_name.to_ascii_lowercase().starts_with("pragma_")
-                && !table_name.eq_ignore_ascii_case("_projection_meta")
-            {
-                // Transient CTEs (such as recursive CTE self-references) and
-                // eponymous functions (json_each/json_tree) have no backing DB.
-                if table_name.eq_ignore_ascii_case("json_each")
-                    || table_name.eq_ignore_ascii_case("json_tree")
-                    || column_name.is_empty()
-                {
-                    return Authorization::Allow;
-                }
-            }
             if let Some(db) = ctx.database_name
                 && !db.eq_ignore_ascii_case("main")
             {
@@ -396,6 +632,24 @@ fn authorize(ctx: AuthContext<'_>, denied: &DeniedState) -> Authorization {
                     SandboxRule::UnauthorizedTable,
                     format!("table {db}.{table_name} is not in the Ask projection"),
                 );
+            }
+            if (table_name.eq_ignore_ascii_case("json_each")
+                || table_name.eq_ignore_ascii_case("json_tree"))
+                && ctx
+                    .database_name
+                    .is_none_or(|db| db.eq_ignore_ascii_case("main"))
+            {
+                return Authorization::Allow;
+            }
+            if ctx.database_name.is_none()
+                && !table_name.to_ascii_lowercase().starts_with("sqlite_")
+                && !table_name.to_ascii_lowercase().starts_with("pragma_")
+                && !table_name.eq_ignore_ascii_case("_projection_meta")
+                && cte_names
+                    .iter()
+                    .any(|cte| cte.eq_ignore_ascii_case(table_name))
+            {
+                return Authorization::Allow;
             }
             if !projection::is_allowed_table(table_name) {
                 return record(
@@ -428,22 +682,295 @@ fn authorize(ctx: AuthContext<'_>, denied: &DeniedState) -> Authorization {
     }
 }
 
-fn map_sqlite_error(error: rusqlite::Error, denied: &DeniedState) -> SandboxRejection {
+const INTERRUPT_NONE: u8 = 0;
+const INTERRUPT_TIMEOUT: u8 = 1;
+const INTERRUPT_INSTRUCTION_LIMIT: u8 = 2;
+const INTERRUPT_CANCELLED: u8 = 3;
+
+#[derive(Clone, Copy)]
+enum QueryPhase {
+    Prepare,
+    Runtime,
+}
+
+fn ident_from_sql(raw: &str, sql: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_end_matches("()");
+    if trimmed.is_empty() || trimmed.len() > 64 || trimmed.chars().any(char::is_control) {
+        return None;
+    }
+    if sql.contains(trimmed) {
+        return Some(trimmed.to_owned());
+    }
+    if let Some((_, suffix)) = trimmed.rsplit_once('.')
+        && !suffix.is_empty()
+        && sql.contains(suffix)
+    {
+        return Some(trimmed.to_owned());
+    }
+    None
+}
+
+fn sanitize_prepare_error(
+    err: rusqlite::ffi::Error,
+    msg: Option<&str>,
+    sql: &str,
+) -> SandboxRejection {
+    let text = msg.unwrap_or("");
+    if let Some(table) = text.strip_prefix("no such table: ") {
+        let safe_table = ident_from_sql(table, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::UnauthorizedTable,
+            format!(
+                "Query rejected by rule `unauthorized_table`: table {safe_table} is not in the Ask projection."
+            ),
+            format!("unauthorized_table: table {safe_table} is not in the Ask projection"),
+            format!("no_such_table:{safe_table}"),
+        );
+    }
+    if let Some(col) = text.strip_prefix("no such column: ") {
+        let safe_col = ident_from_sql(col, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            format!("The SQL query could not run: no such column `{safe_col}` (rule `sql_error`)."),
+            format!("sql_error (no_such_column): {safe_col}"),
+            format!("no_such_column:{safe_col}"),
+        );
+    }
+    if let Some(col) = text.strip_prefix("ambiguous column name: ") {
+        let safe_col = ident_from_sql(col, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            format!(
+                "The SQL query could not run: ambiguous column `{safe_col}` (rule `sql_error`)."
+            ),
+            format!("sql_error (ambiguous_column): {safe_col}"),
+            format!("ambiguous_column:{safe_col}"),
+        );
+    }
+    if let Some(fn_name) = text.strip_prefix("no such function: ") {
+        let safe_fn = ident_from_sql(fn_name, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            format!(
+                "The SQL query could not run: no such function `{safe_fn}` (rule `sql_error`)."
+            ),
+            format!("sql_error (no_such_function): {safe_fn}"),
+            format!("no_such_function:{safe_fn}"),
+        );
+    }
+    if let Some(rest) = text.strip_prefix("wrong number of arguments to function ") {
+        let safe_fn = ident_from_sql(rest, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            format!(
+                "The SQL query could not run: wrong number of arguments to `{safe_fn}` (rule `sql_error`)."
+            ),
+            format!("sql_error (wrong_argument_count): {safe_fn}"),
+            format!("wrong_argument_count:{safe_fn}"),
+        );
+    }
+    if let Some(rest) = text
+        .strip_prefix("misuse of aggregate: ")
+        .or_else(|| text.strip_prefix("misuse of window function: "))
+        .or_else(|| text.strip_prefix("misuse of aliased aggregate "))
+    {
+        let safe_fn = ident_from_sql(rest, sql).unwrap_or_else(|| "unknown".into());
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            format!("The SQL query could not run: invalid use of `{safe_fn}` (rule `sql_error`)."),
+            format!("sql_error (aggregate_misuse): {safe_fn}"),
+            format!("aggregate_misuse:{safe_fn}"),
+        );
+    }
+    if let Some(rest) = text
+        .strip_prefix("near \"")
+        .and_then(|s| s.strip_suffix("\": syntax error"))
+    {
+        let model_err = match ident_from_sql(rest, sql) {
+            Some(tok) => format!("sql_error (syntax_error): near \"{tok}\""),
+            None => "sql_error (syntax_error)".to_owned(),
+        };
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "The SQL query has a syntax error (rule `sql_error`).",
+            model_err,
+            "syntax_error",
+        );
+    }
+    if text == "incomplete input" {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "The SQL query is incomplete (rule `sql_error`).",
+            "sql_error (incomplete_input)",
+            "incomplete_input",
+        );
+    }
+    if text.contains("Expression tree is too large") || text.contains("parser stack overflow") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "The SQL query expression nesting exceeds the sandbox limit (rule `sql_error`).",
+            "sql_error (expression_depth_limit)",
+            "expression_depth_limit",
+        );
+    }
+    if text.contains("too many terms in compound SELECT") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "The SQL query has too many compound SELECT terms (rule `sql_error`).",
+            "sql_error (compound_select_limit)",
+            "compound_select_limit",
+        );
+    }
+    if text.contains("do not have the same number of result columns") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "Compound SELECT branches must return the same number of columns (rule `sql_error`).",
+            "sql_error (compound_column_mismatch)",
+            "compound_column_mismatch",
+        );
+    }
+    if text.contains("too many arguments on function") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "A function call in the SQL query exceeds the argument limit (rule `sql_error`).",
+            "sql_error (function_arg_limit)",
+            "function_arg_limit",
+        );
+    }
+    if text.contains("too many columns") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "The SQL query selects too many columns (rule `sql_error`).",
+            "sql_error (column_limit)",
+            "column_limit",
+        );
+    }
+    if text.contains("term out of range") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "An ORDER BY or GROUP BY term is out of range (rule `sql_error`).",
+            "sql_error (term_out_of_range)",
+            "term_out_of_range",
+        );
+    }
+    if text.contains("too many SQL variables") {
+        return SandboxRejection::new(
+            SandboxRule::BoundParameters,
+            "Bound parameter placeholders are not allowed in Ask SQL (rule `bound_parameters`).",
+            "bound_parameters: bound parameter placeholders are not allowed",
+            "bound_parameters",
+        );
+    }
+    if text.contains("LIKE or GLOB pattern") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "A LIKE or GLOB pattern exceeds the sandbox limit (rule `sql_error`).",
+            "sql_error (pattern_limit)",
+            "pattern_limit",
+        );
+    }
+    let class = format!("prepare_error:{:?}", err.code);
+    SandboxRejection::new(
+        SandboxRule::SqlError,
+        "The SQL query could not be prepared (rule `sql_error`).",
+        format!("sql_error ({class})"),
+        class,
+    )
+}
+
+fn sanitize_runtime_error(err: rusqlite::ffi::Error, msg: Option<&str>) -> SandboxRejection {
+    // Runtime errors occur while scanning projection rows: never copy dynamic
+    // SQLite message substrings that could originate from a row value.
+    let text = msg.unwrap_or("");
+    let (class, owner) = if text == "malformed JSON" {
+        (
+            "malformed_json",
+            "The SQL query encountered malformed JSON input (rule `sql_error`).",
+        )
+    } else if text.contains("JSON") {
+        (
+            "json_error",
+            "A JSON function failed while evaluating the SQL query (rule `sql_error`).",
+        )
+    } else if text.contains("LIKE or GLOB pattern") {
+        (
+            "pattern_limit",
+            "A LIKE or GLOB pattern exceeds the sandbox limit (rule `sql_error`).",
+        )
+    } else if text.contains("ESCAPE expression") {
+        (
+            "invalid_like_escape",
+            "Invalid LIKE ESCAPE expression in SQL query (rule `sql_error`).",
+        )
+    } else if text.contains("nth_value") || text.contains("ntile") || text.contains("frame") {
+        (
+            "window_argument_error",
+            "Invalid window function argument in SQL query (rule `sql_error`).",
+        )
+    } else if err.code == rusqlite::ErrorCode::TypeMismatch || text.contains("datatype mismatch") {
+        (
+            "datatype_mismatch",
+            "The SQL query encountered a datatype mismatch (rule `sql_error`).",
+        )
+    } else {
+        (
+            "runtime_error",
+            "The SQL query failed during execution (rule `sql_error`).",
+        )
+    };
+    SandboxRejection::new(
+        SandboxRule::SqlError,
+        owner,
+        format!("sql_error ({class})"),
+        class,
+    )
+}
+
+fn map_sqlite_error(
+    error: rusqlite::Error,
+    phase: QueryPhase,
+    sql: &str,
+    denied: &DeniedState,
+    interrupt_reason: &AtomicU8,
+    cancel: Option<&SandboxCancel>,
+) -> SandboxRejection {
     if let Some((rule, detail)) = denied.lock().unwrap().take() {
-        let message = format!("Query rejected by rule `{}`: {detail}.", rule_name(rule));
-        return SandboxRejection::new(rule, message, detail);
+        let name = rule_name(rule);
+        let message = format!("Query rejected by rule `{name}`: {detail}.");
+        let model_error = format!("{name}: {detail}");
+        return SandboxRejection::new(rule, message, model_error, detail);
     }
     match error {
         rusqlite::Error::MultipleStatement => SandboxRejection::new(
             SandboxRule::MultipleStatements,
             "Only a single SQL statement is allowed (rule `multiple_statements`).",
+            "multiple_statements: only a single SQL statement is allowed",
             "multiple_statements",
         ),
         rusqlite::Error::SqliteFailure(err, msg) => {
             if err.code == rusqlite::ErrorCode::OperationInterrupted {
+                if cancel.is_some_and(SandboxCancel::is_cancelled)
+                    || interrupt_reason.load(Ordering::SeqCst) == INTERRUPT_CANCELLED
+                {
+                    return SandboxRejection::new(
+                        SandboxRule::Cancelled,
+                        "The SQL query was cancelled (rule `cancelled`).",
+                        "cancelled: query was cancelled",
+                        "cancelled",
+                    );
+                }
+                if interrupt_reason.load(Ordering::SeqCst) == INTERRUPT_INSTRUCTION_LIMIT {
+                    return SandboxRejection::new(
+                        SandboxRule::InstructionLimit,
+                        "The SQL query exceeded the instruction budget and was stopped (rule `instruction_limit`).",
+                        "instruction_limit: query exceeded instruction budget",
+                        "instruction_limit",
+                    );
+                }
                 return SandboxRejection::new(
                     SandboxRule::Timeout,
                     "The SQL query exceeded the time limit and was stopped (rule `timeout`).",
+                    "timeout: query exceeded wall-clock time limit",
                     "timeout",
                 );
             }
@@ -451,32 +978,30 @@ fn map_sqlite_error(error: rusqlite::Error, denied: &DeniedState) -> SandboxReje
                 return SandboxRejection::new(
                     SandboxRule::UnauthorizedAction,
                     "The SQL query was denied by the sandbox authorizer (rule `unauthorized_action`).",
-                    msg.unwrap_or_else(|| "unauthorized".into()),
+                    "unauthorized_action: statement denied by sandbox authorizer",
+                    "unauthorized_action",
                 );
             }
-            let detail = msg.unwrap_or_else(|| err.to_string());
-            if let Some(table) = detail.strip_prefix("no such table: ") {
+            if err.code == rusqlite::ErrorCode::TooBig {
                 return SandboxRejection::new(
-                    SandboxRule::UnauthorizedTable,
-                    format!(
-                        "Query rejected by rule `{}`: table {table} is not in the Ask projection.",
-                        rule_name(SandboxRule::UnauthorizedTable)
-                    ),
-                    detail,
+                    SandboxRule::OutputTooLarge,
+                    "The SQL query produced a value exceeding the size limit (rule `output_too_large`).",
+                    "output_too_large: query result exceeded size limit",
+                    "output_too_large",
                 );
             }
-            SandboxRejection::new(
-                SandboxRule::SqlError,
-                format!("The SQL query could not run: {detail}."),
-                detail,
-            )
+            match phase {
+                QueryPhase::Prepare => sanitize_prepare_error(err, msg.as_deref(), sql),
+                QueryPhase::Runtime => sanitize_runtime_error(err, msg.as_deref()),
+            }
         }
         other => {
-            let detail = other.to_string();
+            let class = format!("{:?}", other.sqlite_error_code());
             SandboxRejection::new(
                 SandboxRule::SqlError,
-                format!("The SQL query could not run: {detail}."),
-                detail,
+                "The SQL query could not run (rule `sql_error`).",
+                format!("sql_error ({class})"),
+                class,
             )
         }
     }
@@ -489,12 +1014,16 @@ fn rule_name(rule: SandboxRule) -> &'static str {
         SandboxRule::NulByte => "nul_byte",
         SandboxRule::NotSelect => "not_select",
         SandboxRule::MultipleStatements => "multiple_statements",
+        SandboxRule::BoundParameters => "bound_parameters",
         SandboxRule::NonReadOnly => "non_read_only",
         SandboxRule::UnauthorizedAction => "unauthorized_action",
         SandboxRule::UnauthorizedTable => "unauthorized_table",
         SandboxRule::UnauthorizedColumn => "unauthorized_column",
         SandboxRule::Timeout => "timeout",
+        SandboxRule::InstructionLimit => "instruction_limit",
+        SandboxRule::Cancelled => "cancelled",
         SandboxRule::BlobNotAllowed => "blob_not_allowed",
+        SandboxRule::OutputTooLarge => "output_too_large",
         SandboxRule::SqlError => "sql_error",
         SandboxRule::ProjectionUnavailable => "projection_unavailable",
     }
@@ -507,12 +1036,51 @@ pub fn execute(
     sql: &str,
     limits: SandboxLimits,
 ) -> std::result::Result<SandboxOutput, SandboxRejection> {
-    static_check(sql, limits.max_sql_bytes)?;
+    execute_with_cancel(projection_path, sql, limits, None)
+}
+
+/// Run a single read-only SQL query against the Ask projection file inside the
+/// sandbox with an optional cancellation handle that interrupts the SQLite
+/// connection if triggered.
+pub fn execute_with_cancel(
+    projection_path: &Path,
+    sql: &str,
+    limits: SandboxLimits,
+    cancel: Option<&SandboxCancel>,
+) -> std::result::Result<SandboxOutput, SandboxRejection> {
+    let result = execute_inner(projection_path, sql, limits, cancel);
+    if let Err(ref rejection) = result {
+        eprintln!(
+            "Ask SQL rejected ({}): {}",
+            rejection.rule_name(),
+            rejection.detail
+        );
+    }
+    result
+}
+
+fn execute_inner(
+    projection_path: &Path,
+    sql: &str,
+    limits: SandboxLimits,
+    cancel: Option<&SandboxCancel>,
+) -> std::result::Result<SandboxOutput, SandboxRejection> {
+    if cancel.is_some_and(SandboxCancel::is_cancelled) {
+        return Err(SandboxRejection::new(
+            SandboxRule::Cancelled,
+            "The SQL query was cancelled (rule `cancelled`).",
+            "cancelled: query was cancelled",
+            "cancelled",
+        ));
+    }
+
+    let cte_names = static_check(sql, limits.max_sql_bytes)?;
 
     if !projection_path.is_file() {
         return Err(SandboxRejection::new(
             SandboxRule::ProjectionUnavailable,
-            "The Ask projection is not built yet.",
+            "The Ask projection is not built yet (rule `projection_unavailable`).",
+            "projection_unavailable: Ask projection is not built yet",
             "projection_missing",
         ));
     }
@@ -521,47 +1089,96 @@ pub fn execute(
         projection_path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|err| {
+    .map_err(|_| {
         SandboxRejection::new(
             SandboxRule::ProjectionUnavailable,
-            "Could not open the Ask projection.",
-            err.to_string(),
+            "Could not open the Ask projection (rule `projection_unavailable`).",
+            "projection_unavailable: could not open Ask projection",
+            "projection_open_failed",
         )
     })?;
 
-    configure_connection(&conn, limits).map_err(|err| {
+    let _interrupt_guard =
+        cancel.map(|token| InterruptRegistration::register(token, conn.get_interrupt_handle()));
+
+    configure_connection(&conn, limits).map_err(|_| {
         SandboxRejection::new(
             SandboxRule::SqlError,
-            "Failed to configure the SQL sandbox.",
-            err.to_string(),
+            "Failed to configure the SQL sandbox (rule `sql_error`).",
+            "sql_error (sandbox_configuration)",
+            "sandbox_configuration_failed",
         )
     })?;
 
     let denied: DeniedState = Arc::new(Mutex::new(None));
     let auth_denied = Arc::clone(&denied);
     conn.authorizer(Some(move |ctx: AuthContext<'_>| {
-        authorize(ctx, &auth_denied)
+        authorize(ctx, &cte_names, &auth_denied)
     }))
-    .map_err(|err| map_sqlite_error(err, &denied))?;
+    .map_err(|err| {
+        map_sqlite_error(
+            err,
+            QueryPhase::Prepare,
+            sql,
+            &denied,
+            &AtomicU8::new(INTERRUPT_NONE),
+            cancel,
+        )
+    })?;
 
     let deadline = Instant::now() + limits.timeout;
-    conn.progress_handler(1000, Some(move || Instant::now() >= deadline))
-        .map_err(|err| {
-            SandboxRejection::new(
-                SandboxRule::SqlError,
-                "Failed to configure the SQL timeout handler.",
-                err.to_string(),
-            )
-        })?;
+    let interrupt_reason = Arc::new(AtomicU8::new(INTERRUPT_NONE));
+    let reason_ref = Arc::clone(&interrupt_reason);
+    let instructions = AtomicU64::new(0);
+    let max_instructions = limits.max_instructions;
+    let cancel_flag = cancel.map(|token| Arc::clone(&token.cancelled));
+    conn.progress_handler(
+        PROGRESS_STEP_INTERVAL,
+        Some(move || {
+            if cancel_flag
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::SeqCst))
+            {
+                reason_ref.store(INTERRUPT_CANCELLED, Ordering::SeqCst);
+                return true;
+            }
+            if Instant::now() >= deadline {
+                reason_ref.store(INTERRUPT_TIMEOUT, Ordering::SeqCst);
+                return true;
+            }
+            let prev = instructions.fetch_add(PROGRESS_STEP_INTERVAL as u64, Ordering::Relaxed);
+            if prev.saturating_add(PROGRESS_STEP_INTERVAL as u64) > max_instructions {
+                reason_ref.store(INTERRUPT_INSTRUCTION_LIMIT, Ordering::SeqCst);
+                return true;
+            }
+            false
+        }),
+    )
+    .map_err(|_| {
+        SandboxRejection::new(
+            SandboxRule::SqlError,
+            "Failed to configure the SQL timeout handler (rule `sql_error`).",
+            "sql_error (progress_handler_configuration)",
+            "progress_handler_failed",
+        )
+    })?;
 
-    let mut stmt = conn
-        .prepare(sql)
-        .map_err(|err| map_sqlite_error(err, &denied))?;
+    let mut stmt = conn.prepare(sql).map_err(|err| {
+        map_sqlite_error(
+            err,
+            QueryPhase::Prepare,
+            sql,
+            &denied,
+            &interrupt_reason,
+            cancel,
+        )
+    })?;
 
     if !stmt.readonly() {
         return Err(SandboxRejection::new(
             SandboxRule::NonReadOnly,
             "Only read-only statements are allowed (rule `non_read_only`).",
+            "non_read_only: only read-only statements are allowed",
             "non_read_only",
         ));
     }
@@ -569,29 +1186,55 @@ pub fn execute(
     let columns: Vec<String> = stmt.column_names().into_iter().map(str::to_owned).collect();
     let col_count = columns.len();
 
-    let mut query_rows = stmt
-        .query([])
-        .map_err(|err| map_sqlite_error(err, &denied))?;
+    let mut query_rows = stmt.query([]).map_err(|err| {
+        map_sqlite_error(
+            err,
+            QueryPhase::Runtime,
+            sql,
+            &denied,
+            &interrupt_reason,
+            cancel,
+        )
+    })?;
 
     let mut rows = Vec::new();
+    let mut used_bytes: usize = 0;
     let mut truncated = false;
-    while let Some(row) = query_rows
-        .next()
-        .map_err(|err| map_sqlite_error(err, &denied))?
-    {
+    while let Some(row) = query_rows.next().map_err(|err| {
+        map_sqlite_error(
+            err,
+            QueryPhase::Runtime,
+            sql,
+            &denied,
+            &interrupt_reason,
+            cancel,
+        )
+    })? {
         if rows.len() >= limits.max_rows {
             truncated = true;
             break;
         }
         let mut values = Vec::with_capacity(col_count);
+        let mut row_bytes: usize = 0;
         for index in 0..col_count {
-            let cell = row
-                .get_ref(index)
-                .map_err(|err| map_sqlite_error(err, &denied))?;
+            let cell = row.get_ref(index).map_err(|err| {
+                map_sqlite_error(
+                    err,
+                    QueryPhase::Runtime,
+                    sql,
+                    &denied,
+                    &interrupt_reason,
+                    cancel,
+                )
+            })?;
             let value = match cell {
                 ValueRef::Null => SqlValue::Null,
-                ValueRef::Integer(i) => SqlValue::Integer(i),
+                ValueRef::Integer(i) => {
+                    row_bytes = row_bytes.saturating_add(8);
+                    SqlValue::Integer(i)
+                }
                 ValueRef::Real(f) => {
+                    row_bytes = row_bytes.saturating_add(8);
                     if f.is_finite() {
                         SqlValue::Real(f)
                     } else {
@@ -602,22 +1245,41 @@ pub fn execute(
                     let text = std::str::from_utf8(bytes).map_err(|_| {
                         SandboxRejection::new(
                             SandboxRule::SqlError,
-                            "Query returned invalid UTF-8 text.",
+                            "Query returned invalid UTF-8 text (rule `sql_error`).",
+                            "sql_error (invalid_utf8)",
                             "invalid_utf8",
                         )
                     })?;
+                    row_bytes = row_bytes.saturating_add(text.len());
                     SqlValue::Text(text.to_owned())
                 }
                 ValueRef::Blob(_) => {
                     return Err(SandboxRejection::new(
                         SandboxRule::BlobNotAllowed,
                         "Binary BLOB values are not allowed in Ask results (rule `blob_not_allowed`).",
+                        "blob_not_allowed: binary BLOB values are not allowed in results",
                         "blob_not_allowed",
                     ));
                 }
             };
             values.push(value);
         }
+        if used_bytes.saturating_add(row_bytes) > limits.max_bytes {
+            if rows.is_empty() {
+                return Err(SandboxRejection::new(
+                    SandboxRule::OutputTooLarge,
+                    format!(
+                        "Query row exceeded the {}-byte output cap (rule `output_too_large`).",
+                        limits.max_bytes
+                    ),
+                    "output_too_large: query row exceeded output byte cap",
+                    "output_too_large",
+                ));
+            }
+            truncated = true;
+            break;
+        }
+        used_bytes = used_bytes.saturating_add(row_bytes);
         rows.push(values);
     }
 
@@ -808,5 +1470,318 @@ mod tests {
         .unwrap();
         assert_eq!(out.rows.len(), 1);
         assert!(out.truncated);
+    }
+
+    #[test]
+    fn recursive_cte_selecting_columns_succeeds_while_eponymous_vtables_are_denied() {
+        let proj = fixture_projection();
+        let out = execute(
+            proj.path(),
+            "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt WHERE x < 3) SELECT x FROM cnt",
+            SandboxLimits::default(),
+        )
+        .expect("legitimate bounded recursive CTE selecting column should succeed");
+        assert_eq!(
+            out.rows,
+            vec![
+                vec![SqlValue::Integer(1)],
+                vec![SqlValue::Integer(2)],
+                vec![SqlValue::Integer(3)],
+            ]
+        );
+
+        for sql in [
+            "SELECT * FROM dbstat",
+            "SELECT COUNT(*) FROM dbstat",
+            "SELECT * FROM bytecode('SELECT 1')",
+            "SELECT * FROM tables_used('SELECT 1 FROM listens')",
+            "SELECT * FROM completion('SEL')",
+        ] {
+            let err = execute(proj.path(), sql, SandboxLimits::default())
+                .expect_err(&format!("eponymous vtable must be rejected: {sql}"));
+            assert_eq!(err.rule, SandboxRule::UnauthorizedTable, "{sql}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn bound_parameters_and_unicode_tricks_are_rejected_while_punctuation_in_strings_works() {
+        let proj = fixture_projection();
+
+        for sql in [
+            "SELECT ?",
+            "SELECT ?1",
+            "SELECT :name",
+            "SELECT @name",
+            "SELECT $name",
+            "SELECT * FROM listens WHERE id = ?",
+            "SELECT * FROM artists WHERE name = :artist",
+        ] {
+            let err = execute(proj.path(), sql, SandboxLimits::default())
+                .expect_err(&format!("bound parameter must be rejected: {sql}"));
+            assert_eq!(err.rule, SandboxRule::BoundParameters, "{sql}: {err:?}");
+        }
+
+        // String literals and quoted identifiers containing parameter sigils must work.
+        let out = execute(
+            proj.path(),
+            "SELECT 'who? user@host :1 $100' AS \"col?\"",
+            SandboxLimits::default(),
+        )
+        .expect("punctuation inside string literals and identifiers should be allowed");
+        assert_eq!(out.columns, vec!["col?"]);
+        assert_eq!(
+            out.rows,
+            vec![vec![SqlValue::Text("who? user@host :1 $100".into())]]
+        );
+
+        // Unicode whitespace, BOM, zero-width, and fullwidth tricks must be rejected at static check.
+        for sql in [
+            "\u{FEFF}SELECT 1",
+            "\u{00A0}SELECT 1",
+            "\u{200B}SELECT 1",
+            "ＳＥＬＥＣＴ 1",
+            "\u{202E}1 TCELES",
+            "/* unclosed SELECT 1",
+        ] {
+            let err = execute(proj.path(), sql, SandboxLimits::default())
+                .expect_err(&format!("unicode/comment trick must be rejected: {sql:?}"));
+            assert_eq!(err.rule, SandboxRule::NotSelect, "{sql:?}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn instruction_budget_and_cancellation_stop_runaway_queries() {
+        let proj = fixture_projection();
+        let limits = SandboxLimits {
+            timeout: Duration::from_secs(3),
+            max_instructions: 50_000,
+            ..SandboxLimits::default()
+        };
+        let started = Instant::now();
+        let err = execute(
+            proj.path(),
+            "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt",
+            limits,
+        )
+        .expect_err("instruction budget must stop runaway CTE");
+        assert_eq!(err.rule, SandboxRule::InstructionLimit, "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+
+        // Pre-cancelled token rejects immediately.
+        let pre_cancel = SandboxCancel::new();
+        pre_cancel.cancel();
+        let err = execute_with_cancel(
+            proj.path(),
+            "SELECT COUNT(*) FROM listens",
+            SandboxLimits::default(),
+            Some(&pre_cancel),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::Cancelled, "{err:?}");
+
+        // Live cancellation interrupts an in-flight query well before wall-clock timeout.
+        let cancel = SandboxCancel::new();
+        let trigger = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(25));
+            trigger.cancel();
+        });
+        let started = Instant::now();
+        let err = execute_with_cancel(
+            proj.path(),
+            "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt",
+            SandboxLimits {
+                timeout: Duration::from_secs(5),
+                max_instructions: u64::MAX,
+                ..SandboxLimits::default()
+            },
+            Some(&cancel),
+        )
+        .unwrap_err();
+        handle.join().unwrap();
+        assert_eq!(err.rule, SandboxRule::Cancelled, "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn output_byte_cap_truncates_multi_row_and_rejects_oversized_values_and_blobs() {
+        let proj = fixture_projection();
+        // Multi-row output exceeding max_bytes truncates cleanly after fitting rows.
+        let limits = SandboxLimits {
+            max_rows: 100,
+            max_bytes: 16,
+            ..SandboxLimits::default()
+        };
+        let out = execute(
+            proj.path(),
+            "WITH RECURSIVE cnt(s) AS (SELECT '1234567890' UNION ALL SELECT s FROM cnt LIMIT 5) SELECT s FROM cnt",
+            limits,
+        )
+        .expect("multi-row byte cap should truncate rather than fail when at least one row fits");
+        assert_eq!(out.rows.len(), 1);
+        assert!(out.truncated);
+
+        // Single row exceeding max_bytes rejects with OutputTooLarge.
+        let err = execute(
+            proj.path(),
+            "SELECT '12345678901234567890'",
+            SandboxLimits {
+                max_bytes: 10,
+                ..SandboxLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::OutputTooLarge, "{err:?}");
+
+        // Concatenation exceeding SQLITE_LIMIT_LENGTH hits SQLITE_TOOBIG -> OutputTooLarge.
+        let err = execute(
+            proj.path(),
+            "SELECT printf('%900000s', 'a') || printf('%900000s', 'a')",
+            SandboxLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::OutputTooLarge, "{err:?}");
+
+        // Huge printf width is capped by SQLITE_LIMIT_LENGTH (either errors or yields NULL without allocating).
+        match execute(
+            proj.path(),
+            "SELECT printf('%10000000s', 'a')",
+            SandboxLimits::default(),
+        ) {
+            Err(err) => assert_eq!(err.rule, SandboxRule::OutputTooLarge, "{err:?}"),
+            Ok(out) => assert_eq!(out.rows, vec![vec![SqlValue::Null]]),
+        }
+
+        // BLOB values are rejected.
+        for sql in ["SELECT X'deadbeef'", "SELECT CAST('abc' AS BLOB)"] {
+            let err = execute(proj.path(), sql, SandboxLimits::default()).unwrap_err();
+            assert_eq!(err.rule, SandboxRule::BlobNotAllowed, "{sql}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn sanitized_errors_name_rule_for_owner_and_never_leak_projection_values() {
+        let file = NamedTempFile::new().unwrap();
+        let conn = Connection::open(file.path()).unwrap();
+        conn.execute_batch(projection::DDL).unwrap();
+        conn.execute(
+            "INSERT INTO artists(id, name) VALUES ('a1', 'CanaryArtistSecret99')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO albums(id, name) VALUES ('al1', 'CanaryAlbumSecret99')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tracks(id, title, album_id, duration_ms) VALUES ('t1', 'CanaryBrokenJson{\"unclosed', 'al1', 180000)",
+            [],
+        )
+        .unwrap();
+
+        let secrets = [
+            "CanaryArtistSecret99",
+            "CanaryAlbumSecret99",
+            "CanaryBrokenJson",
+            "unclosed",
+        ];
+
+        // Runtime errors triggered while reading projection rows must never leak row values.
+        for (sql, limits, expected_rule) in [
+            (
+                "SELECT json(title) FROM tracks",
+                SandboxLimits::default(),
+                SandboxRule::SqlError,
+            ),
+            (
+                "SELECT nth_value(title, 0) OVER () FROM tracks",
+                SandboxLimits::default(),
+                SandboxRule::SqlError,
+            ),
+            (
+                "SELECT CAST(title AS BLOB) FROM tracks",
+                SandboxLimits::default(),
+                SandboxRule::BlobNotAllowed,
+            ),
+            (
+                "SELECT title FROM tracks",
+                SandboxLimits {
+                    max_bytes: 5,
+                    ..SandboxLimits::default()
+                },
+                SandboxRule::OutputTooLarge,
+            ),
+        ] {
+            let err = execute(file.path(), sql, limits).unwrap_err();
+            assert_eq!(err.rule, expected_rule, "{sql}: {err:?}");
+            assert!(
+                err.message.contains(err.rule_name()),
+                "owner message must name rule `{}`: {}",
+                err.rule_name(),
+                err.message
+            );
+            for secret in secrets {
+                assert!(
+                    !err.model_error.contains(secret)
+                        && !err.message.contains(secret)
+                        && !err.detail.contains(secret),
+                    "error leaked projection value `{secret}` for `{sql}`: {err:?}"
+                );
+            }
+        }
+
+        // Prepare-time errors carry error class + offending identifier from the model's SQL.
+        let err = execute(
+            file.path(),
+            "SELECT phantom_column FROM tracks",
+            SandboxLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::SqlError);
+        assert!(err.message.contains(err.rule_name()), "{err:?}");
+        assert!(
+            err.model_error.contains("phantom_column"),
+            "expected offending identifier in model_error: {err:?}"
+        );
+
+        let err = execute(
+            file.path(),
+            "SELECT * FROM phantom_table",
+            SandboxLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::UnauthorizedTable);
+        assert!(err.message.contains(err.rule_name()), "{err:?}");
+        assert!(
+            err.model_error.contains("phantom_table"),
+            "expected offending table in model_error: {err:?}"
+        );
+
+        let err = execute(
+            file.path(),
+            "SELECT phantom_func(id) FROM tracks",
+            SandboxLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::SqlError);
+        assert!(err.message.contains(err.rule_name()), "{err:?}");
+        assert!(
+            err.model_error.contains("phantom_func"),
+            "expected offending function in model_error: {err:?}"
+        );
+
+        let err = execute(
+            file.path(),
+            "SELECT sqlite_version()",
+            SandboxLimits::default(),
+        )
+        .unwrap_err();
+        assert_eq!(err.rule, SandboxRule::UnauthorizedAction);
+        assert!(err.message.contains(err.rule_name()), "{err:?}");
+        assert!(
+            err.model_error.contains("sqlite_version"),
+            "expected disallowed function in model_error: {err:?}"
+        );
     }
 }
