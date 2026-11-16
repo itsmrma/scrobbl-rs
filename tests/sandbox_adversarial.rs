@@ -41,7 +41,7 @@ struct CorpusCase {
 fn adversarial_projection() -> NamedTempFile {
     let file = NamedTempFile::new().unwrap();
     let conn = Connection::open(file.path()).unwrap();
-    conn.execute_batch(projection::DDL).unwrap();
+    conn.execute_batch(&projection::ddl()).unwrap();
     conn.execute(
         "INSERT INTO artists(id, name) VALUES ('a1', 'CanaryArtistSecret'), ('a2', 'Ado')",
         [],
@@ -53,7 +53,7 @@ fn adversarial_projection() -> NamedTempFile {
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO tracks(id, title, album_id, duration_ms) VALUES ('t1', 'CanaryTrackSecret', 'al1', 210000)",
+        "INSERT INTO tracks(id, title, album_id, duration_ms, edition_key) VALUES ('t1', 'CanaryTrackSecret', 'al1', 210000, 'canary:a1')",
         [],
     )
     .unwrap();
@@ -62,11 +62,16 @@ fn adversarial_projection() -> NamedTempFile {
         [],
     )
     .unwrap();
+    conn.execute(
+        "INSERT INTO album_artists(album_id, artist_id, ordinal) VALUES ('al1', 'a1', 0)",
+        [],
+    )
+    .unwrap();
     // Insert 60 listens so multi-way cartesian joins quickly blow through budgets.
     let mut stmt = conn
         .prepare(
-            "INSERT INTO listens(id, track_id, played_at_ms, local_date, week_date, local_year, local_month, weekday, local_hour, listened_ms, duration_kind, counted, needs_review) \
-             VALUES (?1, 't1', ?2, '2024-01-10', '2024-01-08', 2024, 1, 3, 11, 210000, 'actual', 1, 0)",
+            "INSERT INTO listens(id, track_id, played_at_ms, played_at_local, local_date, week_date, local_year, local_month, weekday, week_start, local_hour, listened_ms, duration_kind, counted, needs_review, sources) \
+             VALUES (?1, 't1', ?2, '2024-01-10 11:00:00', '2024-01-10', '2024-01-08', 2024, 1, 3, 0, 11, 210000, 'actual', 1, 0, '[\"spotify_api\"]')",
         )
         .unwrap();
     for i in 0..60_i64 {

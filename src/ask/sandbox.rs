@@ -1300,7 +1300,7 @@ mod tests {
     fn fixture_projection() -> NamedTempFile {
         let file = NamedTempFile::new().unwrap();
         let conn = Connection::open(file.path()).unwrap();
-        conn.execute_batch(projection::DDL).unwrap();
+        conn.execute_batch(&projection::ddl()).unwrap();
         conn.execute(
             "INSERT INTO artists(id, name) VALUES ('a1', 'Björk'), ('a2', 'Ado')",
             [],
@@ -1312,7 +1312,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO tracks(id, title, album_id, duration_ms) VALUES ('t1', 'Jóga', 'al1', 305000)",
+            "INSERT INTO tracks(id, title, album_id, duration_ms, edition_key) VALUES ('t1', 'Jóga', 'al1', 305000, 'joga:a1')",
             [],
         )
         .unwrap();
@@ -1322,7 +1322,12 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO listens(id, track_id, played_at_ms, local_date, week_date, local_year, local_month, weekday, local_hour, listened_ms, duration_kind, counted, needs_review) VALUES ('l1', 't1', 1704880800000, '2024-01-10', '2024-01-08', 2024, 1, 3, 11, 305000, 'actual', 1, 0)",
+            "INSERT INTO album_artists(album_id, artist_id, ordinal) VALUES ('al1', 'a1', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO listens(id, track_id, played_at_ms, played_at_local, local_date, week_date, local_year, local_month, weekday, week_start, local_hour, listened_ms, duration_kind, counted, needs_review, sources) VALUES ('l1', 't1', 1704880800000, '2024-01-10 11:00:00', '2024-01-10', '2024-01-08', 2024, 1, 3, 0, 11, 305000, 'actual', 1, 0, '[\"spotify_api\"]')",
             [],
         )
         .unwrap();
@@ -1663,7 +1668,7 @@ mod tests {
     fn sanitized_errors_name_rule_for_owner_and_never_leak_projection_values() {
         let file = NamedTempFile::new().unwrap();
         let conn = Connection::open(file.path()).unwrap();
-        conn.execute_batch(projection::DDL).unwrap();
+        conn.execute_batch(&projection::ddl()).unwrap();
         conn.execute(
             "INSERT INTO artists(id, name) VALUES ('a1', 'CanaryArtistSecret99')",
             [],
@@ -1675,7 +1680,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO tracks(id, title, album_id, duration_ms) VALUES ('t1', 'CanaryBrokenJson{\"unclosed', 'al1', 180000)",
+            "INSERT INTO tracks(id, title, album_id, duration_ms, edition_key) VALUES ('t1', 'CanaryBrokenJson{\"unclosed', 'al1', 180000, 'canary:a1')",
             [],
         )
         .unwrap();
