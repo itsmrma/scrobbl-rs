@@ -212,6 +212,7 @@ fn test_model(id: &str, url: String, sha256: String, size_bytes: u64) -> catalog
         speed: None,
         backend: "test".to_string(),
         selectable: true,
+        recommendation: scrobbl_rs::ai::AnswerMode::Guided,
     }
 }
 
@@ -289,8 +290,18 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     let (_dir, state, token) = setup().await;
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
     assert_eq!(catalog["runtime_available"], cfg!(feature = "llama"));
+    assert_eq!(
+        catalog["remote_recommendation"], "sql",
+        "the bring-your-own-AI option recommends free questions"
+    );
     let models = catalog["models"].as_array().unwrap();
     assert!(models.len() >= 5);
+    assert!(
+        models
+            .iter()
+            .all(|model| model["recommendation"] == "guided"),
+        "every local catalog model recommends guided questions"
+    );
     let default = models
         .iter()
         .find(|model| model["id"] == "qwen3-1.7b-q4_k_m")
@@ -880,4 +891,117 @@ async fn in_progress_download_is_not_reported_as_installed_or_missing_metadata()
     );
 
     handle.abort();
+}
+
+#[tokio::test]
+async fn answer_mode_defaults_per_engine_and_persists_across_switches() {
+    let _guard = TEST_LOCK.lock().await;
+    catalog::clear_test_models();
+    let (_dir, state, token) = setup().await;
+
+    let initial = get_json(&state, &token, "/api/v1/ai/settings").await;
+    assert_eq!(initial["provider"], "local");
+    assert_eq!(initial["answer_mode"], "guided");
+    assert_eq!(initial["local_answer_mode"], "guided");
+    assert_eq!(initial["remote_answer_mode"], "sql");
+
+    let ask = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask["provider"], "local");
+    assert_eq!(ask["answer_mode"], "guided");
+
+    // Set local engine to sql mode.
+    let (status, saved_local_sql) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "local",
+            "answer_mode": "sql",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_local_sql}");
+    assert_eq!(saved_local_sql["provider"], "local");
+    assert_eq!(saved_local_sql["answer_mode"], "sql");
+    assert_eq!(saved_local_sql["local_answer_mode"], "sql");
+    assert_eq!(saved_local_sql["remote_answer_mode"], "sql");
+
+    let ask_local_sql = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_local_sql["provider"], "local");
+    assert_eq!(ask_local_sql["answer_mode"], "sql");
+
+    // Switch to remote engine and set remote to guided.
+    let (status, saved_remote_guided) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "remote",
+            "answer_mode": "guided",
+            "remote_url": "http://127.0.0.1:11434/v1",
+            "remote_model": "qwen3:8b",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved_remote_guided}");
+    assert_eq!(saved_remote_guided["provider"], "remote");
+    assert_eq!(saved_remote_guided["answer_mode"], "guided");
+    assert_eq!(saved_remote_guided["local_answer_mode"], "sql");
+    assert_eq!(saved_remote_guided["remote_answer_mode"], "guided");
+
+    let ask_remote = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_remote["provider"], "remote");
+    assert_eq!(ask_remote["answer_mode"], "guided");
+
+    // Switch back to local without specifying answer_mode: local's sql choice is restored.
+    let (status, back_to_local) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "local",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{back_to_local}");
+    assert_eq!(back_to_local["answer_mode"], "sql");
+    assert_eq!(back_to_local["local_answer_mode"], "sql");
+    assert_eq!(back_to_local["remote_answer_mode"], "guided");
+
+    // Switch back to remote without specifying answer_mode: remote's guided choice is restored.
+    let (status, back_to_remote) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "remote",
+            "remote_url": "http://127.0.0.1:11434/v1",
+            "remote_model": "qwen3:8b",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{back_to_remote}");
+    assert_eq!(back_to_remote["answer_mode"], "guided");
+    assert_eq!(back_to_remote["local_answer_mode"], "sql");
+    assert_eq!(back_to_remote["remote_answer_mode"], "guided");
 }

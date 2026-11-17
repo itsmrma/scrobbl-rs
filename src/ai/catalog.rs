@@ -7,6 +7,8 @@
 //! a client.
 use std::sync::{LazyLock, Mutex};
 
+use super::AnswerMode;
+
 const GIB: u64 = 1024 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -88,6 +90,10 @@ pub struct CatalogModel {
     pub speed: Option<MeasuredSpeed>,
     pub backend: String,
     pub selectable: bool,
+    /// The answer mode that fits this model. Every downloadable local model is
+    /// recommended for guided questions: it fills a fixed vocabulary instead of
+    /// writing SQL, and guided questions are answered by tested Rust executors.
+    pub recommendation: AnswerMode,
 }
 
 impl CatalogModel {
@@ -179,6 +185,7 @@ fn qwen(
         speed,
         backend: "llama.cpp (CPU)".to_string(),
         selectable: status == "available",
+        recommendation: AnswerMode::Guided,
     }
 }
 

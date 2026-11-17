@@ -55,9 +55,36 @@ impl Provider {
     }
 }
 
+/// How Ask answers questions: fixed guided vocabulary or free-form SQL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerMode {
+    Guided,
+    Sql,
+}
+
+impl AnswerMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Guided => "guided",
+            Self::Sql => "sql",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "guided" => Some(Self::Guided),
+            "sql" => Some(Self::Sql),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
     pub provider: Provider,
+    pub local_answer_mode: AnswerMode,
+    pub remote_answer_mode: AnswerMode,
     pub remote_url: Option<String>,
     pub remote_model: Option<String>,
     /// Never sent to the browser; only whether one is set.
@@ -73,6 +100,8 @@ impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             provider: Provider::Local,
+            local_answer_mode: AnswerMode::Guided,
+            remote_answer_mode: AnswerMode::Sql,
             remote_url: None,
             remote_model: None,
             remote_key: None,
@@ -120,8 +149,18 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
     let remote_key = setting("ai_remote_key")
         .await?
         .filter(|value| !value.is_empty());
+    let local_answer_mode = setting("ai_answer_mode_local")
+        .await?
+        .and_then(|value| AnswerMode::parse(&value))
+        .unwrap_or(AnswerMode::Guided);
+    let remote_answer_mode = setting("ai_answer_mode_remote")
+        .await?
+        .and_then(|value| AnswerMode::parse(&value))
+        .unwrap_or(AnswerMode::Sql);
     Ok(StoredSettings {
         provider,
+        local_answer_mode,
+        remote_answer_mode,
         remote_url,
         remote_model,
         remote_key,
@@ -136,6 +175,13 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
 impl StoredSettings {
     pub fn uses_remote(&self) -> bool {
         self.provider == Provider::Remote
+    }
+
+    pub fn effective_answer_mode(&self) -> AnswerMode {
+        match self.provider {
+            Provider::Local => self.local_answer_mode,
+            Provider::Remote => self.remote_answer_mode,
+        }
     }
 
     /// The remote server address and model name are both set.
@@ -198,6 +244,9 @@ pub async fn selected_model_readiness(
 pub struct AiSettings {
     /// `local` or `remote`.
     pub provider: String,
+    pub answer_mode: AnswerMode,
+    pub local_answer_mode: AnswerMode,
+    pub remote_answer_mode: AnswerMode,
     pub remote_url: Option<String>,
     pub remote_model: Option<String>,
     pub remote_key_set: bool,
@@ -218,6 +267,14 @@ pub struct SaveAiSettings {
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
+    pub answer_mode: Option<AnswerMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub local_answer_mode: Option<AnswerMode>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub remote_answer_mode: Option<AnswerMode>,
+    #[serde(default)]
     pub remote_url: Option<String>,
     #[serde(default)]
     pub remote_model: Option<String>,
@@ -235,6 +292,7 @@ pub struct SaveAiSettings {
 pub struct AiAskStatus {
     /// `local` or `remote`.
     pub provider: String,
+    pub answer_mode: AnswerMode,
     pub remote_model: Option<String>,
     pub enabled: bool,
     pub runtime_available: bool,
@@ -319,6 +377,9 @@ pub struct AiCatalogModel {
     pub speed: Option<AiSpeed>,
     pub backend: String,
     pub selectable: bool,
+    /// Fixed recommendation: guided questions for every local catalog model.
+    /// No measured SQL accuracy is stored or shown.
+    pub recommendation: AnswerMode,
     pub installed: bool,
     pub installed_size_bytes: Option<u64>,
     pub checksum_verified: bool,
@@ -345,6 +406,10 @@ pub struct AiCatalog {
     pub installed: Vec<AiInstalledModel>,
     pub total_installed_bytes: u64,
     pub disk_used_bytes: u64,
+    /// Fixed recommendation for the "bring your own AI" option: free questions
+    /// (SQL), because a larger remote model can write SQL and the archive never
+    /// leaves the instance.
+    pub remote_recommendation: AnswerMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -434,6 +499,9 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
         };
     Ok(AiSettings {
         provider: stored.provider.as_str().to_owned(),
+        answer_mode: stored.effective_answer_mode(),
+        local_answer_mode: stored.local_answer_mode,
+        remote_answer_mode: stored.remote_answer_mode,
         remote_url: stored.remote_url.clone(),
         remote_model: stored.remote_model.clone(),
         remote_key_set: stored.remote_key.is_some(),
@@ -554,6 +622,15 @@ pub async fn settings_post(
         // installed file through the select endpoint.
     }
 
+    let local_answer_mode = form.local_answer_mode.unwrap_or(match provider {
+        Provider::Local => form.answer_mode.unwrap_or(previous.local_answer_mode),
+        Provider::Remote => previous.local_answer_mode,
+    });
+    let remote_answer_mode = form.remote_answer_mode.unwrap_or(match provider {
+        Provider::Remote => form.answer_mode.unwrap_or(previous.remote_answer_mode),
+        Provider::Local => previous.remote_answer_mode,
+    });
+
     let mut tx = state.db.begin().await?;
     crate::db::set_setting(&mut tx, "ai_enabled", if form.enabled { "1" } else { "0" }).await?;
     crate::db::set_setting(
@@ -571,6 +648,13 @@ pub async fn settings_post(
     .await?;
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
     crate::db::set_setting(&mut tx, "ai_provider", provider.as_str()).await?;
+    crate::db::set_setting(&mut tx, "ai_answer_mode_local", local_answer_mode.as_str()).await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_answer_mode_remote",
+        remote_answer_mode.as_str(),
+    )
+    .await?;
     crate::db::set_setting(
         &mut tx,
         "ai_remote_url",
@@ -591,8 +675,17 @@ pub async fn settings_post(
     .await?;
     tx.commit().await?;
 
+    if form.enabled {
+        state.ask.projection.notify();
+    } else {
+        crate::ask::projection::remove(&state.storage.directory, &state.ask.projection).await?;
+        state.ask.projection.notify();
+    }
+
     let stored = StoredSettings {
         provider,
+        local_answer_mode,
+        remote_answer_mode,
         remote_url,
         remote_model,
         remote_key,
@@ -615,6 +708,7 @@ pub async fn ask_status(
         // Your own AI needs no local runtime and loads nothing here.
         return Ok(Json(AiAskStatus {
             provider: stored.provider.as_str().to_owned(),
+            answer_mode: stored.effective_answer_mode(),
             remote_model: stored.remote_model.clone(),
             enabled: stored.enabled,
             runtime_available: true,
@@ -625,6 +719,7 @@ pub async fn ask_status(
     let readiness = selected_model_readiness(&state, &stored).await?;
     Ok(Json(AiAskStatus {
         provider: stored.provider.as_str().to_owned(),
+        answer_mode: stored.effective_answer_mode(),
         remote_model: None,
         enabled: stored.enabled,
         // The build feature and the installed parser must both be present: a
@@ -753,6 +848,7 @@ pub async fn catalog_get(
                 }),
                 backend: model.backend.clone(),
                 selectable: model.selectable,
+                recommendation: model.recommendation,
                 installed,
                 installed_size_bytes: installed_entry.map(|entry| entry.size_bytes),
                 checksum_verified: installed_entry.is_some_and(|entry| entry.checksum_verified),
@@ -797,6 +893,7 @@ pub async fn catalog_get(
         installed,
         total_installed_bytes,
         disk_used_bytes: models::total_size(&root),
+        remote_recommendation: AnswerMode::Sql,
     }))
 }
 
@@ -992,9 +1089,35 @@ async fn remote_test(stored: &StoredSettings) -> AiTestResult {
             "Enter the AI server address and the model name first.".into(),
         );
     };
+    let question = "How many times did I listen to Björk?";
+    if stored.effective_answer_mode() == AnswerMode::Sql {
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let raw = crate::ask::remote::infer_sql(
+            &config,
+            question,
+            None,
+            &today,
+            crate::ask::parser::inference_timeout(),
+        )
+        .await;
+        return match raw {
+            Err(error) => result(false, error.to_string()),
+            Ok(text) => match crate::ask::parser::interpret_remote_sql(&text) {
+                Ok(_) => result(
+                    true,
+                    format!("Connected. {} understood a test question.", config.model),
+                ),
+                Err(_) => result(
+                    false,
+                    "The server answered, but not in the SQL format Ask needs. Try a more capable model."
+                        .into(),
+                ),
+            },
+        };
+    }
     let raw = crate::ask::remote::infer(
         &config,
-        "How many times did I listen to Björk?",
+        question,
         None,
         crate::ask::parser::inference_timeout(),
     )
@@ -1025,5 +1148,8 @@ pub async fn worker(state: AppState) {
             }
         }
     }
-    download::worker(state).await;
+    tokio::join!(
+        download::worker(state.clone()),
+        crate::ask::projection::worker(state),
+    );
 }

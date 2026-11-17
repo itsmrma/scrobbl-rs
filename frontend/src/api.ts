@@ -35,6 +35,7 @@ import type {
   ListeningMilestones,
   AskPrevious,
   AskResponse,
+  AskSqlRequest,
   Query,
   AiSettings,
   SaveAiSettings,
@@ -80,6 +81,7 @@ export type ApplicationInfo = {
   listens_bytes: number;
   models_bytes: number;
   backups_bytes: number;
+  projection_bytes: number;
   total_storage_bytes: number;
   listens: number;
   tracks: number;
@@ -433,13 +435,25 @@ export const api = {
     question: string,
     context: { kind: string; id: string } | null,
     previous: AskPrevious | null = null,
+    options?: { signal?: AbortSignal; requestId?: string },
   ) =>
-    post<AskResponse>("/api/v1/ask", {
-      question,
-      context,
-      ...(previous ? { previous } : {}),
+    post<AskResponse>(
+      "/api/v1/ask",
+      {
+        question,
+        context,
+        ...(previous ? { previous } : {}),
+        ...(options?.requestId ? { request_id: options.requestId } : {}),
+      },
+      options?.signal,
+    ),
+  cancelAsk: (request_id?: string) =>
+    post<{ cancelled: boolean }>("/api/v1/ask/cancel", {
+      ...(request_id ? { request_id } : {}),
     }),
   askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
+  askSql: (payload: AskSqlRequest) =>
+    post<AskResponse>("/api/v1/ask/sql", payload),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),
