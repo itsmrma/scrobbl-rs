@@ -216,3 +216,85 @@ pub async fn resume(State(state): State<AppState>, headers: HeaderMap) -> Result
     state.spotify.wake_collection();
     Ok(Json(json!({"ok":true})))
 }
+
+#[derive(Deserialize)]
+pub struct Reset {
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+/// Delete every archive row in place, keeping the owner account, the settings
+/// and the calendars so the instance still works and the user does not have to
+/// touch the files on disk.
+pub async fn reset(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(form): Json<Reset>,
+) -> Result<Json<Value>> {
+    auth::require_write(&state, &headers).await?;
+    if !form.confirm {
+        return Err(AppError::BadRequest(
+            "Explicit confirmation is required to delete the archive.".into(),
+        ));
+    }
+    let _operation = state.storage.recovery_operations.lock().await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM jobs WHERE state IN ('queued','running','waiting') \
+         AND kind IN ('spotify_import','listenbrainz_file','recovery_verify','recovery_restore','recovery_export','recovery_backup'))",
+    )
+    .fetch_one(&state.read_db)
+    .await?;
+    if active {
+        return Err(AppError::Conflict(
+            "Wait for the running operations to finish before deleting the archive.".into(),
+        ));
+    }
+    state.storage.maintenance(true).await.map_err(failure)?;
+    let wiped = wipe(&state).await;
+    // Leave maintenance even when the wipe failed, or the instance stays read-only.
+    state.storage.maintenance(false).await.map_err(failure)?;
+    wiped?;
+    Ok(Json(json!({"ok":true})))
+}
+
+async fn wipe(state: &AppState) -> Result<()> {
+    let mut tx = state.storage.writer.begin().await?;
+    for sql in [
+        "DELETE FROM calendar_staging",
+        "DELETE FROM conflicts",
+        "DELETE FROM source_occurrences",
+        "DELETE FROM observation_variants",
+        "DELETE FROM observations",
+        "DELETE FROM original_payloads",
+        "DELETE FROM listens",
+        "DELETE FROM artwork",
+        "DELETE FROM artwork_misses",
+        "DELETE FROM entity_links",
+        "DELETE FROM track_artists",
+        "DELETE FROM tracks",
+        "DELETE FROM albums",
+        "DELETE FROM artists",
+        "DELETE FROM name_group_members",
+        "DELETE FROM name_groups",
+        "DELETE FROM local_corrections",
+        "DELETE FROM identity_decisions",
+        "DELETE FROM group_members",
+        "DELETE FROM entity_groups",
+        "DELETE FROM job_members",
+        "DELETE FROM job_inputs",
+        "DELETE FROM jobs",
+        "DELETE FROM job_identity_counts",
+        "DELETE FROM source_files",
+        "DELETE FROM listenbrainz_pages",
+        "DELETE FROM changes",
+    ] {
+        sqlx::query(sql).execute(&mut *tx).await?;
+    }
+    sqlx::query("UPDATE archive_state SET revision=revision+1,retained_from=0 WHERE singleton=1")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    // A new generation invalidates cached API copies and the Ask projection.
+    state.storage.rotate_generation().await.map_err(failure)?;
+    Ok(())
+}

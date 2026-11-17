@@ -34,6 +34,7 @@ export type Activity = { id: string, created_at_ms: number, kind: string, state:
 export type ActivityMember = { originals: number, variants: number, duplicates: number, added: number, reconciled: number, invalid: number, skipped: number, below_threshold: number, member: string, kind: string, state: string, expected_rows: number | null, processed: number, error_code: string | null, };
 export type ActivityDetail = { source_parameters: unknown, issues: Array<RowIssue>, activity: Activity, members: Array<ActivityMember>, };
 export type RowIssue = { member: string, row_number: number, reason: string, };
+export type ImportFile = { file_id: string, filename: string, job_id: string, created_at_ms: number, state: string, outcome: string | null, error_code: string | null, size_bytes: number, received_at_ms: number, listens: number, added: number, duplicates: number, invalid: number, skipped: number, };
 export type Limits = { upload_bytes: number, expanded_bytes: number, members: number, row_bytes: number, };
 export type GroupMember = { id: string, name: string, sample: string, tracks: number, listens: number, };
 export type GroupPage = { members: Array<GroupMember>, total: number, page: number, can_rejoin: boolean, };

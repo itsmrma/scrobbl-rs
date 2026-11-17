@@ -28,6 +28,10 @@ export function Recovery({
     [repeat, setRepeat] = useState(""),
     [confirmed, setConfirmed] = useState(false),
     [restart, setRestart] = useState(false),
+    [resetOpen, setResetOpen] = useState(false),
+    [resetConfirmed, setResetConfirmed] = useState(false),
+    [resetBusy, setResetBusy] = useState(false),
+    [resetError, setResetError] = useState(""),
     [format, setFormat] = useState("json"),
     [selection, setSelection] = useState<ExportSelection>({
       from: null,
@@ -54,6 +58,18 @@ export function Recovery({
     }
   }
   const restarting = restart || loaded.data?.restart_required;
+  async function wipeArchive() {
+    setResetBusy(true);
+    setResetError("");
+    try {
+      await api.resetArchive();
+      window.location.reload();
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResetBusy(false);
+    }
+  }
   return (
     <section className="settings-form recovery-form">
       <ErrorText>{error || loaded.error}</ErrorText>
@@ -341,6 +357,71 @@ export function Recovery({
           </div>
         );
       })}
+      <h3>Delete the archive</h3>
+      <p>
+        Delete every listen, import, catalog entry and saved report in this
+        archive. Your account, settings and calendars stay, and the files on
+        disk are left alone: you can import fresh data afterwards.
+      </p>
+      <p className="warning">
+        This cannot be undone. Create a backup first if you may want the data
+        back.
+      </p>
+      <div className="connection-actions">
+        <button
+          className="danger"
+          disabled={busy || restarting}
+          onClick={() => {
+            setResetConfirmed(false);
+            setResetError("");
+            setResetOpen(true);
+          }}
+        >
+          Delete all archive data
+        </button>
+      </div>
+      {resetOpen && (
+        <Modal
+          title="Delete all archive data"
+          close={() => {
+            if (!resetBusy) setResetOpen(false);
+          }}
+        >
+          <p>
+            Every listen, imported file record and catalog entry is deleted now.
+            Your account, settings and calendars are kept. Make a backup first
+            if you may want to restore this archive.
+          </p>
+          <p className="warning">
+            This cannot be undone and imported files will need importing again.
+          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={resetConfirmed}
+              onChange={(e) => setResetConfirmed(e.target.checked)}
+            />
+            I understand every archive row will be deleted
+          </label>
+          <ErrorText>{resetError}</ErrorText>
+          <div className="form-actions">
+            <button
+              className="danger"
+              disabled={!resetConfirmed || resetBusy}
+              onClick={() => void wipeArchive()}
+            >
+              {resetBusy ? "Deleting…" : "Delete everything"}
+            </button>
+            <button
+              className="secondary"
+              disabled={resetBusy}
+              onClick={() => setResetOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </Modal>
+      )}
       {restore && (
         <Modal
           title="Replace this archive"

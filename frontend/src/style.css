@@ -7063,3 +7063,38 @@ dialog.artwork-lightbox {
 .ai-mode-explanations .field-hint {
   margin: 0;
 }
+
+/* Imported files: one row per uploaded history file with its own counters. */
+.import-files {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.import-file {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-md);
+  background: var(--row-bg);
+}
+
+.import-file-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.import-file-main strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 600px) {
+  .import-file {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

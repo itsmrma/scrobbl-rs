@@ -21,6 +21,7 @@ import { defaultAccent, ink, isHex, periods, WEEKDAYS } from "./preferences";
 import type { useAppearance } from "./preferences";
 import { Link, navigate } from "./navigation";
 import { Recovery } from "./recovery";
+import { ImportFiles } from "./import-files";
 import { ApiKeys } from "./api-keys";
 import { SkeletonCard } from "./skeleton";
 
@@ -1542,6 +1543,7 @@ const SECTIONS: [string, string, string][] = [
   ["connections", "Connections", "link"],
   ["images", "Image providers", "image"],
   ["ai", "AI", "forum"],
+  ["imports", "Imported files", "upload_file"],
   ["data", "Data & recovery", "inventory_2"],
   ["api-keys", "API keys", "key"],
 ];
@@ -1623,6 +1625,14 @@ export function Settings({
               preferences={preferences}
               active={visible && section === "data"}
             />
+          </div>
+          <div hidden={section !== "imports"}>
+            {section === "imports" && (
+              <ImportFiles
+                preferences={preferences}
+                active={visible && section === "imports"}
+              />
+            )}
           </div>
           <div hidden={section !== "api-keys"}>
             {section === "api-keys" && <ApiKeys preferences={preferences} />}
