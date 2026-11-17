@@ -727,7 +727,10 @@ async fn remote_sql_mode_executes_valid_query_against_projection_and_hides_archi
         "Creep",
         "sk-secret-key",
     ] {
-        assert!(!sent.contains(secret), "prompt leaked `{secret}`: {sent}");
+        assert!(
+            !sent.contains(secret),
+            "prompt leaked an archive value or key"
+        );
     }
 }
 
@@ -902,7 +905,10 @@ async fn remote_sql_mode_repairs_a_rejected_query_and_never_leaks_archive_values
             "Radiohead",
             "sk-secret-key",
         ] {
-            assert!(!text.contains(secret), "request leaked `{secret}`: {text}");
+            assert!(
+                !text.contains(secret),
+                "request leaked an archive value or key"
+            );
         }
         let user_msg = req["messages"][1]["content"].as_str().unwrap();
         assert!(
@@ -1190,7 +1196,10 @@ async fn remote_sql_mode_follow_up_sends_previous_sql_and_no_results() {
             "Radiohead",
             "sk-secret-key",
         ] {
-            assert!(!raw.contains(secret), "call {idx} leaked `{secret}`: {raw}");
+            assert!(
+                !raw.contains(secret),
+                "call {idx} leaked an archive value or key"
+            );
         }
     }
 }
@@ -1788,7 +1797,7 @@ async fn local_sql_mode_repairs_a_rejected_query() {
     for secret in ["Jóga", "Hunter", "Creep"] {
         assert!(
             !repair_prompt.contains(secret),
-            "repair prompt leaked `{secret}`: {repair_prompt}"
+            "repair prompt leaked an archive value"
         );
     }
 }

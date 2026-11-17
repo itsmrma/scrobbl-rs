@@ -1796,7 +1796,7 @@ mod tests {
                     !err.model_error.contains(secret)
                         && !err.message.contains(secret)
                         && !err.detail.contains(secret),
-                    "error leaked projection value `{secret}` for `{sql}`: {err:?}"
+                    "error leaked a projection value for `{sql}`"
                 );
             }
         }

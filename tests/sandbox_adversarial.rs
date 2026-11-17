@@ -353,7 +353,7 @@ async fn projection_file_contains_no_secrets_or_archive_only_tables() {
     ] {
         assert!(
             !raw_lossy.contains(secret),
-            "projection file leaked secret `{secret}`"
+            "projection file leaked a secret"
         );
         let utf16le: Vec<u8> = secret
             .encode_utf16()
@@ -363,7 +363,7 @@ async fn projection_file_contains_no_secrets_or_archive_only_tables() {
             !raw_bytes
                 .windows(utf16le.len())
                 .any(|w| w == utf16le.as_slice()),
-            "projection file leaked UTF-16LE secret `{secret}`"
+            "projection file leaked a UTF-16LE secret"
         );
     }
 

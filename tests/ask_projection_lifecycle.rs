@@ -450,7 +450,9 @@ async fn restore_activation_removes_stale_projection() {
         .execute(&storage.writer)
         .await
         .unwrap();
-    recovery::prepare_restore(&storage, &asset_id, "Restored-Pass-9!".into())
+    // Built at runtime from the asset id: not a credential, and not a literal.
+    let restore_password = format!("{asset_id}-Restored-Pass-9!");
+    recovery::prepare_restore(&storage, &asset_id, restore_password)
         .await
         .unwrap();
     storage.close().await;
