@@ -14,7 +14,7 @@
 </div>
 
 <p align="center">
-  <a href="https://scrobbl-site.example.workers.dev"><strong>Website</strong></a>
+  <a href="https://scrobblrs.benassimatteo.dev"><strong>Website</strong></a>
 </p>
 
 <p align="center">

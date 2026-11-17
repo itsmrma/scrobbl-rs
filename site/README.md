@@ -32,40 +32,26 @@ Done once by the owner in the Cloudflare dashboard (Workers & Pages >
 Pushes to `main` that touch `site/*` deploy to production. Other branches
 get a preview version via `versions upload`.
 
-## Add a custom domain later
+## Custom domain
 
-Add a `routes` entry to `wrangler.jsonc` and deploy. The zone must be on the
-same Cloudflare account.
+The site is served at `https://scrobblrs.benassimatteo.dev`, declared as a
+Custom Domain in `wrangler.jsonc` (`routes`). The `benassimatteo.dev` zone must
+be on the same Cloudflare account; Cloudflare creates the DNS record and the
+certificate on the next `wrangler deploy` (production builds only: preview
+versions keep their own URLs).
 
-```jsonc
-{
-  "routes": [{ "pattern": "scrobbl.rs", "custom_domain": true }]
-}
-```
+## Production origin
 
-Use `"www.scrobbl.rs"` for a subdomain entry as well. Cloudflare creates the
-DNS record and certificate on the next deploy.
+Share metadata needs absolute URLs, so `https://scrobblrs.benassimatteo.dev`
+is written in:
 
-## Set the production origin
-
-Share metadata needs absolute URLs, so the production origin is written in
-several places as the placeholder `https://scrobbl-site.example.workers.dev`:
-
-- `../README.md` (repository root, outside `site/`): the "Website" link
+- `../README.md` (repository root): the "Website" link
 - `public/index.html`: `canonical`, `og:url`, `og:image`, `twitter:image`
 - `public/robots.txt`: the `Sitemap:` line
 - `public/sitemap.xml`: the single `<loc>`
 
-After the first deploy, replace it with the real address (the
-`scrobbl-site.<account>.workers.dev` URL, or the custom domain once added):
-
-```sh
-grep -rl 'scrobbl-site.example.workers.dev' public ../README.md | xargs sed -i '' 's#https://scrobbl-site.example.workers.dev#https://YOUR-ORIGIN#g'
-```
-
-(On Linux use `sed -i` without the empty string.) The tests only require that
-these URLs share one origin, so they pass before and after the swap. Then add
-the same URL to the repository's "About" field.
+To change domain, update those files and the `routes` entry. Also add the URL
+to the repository's "About" field.
 
 The social image is `public/social.jpg`, the `brag.jpg` frame of the app
 README (demo data only) scaled to 1200 px wide.
