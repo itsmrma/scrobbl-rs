@@ -329,6 +329,15 @@ impl Runtime {
         // covers an engine blocked inside one long decode call.
         let guard = cancel.remaining() + OUTER_TIMEOUT_GRACE;
         let cancel_on_timeout = cancel.clone();
+        struct CancelOnDrop<'a>(&'a CancelToken, bool);
+        impl Drop for CancelOnDrop<'_> {
+            fn drop(&mut self) {
+                if !self.1 {
+                    self.0.cancel();
+                }
+            }
+        }
+        let mut drop_guard = CancelOnDrop(&cancel_on_timeout, false);
         let (reply, response) = oneshot::channel();
         let job = Box::new(Job {
             spec: spec.clone(),
@@ -338,11 +347,19 @@ impl Runtime {
         });
         match self.inner.sender.try_send(Message::Infer(job)) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) => return Err(RuntimeError::Busy),
-            Err(TrySendError::Disconnected(_)) => return Err(RuntimeError::Closed),
+            Err(TrySendError::Full(_)) => {
+                drop_guard.1 = true;
+                return Err(RuntimeError::Busy);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                drop_guard.1 = true;
+                return Err(RuntimeError::Closed);
+            }
         }
 
-        match tokio::time::timeout(guard, response).await {
+        let outcome = tokio::time::timeout(guard, response).await;
+        drop_guard.1 = true;
+        match outcome {
             Err(_) => {
                 cancel_on_timeout.cancel();
                 Err(RuntimeError::Timeout)
@@ -948,5 +965,38 @@ mod tests {
         let expired = CancelToken::new(Duration::from_millis(0));
         assert_eq!(expired.error(), InferenceError::Timeout);
         assert!(expired.should_stop());
+    }
+
+    #[tokio::test]
+    async fn dropping_infer_future_cancels_the_token_and_resets_engine() {
+        let (runtime, state) = mock(Duration::from_secs(5));
+        let spec = spec(Duration::from_secs(10));
+        let cancel = CancelToken::new(Duration::from_secs(10));
+        let handle = tokio::spawn({
+            let runtime = runtime.clone();
+            let spec = spec.clone();
+            let cancel = cancel.clone();
+            async move {
+                let _ = runtime.infer_with_cancel(&spec, "drop me", cancel).await;
+            }
+        });
+        for _ in 0..100 {
+            if state.started.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(state.started.load(Ordering::SeqCst), 1);
+        handle.abort();
+        let _ = handle.await;
+        for _ in 0..100 {
+            if state.resets.load(Ordering::SeqCst) > 0 && state.active.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(cancel.is_cancelled(), "dropping infer future must cancel token");
+        assert!(state.resets.load(Ordering::SeqCst) > 0);
+        assert_eq!(state.active.load(Ordering::SeqCst), 0);
     }
 }

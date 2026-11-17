@@ -128,7 +128,8 @@ scalar: number | null, time: TimeCoverage | null, rows: Array<ResultRow>, first:
  */
 total: number, links: Array<ResultLink>, };
 export type AskStep = { query: Query | null, chips: Array<Chip>, result: AskResult | null, };
-export type AskPrevious = { question: string, chips: Array<Chip>, };
+export type SqlPrevious = { title: string, computed: string, sql: string, };
+export type AskPrevious = { question: string, chips: Array<Chip>, sql?: SqlPrevious, };
 export type TimeCoverage = { known_ms: number, actual_ms: number, estimated_ms: number, unknown_listens: number, unknown_percent: number, };
 export type ResultRow = { label: string, key: string, plays: number, time: TimeCoverage | null, href: string | null, };
 export type ListenPoint = { played_at_ms: number, title: string, artist: string, album: string | null, track_id: string, };
@@ -141,7 +142,9 @@ export type AskRequest = { question: string, context: AskContext | null,
 /**
  * The answer this question follows up on, when the owner continues from it.
  */
-previous: AskPrevious | null, };
+previous: AskPrevious | null, request_id?: string, };
+export type AskCancelRequest = { request_id?: string, };
+export type AskCancelResponse = { cancelled: boolean, };
 export type AskContext = { kind: EntityKind, id: string, };
 export type AskQueryRequest = { query: Query, };
 export type AnswerMode = "guided" | "sql";

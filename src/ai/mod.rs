@@ -1063,6 +1063,7 @@ async fn remote_test(stored: &StoredSettings) -> AiTestResult {
         let raw = crate::ask::remote::infer_sql(
             &config,
             question,
+            None,
             &today,
             crate::ask::parser::inference_timeout(),
         )

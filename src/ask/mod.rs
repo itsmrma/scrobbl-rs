@@ -20,7 +20,8 @@ use crate::{
     ask::{
         dsl::{Chip, Entity, EntityKind, Metric, Query},
         parser::{ParsedQuestion, PlanStep, Previous, QueryParser, StubParser, UnavailableParser},
-        sandbox::{SandboxLimits, SandboxRule, SqlValue},
+        runtime::CancelToken,
+        sandbox::{SandboxCancel, SandboxLimits, SandboxRule, SqlValue},
         schema::{ColumnFormat, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     auth,
@@ -28,7 +29,15 @@ use crate::{
 };
 use axum::{Json, extract::State, http::HeaderMap};
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::Notify;
 use ts_rs::TS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -184,14 +193,42 @@ pub struct AskRequest {
     /// The answer this question follows up on, when the owner continues from it.
     #[serde(default)]
     pub previous: Option<AskPrevious>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub request_id: Option<String>,
 }
 
-/// The previous question and its interpretation chips. Results are never sent
-/// to the model.
+#[derive(Clone, Debug, Default, Deserialize, TS)]
+pub struct AskCancelRequest {
+    #[serde(default)]
+    #[ts(optional)]
+    pub request_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct AskCancelResponse {
+    pub cancelled: bool,
+}
+
+/// The previous SQL-mode answer for a follow-up question. Results are never
+/// sent to the model.
+#[derive(Clone, Debug, Deserialize, TS)]
+pub struct SqlPrevious {
+    pub title: String,
+    pub computed: String,
+    pub sql: String,
+}
+
+/// The previous question and its interpretation chips or SQL summary. Results
+/// are never sent to the model.
 #[derive(Clone, Debug, Deserialize, TS)]
 pub struct AskPrevious {
     pub question: String,
+    #[serde(default)]
     pub chips: Vec<Chip>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub sql: Option<SqlPrevious>,
 }
 
 impl AskPrevious {
@@ -207,6 +244,15 @@ impl AskPrevious {
                 .take(20)
                 .map(|chip| (clip(&chip.label, 40), clip(&chip.value, 200)))
                 .collect(),
+            sql: self
+                .sql
+                .as_ref()
+                .filter(|prev| !prev.sql.trim().is_empty())
+                .map(|prev| parser::SqlPrevious {
+                    title: clip(prev.title.trim(), 200),
+                    computed: clip(prev.computed.trim(), 500),
+                    sql: clip(prev.sql.trim(), sandbox::MAX_SQL_BYTES),
+                }),
         }
     }
 }
@@ -222,6 +268,138 @@ pub struct AskQueryRequest {
     pub query: Query,
 }
 
+#[derive(Clone)]
+pub struct AskCancel {
+    pub token: CancelToken,
+    pub sandbox: SandboxCancel,
+    notify: Arc<Notify>,
+}
+
+impl AskCancel {
+    fn new(timeout: Duration) -> Self {
+        Self {
+            token: CancelToken::new(timeout),
+            sandbox: SandboxCancel::new(),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.token.cancel();
+        self.sandbox.cancel();
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.token.is_cancelled() || self.sandbox.is_cancelled()
+    }
+
+    pub async fn cancelled(&self) {
+        if self.is_cancelled() {
+            return;
+        }
+        let notified = self.notify.notified();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
+    }
+}
+
+struct InFlightEntry {
+    id: String,
+    cancel: AskCancel,
+}
+
+#[derive(Default)]
+struct InFlightAsks {
+    entries: Mutex<Vec<InFlightEntry>>,
+    next_id: AtomicU64,
+}
+
+impl InFlightAsks {
+    fn register(&self, request_id: Option<&str>, timeout: Duration) -> (String, AskCancel) {
+        let id = request_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.chars().take(128).collect::<String>())
+            .unwrap_or_else(|| format!("ask-{}", self.next_id.fetch_add(1, Ordering::Relaxed)));
+        let cancel = AskCancel::new(timeout);
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        entries.push(InFlightEntry {
+            id: id.clone(),
+            cancel: cancel.clone(),
+        });
+        (id, cancel)
+    }
+
+    fn remove(&self, id: &str) {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(pos) = entries.iter().position(|entry| entry.id == id) {
+            entries.remove(pos);
+        }
+    }
+
+    fn cancel(&self, request_id: Option<&str>) -> bool {
+        let targets: Vec<AskCancel> = {
+            let entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            entries
+                .iter()
+                .filter(|entry| match request_id.map(str::trim).filter(|s| !s.is_empty()) {
+                    Some(id) => entry.id == id,
+                    None => true,
+                })
+                .filter(|entry| !entry.cancel.is_cancelled())
+                .map(|entry| entry.cancel.clone())
+                .collect()
+        };
+        let any = !targets.is_empty();
+        for target in targets {
+            target.cancel();
+        }
+        any
+    }
+
+    fn count(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .len()
+    }
+}
+
+struct InFlightGuard {
+    registry: Arc<InFlightAsks>,
+    id: String,
+    cancel: AskCancel,
+    finished: bool,
+}
+
+impl InFlightGuard {
+    fn finish(mut self) {
+        self.finished = true;
+        self.registry.remove(&self.id);
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.cancel.cancel();
+            self.registry.remove(&self.id);
+        }
+    }
+}
+
 /// The Ask service seam. `AppState::new` installs the local model parser when
 /// the `llama` feature is compiled in; tests install `Ask::stub()` and a
 /// feature-off build keeps `Ask::unavailable()`.
@@ -235,6 +413,20 @@ pub struct Ask {
     /// True when this Ask is backed by the real runtime rather than a stub.
     pub local: bool,
     pub projection: projection::ProjectionGate,
+    pub sql_limits: SandboxLimits,
+    in_flight: Arc<InFlightAsks>,
+}
+
+fn sql_limits_from_env() -> SandboxLimits {
+    let mut limits = SandboxLimits::default();
+    if let Some(ms) = std::env::var("SCROBBL_ASK_SQL_TIMEOUT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+    {
+        limits.timeout = std::time::Duration::from_millis(ms);
+    }
+    limits
 }
 
 impl Default for Ask {
@@ -251,6 +443,8 @@ impl Ask {
             model_ready: false,
             local: false,
             projection: projection::ProjectionGate::default(),
+            sql_limits: sql_limits_from_env(),
+            in_flight: Arc::new(InFlightAsks::default()),
         }
     }
 
@@ -266,6 +460,8 @@ impl Ask {
             model_ready: true,
             local: true,
             projection: projection::ProjectionGate::default(),
+            sql_limits: sql_limits_from_env(),
+            in_flight: Arc::new(InFlightAsks::default()),
         }
     }
 
@@ -276,6 +472,8 @@ impl Ask {
             model_ready: true,
             local: false,
             projection: projection::ProjectionGate::default(),
+            sql_limits: sql_limits_from_env(),
+            in_flight: Arc::new(InFlightAsks::default()),
         }
     }
 
@@ -291,7 +489,32 @@ impl Ask {
             model_ready,
             local,
             projection: projection::ProjectionGate::default(),
+            sql_limits: sql_limits_from_env(),
+            in_flight: Arc::new(InFlightAsks::default()),
         }
+    }
+
+    fn register_in_flight(
+        &self,
+        request_id: Option<&str>,
+        timeout: Duration,
+    ) -> (AskCancel, InFlightGuard) {
+        let (id, cancel) = self.in_flight.register(request_id, timeout);
+        let guard = InFlightGuard {
+            registry: Arc::clone(&self.in_flight),
+            id,
+            cancel: cancel.clone(),
+            finished: false,
+        };
+        (cancel, guard)
+    }
+
+    pub fn cancel_request(&self, request_id: Option<&str>) -> bool {
+        self.in_flight.cancel(request_id)
+    }
+
+    pub fn active_count(&self) -> usize {
+        self.in_flight.count()
     }
 
     pub fn available(&self) -> bool {
@@ -314,6 +537,69 @@ impl Ask {
     ) -> Result<ParsedQuestion> {
         self.parser.parse_follow_up(question, previous).await
     }
+
+    pub async fn parse_with_cancel(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+        cancel: &CancelToken,
+    ) -> Result<ParsedQuestion> {
+        self.parser
+            .parse_with_cancel(question, previous, Some(cancel))
+            .await
+    }
+
+    pub async fn repair_sql(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+        attempts: &[(&str, &str)],
+        cancel: &CancelToken,
+    ) -> Result<ParsedQuestion> {
+        self.parser
+            .repair_sql(question, previous, attempts, Some(cancel))
+            .await
+    }
+}
+
+fn cancelled_response(
+    state: &AppState,
+    question: String,
+    sql_output: Option<SqlModelOutput>,
+) -> AskResponse {
+    AskResponse {
+        status: AskStatus::Failed,
+        question,
+        query: None,
+        chips: Vec::new(),
+        result: None,
+        message: Some("The question was cancelled (rule `cancelled`).".into()),
+        candidates: Vec::new(),
+        runtime_available: state.ask.runtime_available,
+        earlier: Vec::new(),
+        sql: sql_output.map(|output| SqlAnswer {
+            title: output.title,
+            computed: output.computed,
+            answer_kind: output.answer_kind,
+            sql: output.sql,
+            columns: Vec::new(),
+            rows: Vec::new(),
+            truncated: false,
+            rule_code: Some(SandboxRule::Cancelled),
+            as_of_ms: None,
+        }),
+    }
+}
+
+pub async fn cancel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Option<Json<AskCancelRequest>>,
+) -> Result<Json<AskCancelResponse>> {
+    auth::session(&state, &headers).await?;
+    let request_id = body.as_ref().and_then(|b| b.request_id.as_deref());
+    let cancelled = state.ask.cancel_request(request_id);
+    Ok(Json(AskCancelResponse { cancelled }))
 }
 
 pub async fn ask(
@@ -342,36 +628,49 @@ pub async fn ask(
         }));
     }
     let previous = request.previous.as_ref().map(AskPrevious::sanitized);
-    let parsed = state
+    let (ask_cancel, guard) = state
         .ask
-        .parse_follow_up(&question, previous.as_ref())
-        .await?;
-    let query = match parsed {
-        ParsedQuestion::Query(query) => query,
-        ParsedQuestion::Plan(steps) => {
-            return Ok(Json(
-                run_plan(&state, question, steps, request.context).await?,
-            ));
+        .register_in_flight(request.request_id.as_deref(), parser::inference_timeout());
+
+    let parsed = tokio::select! {
+        biased;
+        () = ask_cancel.cancelled() => {
+            guard.finish();
+            return Ok(Json(cancelled_response(&state, question, None)));
         }
-        ParsedQuestion::Sql(output) => {
-            return Ok(Json(run_sql(&state, question, output).await?));
-        }
-        ParsedQuestion::Unsupported { reason } => {
-            return Ok(Json(AskResponse {
-                status: AskStatus::Unsupported,
-                question,
-                query: None,
-                chips: Vec::new(),
-                result: None,
-                message: Some(reason),
-                candidates: Vec::new(),
-                runtime_available: state.ask.runtime_available,
-                earlier: Vec::new(),
-                sql: None,
-            }));
+        res = state.ask.parse_with_cancel(&question, previous.as_ref(), &ask_cancel.token) => match res {
+            Ok(parsed) => parsed,
+            Err(_) if ask_cancel.is_cancelled() => {
+                guard.finish();
+                return Ok(Json(cancelled_response(&state, question, None)));
+            }
+            Err(err) => {
+                guard.finish();
+                return Err(err);
+            }
         }
     };
-    Ok(Json(run(&state, question, query, request.context).await?))
+    let response = match parsed {
+        ParsedQuestion::Query(query) => run(&state, question, query, request.context).await?,
+        ParsedQuestion::Plan(steps) => run_plan(&state, question, steps, request.context).await?,
+        ParsedQuestion::Sql(output) => {
+            run_sql(&state, question, previous.as_ref(), output, &ask_cancel).await?
+        }
+        ParsedQuestion::Unsupported { reason } => AskResponse {
+            status: AskStatus::Unsupported,
+            question,
+            query: None,
+            chips: Vec::new(),
+            result: None,
+            message: Some(reason),
+            candidates: Vec::new(),
+            runtime_available: state.ask.runtime_available,
+            earlier: Vec::new(),
+            sql: None,
+        },
+    };
+    guard.finish();
+    Ok(Json(response))
 }
 
 pub async fn query(
@@ -602,72 +901,168 @@ fn match_columns(actual: &[String], declared: &[SqlColumnSpec]) -> Vec<SqlColumn
         .collect()
 }
 
+pub const MAX_SQL_REPAIR_ROUNDS: usize = 2;
+
+fn is_repairable_rule(rule: SandboxRule) -> bool {
+    !matches!(
+        rule,
+        SandboxRule::Cancelled | SandboxRule::Timeout | SandboxRule::ProjectionUnavailable
+    )
+}
+
 async fn run_sql(
     state: &AppState,
     question: String,
-    output: SqlModelOutput,
+    previous: Option<&Previous>,
+    mut output: SqlModelOutput,
+    ask_cancel: &AskCancel,
 ) -> Result<AskResponse> {
-    let proj_path = projection::for_query(&state.storage, &state.ask.projection).await?;
-    let sql_text = output.sql.clone();
-    let (as_of_ms, outcome) = {
-        let _read = state.ask.projection.read_lock().await;
-        tokio::task::spawn_blocking(move || {
-            let as_of_ms = projection::read_built_at_ms(&proj_path);
-            let outcome = sandbox::execute(&proj_path, &sql_text, SandboxLimits::default());
-            (as_of_ms, outcome)
-        })
-        .await
-        .map_err(|_| AppError::Internal)?
-    };
-    match outcome {
-        Ok(table) => {
-            let columns = match_columns(&table.columns, &output.columns);
-            Ok(AskResponse {
-                status: AskStatus::Ok,
-                question,
-                query: None,
-                chips: Vec::new(),
-                result: None,
-                message: None,
-                candidates: Vec::new(),
-                runtime_available: state.ask.runtime_available,
-                earlier: Vec::new(),
-                sql: Some(SqlAnswer {
-                    title: output.title,
-                    computed: output.computed,
-                    answer_kind: output.answer_kind,
-                    sql: output.sql,
-                    columns,
-                    rows: table.rows,
-                    truncated: table.truncated,
-                    rule_code: None,
-                    as_of_ms,
-                }),
+    let mut failed_attempts: Vec<(String, String)> = Vec::new();
+    let limits = state.ask.sql_limits;
+    for round in 0..=MAX_SQL_REPAIR_ROUNDS {
+        let proj_path = tokio::select! {
+            biased;
+            () = ask_cancel.cancelled() => return Ok(cancelled_response(state, question, Some(output))),
+            res = projection::for_query(&state.storage, &state.ask.projection) => res?,
+        };
+        let sql_text = output.sql.clone();
+        let sandbox_cancel = ask_cancel.sandbox.clone();
+        let (as_of_ms, outcome) = {
+            let _read = tokio::select! {
+                biased;
+                () = ask_cancel.cancelled() => return Ok(cancelled_response(state, question, Some(output))),
+                guard = state.ask.projection.read_lock() => guard,
+            };
+            tokio::task::spawn_blocking(move || {
+                let as_of_ms = projection::read_built_at_ms(&proj_path);
+                let outcome = sandbox::execute_with_cancel(
+                    &proj_path,
+                    &sql_text,
+                    limits,
+                    Some(&sandbox_cancel),
+                );
+                (as_of_ms, outcome)
             })
+            .await
+            .map_err(|_| AppError::Internal)?
+        };
+        match outcome {
+            Ok(table) => {
+                let columns = match_columns(&table.columns, &output.columns);
+                return Ok(AskResponse {
+                    status: AskStatus::Ok,
+                    question,
+                    query: None,
+                    chips: Vec::new(),
+                    result: None,
+                    message: None,
+                    candidates: Vec::new(),
+                    runtime_available: state.ask.runtime_available,
+                    earlier: Vec::new(),
+                    sql: Some(SqlAnswer {
+                        title: output.title,
+                        computed: output.computed,
+                        answer_kind: output.answer_kind,
+                        sql: output.sql,
+                        columns,
+                        rows: table.rows,
+                        truncated: table.truncated,
+                        rule_code: None,
+                        as_of_ms,
+                    }),
+                });
+            }
+            Err(rejection) => {
+                let mut repair_note: Option<String> = None;
+                if is_repairable_rule(rejection.rule) && round < MAX_SQL_REPAIR_ROUNDS {
+                    failed_attempts.push((output.sql.clone(), rejection.model_error.clone()));
+                    let refs: Vec<(&str, &str)> = failed_attempts
+                        .iter()
+                        .map(|(sql, err)| (sql.as_str(), err.as_str()))
+                        .collect();
+                    let repaired = tokio::select! {
+                        biased;
+                        () = ask_cancel.cancelled() => return Ok(cancelled_response(state, question, Some(output))),
+                        res = state.ask.repair_sql(&question, previous, &refs, &ask_cancel.token) => res,
+                    };
+                    match repaired {
+                        Ok(ParsedQuestion::Sql(next_output)) => {
+                            output = next_output;
+                            continue;
+                        }
+                        Ok(ParsedQuestion::Unsupported { reason }) => {
+                            return Ok(AskResponse {
+                                status: AskStatus::Unsupported,
+                                question,
+                                query: None,
+                                chips: Vec::new(),
+                                result: None,
+                                message: Some(reason),
+                                candidates: Vec::new(),
+                                runtime_available: state.ask.runtime_available,
+                                earlier: Vec::new(),
+                                sql: None,
+                            });
+                        }
+                        Ok(ParsedQuestion::Query(_) | ParsedQuestion::Plan(_)) => {}
+                        Err(_) if ask_cancel.is_cancelled() => {
+                            return Ok(cancelled_response(state, question, Some(output)));
+                        }
+                        Err(AppError::BadRequest(detail)) => {
+                            repair_note = Some(detail);
+                        }
+                        Err(err) => return Err(err),
+                    }
+                }
+                let local_hint = if is_repairable_rule(rejection.rule)
+                    && ai::read_settings(state)
+                        .await
+                        .ok()
+                        .is_some_and(|s| !s.uses_remote())
+                {
+                    " Try switching to guided questions or choosing a larger model in AI settings."
+                } else {
+                    ""
+                };
+                let message = if let Some(note) = repair_note {
+                    format!(
+                        "Could not repair the SQL query ({note}) {}{local_hint}",
+                        rejection.message
+                    )
+                } else if round > 0 && is_repairable_rule(rejection.rule) {
+                    format!(
+                        "Could not produce a valid query after {MAX_SQL_REPAIR_ROUNDS} repair attempts. {}{local_hint}",
+                        rejection.message
+                    )
+                } else {
+                    rejection.message
+                };
+                return Ok(AskResponse {
+                    status: AskStatus::Failed,
+                    question,
+                    query: None,
+                    chips: Vec::new(),
+                    result: None,
+                    message: Some(message),
+                    candidates: Vec::new(),
+                    runtime_available: state.ask.runtime_available,
+                    earlier: Vec::new(),
+                    sql: Some(SqlAnswer {
+                        title: output.title,
+                        computed: output.computed,
+                        answer_kind: output.answer_kind,
+                        sql: output.sql,
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        truncated: false,
+                        rule_code: Some(rejection.rule),
+                        as_of_ms,
+                    }),
+                });
+            }
         }
-        Err(rejection) => Ok(AskResponse {
-            status: AskStatus::Failed,
-            question,
-            query: None,
-            chips: Vec::new(),
-            result: None,
-            message: Some(rejection.message),
-            candidates: Vec::new(),
-            runtime_available: state.ask.runtime_available,
-            earlier: Vec::new(),
-            sql: Some(SqlAnswer {
-                title: output.title,
-                computed: output.computed,
-                answer_kind: output.answer_kind,
-                sql: output.sql,
-                columns: Vec::new(),
-                rows: Vec::new(),
-                truncated: false,
-                rule_code: Some(rejection.rule),
-                as_of_ms,
-            }),
-        }),
     }
+    Err(AppError::Internal)
 }
 
 async fn run(

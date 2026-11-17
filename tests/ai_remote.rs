@@ -18,7 +18,14 @@ use scrobbl_rs::{
     db, web,
 };
 use serde_json::{Value, json};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tower::ServiceExt;
 
 type Seen = Arc<Mutex<Vec<(Option<String>, Value)>>>;
@@ -29,7 +36,10 @@ struct Mock {
     /// Reject `json_schema` like a server that does not support it.
     reject_schema: bool,
     reply: Arc<Mutex<String>>,
+    replies: Arc<Mutex<VecDeque<String>>>,
     status: Arc<Mutex<u16>>,
+    delay: Arc<Mutex<Duration>>,
+    request_count: Arc<AtomicUsize>,
 }
 
 async fn chat(
@@ -43,6 +53,11 @@ async fn chat(
         .map(str::to_owned);
     let schema = body["response_format"]["type"] == "json_schema";
     mock.seen.lock().unwrap().push((auth, body));
+    mock.request_count.fetch_add(1, Ordering::SeqCst);
+    let delay = *mock.delay.lock().unwrap();
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
     let status = *mock.status.lock().unwrap();
     if status != 0 && status != 200 {
         return (
@@ -56,7 +71,12 @@ async fn chat(
             Json(json!({"error": {"message": "response_format json_schema is not supported"}})),
         );
     }
-    let reply = mock.reply.lock().unwrap().clone();
+    let reply = mock
+        .replies
+        .lock()
+        .unwrap()
+        .pop_front()
+        .unwrap_or_else(|| mock.reply.lock().unwrap().clone());
     (
         StatusCode::OK,
         Json(json!({"choices": [{"message": {"role": "assistant", "content": reply}}]})),
@@ -794,4 +814,693 @@ async fn remote_connection_test_accepts_sql_mode_response() {
     assert_eq!(status, StatusCode::OK, "{test}");
     assert_eq!(test["model_ready"], true, "{test}");
     assert!(test["message"].as_str().unwrap().contains("Connected"));
+}
+
+// ---- Repair rounds, follow-ups, cancellation and honest failures (#212) ----
+
+fn sql_reply(sql: &str, title: &str, computed: &str, answer_kind: &str, columns: Value) -> String {
+    json!({
+        "sql": sql,
+        "title": title,
+        "computed": computed,
+        "answer_kind": answer_kind,
+        "columns": columns,
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn remote_sql_mode_repairs_a_rejected_query_and_never_leaks_archive_values() {
+    let mock = Mock::default();
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        replies.push_back(sql_reply(
+            "SELECT missing_col FROM listens",
+            "Total plays",
+            "Counted plays across all time.",
+            "value",
+            json!([{"name": "plays", "format": "count"}]),
+        ));
+        replies.push_back(sql_reply(
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+            "Total plays",
+            "Counted plays across all time.",
+            "value",
+            json!([{"name": "plays", "format": "count"}]),
+        ));
+    }
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    let extra = play(
+        99,
+        "2024-03-01T10:00:00Z",
+        "fixture-ar99",
+        "PrivateRepairArtist",
+        "PrivateRepairTrack",
+    );
+    let mut tx = state.storage.writer.begin().await.unwrap();
+    scrobbl_rs::db::ingest(&mut tx, &[extra]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "How many plays do I have?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["sql"]["rows"], json!([[6]]), "{body}");
+
+    let seen = mock.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "expected initial + 1 repair call");
+    let repair_sent = seen[1].1.to_string();
+    assert!(
+        repair_sent.contains("SELECT missing_col FROM listens"),
+        "repair prompt must include failed SQL: {repair_sent}"
+    );
+    assert!(
+        repair_sent.contains("no_such_column") && repair_sent.contains("missing_col"),
+        "repair prompt must include sanitized error: {repair_sent}"
+    );
+    for (_, req) in seen.iter() {
+        let text = req.to_string();
+        for secret in [
+            "PrivateRepairArtist",
+            "PrivateRepairTrack",
+            "Jóga",
+            "Hunter",
+            "Creep",
+            "Radiohead",
+            "sk-secret-key",
+        ] {
+            assert!(!text.contains(secret), "request leaked `{secret}`: {text}");
+        }
+        let user_msg = req["messages"][1]["content"].as_str().unwrap();
+        assert!(
+            !user_msg.contains("Björk"),
+            "user message leaked archive value: {user_msg}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn remote_sql_mode_exhausts_two_repair_rounds_and_returns_honest_failure() {
+    let mock = Mock::default();
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        replies.push_back(sql_reply(
+            "SELECT value FROM settings",
+            "Secrets",
+            "Read settings.",
+            "table",
+            json!([]),
+        ));
+        replies.push_back(sql_reply(
+            "DELETE FROM listens",
+            "Delete",
+            "Delete listens.",
+            "table",
+            json!([]),
+        ));
+        replies.push_back(sql_reply(
+            "SELECT bad_col FROM listens",
+            "Bad col",
+            "Read bad_col.",
+            "table",
+            json!([]),
+        ));
+    }
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    // Even for a question that guided mode could answer ("How many times did I listen to Björk?"),
+    // SQL mode must fail honestly and never silently switch to guided questions.
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "How many times did I listen to Björk?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "failed", "{body}");
+    assert!(body["query"].is_null(), "must never switch to guided: {body}");
+    assert!(body["result"].is_null(), "{body}");
+    assert_eq!(body["sql"]["rule_code"], "sql_error", "{body}");
+    assert_eq!(body["sql"]["rows"], json!([]), "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(
+        message.contains("2 repair attempts"),
+        "expected repair exhaustion message: {message}"
+    );
+    assert!(
+        message.contains("sql_error") && message.contains("bad_col"),
+        "expected rule name and identifier in message: {message}"
+    );
+
+    let seen = mock.seen.lock().unwrap();
+    assert_eq!(seen.len(), 3, "expected 1 initial + 2 repair calls");
+    let third_user = seen[2].1["messages"][1]["content"].as_str().unwrap();
+    assert!(third_user.contains("SELECT value FROM settings"), "{third_user}");
+    assert!(third_user.contains("unauthorized_table"), "{third_user}");
+    assert!(third_user.contains("DELETE FROM listens"), "{third_user}");
+    assert!(third_user.contains("not_select"), "{third_user}");
+}
+
+#[tokio::test]
+async fn remote_sql_mode_reports_timeout_honestly_without_retrying() {
+    let mock = Mock::default();
+    *mock.reply.lock().unwrap() = sql_reply(
+        "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt",
+        "Endless",
+        "Endless loop.",
+        "value",
+        json!([{"name": "c", "format": "count"}]),
+    );
+    let url = serve(mock.clone()).await;
+    let (_dir, mut state, token) = setup_sql_default(&url).await;
+    state.ask.sql_limits.timeout = Duration::from_millis(5);
+    state.ask.sql_limits.max_instructions = 10_000_000_000;
+    seed(&state).await;
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "Count forever"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "failed", "{body}");
+    assert_eq!(body["sql"]["rule_code"], "timeout", "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(message.contains("timeout"), "{message}");
+    assert_eq!(
+        mock.seen.lock().unwrap().len(),
+        1,
+        "timeout must stop immediately without wasting repair rounds"
+    );
+}
+
+#[tokio::test]
+async fn remote_sql_mode_repair_can_conclude_unsupported_or_handle_bad_repair_json() {
+    let mock = Mock::default();
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        replies.push_back(sql_reply(
+            "SELECT mood FROM listens",
+            "Mood",
+            "Plays by mood.",
+            "table",
+            json!([]),
+        ));
+        replies.push_back(sql_reply(
+            "",
+            "",
+            "The archive does not record song moods.",
+            "unsupported",
+            json!([]),
+        ));
+    }
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "What mood do I listen to most?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "unsupported", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("moods"),
+        "{body}"
+    );
+
+    // If a repair round emits unparseable output instead of valid JSON, return an honest failure
+    // keeping the last rule code and SQL rather than dropping into a generic HTTP 400.
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        replies.push_back(sql_reply(
+            "SELECT value FROM settings",
+            "Secrets",
+            "Read settings.",
+            "table",
+            json!([]),
+        ));
+        replies.push_back("not valid json at all".into());
+    }
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "Show secrets"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "failed", "{body}");
+    assert_eq!(body["sql"]["rule_code"], "unauthorized_table", "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("unauthorized_table"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn remote_sql_mode_follow_up_sends_previous_sql_and_no_results() {
+    let mock = Mock::default();
+    let prev_sql = "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 GROUP BY a.id ORDER BY plays DESC";
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        // First reply triggers a repair to confirm repair also keeps follow-up context without archive values.
+        replies.push_back(sql_reply(
+            "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND l.bad_month = 2 GROUP BY a.id",
+            "February plays per artist",
+            "Counted plays per artist in February 2024.",
+            "table",
+            json!([{"name": "artist", "format": "artist"}, {"name": "plays", "format": "count"}]),
+        ));
+        replies.push_back(sql_reply(
+            "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND l.local_year = 2024 AND l.local_month = 2 GROUP BY a.id ORDER BY plays DESC, a.name ASC",
+            "February 2024 plays per artist",
+            "Counted plays per artist in February 2024.",
+            "table",
+            json!([{"name": "artist", "format": "artist"}, {"name": "plays", "format": "count"}]),
+        ));
+    }
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    let extra = play(
+        99,
+        "2024-03-01T10:00:00Z",
+        "fixture-ar99",
+        "PrivateFollowUpArtist",
+        "PrivateFollowUpTrack",
+    );
+    let mut tx = state.storage.writer.begin().await.unwrap();
+    scrobbl_rs::db::ingest(&mut tx, &[extra]).await.unwrap();
+    tx.commit().await.unwrap();
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({
+            "question": "and only in February 2024?",
+            "previous": {
+                "question": "How many times did I listen to each artist?",
+                "chips": [],
+                "sql": {
+                    "title": "Plays per artist",
+                    "computed": "Counted plays grouped by artist across all time.",
+                    "sql": prev_sql,
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(
+        body["sql"]["rows"],
+        json!([["Björk", 1], ["Radiohead", 1]]),
+        "{body}"
+    );
+
+    let seen = mock.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    for (idx, (_, req)) in seen.iter().enumerate() {
+        let user = req["messages"][1]["content"].as_str().unwrap();
+        assert!(
+            user.contains("Previous question: How many times did I listen to each artist?"),
+            "call {idx}: {user}"
+        );
+        assert!(
+            user.contains("Previous title: Plays per artist"),
+            "call {idx}: {user}"
+        );
+        assert!(
+            user.contains("Previous computed: Counted plays grouped by artist across all time."),
+            "call {idx}: {user}"
+        );
+        assert!(
+            user.contains(&format!("Previous SQL: {prev_sql}")),
+            "call {idx}: {user}"
+        );
+        assert!(
+            user.contains("New question: and only in February 2024?"),
+            "call {idx}: {user}"
+        );
+        let raw = req.to_string();
+        for secret in [
+            "PrivateFollowUpArtist",
+            "PrivateFollowUpTrack",
+            "Jóga",
+            "Hunter",
+            "Creep",
+            "Radiohead",
+            "sk-secret-key",
+        ] {
+            assert!(!raw.contains(secret), "call {idx} leaked `{secret}`: {raw}");
+        }
+    }
+}
+
+async fn serve_app(mut state: AppState) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    state.config.port = addr.port();
+    let router = web::router(state);
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    format!("http://{addr}")
+}
+
+async fn wait_for_request(mock: &Mock, expected: usize) {
+    for _ in 0..500 {
+        if mock.request_count.load(Ordering::SeqCst) >= expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("timed out waiting for mock AI request #{expected}");
+}
+
+#[tokio::test]
+async fn cancelling_during_long_sql_query_interrupts_sqlite_and_keeps_server_responsive() {
+    let mock = Mock::default();
+    let slow_sql = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt";
+    *mock.reply.lock().unwrap() = sql_reply(
+        slow_sql,
+        "Endless",
+        "Endless loop.",
+        "value",
+        json!([{"name": "c", "format": "count"}]),
+    );
+    let url = serve(mock.clone()).await;
+    let (_dir, mut state, token) = setup_sql_default(&url).await;
+    state.ask.sql_limits.timeout = Duration::from_secs(10);
+    state.ask.sql_limits.max_instructions = 10_000_000_000;
+    seed(&state).await;
+
+    let base = serve_app(state.clone()).await;
+    let client = reqwest::Client::new();
+    let started = std::time::Instant::now();
+
+    let ask_task = tokio::spawn({
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/api/v1/ask"))
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("origin", &base)
+                .json(&json!({"question": "Count forever", "request_id": "sql-cancel-1"}))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    });
+
+    wait_for_request(&mock, 1).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+
+    let cancel_res = client
+        .post(format!("{base}/api/v1/ask/cancel"))
+        .header("cookie", format!("scrobbl_session={token}"))
+        .header("x-csrf-token", "test-csrf")
+        .header("origin", &base)
+        .json(&json!({"request_id": "sql-cancel-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cancel_res.status(), StatusCode::OK);
+    let cancel_body: Value = cancel_res.json().await.unwrap();
+    assert_eq!(cancel_body["cancelled"], true, "{cancel_body}");
+
+    let body = ask_task.await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "cancellation took too long: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(body["status"], "failed", "{body}");
+    assert_eq!(body["sql"]["rule_code"], "cancelled", "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("cancelled"),
+        "{body}"
+    );
+
+    // Server remains responsive and a subsequent valid query succeeds immediately.
+    *mock.reply.lock().unwrap() = sql_reply(
+        "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+        "Total plays",
+        "Counted plays.",
+        "value",
+        json!([{"name": "plays", "format": "count"}]),
+    );
+    let next: Value = client
+        .post(format!("{base}/api/v1/ask"))
+        .header("cookie", format!("scrobbl_session={token}"))
+        .header("x-csrf-token", "test-csrf")
+        .header("origin", &base)
+        .json(&json!({"question": "How many plays?"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(next["status"], "ok", "{next}");
+    assert_eq!(next["sql"]["rows"], json!([[5]]), "{next}");
+}
+
+#[tokio::test]
+async fn cancelling_during_remote_ai_inference_aborts_and_returns_honestly() {
+    let mock = Mock::default();
+    *mock.delay.lock().unwrap() = Duration::from_secs(10);
+    *mock.reply.lock().unwrap() = sql_reply(
+        "SELECT COUNT(*) AS plays FROM listens",
+        "Plays",
+        "Plays.",
+        "value",
+        json!([{"name": "plays", "format": "count"}]),
+    );
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    seed(&state).await;
+
+    let base = serve_app(state).await;
+    let client = reqwest::Client::new();
+    let started = std::time::Instant::now();
+
+    let ask_task = tokio::spawn({
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            client
+                .post(format!("{base}/api/v1/ask"))
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("origin", &base)
+                .json(&json!({"question": "Slow LLM question", "request_id": "llm-cancel-1"}))
+                .send()
+                .await
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap()
+        }
+    });
+
+    wait_for_request(&mock, 1).await;
+    let cancel_body: Value = client
+        .post(format!("{base}/api/v1/ask/cancel"))
+        .header("cookie", format!("scrobbl_session={token}"))
+        .header("x-csrf-token", "test-csrf")
+        .header("origin", &base)
+        .json(&json!({"request_id": "llm-cancel-1"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cancel_body["cancelled"], true, "{cancel_body}");
+
+    let body = ask_task.await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "remote inference cancellation took too long: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(body["status"], "failed", "{body}");
+    assert!(
+        body["message"].as_str().unwrap().contains("cancelled"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn dropping_http_request_interrupts_in_flight_sql_query() {
+    let mock = Mock::default();
+    let slow_sql = "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt";
+    *mock.reply.lock().unwrap() = sql_reply(
+        slow_sql,
+        "Endless",
+        "Endless loop.",
+        "value",
+        json!([{"name": "c", "format": "count"}]),
+    );
+    let url = serve(mock.clone()).await;
+    let (_dir, mut state, token) = setup_sql_default(&url).await;
+    state.ask.sql_limits.timeout = Duration::from_secs(10);
+    state.ask.sql_limits.max_instructions = 10_000_000_000;
+    seed(&state).await;
+
+    let base = serve_app(state.clone()).await;
+    let client = reqwest::Client::new();
+
+    let ask_task = tokio::spawn({
+        let client = client.clone();
+        let base = base.clone();
+        let token = token.clone();
+        async move {
+            let _ = client
+                .post(format!("{base}/api/v1/ask"))
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("origin", &base)
+                .json(&json!({"question": "Count forever"}))
+                .send()
+                .await;
+        }
+    });
+
+    wait_for_request(&mock, 1).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    assert_eq!(state.ask.active_count(), 1);
+    ask_task.abort();
+    let _ = ask_task.await;
+
+    for _ in 0..100 {
+        if state.ask.active_count() == 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        state.ask.active_count(),
+        0,
+        "aborting HTTP request must cancel in-flight SQL"
+    );
+
+    // Server stays responsive right away.
+    *mock.reply.lock().unwrap() = sql_reply(
+        "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+        "Total plays",
+        "Counted plays.",
+        "value",
+        json!([{"name": "plays", "format": "count"}]),
+    );
+    let next: Value = client
+        .post(format!("{base}/api/v1/ask"))
+        .header("cookie", format!("scrobbl_session={token}"))
+        .header("x-csrf-token", "test-csrf")
+        .header("origin", &base)
+        .json(&json!({"question": "How many plays?"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(next["status"], "ok", "{next}");
+}
+
+#[tokio::test]
+async fn ask_cancel_requires_owner_session_and_csrf_and_rejects_api_keys() {
+    let mock = Mock::default();
+    let url = serve(mock).await;
+    let (_dir, state, token) = setup_sql_default(&url).await;
+    let router = web::router(state);
+
+    // Missing session -> 401
+    let res = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/cancel")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    // Missing CSRF -> 403
+    let res = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/cancel")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+    // Read-only API key -> 403
+    let res = router
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask/cancel")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("authorization", "Bearer deadbeef")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
 }
