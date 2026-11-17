@@ -2,6 +2,7 @@
 //! canonical listening selection. The model (later) only produces DSL.
 pub mod dsl;
 pub mod execute;
+pub mod fixture;
 pub mod grammar;
 pub mod grouping;
 pub mod history_link;

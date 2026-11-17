@@ -1,9 +1,14 @@
-//! Offline eval harness for the Ask parser.
+//! Offline eval harness for the Ask parser and for Ask free questions (SQL).
 //!
-//! Reads a versioned JSONL corpus, runs the shipped prompt, grammar and
-//! `ModelOutput` path against one local GGUF file, and writes a compact JSON
-//! result plus a Markdown report. It never runs in the normal test suite and
-//! never touches the network: the model is passed by path.
+//! The guided mode reads a versioned JSONL corpus, runs the shipped prompt,
+//! grammar and `ModelOutput` path against one local GGUF file, and writes a
+//! compact JSON result plus a Markdown report. It never runs in the normal test
+//! suite and never touches the network: the model is passed by path.
+//!
+//! The SQL mode reads `evals/ask/sql_corpus.jsonl`, builds the fixed synthetic
+//! fixture from `ask::fixture`, asks one OpenAI-compatible server for SQL and
+//! scores the typed result against the expected values. It runs only when
+//! explicitly requested and requires a server the operator names.
 //!
 //! ```text
 //! cargo run --locked --release --bin ask-eval -- \
@@ -12,25 +17,34 @@
 //!   --corpus evals/ask/corpus.jsonl \
 //!   --threads 8 \
 //!   --out C:\temp\qwen3-1.7b.json
+//!
+//! cargo run --locked --release --bin ask-eval -- --sql \
+//!   --base-url https://api.example.com/v1 --remote-model example-model \
+//!   --label example --out C:\temp\example-sql.json
 //! ```
 use scrobbl_rs::ask::{
     dsl::{Limit, Query},
+    fixture,
     parser::ParsedQuestion,
     prompt,
+    remote::{self, RemoteConfig},
     runtime::{self, Generation, ModelSpec, Session},
-    schema::{self, ModelOutput},
+    sandbox::{self, SandboxLimits, SandboxRule, SqlValue},
+    schema::{self, ModelOutput, SqlAnswerKind, SqlModelOutput},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     process::ExitCode,
     time::Duration,
 };
 
 const DEFAULT_CORPUS: &str = "evals/ask/corpus.jsonl";
+const DEFAULT_SQL_CORPUS: &str = "evals/ask/sql_corpus.jsonl";
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_WARMUPS: usize = 2;
+const MAX_SQL_REPAIR_ROUNDS: usize = 2;
 const SLOTS: [&str; 7] = [
     "target", "name", "period", "weekday", "group_by", "limit", "order",
 ];
@@ -50,6 +64,9 @@ fn run() -> Result<(), String> {
     if args.help {
         eprintln!("{}", Args::usage());
         return Ok(());
+    }
+    if args.sql {
+        return run_sql(&args);
     }
 
     let cases = load_corpus(&args.corpus)?;
@@ -175,6 +192,11 @@ struct Args {
     report: Option<PathBuf>,
     timeout: Duration,
     warmups: usize,
+    sql: bool,
+    sql_corpus: PathBuf,
+    base_url: Option<String>,
+    remote_model: Option<String>,
+    api_key: Option<String>,
     help: bool,
 }
 
@@ -190,6 +212,11 @@ impl Default for Args {
             report: None,
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             warmups: DEFAULT_WARMUPS,
+            sql: false,
+            sql_corpus: PathBuf::from(DEFAULT_SQL_CORPUS),
+            base_url: None,
+            remote_model: None,
+            api_key: None,
             help: false,
         }
     }
@@ -198,17 +225,23 @@ impl Default for Args {
 impl Args {
     fn usage() -> &'static str {
         "usage: ask-eval --model <file.gguf> [options]\n\
+         \x20      ask-eval --sql --base-url <url> --remote-model <name> [options]\n\
          \n\
          options:\n\
-         \x20 --model <path>      GGUF file to evaluate (required)\n\
-         \x20 --label <name>      label stored in the result (default: file stem)\n\
-         \x20 --corpus <path>     JSONL corpus (default: evals/ask/corpus.jsonl)\n\
+         \x20 --model <path>      GGUF file to evaluate in guided mode (required there)\n\
+         \x20 --label <name>      label stored in the result (default: file stem or model name)\n\
+         \x20 --corpus <path>     guided JSONL corpus (default: evals/ask/corpus.jsonl)\n\
          \x20 --threads <n>       inference threads (default: 4)\n\
          \x20 --limit <n>         evaluate only the first n cases\n\
          \x20 --warmups <n>       uncounted warm-up questions (default: 2)\n\
          \x20 --timeout-ms <n>    per-question timeout (default: 120000)\n\
          \x20 --out <path.json>   write JSON plus a Markdown report next to it\n\
          \x20 --report <path.md>  override the Markdown report path\n\
+         \x20 --sql               score free questions (SQL) by result on the fixed fixture\n\
+         \x20 --sql-corpus <path> SQL JSONL corpus (default: evals/ask/sql_corpus.jsonl)\n\
+         \x20 --base-url <url>    OpenAI-compatible server base URL (SQL mode)\n\
+         \x20 --remote-model <n>  model name sent to that server (SQL mode)\n\
+         \x20 --api-key <key>     optional bearer token (SQL mode; prefer SCROBBL_ASK_EVAL_API_KEY)\n\
          \x20 --help              show this help"
     }
 
@@ -233,10 +266,44 @@ impl Args {
                 }
                 "--out" => args.out = Some(PathBuf::from(value()?)),
                 "--report" => args.report = Some(PathBuf::from(value()?)),
+                "--sql" => args.sql = true,
+                "--sql-corpus" => args.sql_corpus = PathBuf::from(value()?),
+                "--base-url" => args.base_url = Some(value()?),
+                "--remote-model" => args.remote_model = Some(value()?),
+                "--api-key" => args.api_key = Some(value()?),
                 other => return Err(format!("unknown argument {other:?}\n{}", Self::usage())),
             }
         }
         if args.help {
+            return Ok(args);
+        }
+        if args.sql {
+            if args
+                .base_url
+                .as_deref()
+                .is_none_or(|url| url.trim().is_empty())
+            {
+                return Err(format!(
+                    "--base-url is required in SQL mode\n{}",
+                    Self::usage()
+                ));
+            }
+            if args
+                .remote_model
+                .as_deref()
+                .is_none_or(|model| model.trim().is_empty())
+            {
+                return Err(format!(
+                    "--remote-model is required in SQL mode\n{}",
+                    Self::usage()
+                ));
+            }
+            if args.label.is_empty() {
+                args.label = args.remote_model.clone().unwrap_or_default();
+            }
+            if args.warmups > 1000 {
+                return Err("--warmups is unreasonably large".into());
+            }
             return Ok(args);
         }
         if args.model.as_os_str().is_empty() {
@@ -978,6 +1045,617 @@ fn round(value: f64, places: u32) -> f64 {
     (value * factor).round() / factor
 }
 
+// ---------------------------------------------------------------------------
+// SQL mode: score free questions by result on the fixed fixture
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Deserialize)]
+struct SqlCase {
+    id: String,
+    lang: String,
+    question: String,
+    /// `expressible` when the frozen guided vocabulary can answer the question.
+    guided: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    /// The query that defines the expected answer. The model-free test runs it
+    /// against the fixture and asserts that it returns `expected`.
+    reference_sql: String,
+    expected: ExpectedTable,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+struct ExpectedTable {
+    columns: Vec<String>,
+    rows: Vec<Vec<Cell>>,
+}
+
+/// A typed expected cell, written as a JSON scalar in the corpus.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+enum Cell {
+    Null,
+    Integer(i64),
+    Real(f64),
+    Text(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    Correct,
+    HonestFailure,
+    WrongButPlausible,
+}
+
+impl Outcome {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Correct => "correct",
+            Self::HonestFailure => "honest_failure",
+            Self::WrongButPlausible => "wrong_but_plausible",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SqlObservation {
+    outcome: Outcome,
+    rule_code: Option<String>,
+    detail: Option<String>,
+}
+
+fn load_sql_corpus(path: &Path) -> Result<Vec<SqlCase>, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    parse_sql_corpus(&text, &path.display().to_string())
+}
+
+fn parse_sql_corpus(text: &str, origin: &str) -> Result<Vec<SqlCase>, String> {
+    let mut cases = Vec::new();
+    let mut ids = BTreeSet::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let case: SqlCase = serde_json::from_str(line)
+            .map_err(|error| format!("{origin}:{}: {error}", index + 1))?;
+        validate_sql_case(&case, &mut ids)
+            .map_err(|error| format!("{origin}:{}: {error}", index + 1))?;
+        cases.push(case);
+    }
+    Ok(cases)
+}
+
+fn validate_sql_case(case: &SqlCase, ids: &mut BTreeSet<String>) -> Result<(), String> {
+    let id = &case.id;
+    if !ids.insert(id.clone()) {
+        return Err(format!("{id}: duplicate id"));
+    }
+    if !matches!(case.lang.as_str(), "en" | "it") {
+        return Err(format!("{id}: language must be en or it"));
+    }
+    if !id.starts_with(&format!("sql-{}-", case.lang)) {
+        return Err(format!("{id}: id must start with sql-{}-", case.lang));
+    }
+    if case.question.trim().is_empty() {
+        return Err(format!("{id}: the question is empty"));
+    }
+    if !matches!(case.guided.as_str(), "expressible" | "not_expressible") {
+        return Err(format!(
+            "{id}: guided must be expressible or not_expressible, got {:?}",
+            case.guided
+        ));
+    }
+    if case.reference_sql.trim().is_empty() {
+        return Err(format!("{id}: reference_sql is empty"));
+    }
+    let expected = &case.expected;
+    if expected.columns.is_empty() {
+        return Err(format!("{id}: expected.columns is empty"));
+    }
+    if expected.rows.is_empty() {
+        return Err(format!(
+            "{id}: expected.rows is empty; use an explicit result"
+        ));
+    }
+    for (row, cells) in expected.rows.iter().enumerate() {
+        if cells.len() != expected.columns.len() {
+            return Err(format!(
+                "{id}: expected row {} has {} cells for {} columns",
+                row + 1,
+                cells.len(),
+                expected.columns.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn cell_matches(expected: &Cell, actual: &SqlValue) -> bool {
+    match (expected, actual) {
+        (Cell::Null, SqlValue::Null) => true,
+        (Cell::Integer(a), SqlValue::Integer(b)) => a == b,
+        (Cell::Text(a), SqlValue::Text(b)) => a == b,
+        (Cell::Integer(a), SqlValue::Real(b)) => (*a as f64 - *b).abs() <= 1e-6,
+        (Cell::Real(a), SqlValue::Integer(b)) => (*a - *b as f64).abs() <= 1e-6,
+        (Cell::Real(a), SqlValue::Real(b)) => (a - b).abs() <= 1e-6,
+        _ => false,
+    }
+}
+
+fn render_value(value: &SqlValue) -> String {
+    match value {
+        SqlValue::Null => "null".into(),
+        SqlValue::Integer(value) => value.to_string(),
+        SqlValue::Real(value) => value.to_string(),
+        SqlValue::Text(value) => format!("{value:?}"),
+    }
+}
+
+fn render_cell(cell: &Cell) -> String {
+    match cell {
+        Cell::Null => "null".into(),
+        Cell::Integer(value) => value.to_string(),
+        Cell::Real(value) => value.to_string(),
+        Cell::Text(value) => format!("{value:?}"),
+    }
+}
+
+/// Compare a typed SQL result to the expected table. Rows are ordered: a
+/// ranking is scored on its order, and every reference query orders it
+/// deterministically.
+fn compare_result(expected: &ExpectedTable, output: &sandbox::SandboxOutput) -> Result<(), String> {
+    if output.truncated {
+        return Err("the result was truncated by the output cap".into());
+    }
+    if output.columns.len() != expected.columns.len() {
+        return Err(format!(
+            "expected {} columns, got {}",
+            expected.columns.len(),
+            output.columns.len()
+        ));
+    }
+    if output.rows.len() != expected.rows.len() {
+        return Err(format!(
+            "expected {} rows, got {}",
+            expected.rows.len(),
+            output.rows.len()
+        ));
+    }
+    for (row, (expected_row, actual_row)) in expected.rows.iter().zip(&output.rows).enumerate() {
+        if expected_row.len() != actual_row.len() {
+            return Err(format!("row {} has a different column count", row + 1));
+        }
+        for (column, (expected_cell, actual_cell)) in
+            expected_row.iter().zip(actual_row).enumerate()
+        {
+            if !cell_matches(expected_cell, actual_cell) {
+                return Err(format!(
+                    "cell ({}, {}) expected {}, got {}",
+                    row + 1,
+                    expected.columns[column],
+                    render_cell(expected_cell),
+                    render_value(actual_cell)
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_repairable_rule(rule: SandboxRule) -> bool {
+    !matches!(
+        rule,
+        SandboxRule::Cancelled | SandboxRule::Timeout | SandboxRule::ProjectionUnavailable
+    )
+}
+
+/// Validate the model's JSON and honour an explicit refusal.
+fn parse_sql_output(reply: &str) -> Result<Option<SqlModelOutput>, String> {
+    let output: SqlModelOutput =
+        serde_json::from_str(reply).map_err(|error| format!("schema: {error}"))?;
+    if output.answer_kind == SqlAnswerKind::Unsupported || output.sql.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(output))
+}
+
+async fn observe_sql_case(
+    config: &RemoteConfig,
+    case: &SqlCase,
+    projection: &Path,
+    timeout: Duration,
+) -> SqlObservation {
+    let fail = |detail: String| SqlObservation {
+        outcome: Outcome::HonestFailure,
+        rule_code: None,
+        detail: Some(detail),
+    };
+    let reply = match remote::infer_sql(config, &case.question, None, fixture::TODAY, timeout).await
+    {
+        Ok(reply) => reply,
+        Err(error) => return fail(format!("request: {error}")),
+    };
+    let mut output = match parse_sql_output(&reply) {
+        Ok(Some(output)) => output,
+        Ok(None) => return fail("unsupported".into()),
+        Err(error) => return fail(error),
+    };
+    let mut attempts: Vec<(String, String)> = Vec::new();
+    for round in 0..=MAX_SQL_REPAIR_ROUNDS {
+        match sandbox::execute(projection, &output.sql, SandboxLimits::default()) {
+            Ok(table) => {
+                return match compare_result(&case.expected, &table) {
+                    Ok(()) => SqlObservation {
+                        outcome: Outcome::Correct,
+                        rule_code: None,
+                        detail: None,
+                    },
+                    Err(detail) => SqlObservation {
+                        outcome: Outcome::WrongButPlausible,
+                        rule_code: None,
+                        detail: Some(detail),
+                    },
+                };
+            }
+            Err(rejection) => {
+                if is_repairable_rule(rejection.rule) && round < MAX_SQL_REPAIR_ROUNDS {
+                    attempts.push((output.sql.clone(), rejection.model_error.clone()));
+                    let references: Vec<(&str, &str)> = attempts
+                        .iter()
+                        .map(|(sql, error)| (sql.as_str(), error.as_str()))
+                        .collect();
+                    let repaired = remote::infer_sql_repair(
+                        config,
+                        &case.question,
+                        None,
+                        &references,
+                        fixture::TODAY,
+                        timeout,
+                    )
+                    .await;
+                    match repaired {
+                        Ok(reply) => match parse_sql_output(&reply) {
+                            Ok(Some(next)) => {
+                                output = next;
+                                continue;
+                            }
+                            Ok(None) => return fail("unsupported after repair".into()),
+                            Err(error) => return fail(format!("repair output: {error}")),
+                        },
+                        Err(error) => return fail(format!("repair request: {error}")),
+                    }
+                }
+                return SqlObservation {
+                    outcome: Outcome::HonestFailure,
+                    rule_code: Some(rejection.rule_name().to_owned()),
+                    detail: Some(rejection.model_error),
+                };
+            }
+        }
+    }
+    fail("repair rounds exhausted".into())
+}
+
+#[derive(Clone, Debug, Default)]
+struct SqlCounts {
+    cases: usize,
+    correct: usize,
+    honest_failure: usize,
+    wrong_but_plausible: usize,
+}
+
+impl SqlCounts {
+    fn add(&mut self, outcome: Outcome) {
+        self.cases += 1;
+        match outcome {
+            Outcome::Correct => self.correct += 1,
+            Outcome::HonestFailure => self.honest_failure += 1,
+            Outcome::WrongButPlausible => self.wrong_but_plausible += 1,
+        }
+    }
+
+    fn summary(&self) -> SqlSummary {
+        SqlSummary {
+            cases: self.cases,
+            correct: self.correct,
+            honest_failure: self.honest_failure,
+            wrong_but_plausible: self.wrong_but_plausible,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlCaseResult {
+    id: String,
+    lang: String,
+    guided: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Vec<String>,
+    outcome: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rule_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlRunResult {
+    schema: u32,
+    mode: &'static str,
+    fixture: SqlFixtureInfo,
+    model: SqlModelInfo,
+    corpus: SqlCorpusInfo,
+    overall: SqlSummary,
+    by_language: BTreeMap<String, SqlSummary>,
+    by_guided: BTreeMap<String, SqlSummary>,
+    cases: Vec<SqlCaseResult>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlFixtureInfo {
+    version: u32,
+    today: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlModelInfo {
+    label: String,
+    base_url_host: String,
+    model: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlCorpusInfo {
+    path: String,
+    cases: usize,
+    by_language: BTreeMap<String, usize>,
+    by_guided: BTreeMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct SqlSummary {
+    cases: usize,
+    correct: usize,
+    honest_failure: usize,
+    wrong_but_plausible: usize,
+}
+
+impl SqlRunResult {
+    fn markdown(&self) -> String {
+        let mut report = String::new();
+        report.push_str(&format!("# Ask SQL eval - {}\n\n", self.model.label));
+        report.push_str(&format!(
+            "- Mode: free questions (SQL), scored by typed result\n- Server: `{}`\n- Model: `{}`\n- Fixture: version {}, today `{}`\n",
+            self.model.base_url_host, self.model.model, self.fixture.version, self.fixture.today
+        ));
+        let languages = self
+            .corpus
+            .by_language
+            .iter()
+            .map(|(language, count)| format!("{language} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let guided = self
+            .corpus
+            .by_guided
+            .iter()
+            .map(|(kind, count)| format!("{kind} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        report.push_str(&format!(
+            "- Corpus: `{}` ({} cases: {languages}; {guided})\n\n",
+            self.corpus.path, self.corpus.cases
+        ));
+        report.push_str(
+            "| set | cases | correct | honest failure | wrong but plausible |\n\
+             | --- | ---: | ---: | ---: | ---: |\n",
+        );
+        report.push_str(&sql_row("all", &self.overall));
+        for (language, summary) in &self.by_language {
+            report.push_str(&sql_row(language, summary));
+        }
+        for (kind, summary) in &self.by_guided {
+            report.push_str(&sql_row(kind, summary));
+        }
+        let failures: Vec<&SqlCaseResult> = self
+            .cases
+            .iter()
+            .filter(|case| case.outcome != "correct")
+            .collect();
+        if failures.is_empty() {
+            report.push_str("\nEvery case returned the expected result.\n");
+        } else {
+            report.push_str("\n| case | language | guided vocabulary | outcome | rule | detail |\n| --- | --- | --- | --- | --- | --- |\n");
+            for case in failures {
+                report.push_str(&format!(
+                    "| {} | {} | {} | {} | {} | {} |\n",
+                    case.id,
+                    case.lang,
+                    case.guided,
+                    case.outcome,
+                    case.rule_code.as_deref().unwrap_or("-"),
+                    case.detail.as_deref().unwrap_or("-").replace('|', "\\|")
+                ));
+            }
+        }
+        report
+    }
+}
+
+fn sql_row(label: &str, summary: &SqlSummary) -> String {
+    format!(
+        "| {label} | {} | {} | {} | {} |\n",
+        summary.cases, summary.correct, summary.honest_failure, summary.wrong_but_plausible
+    )
+}
+
+fn run_sql(args: &Args) -> Result<(), String> {
+    let cases = load_sql_corpus(&args.sql_corpus)?;
+    if cases.is_empty() {
+        return Err("the SQL corpus is empty".into());
+    }
+    let cases = match args.limit {
+        Some(limit) if limit < cases.len() => cases[..limit].to_vec(),
+        _ => cases,
+    };
+
+    let base_url = args.base_url.clone().unwrap_or_default();
+    let host = remote::endpoint(&base_url)
+        .map(|url| url.host_str().unwrap_or("?").to_owned())
+        .map_err(|error| format!("invalid --base-url: {error}"))?;
+    let config = RemoteConfig {
+        base_url,
+        model: args.remote_model.clone().unwrap_or_default(),
+        api_key: args
+            .api_key
+            .clone()
+            .or_else(|| std::env::var("SCROBBL_ASK_EVAL_API_KEY").ok())
+            .filter(|key| !key.trim().is_empty()),
+    };
+
+    let runtime = tokio::runtime::Runtime::new()
+        .map_err(|error| format!("could not start the async runtime: {error}"))?;
+    runtime.block_on(run_sql_cases(&config, host, args, &cases))
+}
+
+async fn run_sql_cases(
+    config: &RemoteConfig,
+    host: String,
+    args: &Args,
+    cases: &[SqlCase],
+) -> Result<(), String> {
+    let data_dir = std::env::temp_dir().join(format!(
+        "scrobbl-ask-eval-{}-{}",
+        std::process::id(),
+        scrobbl_rs::auth::random_secret()
+    ));
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|error| format!("could not create {}: {error}", data_dir.display()))?;
+    let evaluation = evaluate_sql(config, &host, args, cases, &data_dir).await;
+    let _ = std::fs::remove_dir_all(&data_dir);
+    evaluation
+}
+
+async fn evaluate_sql(
+    config: &RemoteConfig,
+    host: &str,
+    args: &Args,
+    cases: &[SqlCase],
+    data_dir: &Path,
+) -> Result<(), String> {
+    eprintln!(
+        "ask-eval: building fixture version {} in {}",
+        fixture::FIXTURE_VERSION,
+        data_dir.display()
+    );
+    let fixture = fixture::build(data_dir)
+        .await
+        .map_err(|error| format!("could not build the fixed fixture: {error}"))?;
+
+    let mut overall = SqlCounts::default();
+    let mut by_language: BTreeMap<String, SqlCounts> = BTreeMap::new();
+    let mut by_guided: BTreeMap<String, SqlCounts> = BTreeMap::new();
+    let mut results = Vec::with_capacity(cases.len());
+    for (index, case) in cases.iter().enumerate() {
+        let observation =
+            observe_sql_case(config, case, fixture.projection_path(), args.timeout).await;
+        eprintln!(
+            "ask-eval: {}/{} {} {}",
+            index + 1,
+            cases.len(),
+            case.id,
+            observation.outcome.as_str()
+        );
+        overall.add(observation.outcome);
+        by_language
+            .entry(case.lang.clone())
+            .or_default()
+            .add(observation.outcome);
+        by_guided
+            .entry(case.guided.clone())
+            .or_default()
+            .add(observation.outcome);
+        results.push(SqlCaseResult {
+            id: case.id.clone(),
+            lang: case.lang.clone(),
+            guided: case.guided.clone(),
+            tags: case.tags.clone(),
+            outcome: observation.outcome.as_str(),
+            rule_code: observation.rule_code,
+            detail: observation.detail,
+        });
+    }
+
+    let corpus_languages = cases.iter().fold(BTreeMap::new(), |mut acc, case| {
+        *acc.entry(case.lang.clone()).or_insert(0) += 1;
+        acc
+    });
+    let corpus_guided = cases.iter().fold(BTreeMap::new(), |mut acc, case| {
+        *acc.entry(case.guided.clone()).or_insert(0) += 1;
+        acc
+    });
+
+    let result = SqlRunResult {
+        schema: 1,
+        mode: "sql",
+        fixture: SqlFixtureInfo {
+            version: fixture::FIXTURE_VERSION,
+            today: fixture::TODAY.to_owned(),
+        },
+        model: SqlModelInfo {
+            label: args.label.clone(),
+            base_url_host: host.to_owned(),
+            model: config.model.clone(),
+        },
+        corpus: SqlCorpusInfo {
+            path: args.sql_corpus.display().to_string(),
+            cases: cases.len(),
+            by_language: corpus_languages,
+            by_guided: corpus_guided,
+        },
+        overall: overall.summary(),
+        by_language: by_language
+            .iter()
+            .map(|(language, counts)| (language.clone(), counts.summary()))
+            .collect(),
+        by_guided: by_guided
+            .iter()
+            .map(|(kind, counts)| (kind.clone(), counts.summary()))
+            .collect(),
+        cases: results,
+    };
+
+    let json = serde_json::to_string_pretty(&result)
+        .map_err(|error| format!("could not serialize the result: {error}"))?;
+    match &args.out {
+        Some(path) => {
+            if let Some(parent) = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("could not create {}: {error}", parent.display()))?;
+            }
+            std::fs::write(path, format!("{json}\n"))
+                .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+            let report_path = args
+                .report
+                .clone()
+                .unwrap_or_else(|| path.with_extension("md"));
+            std::fs::write(&report_path, result.markdown())
+                .map_err(|error| format!("could not write {}: {error}", report_path.display()))?;
+            eprintln!(
+                "ask-eval: wrote {} and {}",
+                path.display(),
+                report_path.display()
+            );
+        }
+        None => println!("{json}"),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1112,5 +1790,144 @@ mod tests {
         assert!(cases.iter().any(|case| {
             case.tags.iter().any(|tag| tag == "unicode") || !case.expected.name.is_ascii()
         }));
+    }
+
+    const SQL_CORPUS: &str = include_str!("../../evals/ask/sql_corpus.jsonl");
+
+    #[test]
+    fn the_sql_corpus_is_valid_balanced_and_covers_both_modes() {
+        let cases = parse_sql_corpus(SQL_CORPUS, "sql corpus").expect("the SQL corpus must parse");
+        assert!(
+            (18..=40).contains(&cases.len()),
+            "expected 18-40 SQL cases, got {}",
+            cases.len()
+        );
+        let english = cases.iter().filter(|case| case.lang == "en").count();
+        let italian = cases.iter().filter(|case| case.lang == "it").count();
+        assert_eq!(english + italian, cases.len());
+        assert!(
+            english.abs_diff(italian) <= 1,
+            "languages are unbalanced: {english}/{italian}"
+        );
+        for guided in ["expressible", "not_expressible"] {
+            assert!(
+                cases.iter().any(|case| case.guided == guided),
+                "no case is guided {guided}"
+            );
+        }
+        for tag in [
+            "device",
+            "country",
+            "shuffle",
+            "offline",
+            "streak",
+            "ranking",
+            "gap",
+            "first_play",
+            "combined_conditions",
+            "hour",
+        ] {
+            assert!(
+                cases.iter().any(|case| case.tags.iter().any(|t| t == tag)),
+                "no case is tagged {tag}"
+            );
+        }
+        // Relative wording would make the expected value depend on the day the
+        // evaluation runs; the fixture and the corpus stay fixed in time.
+        for case in &cases {
+            let question = case.question.to_lowercase();
+            for relative in [
+                "today",
+                "yesterday",
+                "this year",
+                "last year",
+                "quest'anno",
+                "l'anno scorso",
+                "ultimi",
+            ] {
+                assert!(
+                    !question.contains(relative),
+                    "{}: relative wording {relative:?} is not scored",
+                    case.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn typed_results_are_compared_by_value_and_type() {
+        let expected = ExpectedTable {
+            columns: vec!["plays".into(), "note".into()],
+            rows: vec![vec![Cell::Integer(10), Cell::Text("ok".into())]],
+        };
+        let matching = sandbox::SandboxOutput {
+            columns: vec!["plays".into(), "note".into()],
+            rows: vec![vec![SqlValue::Integer(10), SqlValue::Text("ok".into())]],
+            truncated: false,
+        };
+        assert_eq!(compare_result(&expected, &matching), Ok(()));
+
+        let numeric = sandbox::SandboxOutput {
+            columns: vec!["plays".into(), "note".into()],
+            rows: vec![vec![SqlValue::Real(10.0), SqlValue::Text("ok".into())]],
+            truncated: false,
+        };
+        assert_eq!(compare_result(&expected, &numeric), Ok(()));
+
+        let wrong_value = sandbox::SandboxOutput {
+            columns: vec!["plays".into(), "note".into()],
+            rows: vec![vec![SqlValue::Integer(11), SqlValue::Text("ok".into())]],
+            truncated: false,
+        };
+        assert!(compare_result(&expected, &wrong_value).is_err());
+
+        let wrong_rows = sandbox::SandboxOutput {
+            columns: vec!["plays".into(), "note".into()],
+            rows: Vec::new(),
+            truncated: false,
+        };
+        assert!(compare_result(&expected, &wrong_rows).is_err());
+
+        let truncated = sandbox::SandboxOutput {
+            columns: vec!["plays".into(), "note".into()],
+            rows: vec![vec![SqlValue::Integer(10), SqlValue::Text("ok".into())]],
+            truncated: true,
+        };
+        assert!(compare_result(&expected, &truncated).is_err());
+    }
+
+    #[test]
+    fn outcomes_add_up_per_set() {
+        let mut counts = SqlCounts::default();
+        counts.add(Outcome::Correct);
+        counts.add(Outcome::HonestFailure);
+        counts.add(Outcome::WrongButPlausible);
+        let summary = counts.summary();
+        assert_eq!(summary.cases, 3);
+        assert_eq!(summary.correct, 1);
+        assert_eq!(summary.honest_failure, 1);
+        assert_eq!(summary.wrong_but_plausible, 1);
+    }
+
+    #[tokio::test]
+    async fn every_reference_query_returns_its_expected_result_on_the_fixed_fixture() {
+        let cases = parse_sql_corpus(SQL_CORPUS, "sql corpus").expect("the SQL corpus must parse");
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = fixture::build(dir.path()).await.unwrap();
+        for case in &cases {
+            let output = sandbox::execute(
+                fixture.projection_path(),
+                &case.reference_sql,
+                SandboxLimits::default(),
+            )
+            .unwrap_or_else(|rejection| {
+                panic!(
+                    "{}: the reference SQL was rejected: {}",
+                    case.id, rejection.model_error
+                )
+            });
+            compare_result(&case.expected, &output)
+                .unwrap_or_else(|error| panic!("{}: {error}", case.id));
+        }
     }
 }

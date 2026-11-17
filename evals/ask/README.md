@@ -5,6 +5,10 @@ It is read by the `ask-eval` binary (`src/bin/ask-eval.rs`); the normal test
 suite only validates its shape and labels. No model or network is required to
 parse it.
 
+`sql_corpus.jsonl` is the versioned question set used to score **free questions
+(SQL) by result** on the fixed synthetic fixture from `src/ask/fixture.rs`.
+Both files have model-free tests; neither contains archive data.
+
 ## Format
 
 One JSON object per line:
@@ -96,3 +100,57 @@ the whole corpus sequentially with the production prompt, grammar and greedy
 sampling. It prints progress to stderr and writes `<out>.json` plus
 `<out>.md`. `--limit N` evaluates only the first N cases (the corpus alternates
 English/Italian, so a subset stays balanced).
+
+## SQL corpus
+
+`sql_corpus.jsonl` scores the other answer mode, **free questions (SQL)**, by
+result. One JSON object per line:
+
+```json
+{"id":"sql-en-001","lang":"en","question":"How many times did I listen to Björk?","guided":"expressible","tags":["plays","artist"],"reference_sql":"SELECT COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND a.name = 'Björk'","expected":{"columns":["plays"],"rows":[[10]]}}
+```
+
+| field | meaning |
+| --- | --- |
+| `id` | stable, unique case id (`sql-en-###` / `sql-it-###`) |
+| `lang` | `en` or `it` |
+| `question` | the exact user text sent to the model |
+| `guided` | `expressible` when the frozen guided vocabulary can answer it, otherwise `not_expressible` |
+| `tags` | labels used for coverage and the failure breakdown (`device`, `country`, `shuffle`, `offline`, `streak`, `ranking`, `gap`, `first_play`, `combined_conditions`, `hour`, ...) |
+| `reference_sql` | the query that defines the expected answer; it is re-run on every test against the fixture |
+| `expected` | typed result: `columns` plus `rows` of JSON scalars (`null`, integer/real number, string) |
+
+Rules:
+
+- Values are fixed and synthetic. They come from `src/ask/fixture.rs`, version 1;
+  never copy a personal value or a result from a real archive.
+- Do not use relative wording ("today", "last year", "ultimi 3 mesi"). Each
+  question names a fixed year or date so the expected value does not depend on
+  when the evaluation runs.
+- Row order is part of the answer: a ranking query must order deterministically,
+  including tie-breakers, and the reference SQL shows the intended order.
+- Every expected value must be re-derivable by `reference_sql`. The test
+  `every_reference_query_returns_its_expected_result_on_the_fixed_fixture`
+  fails if a literal and its query disagree.
+- If a fixture row changes, bump `fixture::FIXTURE_VERSION` and re-check every
+  expected value.
+
+Run it against a reference remote model (never in CI):
+
+```powershell
+$env:SCROBBL_ASK_EVAL_BASE_URL='https://api.example.com/v1'
+$env:SCROBBL_ASK_EVAL_MODEL='<model-name>'
+$env:SCROBBL_ASK_EVAL_API_KEY='<key>'   # omit for a local server
+
+cargo run --locked --release --bin ask-eval -- --sql `
+  --base-url $env:SCROBBL_ASK_EVAL_BASE_URL `
+  --remote-model $env:SCROBBL_ASK_EVAL_MODEL `
+  --label '<model-label>' `
+  --out C:\Users\mbena\AppData\Local\Temp\opencode\ask-eval-runs\<model-label>-sql.json
+```
+
+The result classifies each case as `correct`, `honest_failure` or
+`wrong_but_plausible`. Report the aggregate in
+[`docs/reports/ask-eval-sql.md`](../../docs/reports/ask-eval-sql.md); that report
+states explicitly what was not measured.
+

@@ -212,6 +212,7 @@ fn test_model(id: &str, url: String, sha256: String, size_bytes: u64) -> catalog
         speed: None,
         backend: "test".to_string(),
         selectable: true,
+        recommendation: scrobbl_rs::ai::AnswerMode::Guided,
     }
 }
 
@@ -289,8 +290,18 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     let (_dir, state, token) = setup().await;
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
     assert_eq!(catalog["runtime_available"], cfg!(feature = "llama"));
+    assert_eq!(
+        catalog["remote_recommendation"], "sql",
+        "the bring-your-own-AI option recommends free questions"
+    );
     let models = catalog["models"].as_array().unwrap();
     assert!(models.len() >= 5);
+    assert!(
+        models
+            .iter()
+            .all(|model| model["recommendation"] == "guided"),
+        "every local catalog model recommends guided questions"
+    );
     let default = models
         .iter()
         .find(|model| model["id"] == "qwen3-1.7b-q4_k_m")

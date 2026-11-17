@@ -1292,6 +1292,52 @@ pub fn schema_description() -> String {
     out
 }
 
+/// Documentation section for `docs/ask-projection.md`, generated from the same
+/// [`TABLES`] the prompt and the sandbox allow-list use. A test fails when the
+/// checked-in document drifts.
+pub fn schema_markdown() -> String {
+    use std::fmt::Write;
+    let mut out = String::from(
+        "The tables are generated from `src/ask/projection.rs::TABLES`, the same source as the\n\
+         model prompt and the sandbox allow-list. Do not edit this section by hand; regenerate it\n\
+         with `UPDATE_ASK_DOC` when `TABLES` changes.\n\n",
+    );
+    for table in TABLES {
+        let _ = writeln!(out, "### `{}`\n", table.name);
+        let _ = writeln!(out, "{}\n", table.summary);
+        out.push_str("| column | type | constraints | meaning |\n");
+        out.push_str("| --- | --- | --- | --- |\n");
+        for col in table.columns {
+            let constraints = if col.constraints.is_empty() {
+                "—"
+            } else {
+                col.constraints
+            };
+            let _ = writeln!(
+                out,
+                "| `{}` | {} | {} | {} |",
+                col.name, col.sql_type, constraints, col.description
+            );
+        }
+        out.push('\n');
+    }
+    out.push_str(
+        "### `_projection_meta` (internal)\n\n\
+         One row per build, holding the archive generation, revision, build time and calendar id\n\
+         used to decide whether the file is current. It is deliberately absent from `TABLES` and\n\
+         from every allow-list: no query from the model may read it.\n\n\
+         ### Indexes\n\n\
+         The projection carries `listens(track_id, played_at_ms)`, `listens(local_date)`,\n\
+         `listens(counted)`, `track_artists(artist_id, track_id)`,\n\
+         `album_artists(artist_id, album_id)`, `tracks(album_id)` and `tracks(edition_key)`, so\n\
+         ordinary rankings, streaks and gap scans do not become full scans.\n\n\
+         ### Exact DDL\n\n```sql\n",
+    );
+    out.push_str(&ddl());
+    out.push_str("```");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1963,5 +2009,60 @@ mod tests {
 
         handle.abort();
         let _ = handle.await;
+    }
+
+    const DOC: &str = include_str!("../../docs/ask-projection.md");
+    const DOC_BEGIN: &str = "<!-- BEGIN GENERATED: ask projection schema -->";
+    const DOC_END: &str = "<!-- END GENERATED: ask projection schema -->";
+
+    fn regenerate_document(document: &str, schema: &str) -> Option<String> {
+        let start = document.find(DOC_BEGIN)? + DOC_BEGIN.len();
+        let end = start + document[start..].find(DOC_END)?;
+        Some(format!(
+            "{}\n{schema}\n{}",
+            &document[..start],
+            &document[end..]
+        ))
+    }
+
+    #[test]
+    fn the_checked_in_projection_document_matches_the_generated_schema() {
+        let schema = schema_markdown();
+        let expected = regenerate_document(DOC, &schema)
+            .expect("docs/ask-projection.md carries the generated-schema markers");
+        if std::env::var_os("UPDATE_ASK_DOC").is_some() {
+            std::fs::write(
+                concat!(env!("CARGO_MANIFEST_DIR"), "/docs/ask-projection.md"),
+                &expected,
+            )
+            .expect("write docs/ask-projection.md");
+        }
+        assert_eq!(
+            DOC, expected,
+            "docs/ask-projection.md is stale; run \
+             $env:UPDATE_ASK_DOC='1'; cargo test the_checked_in_projection_document_matches_the_generated_schema"
+        );
+    }
+
+    #[test]
+    fn the_projection_document_mentions_every_table_and_rule_layer() {
+        assert!(DOC.contains("Ask projection"));
+        for table in TABLES {
+            assert!(DOC.contains(table.name), "missing table {}", table.name);
+        }
+        for rule in [
+            "query_only",
+            "trusted_schema",
+            "SQLITE_LIMIT_ATTACHED",
+            "authorizer",
+            "sql_too_long",
+            "unauthorized_table",
+            "timeout",
+            "instruction_limit",
+            "output_too_large",
+            "cancelled",
+        ] {
+            assert!(DOC.contains(rule), "missing sandbox detail {rule}");
+        }
     }
 }

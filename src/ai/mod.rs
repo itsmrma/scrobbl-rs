@@ -377,6 +377,9 @@ pub struct AiCatalogModel {
     pub speed: Option<AiSpeed>,
     pub backend: String,
     pub selectable: bool,
+    /// Fixed recommendation: guided questions for every local catalog model.
+    /// No measured SQL accuracy is stored or shown.
+    pub recommendation: AnswerMode,
     pub installed: bool,
     pub installed_size_bytes: Option<u64>,
     pub checksum_verified: bool,
@@ -403,6 +406,10 @@ pub struct AiCatalog {
     pub installed: Vec<AiInstalledModel>,
     pub total_installed_bytes: u64,
     pub disk_used_bytes: u64,
+    /// Fixed recommendation for the "bring your own AI" option: free questions
+    /// (SQL), because a larger remote model can write SQL and the archive never
+    /// leaves the instance.
+    pub remote_recommendation: AnswerMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -841,6 +848,7 @@ pub async fn catalog_get(
                 }),
                 backend: model.backend.clone(),
                 selectable: model.selectable,
+                recommendation: model.recommendation,
                 installed,
                 installed_size_bytes: installed_entry.map(|entry| entry.size_bytes),
                 checksum_verified: installed_entry.is_some_and(|entry| entry.checksum_verified),
@@ -885,6 +893,7 @@ pub async fn catalog_get(
         installed,
         total_installed_bytes,
         disk_used_bytes: models::total_size(&root),
+        remote_recommendation: AnswerMode::Sql,
     }))
 }
 

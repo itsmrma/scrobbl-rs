@@ -171,9 +171,20 @@ export type AiLanguageScore = { language: string, exact_match: number | null, ca
 export type AiParserScores = { intent: number | null, slots: number | null, refusals: number | null, exact_match: number | null, };
 export type AiSpeed = { p50_ms: number, p95_ms: number, ttft_ms: number, decode_tokens_per_second: number, prefill_tokens_per_second: number, measured_on: string, };
 export type AiDownloadJob = { id: string, state: string, processed_bytes: number, expected_bytes: number, bytes_per_second: number | null, eta_seconds: number | null, cancel_requested: boolean, error_code: string | null, };
-export type AiCatalogModel = { id: string, name: string, tier: string, status: string, description: string, license: AiLicense, download: AiDownload, requirements: AiRequirements, languages: Array<AiLanguageScore>, parser: AiParserScores, speed: AiSpeed | null, backend: string, selectable: boolean, installed: boolean, installed_size_bytes: number | null, checksum_verified: boolean, error: string | null, download_job: AiDownloadJob | null, };
+export type AiCatalogModel = { id: string, name: string, tier: string, status: string, description: string, license: AiLicense, download: AiDownload, requirements: AiRequirements, languages: Array<AiLanguageScore>, parser: AiParserScores, speed: AiSpeed | null, backend: string, selectable: boolean, 
+/**
+ * Fixed recommendation: guided questions for every local catalog model.
+ * No measured SQL accuracy is stored or shown.
+ */
+recommendation: AnswerMode, installed: boolean, installed_size_bytes: number | null, checksum_verified: boolean, error: string | null, download_job: AiDownloadJob | null, };
 export type AiInstalledModel = { id: string, name: string | null, file: string | null, size_bytes: number, installed_at_ms: number | null, checksum_verified: boolean, error: string | null, };
-export type AiCatalog = { runtime_available: boolean, model_dir: string, models: Array<AiCatalogModel>, installed: Array<AiInstalledModel>, total_installed_bytes: number, disk_used_bytes: number, };
+export type AiCatalog = { runtime_available: boolean, model_dir: string, models: Array<AiCatalogModel>, installed: Array<AiInstalledModel>, total_installed_bytes: number, disk_used_bytes: number, 
+/**
+ * Fixed recommendation for the "bring your own AI" option: free questions
+ * (SQL), because a larger remote model can write SQL and the archive never
+ * leaves the instance.
+ */
+remote_recommendation: AnswerMode, };
 export type AiDownloadStarted = { job_id: string, };
 export type AiDeleteRequest = { confirm: boolean, force: boolean, };
 export type AiDeleteResult = { id: string, freed_bytes: number, };
