@@ -235,7 +235,7 @@ test("a free question with remote AI shows the computed sentence, a table and th
   await expect(card).toBeVisible();
   await expect(card).toContainText("Top tracks");
   await expect(card).toContainText(
-    "Computed: Counted plays per track across all time.",
+    "The model says this query computes: Counted plays per track across all time.",
   );
   await expect(card).toContainText("Projection as of ");
 
@@ -426,6 +426,12 @@ test("free results render value, table, series, ranking, entity/history links, p
   );
   await card.getByRole("button", { name: "Run" }).click();
   await expect(card).toContainText("result truncated");
+  // The model's description of its original query stays visible, attributed,
+  // even though this answer came from owner-edited SQL.
+  await expect(card).toContainText("You ran edited SQL.");
+  await expect(card).toContainText(
+    "Counted listens with artist, album, track, timestamp and duration.",
+  );
   await expect(card.locator(".ask-table tbody tr")).toHaveCount(100);
   await expect(card.locator(".pagination")).toContainText("Page 1 of 10");
   await card.getByRole("button", { name: "Next" }).click();
