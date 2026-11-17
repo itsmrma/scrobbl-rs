@@ -5076,9 +5076,12 @@ test("totals widget lays out three compact columns with left-aligned labels abov
         `Value left offset in stat ${i} at ${width}px`,
       ).toBeLessThan(16);
 
-      // Align items and text align checks
-      expect(statStyle.alignItems).toBe("flex-start");
-      expect(statStyle.justifyContent).toBe("flex-start");
+      // Align items and text align checks. Newer Chromium (Playwright 1.65)
+      // serialises a start alignment as "flow-start"; every engine reports an
+      // equivalent keyword for the same computed start alignment.
+      for (const value of [statStyle.alignItems, statStyle.justifyContent]) {
+        expect(["flex-start", "start", "flow-start"]).toContain(value);
+      }
       expect(statStyle.textAlign).toBe("left");
     }
   }
