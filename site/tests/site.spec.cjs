@@ -35,6 +35,9 @@ async function colors(page, selectors) {
   }, [RESOLVE, selectors]);
 }
 
+const PRESETS = ["Lime", "Sky", "Lavender", "Peach", "Rose", "Mint"];
+const picker = (page) => page.getByRole("group", { name: "Accent colour" });
+
 function contrast(a, b) {
   const lum = (rgb) => {
     const c = rgb.slice(0, 3).map((v) => {
@@ -174,3 +177,62 @@ test("controls are keyboard reachable and have accessible names", async ({ page,
   seen.delete(-1);
   expect(seen.size).toBe(visible);
 });
+
+test("accent picker offers six labelled, large, pressable swatches", async ({ page }) => {
+  await page.goto("/");
+  const swatches = picker(page).getByRole("button");
+  await expect(swatches).toHaveCount(6);
+  for (const name of PRESETS) {
+    const b = picker(page).getByRole("button", { name, exact: true });
+    const box = await b.boundingBox();
+    expect(box.width, name).toBeGreaterThanOrEqual(44);
+    expect(box.height, name).toBeGreaterThanOrEqual(44);
+  }
+  await expect(picker(page).getByRole("button", { name: "Lime", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(picker(page).getByRole("button", { name: "Sky", exact: true })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("choosing a swatch recolours button, dot and surfaces, and reload returns to lime", async ({ page }) => {
+  await page.goto("/");
+  const sel = {
+    btn: [".btn.primary", "backgroundColor"],
+    dot: ["h1 .accent", "color"],
+    bg: ["body", "backgroundColor"],
+    border: [".nav", "borderBottomColor"],
+  };
+  const before = await colors(page, sel);
+  await picker(page).getByRole("button", { name: "Lavender", exact: true }).click();
+  const after = await colors(page, sel);
+  // Lavender #c5a3ee
+  expect(after.btn.slice(0, 3)).toEqual([0xc5, 0xa3, 0xee]);
+  expect(after.btn).not.toEqual(before.btn);
+  expect(after.dot).not.toEqual(before.dot);
+  expect(after.bg).not.toEqual(before.bg);
+  expect(after.border).not.toEqual(before.border);
+  await expect(picker(page).getByRole("button", { name: "Lavender", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(picker(page).getByRole("button", { name: "Lime", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await page.reload();
+  expect((await colors(page, sel)).btn.slice(0, 3)).toEqual([0xc9, 0xee, 0x8b]);
+  await expect(picker(page).getByRole("button", { name: "Lime", exact: true })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("swatches work from the keyboard and show a focus ring", async ({ page }) => {
+  await page.goto("/");
+  const sky = picker(page).getByRole("button", { name: "Sky", exact: true });
+  await sky.focus();
+  expect(await sky.evaluate((el) => getComputedStyle(el).outlineStyle)).not.toBe("none");
+  await page.keyboard.press("Enter");
+  await expect(sky).toHaveAttribute("aria-pressed", "true");
+});
+
+for (const scheme of ["dark", "light"]) {
+  test(`primary button text has 4.5:1 contrast for every preset in ${scheme} theme`, async ({ page }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    for (const name of PRESETS) {
+      await picker(page).getByRole("button", { name, exact: true }).click();
+      const c = await colors(page, { bg: [".btn.primary", "backgroundColor"], fg: [".btn.primary", "color"] });
+      expect(contrast(c.fg, c.bg), name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}
