@@ -5,7 +5,7 @@
 //! `assistant\n<think>\n\n</think>\n\n` is the spike-verified way to disable
 //! Qwen3 thinking mode. The grammar already forces the first output token to
 //! `{`, but disabling thinking reliably also keeps the prompt short.
-use crate::ask::{projection, schema};
+use crate::ask::{parser::Previous, projection, sandbox, schema};
 
 pub const THINKING_PREFIX: &str = "<|im_start|>assistant\n<think>\n\n</think>\n\n";
 
@@ -261,6 +261,60 @@ pub fn local_sql_system_prompt(today: &str) -> String {
         today,
         "Output JSON only with fields: sql, title, computed, answer_kind (value|table|series|ranking|unsupported), columns ([{name, format}] where format is count|duration_ms|date|datetime|percent|text|artist|album|track).",
     )
+}
+
+/// Build the ChatML prompt for a local SQL repair round. It keeps the local SQL
+/// contract and adds the previous answer and every failed SQL with the error the
+/// sandbox returned for it; results and archive values are never included.
+pub fn build_sql_repair_prompt(
+    question: &str,
+    previous: Option<&Previous>,
+    attempts: &[(&str, &str)],
+    today: &str,
+) -> String {
+    let system = format!(
+        "{}\n\nA previous SQL query for this question was rejected by the sandbox. Write a corrected query, still answering the same question.",
+        local_sql_system_prompt(today)
+    );
+    format!(
+        "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n{}",
+        system,
+        sql_repair_user_turn(question, previous, attempts),
+        THINKING_PREFIX
+    )
+}
+
+fn sql_repair_user_turn(
+    question: &str,
+    previous: Option<&Previous>,
+    attempts: &[(&str, &str)],
+) -> String {
+    let mut text = String::new();
+    if let Some(previous) = previous
+        && let Some(sql) = previous.sql.as_ref().filter(|s| !s.sql.trim().is_empty())
+    {
+        text.push_str(&format!(
+            "Previous question: {}\n",
+            previous.question.trim()
+        ));
+        if !sql.computed.trim().is_empty() {
+            text.push_str(&format!("Previous computed: {}\n", sql.computed.trim()));
+        }
+        text.push_str(&format!("Previous SQL: {}\n\n", sql.sql.trim()));
+    }
+    text.push_str(&format!("Question: {}\n", question.trim()));
+    for (index, (sql, error)) in attempts.iter().enumerate() {
+        let clipped: String = sql.chars().take(sandbox::MAX_SQL_BYTES).collect();
+        text.push_str(&format!(
+            "\nAttempt {} failed.\nSQL: {clipped}\nError: {error}\n",
+            index + 1
+        ));
+    }
+    text.push_str(
+        "\nFix the SQL query and return the corrected JSON object matching the required fields. \
+         Do not guess or approximate results, and set answer_kind to \"unsupported\" if the question cannot be answered from the Ask projection.",
+    );
+    text
 }
 
 /// System prompt for free questions (SQL mode): carries only the documented

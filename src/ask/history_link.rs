@@ -12,6 +12,20 @@ use chrono::{Days, NaiveDate};
 use rusqlite::{Connection, OpenFlags};
 use std::{collections::HashMap, fmt::Write as _, path::Path};
 
+/// Open the projection for the fixed history-link queries. These queries are
+/// app-generated, bind every parameter and only read; the SQL sandbox is the
+/// path for model-written SQL, not this one.
+fn open_projection_read_only(projection_path: &Path) -> Option<Connection> {
+    let conn = Connection::open_with_flags(
+        projection_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()?;
+    // Belt and braces: even a future mistake here cannot write.
+    let _ = conn.pragma_update(None, "query_only", true);
+    Some(conn)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Token {
     Word(String),
@@ -876,11 +890,7 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
             return None;
         }
         let predicates = split_top_level_and(where_tokens)?;
-        let conn = Connection::open_with_flags(
-            projection_path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
-        .ok()?;
+        let conn = open_projection_read_only(projection_path)?;
         for pred in predicates {
             apply_predicate(pred, &aliases, &conn, &mut filters)?;
         }
@@ -984,10 +994,7 @@ pub fn resolve_cell_links(
     {
         return Vec::new();
     }
-    let Ok(conn) = Connection::open_with_flags(
-        projection_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) else {
+    let Some(conn) = open_projection_read_only(projection_path) else {
         return Vec::new();
     };
 

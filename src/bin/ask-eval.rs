@@ -29,7 +29,7 @@ use scrobbl_rs::ask::{
     prompt,
     remote::{self, RemoteConfig},
     runtime::{self, Generation, ModelSpec, Session},
-    sandbox::{self, SandboxLimits, SandboxRule, SqlValue},
+    sandbox::{self, SandboxLimits, SqlValue},
     schema::{self, ModelOutput, SqlAnswerKind, SqlModelOutput},
 };
 use serde::{Deserialize, Serialize};
@@ -1243,13 +1243,6 @@ fn compare_result(expected: &ExpectedTable, output: &sandbox::SandboxOutput) -> 
     Ok(())
 }
 
-fn is_repairable_rule(rule: SandboxRule) -> bool {
-    !matches!(
-        rule,
-        SandboxRule::Cancelled | SandboxRule::Timeout | SandboxRule::ProjectionUnavailable
-    )
-}
-
 /// Validate the model's JSON and honour an explicit refusal.
 fn parse_sql_output(reply: &str) -> Result<Option<SqlModelOutput>, String> {
     let output: SqlModelOutput =
@@ -1299,7 +1292,7 @@ async fn observe_sql_case(
                 };
             }
             Err(rejection) => {
-                if is_repairable_rule(rejection.rule) && round < MAX_SQL_REPAIR_ROUNDS {
+                if rejection.rule.is_repairable() && round < MAX_SQL_REPAIR_ROUNDS {
                     attempts.push((output.sql.clone(), rejection.model_error.clone()));
                     let references: Vec<(&str, &str)> = attempts
                         .iter()

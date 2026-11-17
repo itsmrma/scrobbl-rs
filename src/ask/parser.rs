@@ -527,6 +527,7 @@ impl ModelParser {
         &self,
         question: &str,
         previous: Option<&Previous>,
+        mode: Option<AnswerMode>,
         cancel: Option<&CancelToken>,
     ) -> Result<ParsedQuestion> {
         if cancel.is_some_and(CancelToken::is_cancelled) {
@@ -538,13 +539,16 @@ impl ModelParser {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             });
         }
+        // A per-request mode never persists; without one the stored mode for the
+        // selected engine applies.
+        let answer_mode = mode.unwrap_or_else(|| stored.effective_answer_mode());
         if stored.uses_remote() {
             let Some(config) = stored.remote_config() else {
                 return Ok(ParsedQuestion::Unsupported {
                     reason: "Enter the AI server address and the model name in Settings.".into(),
                 });
             };
-            if stored.effective_answer_mode() == crate::ai::AnswerMode::Sql {
+            if answer_mode == crate::ai::AnswerMode::Sql {
                 let today = active_calendar_today(&self.db).await;
                 let raw = crate::ask::remote::infer_sql(
                     &config,
@@ -559,50 +563,10 @@ impl ModelParser {
             let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
             return interpret_remote(&raw, question);
         }
-        let answer_mode = stored.effective_answer_mode();
-        let Some(model_id) = stored.active_model else {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "Download and select an AI model in Settings before asking questions."
-                    .into(),
-            });
+        let spec = match self.local_spec(&stored)? {
+            Ok(spec) => spec,
+            Err(reason) => return Ok(ParsedQuestion::Unsupported { reason }),
         };
-        let Some(catalog_model) = crate::ai::catalog::find(&model_id) else {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not in the curated catalog. Choose another model."
-                    .into(),
-            });
-        };
-        if !catalog_model.is_available() {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not available for questions in this release. Choose another model."
-                    .into(),
-            });
-        }
-
-        let root = match stored.model_dir.as_deref() {
-            Some(dir) => PathBuf::from(dir),
-            None => self.data_dir.join("models"),
-        };
-        let dir = crate::ai::models::model_dir(&root, &model_id)?;
-        let installed = crate::ai::models::scan(&root)
-            .into_iter()
-            .find(|entry| entry.id == model_id);
-        if !installed.is_some_and(|entry| {
-            entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
-        }) {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not installed or did not pass verification. Download it again or choose another model."
-                    .into(),
-            });
-        }
-        let path = crate::ai::models::model_file(&dir, &catalog_model.download.file)?;
-
-        let spec = ModelSpec::new(
-            model_id,
-            path,
-            stored.threads.clamp(1, 64),
-            stored.unload_minutes.clamp(1, 1440),
-        );
         let token = cancel
             .cloned()
             .unwrap_or_else(|| CancelToken::new(self.timeout));
@@ -624,6 +588,54 @@ impl ModelParser {
             .map_err(runtime_error)?;
 
         interpret(&output, question)
+    }
+
+    /// Resolve the selected catalog model into the worker's spec. The error is
+    /// the owner-facing refusal, so the caller can return it unchanged.
+    fn local_spec(
+        &self,
+        stored: &crate::ai::StoredSettings,
+    ) -> Result<std::result::Result<ModelSpec, String>> {
+        let Some(model_id) = stored.active_model.clone() else {
+            return Ok(Err(
+                "Download and select an AI model in Settings before asking questions.".into(),
+            ));
+        };
+        let Some(catalog_model) = crate::ai::catalog::find(&model_id) else {
+            return Ok(Err(
+                "The selected model is not in the curated catalog. Choose another model.".into(),
+            ));
+        };
+        if !catalog_model.is_available() {
+            return Ok(Err(
+                "The selected model is not available for questions in this release. Choose another model."
+                    .into(),
+            ));
+        }
+
+        let root = match stored.model_dir.as_deref() {
+            Some(dir) => PathBuf::from(dir),
+            None => self.data_dir.join("models"),
+        };
+        let dir = crate::ai::models::model_dir(&root, &model_id)?;
+        let installed = crate::ai::models::scan(&root)
+            .into_iter()
+            .find(|entry| entry.id == model_id);
+        if !installed.is_some_and(|entry| {
+            entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
+        }) {
+            return Ok(Err(
+                "The selected model is not installed or did not pass verification. Download it again or choose another model."
+                    .into(),
+            ));
+        }
+        let path = crate::ai::models::model_file(&dir, &catalog_model.download.file)?;
+        Ok(Ok(ModelSpec::new(
+            model_id,
+            path,
+            stored.threads.clamp(1, 64),
+            stored.unload_minutes.clamp(1, 1440),
+        )))
     }
 
     async fn repair_sql_model(
@@ -660,7 +672,25 @@ impl ModelParser {
             .await?;
             return interpret_remote_sql(&raw).map(Some);
         }
-        Ok(None)
+        // The local engine has a free-string `sql` field in its own JSON
+        // grammar, so it can repair too: same SQL grammar, same output contract,
+        // same timeouts and cancellation as local SQL mode.
+        let spec = match self.local_spec(&stored)? {
+            Ok(spec) => spec,
+            Err(reason) => return Ok(Some(ParsedQuestion::Unsupported { reason })),
+        };
+        let today = active_calendar_today(&self.db).await;
+        let prompt =
+            crate::ask::prompt::build_sql_repair_prompt(question, previous, attempts, &today);
+        let token = cancel
+            .cloned()
+            .unwrap_or_else(|| CancelToken::new(self.timeout));
+        let raw = self
+            .runtime
+            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
+            .await
+            .map_err(local_sql_runtime_error)?;
+        interpret_local_sql(&raw).map(Some)
     }
 }
 
@@ -769,7 +799,7 @@ fn local_sql_runtime_error(error: RuntimeError) -> AppError {
 
 impl QueryParser for ModelParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, None, None).await })
+        Box::pin(async move { self.parse_model(question, None, None, None).await })
     }
 
     fn parse_follow_up<'a>(
@@ -777,26 +807,29 @@ impl QueryParser for ModelParser {
         question: &'a str,
         previous: Option<&'a Previous>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous, None).await })
+        Box::pin(async move { self.parse_model(question, previous, None, None).await })
     }
 
     fn parse_for_mode<'a>(
         &'a self,
         question: &'a str,
         previous: Option<&'a Previous>,
-        _mode: AnswerMode,
+        mode: AnswerMode,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous, None).await })
+        Box::pin(async move { self.parse_model(question, previous, Some(mode), None).await })
     }
 
     fn parse_for_mode_with_cancel<'a>(
         &'a self,
         question: &'a str,
         previous: Option<&'a Previous>,
-        _mode: AnswerMode,
+        mode: AnswerMode,
         cancel: Option<&'a CancelToken>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous, cancel).await })
+        Box::pin(async move {
+            self.parse_model(question, previous, Some(mode), cancel)
+                .await
+        })
     }
 
     fn repair_sql<'a>(
