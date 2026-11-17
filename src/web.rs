@@ -55,6 +55,7 @@ pub fn router(state: AppState) -> Router {
         .route("/history", get(index))
         .route("/review", get(index))
         .route("/api/v1/ask", post(crate::ask::ask))
+        .route("/api/v1/ask/cancel", post(crate::ask::cancel))
         .route("/api/v1/ask/query", post(crate::ask::query))
         .route("/api/v1/ask/sql", post(crate::ask::sql))
         .route(

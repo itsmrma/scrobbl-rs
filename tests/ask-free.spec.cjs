@@ -11,23 +11,37 @@ const net = require("node:net");
 const password = "ask free browser password 7!";
 
 const test = base.extend({
-  harness: async ({ browser }, use) => {
+  sqlTimeoutMs: [0, { option: true }],
+  harness: async ({ browser, sqlTimeoutMs }, use) => {
     const directory = await mkdtemp(join(tmpdir(), "scrobbl-ask-free-"));
 
     // Start an in-process mock OpenAI-compatible server on loopback.
     const seen = [];
     let nextReply = "";
+    let replyQueue = [];
+    let delayMs = 0;
     const mockServer = http.createServer((req, res) => {
       let raw = "";
       req.on("data", (chunk) => (raw += chunk));
       req.on("end", () => {
         seen.push(JSON.parse(raw));
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({
-            choices: [{ message: { role: "assistant", content: nextReply } }],
-          }),
-        );
+        const send = () => {
+          if (res.destroyed || res.writableEnded) return;
+          const content =
+            replyQueue.length > 0 ? replyQueue.shift() : nextReply;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              choices: [{ message: { role: "assistant", content } }],
+            }),
+          );
+        };
+        if (delayMs > 0) {
+          const timer = setTimeout(send, delayMs);
+          req.on("close", () => clearTimeout(timer));
+        } else {
+          send();
+        }
       });
     });
     mockServer.listen(0, "127.0.0.1");
@@ -56,6 +70,9 @@ const test = base.extend({
           SCROBBL_EXTERNAL_ORIGIN: `http://127.0.0.1:${port}`,
           SPOTIFY_CLIENT_ID: "",
           SPOTIFY_CLIENT_SECRET: "",
+          ...(sqlTimeoutMs > 0
+            ? { SCROBBL_ASK_SQL_TIMEOUT_MS: String(sqlTimeoutMs) }
+            : {}),
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -160,7 +177,14 @@ const test = base.extend({
         mockUrl: `http://127.0.0.1:${mockPort}/v1`,
         seen,
         setReply: (value) => {
+          replyQueue = [];
           nextReply = JSON.stringify(value);
+        },
+        setReplies: (values) => {
+          replyQueue = values.map((v) => JSON.stringify(v));
+        },
+        setDelay: (ms) => {
+          delayMs = ms;
         },
       });
       expect(errors).toEqual([]);
@@ -549,4 +573,170 @@ test("answer mode defaults, per-engine persistence, local warning, and active mo
   await expect(page.locator(".notice")).toContainText(/larger model/i);
   await page.unroute("**/api/v1/ask");
   await page.unroute("**/api/v1/ask/status");
+});
+
+test("repair rounds, SQL follow-ups without results, unsupported notice and cancellation work in the browser", async ({
+  harness: { page, mockUrl, seen, setReply, setReplies, setDelay },
+}) => {
+  await page.goto("/settings/ai");
+  await page.getByLabel("Enable AI").check();
+  await chooseOption(page.getByLabel("AI engine"), "remote");
+  await page.getByLabel("Server address").fill(mockUrl);
+  await page.getByLabel("Model name").fill("test-sql-model");
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  await page.goto("/ask");
+
+  // 1. A broken SQL query is repaired automatically and renders the valid result.
+  const firstValidSql =
+    "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 GROUP BY a.id ORDER BY plays DESC, a.name ASC";
+  setReplies([
+    {
+      sql: "SELECT nonexistent_col FROM listens",
+      title: "Plays by artist",
+      computed: "Counted plays per artist.",
+      answer_kind: "table",
+      columns: [
+        { name: "artist", format: "artist" },
+        { name: "plays", format: "count" },
+      ],
+    },
+    {
+      sql: firstValidSql,
+      title: "Plays by artist",
+      computed: "Counted plays per artist across all time.",
+      answer_kind: "table",
+      columns: [
+        { name: "artist", format: "artist" },
+        { name: "plays", format: "count" },
+      ],
+    },
+  ]);
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("Plays by artist?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  const card = page.locator(".ask-result");
+  await expect(card).toBeVisible();
+  await expect(card.locator(".ask-table tbody tr")).toHaveCount(3);
+  expect(seen.length).toBe(2);
+  expect(JSON.stringify(seen[1])).toContain("nonexistent_col");
+
+  // 2. Follow-up checkbox is visible and checked in SQL mode and sends previous SQL without results.
+  const followUp = page.getByLabel("Continue from the previous answer");
+  await expect(followUp).toBeVisible();
+  await expect(followUp).toBeChecked();
+  setReply({
+    sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2024",
+    title: "Plays in 2024",
+    computed: "Counted plays in 2024.",
+    answer_kind: "value",
+    columns: [{ name: "plays", format: "count" }],
+  });
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("and total plays in 2024?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(card.locator(".ask-result-value")).toHaveText("4");
+  expect(seen.length).toBe(3);
+  const followUpUser = seen[2].messages[1].content;
+  expect(followUpUser).toContain("Previous question: Plays by artist?");
+  expect(followUpUser).toContain("Previous title: Plays by artist");
+  expect(followUpUser).toContain(
+    "Previous computed: Counted plays per artist across all time.",
+  );
+  expect(followUpUser).toContain(`Previous SQL: ${firstValidSql}`);
+  expect(followUpUser).not.toContain("SecretArchiveArtist");
+  expect(followUpUser).not.toContain("LiteralArtist");
+
+  // 3. Safety rejection after exhausting repair rounds names the rule and mentions repair attempts.
+  setReply({
+    sql: "SELECT value FROM settings",
+    title: "Unsafe",
+    computed: "Read settings.",
+    answer_kind: "table",
+    columns: [],
+  });
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("Show me settings");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(page.getByText("I couldn't answer that")).toBeVisible();
+  await expect(page.locator(".notice")).toContainText("2 repair attempts");
+  await expect(page.locator(".notice")).toContainText("unauthorized_table");
+  expect(seen.length).toBe(6);
+
+  // 4. Unsupported question renders an explicit refusal notice.
+  setReply({
+    sql: "",
+    title: "",
+    computed: "I can only answer questions about your listening archive.",
+    answer_kind: "unsupported",
+    columns: [],
+  });
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("What is the weather today?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(
+    page.getByText("That question is outside the current scope"),
+  ).toBeVisible();
+  await expect(page.locator(".notice")).toContainText(
+    "I can only answer questions about your listening archive.",
+  );
+
+  // 5. Cancelling a slow request interrupts it immediately and keeps Ask usable.
+  setDelay(5000);
+  await page.getByLabel("Your question", { exact: true }).fill("Slow question");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  const cancelBtn = page.getByRole("button", { name: "Cancel", exact: true });
+  await expect(cancelBtn).toBeVisible();
+  await cancelBtn.click();
+  await expect(page.getByText("The question was cancelled.")).toBeVisible();
+
+  setDelay(0);
+  setReply({
+    sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+    title: "Total plays",
+    computed: "All counted plays.",
+    answer_kind: "value",
+    columns: [{ name: "plays", format: "count" }],
+  });
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("How many plays?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+  await expect(card.locator(".ask-result-value")).toHaveText("4");
+});
+
+test.describe("SQL query timeout", () => {
+  test.use({ sqlTimeoutMs: 10 });
+
+  test("a slow SQL query reports a timeout message honestly", async ({
+    harness: { page, mockUrl, setReply },
+  }) => {
+    await page.goto("/settings/ai");
+    await page.getByLabel("Enable AI").check();
+    await chooseOption(page.getByLabel("AI engine"), "remote");
+    await page.getByLabel("Server address").fill(mockUrl);
+    await page.getByLabel("Model name").fill("test-sql-model");
+    await page.getByRole("button", { name: "Save AI settings" }).click();
+    await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+    setReply({
+      sql: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt",
+      title: "Endless",
+      computed: "Count forever.",
+      answer_kind: "value",
+      columns: [{ name: "c", format: "count" }],
+    });
+    await page.goto("/ask");
+    await page
+      .getByLabel("Your question", { exact: true })
+      .fill("Count forever");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(page.getByText("I couldn't answer that")).toBeVisible();
+    await expect(page.locator(".notice")).toContainText("timeout");
+  });
 });

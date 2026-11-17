@@ -7,7 +7,7 @@ use crate::{
     ai::AnswerMode,
     ask::{
         dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
-        runtime::{GrammarKind, ModelSpec, Runtime, RuntimeError},
+        runtime::{CancelToken, GrammarKind, ModelSpec, Runtime, RuntimeError},
         schema::{ColumnFormat, ModelOutput, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     error::{AppError, Result},
@@ -45,12 +45,22 @@ pub struct Binding {
     pub row: usize,
 }
 
+/// What the previous SQL-mode answer computed, so a follow-up can build on it
+/// without ever sending results.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SqlPrevious {
+    pub title: String,
+    pub computed: String,
+    pub sql: String,
+}
+
 /// What the previous answer was, so a follow-up ("and last year?") can build
-/// on it. Only the question and its interpretation, never results.
+/// on it. Only the question and its interpretation or SQL, never results.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Previous {
     pub question: String,
     pub interpretation: Vec<(String, String)>,
+    pub sql: Option<SqlPrevious>,
 }
 
 pub trait QueryParser: Send + Sync {
@@ -77,6 +87,29 @@ pub trait QueryParser: Send + Sync {
         self.parse_follow_up(question, previous)
     }
 
+    /// Parse using the active answer mode with cancellation support.
+    fn parse_for_mode_with_cancel<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        mode: AnswerMode,
+        _cancel: Option<&'a CancelToken>,
+    ) -> ParseFuture<'a> {
+        self.parse_for_mode(question, previous, mode)
+    }
+
+    /// Ask the model to repair a rejected or failing SQL query using only its
+    /// previous SQL and the sanitized sandbox error. Returns `Ok(None)` when
+    /// the parser does not support SQL repair.
+    fn repair_sql<'a>(
+        &'a self,
+        _question: &'a str,
+        _previous: Option<&'a Previous>,
+        _attempts: &'a [(&'a str, &'a str)],
+        _cancel: Option<&'a CancelToken>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ParsedQuestion>>> + Send + 'a>> {
+        Box::pin(async { Ok(None) })
+    }
     /// True while the real runtime is loading a model. Stub and unavailable
     /// parsers never load anything.
     fn model_loading(&self) -> bool {
@@ -494,7 +527,11 @@ impl ModelParser {
         &self,
         question: &str,
         previous: Option<&Previous>,
+        cancel: Option<&CancelToken>,
     ) -> Result<ParsedQuestion> {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(runtime_error(RuntimeError::Cancelled));
+        }
         let stored = crate::ai::read_settings_from(&self.db).await?;
         if !stored.enabled {
             return Ok(ParsedQuestion::Unsupported {
@@ -509,8 +546,14 @@ impl ModelParser {
             };
             if stored.effective_answer_mode() == crate::ai::AnswerMode::Sql {
                 let today = active_calendar_today(&self.db).await;
-                let raw =
-                    crate::ask::remote::infer_sql(&config, question, &today, self.timeout).await?;
+                let raw = crate::ask::remote::infer_sql(
+                    &config,
+                    question,
+                    previous,
+                    &today,
+                    self.timeout,
+                )
+                .await?;
                 return interpret_remote_sql(&raw);
             }
             let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
@@ -560,12 +603,15 @@ impl ModelParser {
             stored.threads.clamp(1, 64),
             stored.unload_minutes.clamp(1, 1440),
         );
+        let token = cancel
+            .cloned()
+            .unwrap_or_else(|| CancelToken::new(self.timeout));
         if answer_mode == AnswerMode::Sql {
             let today = active_calendar_today(&self.db).await;
             let prompt = crate::ask::prompt::build_sql_prompt(question, &today);
             let output = self
                 .runtime
-                .infer_with_grammar(&spec, &prompt, GrammarKind::Sql, self.timeout)
+                .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
                 .await
                 .map_err(local_sql_runtime_error)?;
             return interpret_local_sql(&output);
@@ -573,11 +619,48 @@ impl ModelParser {
         let prompt = crate::ask::prompt::build_prompt(question);
         let output = self
             .runtime
-            .infer(&spec, &prompt, self.timeout)
+            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Guided, token)
             .await
             .map_err(runtime_error)?;
 
         interpret(&output, question)
+    }
+
+    async fn repair_sql_model(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+        attempts: &[(&str, &str)],
+        cancel: Option<&CancelToken>,
+    ) -> Result<Option<ParsedQuestion>> {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(runtime_error(RuntimeError::Cancelled));
+        }
+        let stored = crate::ai::read_settings_from(&self.db).await?;
+        if !stored.enabled {
+            return Ok(Some(ParsedQuestion::Unsupported {
+                reason: "AI is off. Enable it in Settings to ask questions.".into(),
+            }));
+        }
+        if stored.uses_remote() {
+            let Some(config) = stored.remote_config() else {
+                return Ok(Some(ParsedQuestion::Unsupported {
+                    reason: "Enter the AI server address and the model name in Settings.".into(),
+                }));
+            };
+            let today = active_calendar_today(&self.db).await;
+            let raw = crate::ask::remote::infer_sql_repair(
+                &config,
+                question,
+                previous,
+                attempts,
+                &today,
+                self.timeout,
+            )
+            .await?;
+            return interpret_remote_sql(&raw).map(Some);
+        }
+        Ok(None)
     }
 }
 
@@ -686,7 +769,7 @@ fn local_sql_runtime_error(error: RuntimeError) -> AppError {
 
 impl QueryParser for ModelParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, None).await })
+        Box::pin(async move { self.parse_model(question, None, None).await })
     }
 
     fn parse_follow_up<'a>(
@@ -694,7 +777,39 @@ impl QueryParser for ModelParser {
         question: &'a str,
         previous: Option<&'a Previous>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous).await })
+        Box::pin(async move { self.parse_model(question, previous, None).await })
+    }
+
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        _mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move { self.parse_model(question, previous, None).await })
+    }
+
+    fn parse_for_mode_with_cancel<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        _mode: AnswerMode,
+        cancel: Option<&'a CancelToken>,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move { self.parse_model(question, previous, cancel).await })
+    }
+
+    fn repair_sql<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        attempts: &'a [(&'a str, &'a str)],
+        cancel: Option<&'a CancelToken>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ParsedQuestion>>> + Send + 'a>> {
+        Box::pin(async move {
+            self.repair_sql_model(question, previous, attempts, cancel)
+                .await
+        })
     }
 
     fn model_loading(&self) -> bool {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import type {
   AskPrevious,
@@ -179,6 +179,14 @@ export function AskPage({
   const [followUp, setFollowUp] = useState(true);
   const [asked, setAsked] = useState("");
   const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (!visible) return;
@@ -215,23 +223,66 @@ export function AskPage({
   async function submitQuestion(event: FormEvent) {
     event.preventDefault();
     if (!question.trim() || loading) return;
+    const controller = new AbortController();
+    const requestId =
+      globalThis.crypto?.randomUUID?.() ??
+      `ask-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    abortRef.current = controller;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError("");
     setSqlEditorOpen(false);
     try {
-      // A follow-up sends the last question and how it was understood,
+      // A follow-up sends the last question and how it was understood (or SQL),
       // never its results.
       const previous: AskPrevious | null =
-        followUp && canFollowUp && response?.chips.length
-          ? { question: asked, chips: response.chips }
+        followUp && canFollowUp
+          ? sqlMode && response?.sql?.sql
+            ? {
+                question: asked || response.sql.title || "",
+                chips: [],
+                sql: {
+                  title: response.sql.title,
+                  computed: response.sql.computed,
+                  sql: response.sql.sql,
+                },
+              }
+            : response?.chips.length
+              ? { question: asked, chips: response.chips }
+              : null
           : null;
-      setResponse(await api.ask(question.trim(), null, previous));
-      setAsked(question.trim());
+      const next = await api.ask(question.trim(), null, previous, {
+        signal: controller.signal,
+        requestId,
+      });
+      if (requestIdRef.current === requestId) {
+        setResponse(next);
+        setAsked(question.trim());
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (requestIdRef.current !== requestId) return;
+      if (
+        controller.signal.aborted ||
+        (cause instanceof DOMException && cause.name === "AbortError")
+      ) {
+        setResponse(null);
+        setError("The question was cancelled.");
+      } else {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
     } finally {
-      setLoading(false);
+      if (requestIdRef.current === requestId) {
+        abortRef.current = null;
+        requestIdRef.current = null;
+        setLoading(false);
+      }
     }
+  }
+
+  function cancelQuestion() {
+    const id = requestIdRef.current;
+    if (id) void api.cancelAsk(id).catch(() => {});
+    abortRef.current?.abort();
   }
 
   async function runQuery(query: Query) {
@@ -280,7 +331,11 @@ export function AskPage({
   const earlier = response?.earlier ?? [];
   const remote = status?.provider === "remote";
   const sqlMode = status?.answer_mode === "sql";
-  const canFollowUp = remote && !sqlMode && response?.status === "ok";
+  const canFollowUp =
+    response?.status === "ok" &&
+    (sqlMode
+      ? Boolean(response.sql?.sql)
+      : remote && response.chips.length > 0);
   const unavailable =
     !status ||
     !status.enabled ||
@@ -403,6 +458,11 @@ export function AskPage({
             )}
             {loading ? "Asking…" : "Ask"}
           </Button>
+          {loading && (
+            <Button type="button" variant="secondary" onClick={cancelQuestion}>
+              Cancel
+            </Button>
+          )}
           <span className="field-hint">
             {sqlMode ? (
               "Ask any question about your listening history. The AI writes a read-only SQL query over your listening projection and scrobbl.rs runs it in a sandbox."
@@ -509,11 +569,13 @@ export function AskPage({
                 tone="info"
               >
                 {response.message}
-                <p className="ask-hint">
-                  Try: “How many times did I listen to Björk?” · “When did I
-                  first listen to Radiohead?” · “How many hours did I listen?” ·
-                  “What is my listening streak?”
-                </p>
+                {!sqlMode && (
+                  <p className="ask-hint">
+                    Try: “How many times did I listen to Björk?” · “When did I
+                    first listen to Radiohead?” · “How many hours did I listen?”
+                    · “What is my listening streak?”
+                  </p>
+                )}
               </Notice>
             )}
 
@@ -547,14 +609,17 @@ export function AskPage({
                       Rule: {response.sql.rule_code}
                     </p>
                   )}
-                {!remote && sqlMode && !sqlEditorOpen && (
-                  <p className="ask-hint">
-                    Local catalog models can struggle with free SQL questions.
-                    Try switching to{" "}
-                    <Link to="/settings/ai">Guided questions</Link> or a larger
-                    model.
-                  </p>
-                )}
+                {!remote &&
+                  sqlMode &&
+                  !sqlEditorOpen &&
+                  response.sql?.rule_code !== "cancelled" && (
+                    <p className="ask-hint">
+                      Local catalog models can struggle with free SQL questions.
+                      Try switching to{" "}
+                      <Link to="/settings/ai">Guided questions</Link> or a
+                      larger model.
+                    </p>
+                  )}
                 {response.sql?.sql && (
                   <SqlDisclosure
                     sql={response.sql.sql}
