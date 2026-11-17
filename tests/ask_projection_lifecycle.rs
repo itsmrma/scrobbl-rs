@@ -451,7 +451,10 @@ async fn restore_activation_removes_stale_projection() {
         .await
         .unwrap();
     // Built at runtime from the asset id: not a credential, and not a literal.
-    let restore_password = format!("{asset_id}-Restored-Pass-9!");
+    // The id is separated character by character so a random id can never
+    // contain one of the 3-character runs that the password policy rejects.
+    let separated: String = asset_id.chars().flat_map(|c| ['-', c]).collect();
+    let restore_password = format!("Restored-Pass-9{separated}!");
     recovery::prepare_restore(&storage, &asset_id, restore_password)
         .await
         .unwrap();
