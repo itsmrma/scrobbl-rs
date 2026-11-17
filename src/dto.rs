@@ -316,6 +316,25 @@ pub struct RowIssue {
     pub reason: String,
 }
 
+/// One uploaded file of a Spotify import, as listed in Settings.
+#[derive(Serialize, Deserialize, TS)]
+pub struct ImportFile {
+    pub file_id: String,
+    pub filename: String,
+    pub job_id: String,
+    pub created_at_ms: i64,
+    pub state: String,
+    pub outcome: Option<String>,
+    pub error_code: Option<String>,
+    pub size_bytes: i64,
+    pub received_at_ms: i64,
+    pub listens: i64,
+    pub added: i64,
+    pub duplicates: i64,
+    pub invalid: i64,
+    pub skipped: i64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +377,7 @@ mod tests {
             ActivityMember::decl(&config),
             ActivityDetail::decl(&config),
             RowIssue::decl(&config),
+            ImportFile::decl(&config),
             crate::listenbrainz::Limits::decl(&config),
             crate::name_groups::GroupMember::decl(&config),
             crate::name_groups::GroupPage::decl(&config),

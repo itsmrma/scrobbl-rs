@@ -181,7 +181,16 @@ fn upsert_track(conn: &Connection, event: &Event) -> Result<(String, bool)> {
     Ok((id, true))
 }
 pub(crate) fn publish(conn: &Connection, affected: &BTreeSet<String>) -> Result<()> {
-    if affected.is_empty() {
+    publish_with_removals(conn, affected, &BTreeSet::new())
+}
+/// Publish an ingest change and, when listens were deleted outright, the
+/// matching `remove` entries so read clients drop them too.
+pub(crate) fn publish_with_removals(
+    conn: &Connection,
+    affected: &BTreeSet<String>,
+    removed: &BTreeSet<String>,
+) -> Result<()> {
+    if affected.is_empty() && removed.is_empty() {
         return Ok(());
     }
     let revision: Option<i64> = optional(
@@ -200,6 +209,13 @@ pub(crate) fn publish(conn: &Connection, affected: &BTreeSet<String>) -> Result<
         execute(
             conn,
             "INSERT INTO changes(revision,listen_id,operation) SELECT ?,id,CASE WHEN trashed_at_ms IS NULL THEN 'upsert' ELSE 'remove' END FROM listens WHERE id=?",
+            params![revision, id],
+        )?;
+    }
+    for id in removed {
+        execute(
+            conn,
+            "INSERT INTO changes(revision,listen_id,operation) VALUES(?,?,'remove')",
             params![revision, id],
         )?;
     }
@@ -222,7 +238,7 @@ struct Variant {
     kind: String,
     counted: bool,
 }
-fn canonicalize(conn: &Connection, id: &str) -> Result<()> {
+pub(crate) fn canonicalize(conn: &Connection, id: &str) -> Result<()> {
     let variants = rows(
         conn,
         "SELECT v.played_at_ms,v.listened_ms,v.duration_kind,v.counted FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.listen_id=? ORDER BY CASE o.source WHEN 'spotify_api' THEN 0 WHEN 'spotify_import' THEN 1 ELSE 2 END,v.played_at_ms,v.fingerprint",

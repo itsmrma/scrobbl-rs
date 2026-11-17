@@ -227,6 +227,16 @@ pub fn router(state: AppState) -> Router {
             post(crate::activities::cancel),
         )
         .route("/api/v1/import/limits", get(imports::limits))
+        .route("/api/v1/imports", get(crate::imports_admin::list))
+        .route(
+            "/api/v1/imports/delete-all",
+            post(crate::imports_admin::delete_all),
+        )
+        .route(
+            "/api/v1/imports/{file_id}/delete",
+            post(crate::imports_admin::delete_file),
+        )
+        .route("/api/v1/recovery/reset", post(crate::recovery_http::reset))
         .route("/api/session", get(auth::status))
         .route("/api/setup", post(auth::setup))
         .route("/api/login", post(auth::login))

@@ -951,3 +951,163 @@ async fn maintenance_fences_and_requeues_a_running_import_without_orphaning_its_
     let _ = worker.await;
     storage.close().await;
 }
+
+#[tokio::test]
+async fn deleting_an_imported_file_drops_only_its_listens_and_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let first = queue(
+        &storage,
+        &[(
+            "first.json",
+            json!([row(0, 120000)]).to_string().into_bytes(),
+        )],
+        ImportLimits::default(),
+    )
+    .await;
+    run(&storage, &first).await;
+    let second = queue(
+        &storage,
+        &[(
+            "second.json",
+            json!([row(3600, 120000)]).to_string().into_bytes(),
+        )],
+        ImportLimits::default(),
+    )
+    .await;
+    run(&storage, &second).await;
+    assert_eq!(count(&storage, "listens").await, 2);
+    let file_id: String = sqlx::query_scalar("SELECT file_id FROM job_inputs WHERE job_id=?")
+        .bind(&first)
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap();
+    let mut tx = storage.writer.begin().await.unwrap();
+    let removed = scrobbl_rs::imports_admin::delete_imports(&mut tx, Some(&file_id))
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(count(&storage, "listens").await, 1);
+    let first_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE id=?")
+        .bind(&first)
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap();
+    assert_eq!(first_jobs, 0);
+    let inputs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM job_inputs WHERE file_id=?")
+        .bind(&file_id)
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap();
+    assert_eq!(inputs, 0);
+    // The surviving import keeps its listen, its observation and its duration.
+    let (observations, listened): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(MAX(listened_ms),0) FROM observations o JOIN listens l ON l.id=o.listen_id",
+    )
+    .fetch_one(&storage.readers)
+    .await
+    .unwrap();
+    assert_eq!(observations, 1);
+    assert_eq!(listened, 120000);
+    // Deleting what is left removes the last imported listen too.
+    let mut tx = storage.writer.begin().await.unwrap();
+    let removed = scrobbl_rs::imports_admin::delete_imports(&mut tx, None)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(removed, 1);
+    assert_eq!(count(&storage, "listens").await, 0);
+    assert_eq!(count(&storage, "source_occurrences").await, 0);
+    assert_eq!(count(&storage, "observation_variants").await, 0);
+    storage.close().await;
+}
+
+#[tokio::test]
+async fn resetting_the_archive_keeps_the_account_and_leaves_maintenance() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let id = queue(
+        &storage,
+        &[(
+            "history.json",
+            json!([row(0, 120000), row(60, 120000)])
+                .to_string()
+                .into_bytes(),
+        )],
+        ImportLimits::default(),
+    )
+    .await;
+    run(&storage, &id).await;
+    assert_eq!(count(&storage, "listens").await, 2);
+    let config = scrobbl_rs::config::Config {
+        port: 3210,
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        data_dir: dir.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let app = scrobbl_rs::web::router(scrobbl_rs::AppState::new(storage.clone(), config));
+    let token = scrobbl_rs::auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'test-csrf',9999999999999)")
+        .bind(scrobbl_rs::auth::digest(&token))
+        .execute(&storage.private)
+        .await
+        .unwrap();
+    let reset = |body: serde_json::Value| {
+        app.clone().oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/recovery/reset")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+    };
+    // No explicit confirmation, no deletion.
+    let response = reset(json!({})).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(count(&storage, "listens").await, 2);
+    let response = reset(json!({"confirm":true})).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(count(&storage, "listens").await, 0);
+    assert_eq!(count(&storage, "source_occurrences").await, 0);
+    assert_eq!(count(&storage, "observation_variants").await, 0);
+    let entities: i64 =
+        sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM tracks)+(SELECT COUNT(*) FROM albums)+(SELECT COUNT(*) FROM artists)")
+            .fetch_one(&storage.readers)
+            .await
+            .unwrap();
+    assert_eq!(entities, 0);
+    let jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap();
+    assert_eq!(jobs, 0);
+    // The session and the settings survive, and writes are possible again.
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
+        .fetch_one(&storage.private)
+        .await
+        .unwrap();
+    assert_eq!(sessions, 1);
+    let maintenance: i64 = sqlx::query_scalar("SELECT maintenance FROM archive_state")
+        .fetch_one(&storage.readers)
+        .await
+        .unwrap();
+    assert_eq!(maintenance, 0);
+    storage.close().await;
+}

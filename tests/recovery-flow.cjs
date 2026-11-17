@@ -102,4 +102,34 @@ module.exports = async function recoveryFlow(page) {
     path: "test-results/recovery-desktop.png",
     fullPage: true,
   });
+
+  // Deleting the archive is a red action gated by an explicit confirmation.
+  await page.goto("/settings/data");
+  await page
+    .getByRole("button", { name: "Delete all archive data", exact: true })
+    .click();
+  const resetDialog = page.getByRole("dialog", {
+    name: "Delete all archive data",
+  });
+  await expect(resetDialog).toBeVisible();
+  const confirmReset = resetDialog.getByRole("button", {
+    name: "Delete everything",
+    exact: true,
+  });
+  await expect(confirmReset).toBeDisabled();
+  await resetDialog.getByLabel(/I understand every archive row/).check();
+  await expect(confirmReset).toBeEnabled();
+  await resetDialog
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  await expect(resetDialog).toBeHidden();
+
+  // The imported files page lists what each file still owns and can be emptied.
+  await page.goto("/settings/imports");
+  await expect(
+    page.getByRole("heading", { name: "Imported files" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/listens collected live from Spotify stay/i),
+  ).toBeVisible();
 };

@@ -10,6 +10,7 @@ import type {
   History,
   ImportResponse,
   ImportLimits,
+  ImportFile,
   IngestReport,
   NowPlaying,
   Preferences,
@@ -482,6 +483,16 @@ export const api = {
     post<{ status: string; message: string }>("/api/spotify/retry-now"),
   disconnect: () => post("/api/spotify/disconnect"),
   importLimits: () => request<ImportLimits>("/api/v1/import/limits"),
+  imports: () => request<ImportFile[]>("/api/v1/imports"),
+  deleteImportFile: (file_id: string) =>
+    post<{ removed: number }>(
+      `/api/v1/imports/${encodeURIComponent(file_id)}/delete`,
+      { confirm: true },
+    ),
+  deleteAllImports: () =>
+    post<{ removed: number }>("/api/v1/imports/delete-all", { confirm: true }),
+  resetArchive: () =>
+    post<{ ok: boolean }>("/api/v1/recovery/reset", { confirm: true }),
   importSpotify: (form: FormData) =>
     post<ImportResponse>("/api/import/spotify", form),
   activities: (page = 0, kind = "") =>

@@ -24,7 +24,7 @@ import {
   useAppearance,
   useBrowserPreference,
 } from "./preferences";
-import { Settings } from "./settings";
+import { SECTIONS, Settings } from "./settings";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
@@ -243,17 +243,7 @@ function Shell({
 
   const page =
     path === "/" || path === "/dashboard" ? "dashboard" : path.split("/")[1];
-  const settingsSection = [
-    "account",
-    "application",
-    "general",
-    "appearance",
-    "connections",
-    "images",
-    "ai",
-    "data",
-    "api-keys",
-  ].includes(path.split("/")[2])
+  const settingsSection = SECTIONS.some(([id]) => id === path.split("/")[2])
     ? path.split("/")[2]
     : "general";
   const title =

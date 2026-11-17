@@ -20,6 +20,7 @@ pub mod error;
 pub mod exports;
 pub mod import_worker;
 pub mod imports;
+pub mod imports_admin;
 mod ingest;
 pub mod jobs;
 pub mod library;
