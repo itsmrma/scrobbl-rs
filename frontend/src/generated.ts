@@ -16,7 +16,13 @@ export type EntityChoice = { id: string, name: string, subtitle: string, };
 export type SearchEdition = { id: string, subtitle: string, cover_url: string | null, plays: number, };
 export type SearchItem = { id: string, name: string, subtitle: string, cover_url: string | null, plays: number, editions: Array<SearchEdition>, };
 export type RankingPage = { items: Array<Ranking>, total: number, page: number, page_size: number, };
-export type MusicPage = { id: string, name: string, kind: string, cover_url: string | null, album_id: string | null, album: string | null, artists: Array<Artist>, totals: Totals, };
+export type MusicPage = { id: string, name: string, kind: string, cover_url: string | null, album_id: string | null, album: string | null, artists: Array<Artist>, totals: Totals, 
+/**
+ * Position by plays in the matching ranking for the same period, with
+ * shared positions for equal play counts. Absent when the selection has
+ * no counted plays for the entity.
+ */
+rank: number | null, };
 export type ActivityBucket = { start: string, through: string, listens: number, actual_ms: number, estimated_ms: number, unknown_durations: number, partial: boolean, };
 export type ActivityChart = { grain: string, buckets: Array<ActivityBucket>, mixed_week_starts: boolean, partial: boolean, };
 export type DiscoveryRatio = { discoveries: number, repeats: number, total: number, discovery_percent: number, };

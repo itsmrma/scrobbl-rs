@@ -297,6 +297,11 @@
   min-width: 0;
 }
 
+/* A track page has no "Different tracks" metric: two cards fill the row. */
+.stats-grid.is-pair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .stat {
   display: flex;
   flex-direction: column;
@@ -1508,6 +1513,10 @@
     justify-content: space-between;
     align-items: start;
     gap: 8px 12px;
+  }
+
+  .stats-grid.is-pair {
+    grid-template-columns: repeat(2, minmax(0, auto));
   }
 
   .stat,

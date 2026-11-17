@@ -1117,6 +1117,15 @@ test.describe("consultation", () => {
     await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
     await expect(page.getByLabel("Period", { exact: true })).toBeVisible();
 
+    // The header reports the position the artist has in the same ranking, and
+    // the artist page keeps its three statistics.
+    await expect(page.locator(".music-title-main .rank-badge")).toContainText(
+      "#1",
+    );
+    await expect(
+      page.locator(".dashboard-widget[data-widget-type='totals'] .stats-grid .stat"),
+    ).toHaveCount(3);
+
     // 3. Verify default 6-widget artist template layout in .dashboard-grid
     const artistGrid = page.locator(".dashboard-grid");
     await expect(artistGrid).toBeVisible();
@@ -1683,6 +1692,18 @@ test.describe("consultation", () => {
     await expect(page.locator(".music-personal")).toBeVisible();
     await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
     await expect(page.getByLabel("Period", { exact: true })).toBeVisible();
+
+    // The header reports the track's position, and the page drops the track
+    // count that would always read one.
+    await expect(page.locator(".music-title-main .rank-badge")).toContainText(
+      "#1",
+    );
+    const trackStats = page.locator(
+      ".dashboard-widget[data-widget-type='totals'] .stats-grid",
+    );
+    await expect(trackStats.locator(".stat")).toHaveCount(2);
+    await expect(trackStats).toHaveClass(/is-pair/);
+    await expect(trackStats.getByText("Different tracks")).toHaveCount(0);
 
     // 3. Verify default 4-widget track template layout in .dashboard-grid
     const trackGrid = page.locator(".dashboard-grid");

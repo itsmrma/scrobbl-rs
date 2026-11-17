@@ -324,6 +324,33 @@ async fn rankings_keep_primary_ties_across_pages_secondary_order_precision_and_f
             .0,
         400
     );
+    // The entity pages report the same position as the matching ranking,
+    // including the shared position for equal play counts.
+    for (kind, list) in [("tracks", &first), ("artists", &artists)] {
+        for item in list["items"].as_array().unwrap() {
+            let page = json_get(
+                &state,
+                &token,
+                &format!(
+                    "/api/v1/consultation/music/{kind}/{}",
+                    item["id"].as_str().unwrap()
+                ),
+            )
+            .await;
+            assert_eq!(page["rank"], item["position"], "{kind} {}", item["id"]);
+        }
+    }
+    // A period without counted plays has no position to report.
+    let empty = json_get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/music/tracks/{}?from=2030-01-01&to=2030-01-02",
+            first["items"][0]["id"].as_str().unwrap()
+        ),
+    )
+    .await;
+    assert!(empty["rank"].is_null(), "{empty}");
     state.storage.close().await;
 }
 #[tokio::test]

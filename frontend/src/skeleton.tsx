@@ -311,8 +311,10 @@ export function OverviewSkeleton({
 
 export function MusicPageSkeleton({
   label = "Loading music page…",
+  stats = 3,
 }: {
   label?: string;
+  stats?: number;
 }) {
   return (
     <div className="skeleton-container" role="status" aria-busy="true">
@@ -337,8 +339,8 @@ export function MusicPageSkeleton({
           </div>
         </div>
       </div>
-      <div className="stats-grid">
-        {[1, 2, 3].map((i) => (
+      <div className={stats === 2 ? "stats-grid is-pair" : "stats-grid"}>
+        {Array.from({ length: stats }, (_, i) => (
           <div className="stat skeleton-stat" key={i}>
             <SkeletonBlock width="45%" height={13} borderRadius={4} />
             <SkeletonBlock
