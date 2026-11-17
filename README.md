@@ -14,6 +14,10 @@
 </div>
 
 <p align="center">
+  <a href="https://scrobblrs.benassimatteo.dev"><strong>Website</strong></a>
+</p>
+
+<p align="center">
   <a href="brag-output-2026-10-24-164300/brag.mp4"><img src="brag-output-2026-10-24-164300/brag.gif" alt="A short tour of the scrobbl.rs listening archive: dashboard, import, listening history, and self-hosted setup" /></a>
 </p>
 

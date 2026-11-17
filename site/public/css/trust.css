@@ -1,0 +1,21 @@
+/* "Numbers you can trust": notices in the app's notice style (DESIGN.md, Notice Banner). */
+.trust-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 40px; align-items: start; }
+.trust .section-head { margin-bottom: 0; }
+
+.notice {
+  --notice-color: var(--muted);
+  display: flex; align-items: flex-start; gap: 12px; border-radius: 12px; padding: 16px 18px; margin: 0 0 12px;
+  border: 1px solid color-mix(in srgb, var(--notice-color) 35%, var(--border));
+  background: color-mix(in srgb, var(--notice-color) 7%, var(--surface));
+}
+.notice-success { --notice-color: var(--success); }
+.notice-warning { --notice-color: var(--warning); }
+.notice-info { --notice-color: var(--muted); }
+.notice svg { flex: none; color: var(--notice-color); margin-top: 2px; }
+.notice b { display: block; }
+.notice p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+.notice > div { min-width: 0; }
+
+@media (max-width: 900px) {
+  .trust-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+}
