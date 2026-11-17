@@ -6048,6 +6048,7 @@ dialog.artwork-lightbox {
 .ask-result {
   display: grid;
   gap: 10px;
+  min-width: 0;
   margin-bottom: 18px;
 }
 
@@ -6175,7 +6176,8 @@ dialog.artwork-lightbox {
   overflow-wrap: anywhere;
 }
 
-.ask-table tbody th a {
+.ask-table tbody th a,
+.ask-table tbody td a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
@@ -6960,4 +6962,104 @@ dialog.artwork-lightbox {
   gap: 8px;
   min-height: 44px;
   font-size: 13px;
+}
+
+.ask-sql-computed {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ask-sql-disclosure {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.ask-sql-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.ask-sql-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ask-sql-code {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ask-sql-code:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ask-sql-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-result-value a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 600px) {
+  .ask-sql-actions .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+}
+
+.ask-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.ai-answer-mode {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-answer-mode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ai-mode-explanations {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-mode-explanations .field-hint {
+  margin: 0;
 }

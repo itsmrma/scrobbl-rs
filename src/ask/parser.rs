@@ -4,10 +4,11 @@
 //! object-safe `QueryParser` trait and return only DSL, never SQL, rows or IDs.
 //! CI and the current app use `StubParser`, a deterministic phrase map.
 use crate::{
+    ai::AnswerMode,
     ask::{
         dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
-        runtime::{ModelSpec, Runtime, RuntimeError},
-        schema::ModelOutput,
+        runtime::{CancelToken, GrammarKind, ModelSpec, Runtime, RuntimeError},
+        schema::{ColumnFormat, ModelOutput, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     error::{AppError, Result},
 };
@@ -22,6 +23,7 @@ pub enum ParsedQuestion {
     /// dates from one row of an earlier step. Only the stronger "bring your
     /// own AI" engine produces plans.
     Plan(Vec<PlanStep>),
+    Sql(SqlModelOutput),
     Unsupported {
         reason: String,
     },
@@ -43,12 +45,22 @@ pub struct Binding {
     pub row: usize,
 }
 
+/// What the previous SQL-mode answer computed, so a follow-up can build on it
+/// without ever sending results.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SqlPrevious {
+    pub title: String,
+    pub computed: String,
+    pub sql: String,
+}
+
 /// What the previous answer was, so a follow-up ("and last year?") can build
-/// on it. Only the question and its interpretation, never results.
+/// on it. Only the question and its interpretation or SQL, never results.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Previous {
     pub question: String,
     pub interpretation: Vec<(String, String)>,
+    pub sql: Option<SqlPrevious>,
 }
 
 pub trait QueryParser: Send + Sync {
@@ -64,6 +76,40 @@ pub trait QueryParser: Send + Sync {
         self.parse(question)
     }
 
+    /// Parse using the active answer mode. Parsers that only support one mode
+    /// inherit `parse_follow_up`.
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        _mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        self.parse_follow_up(question, previous)
+    }
+
+    /// Parse using the active answer mode with cancellation support.
+    fn parse_for_mode_with_cancel<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        mode: AnswerMode,
+        _cancel: Option<&'a CancelToken>,
+    ) -> ParseFuture<'a> {
+        self.parse_for_mode(question, previous, mode)
+    }
+
+    /// Ask the model to repair a rejected or failing SQL query using only its
+    /// previous SQL and the sanitized sandbox error. Returns `Ok(None)` when
+    /// the parser does not support SQL repair.
+    fn repair_sql<'a>(
+        &'a self,
+        _question: &'a str,
+        _previous: Option<&'a Previous>,
+        _attempts: &'a [(&'a str, &'a str)],
+        _cancel: Option<&'a CancelToken>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ParsedQuestion>>> + Send + 'a>> {
+        Box::pin(async { Ok(None) })
+    }
     /// True while the real runtime is loading a model. Stub and unavailable
     /// parsers never load anything.
     fn model_loading(&self) -> bool {
@@ -77,6 +123,20 @@ pub struct StubParser;
 impl QueryParser for StubParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
         Box::pin(async move { Ok(stub_parse(question)) })
+    }
+
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        _previous: Option<&'a Previous>,
+        mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move {
+            Ok(match mode {
+                AnswerMode::Guided => stub_parse(question),
+                AnswerMode::Sql => stub_parse_sql(question),
+            })
+        })
     }
 }
 
@@ -202,6 +262,99 @@ pub fn stub_parse(question: &str) -> ParsedQuestion {
     // refusal, not an empty answer.
     ParsedQuestion::Unsupported {
         reason: unsupported_question_message(),
+    }
+}
+
+/// Deterministic SQL-mode stub used when testing local SQL mode without a GGUF model.
+pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
+    let normalised = normalise(question);
+    if normalised.is_empty()
+        || contains_any(
+            &normalised,
+            &["weather", "meteo", "poem", "poesia", "capital of"],
+        )
+    {
+        return ParsedQuestion::Unsupported {
+            reason: "I can only answer questions about your listening archive.".into(),
+        };
+    }
+    if contains_any(&normalised, &["show me settings", "read settings"]) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT value FROM settings".into(),
+            title: "Settings".into(),
+            computed: "Attempted to read settings.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: Vec::new(),
+        });
+    }
+    if contains_any(&normalised, &["invalid sql", "broken sql"]) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT * FROM nonexistent_table".into(),
+            title: "Broken query".into(),
+            computed: "Attempted to query a missing table.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: Vec::new(),
+        });
+    }
+    if contains_any(
+        &normalised,
+        &["top tracks", "brani più ascoltati", "canzoni più ascoltate"],
+    ) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC".into(),
+            title: "Top tracks".into(),
+            computed: "Counted plays per track across all time.".into(),
+            answer_kind: SqlAnswerKind::Table,
+            columns: vec![
+                SqlColumnSpec {
+                    name: "track".into(),
+                    format: ColumnFormat::Track,
+                },
+                SqlColumnSpec {
+                    name: "plays".into(),
+                    format: ColumnFormat::Count,
+                },
+            ],
+        });
+    }
+    for prefix in [
+        "how many times did i listen to ",
+        "how many times did i play ",
+        "quante volte ho ascoltato ",
+    ] {
+        if let Some(name) = normalised.strip_prefix(prefix) {
+            let escaped = name.trim().replace('\'', "''");
+            return ParsedQuestion::Sql(SqlModelOutput {
+                sql: format!(
+                    "SELECT COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND LOWER(a.name) = LOWER('{escaped}')"
+                ),
+                title: format!("Plays for {}", name.trim()),
+                computed: format!("Counted plays for artist {} across all time.", name.trim()),
+                answer_kind: SqlAnswerKind::Value,
+                columns: vec![SqlColumnSpec {
+                    name: "plays".into(),
+                    format: ColumnFormat::Count,
+                }],
+            });
+        }
+    }
+    if contains_any(
+        &normalised,
+        &["how many plays", "how many listens", "quanti ascolti"],
+    ) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1".into(),
+            title: "Total plays".into(),
+            computed: "Total counted plays across all time.".into(),
+            answer_kind: SqlAnswerKind::Value,
+            columns: vec![SqlColumnSpec {
+                name: "plays".into(),
+                format: ColumnFormat::Count,
+            }],
+        });
+    }
+    ParsedQuestion::Unsupported {
+        reason: "I couldn't translate that question in stub SQL mode. Try \"What are my top tracks?\" or \"How many plays?\".".into(),
     }
 }
 
@@ -374,39 +527,90 @@ impl ModelParser {
         &self,
         question: &str,
         previous: Option<&Previous>,
+        mode: Option<AnswerMode>,
+        cancel: Option<&CancelToken>,
     ) -> Result<ParsedQuestion> {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(runtime_error(RuntimeError::Cancelled));
+        }
         let stored = crate::ai::read_settings_from(&self.db).await?;
         if !stored.enabled {
             return Ok(ParsedQuestion::Unsupported {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             });
         }
+        // A per-request mode never persists; without one the stored mode for the
+        // selected engine applies.
+        let answer_mode = mode.unwrap_or_else(|| stored.effective_answer_mode());
         if stored.uses_remote() {
             let Some(config) = stored.remote_config() else {
                 return Ok(ParsedQuestion::Unsupported {
                     reason: "Enter the AI server address and the model name in Settings.".into(),
                 });
             };
+            if answer_mode == crate::ai::AnswerMode::Sql {
+                let today = active_calendar_today(&self.db).await;
+                let raw = crate::ask::remote::infer_sql(
+                    &config,
+                    question,
+                    previous,
+                    &today,
+                    self.timeout,
+                )
+                .await?;
+                return interpret_remote_sql(&raw);
+            }
             let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
             return interpret_remote(&raw, question);
         }
-        let Some(model_id) = stored.active_model else {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "Download and select an AI model in Settings before asking questions."
-                    .into(),
-            });
+        let spec = match self.local_spec(&stored)? {
+            Ok(spec) => spec,
+            Err(reason) => return Ok(ParsedQuestion::Unsupported { reason }),
+        };
+        let token = cancel
+            .cloned()
+            .unwrap_or_else(|| CancelToken::new(self.timeout));
+        if answer_mode == AnswerMode::Sql {
+            let today = active_calendar_today(&self.db).await;
+            let prompt = crate::ask::prompt::build_sql_prompt(question, &today);
+            let output = self
+                .runtime
+                .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
+                .await
+                .map_err(local_sql_runtime_error)?;
+            return interpret_local_sql(&output);
+        }
+        let prompt = crate::ask::prompt::build_prompt(question);
+        let output = self
+            .runtime
+            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Guided, token)
+            .await
+            .map_err(runtime_error)?;
+
+        interpret(&output, question)
+    }
+
+    /// Resolve the selected catalog model into the worker's spec. The error is
+    /// the owner-facing refusal, so the caller can return it unchanged.
+    fn local_spec(
+        &self,
+        stored: &crate::ai::StoredSettings,
+    ) -> Result<std::result::Result<ModelSpec, String>> {
+        let Some(model_id) = stored.active_model.clone() else {
+            return Ok(Err(
+                "Download and select an AI model in Settings before asking questions.".into(),
+            ));
         };
         let Some(catalog_model) = crate::ai::catalog::find(&model_id) else {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not in the curated catalog. Choose another model."
-                    .into(),
-            });
+            return Ok(Err(
+                "The selected model is not in the curated catalog. Choose another model.".into(),
+            ));
         };
         if !catalog_model.is_available() {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not available for questions in this release. Choose another model."
+            return Ok(Err(
+                "The selected model is not available for questions in this release. Choose another model."
                     .into(),
-            });
+            ));
         }
 
         let root = match stored.model_dir.as_deref() {
@@ -420,28 +624,117 @@ impl ModelParser {
         if !installed.is_some_and(|entry| {
             entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
         }) {
-            return Ok(ParsedQuestion::Unsupported {
-                reason: "The selected model is not installed or did not pass verification. Download it again or choose another model."
+            return Ok(Err(
+                "The selected model is not installed or did not pass verification. Download it again or choose another model."
                     .into(),
-            });
+            ));
         }
         let path = crate::ai::models::model_file(&dir, &catalog_model.download.file)?;
-
-        let spec = ModelSpec::new(
+        Ok(Ok(ModelSpec::new(
             model_id,
             path,
             stored.threads.clamp(1, 64),
             stored.unload_minutes.clamp(1, 1440),
-        );
-        let prompt = crate::ask::prompt::build_prompt(question);
-        let output = self
-            .runtime
-            .infer(&spec, &prompt, self.timeout)
-            .await
-            .map_err(runtime_error)?;
-
-        interpret(&output, question)
+        )))
     }
+
+    async fn repair_sql_model(
+        &self,
+        question: &str,
+        previous: Option<&Previous>,
+        attempts: &[(&str, &str)],
+        cancel: Option<&CancelToken>,
+    ) -> Result<Option<ParsedQuestion>> {
+        if cancel.is_some_and(CancelToken::is_cancelled) {
+            return Err(runtime_error(RuntimeError::Cancelled));
+        }
+        let stored = crate::ai::read_settings_from(&self.db).await?;
+        if !stored.enabled {
+            return Ok(Some(ParsedQuestion::Unsupported {
+                reason: "AI is off. Enable it in Settings to ask questions.".into(),
+            }));
+        }
+        if stored.uses_remote() {
+            let Some(config) = stored.remote_config() else {
+                return Ok(Some(ParsedQuestion::Unsupported {
+                    reason: "Enter the AI server address and the model name in Settings.".into(),
+                }));
+            };
+            let today = active_calendar_today(&self.db).await;
+            let raw = crate::ask::remote::infer_sql_repair(
+                &config,
+                question,
+                previous,
+                attempts,
+                &today,
+                self.timeout,
+            )
+            .await?;
+            return interpret_remote_sql(&raw).map(Some);
+        }
+        // The local engine has a free-string `sql` field in its own JSON
+        // grammar, so it can repair too: same SQL grammar, same output contract,
+        // same timeouts and cancellation as local SQL mode.
+        let spec = match self.local_spec(&stored)? {
+            Ok(spec) => spec,
+            Err(reason) => return Ok(Some(ParsedQuestion::Unsupported { reason })),
+        };
+        let today = active_calendar_today(&self.db).await;
+        let prompt =
+            crate::ask::prompt::build_sql_repair_prompt(question, previous, attempts, &today);
+        let token = cancel
+            .cloned()
+            .unwrap_or_else(|| CancelToken::new(self.timeout));
+        let raw = self
+            .runtime
+            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
+            .await
+            .map_err(local_sql_runtime_error)?;
+        interpret_local_sql(&raw).map(Some)
+    }
+}
+
+async fn active_calendar_today(db: &sqlx::SqlitePool) -> String {
+    let tz_name: Option<String> = sqlx::query_scalar(
+        "SELECT c.timezone FROM calendars c JOIN settings s ON s.value = c.id WHERE s.key = 'calendar_id'",
+    )
+    .fetch_optional(db)
+    .await
+    .ok()
+    .flatten();
+    let now = chrono::Utc::now();
+    if let Some(tz) = tz_name.and_then(|name| name.parse::<chrono_tz::Tz>().ok()) {
+        return now.with_timezone(&tz).format("%Y-%m-%d").to_string();
+    }
+    now.format("%Y-%m-%d").to_string()
+}
+
+pub fn interpret_remote_sql(raw: &str) -> Result<ParsedQuestion> {
+    interpret_sql_with_message(
+        raw,
+        "The AI model returned a SQL interpretation that does not match the expected format. Try rephrasing the question.",
+    )
+}
+
+pub fn interpret_local_sql(raw: &str) -> Result<ParsedQuestion> {
+    interpret_sql_with_message(
+        raw,
+        "The local model returned a SQL interpretation that does not match the expected format. Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
+    )
+}
+
+fn interpret_sql_with_message(raw: &str, error_message: &str) -> Result<ParsedQuestion> {
+    let output: SqlModelOutput =
+        serde_json::from_str(raw.trim()).map_err(|_| AppError::BadRequest(error_message.into()))?;
+    if output.answer_kind == SqlAnswerKind::Unsupported {
+        let reason = if output.computed.trim().is_empty() {
+            "I can only answer questions about your listening archive.".to_owned()
+        } else {
+            output.computed.trim().to_owned()
+        };
+        return Ok(ParsedQuestion::Unsupported { reason });
+    }
+    Ok(ParsedQuestion::Sql(output))
 }
 
 /// The remote engine answers with a list of steps; a flat single interpretation
@@ -491,9 +784,22 @@ fn runtime_error(error: RuntimeError) -> AppError {
     }
 }
 
+fn local_sql_runtime_error(error: RuntimeError) -> AppError {
+    match error {
+        RuntimeError::Timeout => AppError::BadRequest(
+            "The local model did not answer in time. Try Guided questions in Settings → AI or a larger model."
+                .into(),
+        ),
+        RuntimeError::Failed(message) => AppError::BadRequest(format!(
+            "The local model could not answer: {message}. Try Guided questions in Settings → AI or a larger model."
+        )),
+        other => runtime_error(other),
+    }
+}
+
 impl QueryParser for ModelParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, None).await })
+        Box::pin(async move { self.parse_model(question, None, None, None).await })
     }
 
     fn parse_follow_up<'a>(
@@ -501,7 +807,42 @@ impl QueryParser for ModelParser {
         question: &'a str,
         previous: Option<&'a Previous>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous).await })
+        Box::pin(async move { self.parse_model(question, previous, None, None).await })
+    }
+
+    fn parse_for_mode<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        mode: AnswerMode,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move { self.parse_model(question, previous, Some(mode), None).await })
+    }
+
+    fn parse_for_mode_with_cancel<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        mode: AnswerMode,
+        cancel: Option<&'a CancelToken>,
+    ) -> ParseFuture<'a> {
+        Box::pin(async move {
+            self.parse_model(question, previous, Some(mode), cancel)
+                .await
+        })
+    }
+
+    fn repair_sql<'a>(
+        &'a self,
+        question: &'a str,
+        previous: Option<&'a Previous>,
+        attempts: &'a [(&'a str, &'a str)],
+        cancel: Option<&'a CancelToken>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ParsedQuestion>>> + Send + 'a>> {
+        Box::pin(async move {
+            self.repair_sql_model(question, previous, attempts, cancel)
+                .await
+        })
     }
 
     fn model_loading(&self) -> bool {

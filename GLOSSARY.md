@@ -94,6 +94,22 @@ Un evento significativo nello storico degli ascolti conteggiati di un artista, a
 Una successione di giorni consecutivi, secondo il calendario assegnato, con almeno un ascolto conteggiato dello stesso artista, album o brano per giorno. La serie in corso termina oggi o ieri; la serie più lunga può appartenere a qualsiasi periodo dello storico.
 _Avoid_: Streak senza indicazione dell'entità ascoltata.
 
+**Domanda guidata**:
+Una domanda in linguaggio naturale a cui Ask risponde riempiendo un vocabolario fisso di metriche, filtri, periodi e raggruppamenti; i numeri sono calcolati dal codice Rust. Il vocabolario è congelato e non si estende.
+_Avoid_: Domanda SQL, domanda libera, interpretazione.
+
+**Domanda libera**:
+Una domanda a cui Ask risponde facendo scrivere al modello una query di sola lettura sulla proiezione per Ask; il risultato è calcolato dal database. La correttezza dipende dal modello, e la query resta visibile e modificabile.
+_Avoid_: Domanda SQL quando si intende la modalità, ricerca libera.
+
+**Proiezione per Ask**:
+La rappresentazione documentata e in sola lettura dei dati di ascolto che le domande libere possono interrogare, distinta dall'archivio e priva di impostazioni, credenziali e dati grezzi delle fonti.
+_Avoid_: Copia dell'archivio, cache dell'archivio, database di Ask.
+
+**Sandbox SQL**:
+L'unico confine attraverso cui passa la query scritta dal modello per una domanda libera: sola lettura, controlli statici, elenco di autorizzazione, limiti di risorse e di tempo, tetto sull'output e isolamento su un worker dedicato. Un rifiuto nomina una regola stabile.
+_Avoid_: Esecuzione diretta, query sull'archivio.
+
 
 **Baseline mobile**:
 Il livello minimo garantito di fruibilità dell'interfaccia su schermi stretti (≤ 600px), caratterizzato da flusso a colonna singola, assenza di scroll orizzontale, allineamento naturale a sinistra dei valori e target touch minimi di 44px.
