@@ -137,6 +137,10 @@ pub struct MusicPage {
     pub album: Option<String>,
     pub artists: Vec<Artist>,
     pub totals: Totals,
+    /// Position by plays in the matching ranking for the same period, with
+    /// shared positions for equal play counts. Absent when the selection has
+    /// no counted plays for the entity.
+    pub rank: Option<i64>,
 }
 #[derive(Default, Serialize, Deserialize, TS)]
 pub struct ActivityBucket {
