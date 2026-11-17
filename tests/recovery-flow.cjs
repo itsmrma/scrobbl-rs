@@ -130,6 +130,6 @@ module.exports = async function recoveryFlow(page) {
     page.getByRole("heading", { name: "Imported files" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /Delete all imported listens/ }),
+    page.getByText(/listens collected live from Spotify stay/i),
   ).toBeVisible();
 };
