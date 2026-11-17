@@ -39,8 +39,54 @@
   <main>
     <!-- SECTION hero (ticket: hero + app preview) -->
     <section id="hero" class="block hero">
-      <div class="wrap">
-        <h1>Your listening history, kept on your server<span class="accent">.</span></h1>
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <h1>Your listening history, kept on your server<span class="accent">.</span></h1>
+          <p class="lede">scrobbl.rs collects your Spotify listens, imports years of history, and turns it into a searchable archive with rankings, charts and pages for every artist, album and track. One binary. One owner. Your data.</p>
+          <div class="cta">
+            <a class="btn primary" href="#install">Install with Docker</a>
+            <a class="btn secondary" href="https://github.com/itsmrma/scrobbl-rs" rel="noopener">View source</a>
+          </div>
+          <ul class="facts" aria-label="Highlights">
+            <li>Rust + SQLite</li>
+            <li>Self-hosted</li>
+            <li>No telemetry</li>
+            <li>GPL-3.0-or-later</li>
+          </ul>
+        </div>
+
+        <div class="hero-preview">
+          <span class="demo-tag">DEMO ARCHIVE</span>
+          <div class="mock" role="img" aria-label="Preview of the scrobbl.rs Overview page, built with demo data: a sidebar with now playing, three statistics, a 12-month activity chart and a top artists ranking. All names and numbers are invented.">
+            <div class="mock-side">
+              <b class="mock-brand"><span class="tile"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></svg></span>scrobbl.rs</b>
+              <span class="item on">Overview</span><span class="item">Listening history</span><span class="item">Rankings</span><span class="item">Ask</span>
+              <span class="eyebrow">YOUR LIBRARY</span>
+              <span class="item">Artists</span><span class="item">Albums</span><span class="item">Tracks</span>
+              <div class="now"><span class="cover c2"></span><div><span class="now-label">Now playing</span>Low Tide Radio<small>Harbor Lights</small></div></div>
+            </div>
+            <div class="mock-main">
+              <div class="mock-title">Overview<span class="accent">.</span></div>
+              <div class="sub">Your listening, at a glance</div>
+              <div class="stats">
+                <div class="stat"><span>Listens</span><strong>212,404</strong></div>
+                <div class="stat"><span>Artists</span><strong>6,918</strong></div>
+                <div class="stat"><span>Listening time</span><strong>11,240 h</strong></div>
+              </div>
+              <div class="two">
+                <div class="card"><div class="card-title">Activity <small>last 12 months</small></div>
+                  <div class="bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                </div>
+                <div class="card rank"><div class="card-title">Top artists <small>2026</small></div>
+                  <div class="row"><em>1</em><span class="cover c1"></span><span class="t">Mina Sol<small>1,204 listens</small></span></div>
+                  <div class="row"><em>2</em><span class="cover c3"></span><span class="t">The Quiet Margins<small>987 listens</small></span></div>
+                  <div class="row"><em>3</em><span class="cover c4"></span><span class="t">Ostrava<small>812 listens</small></span></div>
+                  <div class="row"><em>4</em><span class="cover c5"></span><span class="t">Velvet Arcade<small>640 listens</small></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
