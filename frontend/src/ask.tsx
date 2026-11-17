@@ -179,6 +179,11 @@ export function AskPage({
   const [followUp, setFollowUp] = useState(true);
   const [asked, setAsked] = useState("");
   const [sqlEditorOpen, setSqlEditorOpen] = useState(false);
+  // The model's description of the query the owner edited and re-ran, kept so
+  // the explanation never disappears silently after `POST /api/v1/ask/sql`.
+  const [editedDescription, setEditedDescription] = useState<string | null>(
+    null,
+  );
   const abortRef = useRef<AbortController | null>(null);
   const requestIdRef = useRef<string | null>(null);
 
@@ -258,6 +263,7 @@ export function AskPage({
       if (requestIdRef.current === requestId) {
         setResponse(next);
         setAsked(question.trim());
+        setEditedDescription(null);
       }
     } catch (cause) {
       if (requestIdRef.current !== requestId) return;
@@ -288,6 +294,7 @@ export function AskPage({
   async function runQuery(query: Query) {
     setLoading(true);
     setError("");
+    setEditedDescription(null);
     try {
       setResponse(await api.askQuery(query));
     } catch (cause) {
@@ -303,17 +310,22 @@ export function AskPage({
     setError("");
     setSqlEditorOpen(true);
     try {
-      setResponse(
-        await api.askSql({
-          sql: editedSql,
-          title: current?.title ?? null,
-          computed: null,
-          answer_kind:
-            current && current.answer_kind !== "unsupported"
-              ? current.answer_kind
-              : null,
-          columns: current?.columns ?? [],
-        }),
+      const next = await api.askSql({
+        sql: editedSql,
+        title: current?.title ?? null,
+        computed: null,
+        answer_kind:
+          current && current.answer_kind !== "unsupported"
+            ? current.answer_kind
+            : null,
+        columns: current?.columns ?? [],
+      });
+      setResponse(next);
+      // The edited query is not the one the model described, so keep its
+      // description visible with an explicit note instead of dropping it. A
+      // second edit keeps the description from the original answer.
+      setEditedDescription(
+        current?.computed?.trim() ? current.computed : editedDescription,
       );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -653,6 +665,7 @@ export function AskPage({
                 preferences={preferences}
                 running={loading}
                 defaultSqlOpen={sqlEditorOpen}
+                editedDescription={editedDescription}
                 onRunSql={(edited) => void runEditedSql(edited, response.sql)}
               />
             )}
@@ -814,7 +827,6 @@ function isNumericFormat(
     format === "count" ||
     format === "duration_ms" ||
     format === "percent" ||
-    format === "text" ||
     format === undefined
   );
 }
@@ -1120,12 +1132,14 @@ function SqlResultCard({
   preferences,
   running,
   defaultSqlOpen,
+  editedDescription,
   onRunSql,
 }: {
   sql: SqlAnswer;
   preferences: Preferences;
   running: boolean;
   defaultSqlOpen: boolean;
+  editedDescription: string | null;
   onRunSql: (editedSql: string) => void;
 }) {
   const [page, setPage] = useState(1);
@@ -1155,7 +1169,14 @@ function SqlResultCard({
       {sql.title && <p className="ask-result-headline">{sql.title}</p>}
       {sql.computed && (
         <p className="ask-sql-computed">
-          <strong>Computed:</strong> {sql.computed}
+          <strong>The model says this query computes:</strong> {sql.computed}
+        </p>
+      )}
+      {editedDescription && (
+        <p className="ask-sql-computed">
+          <strong>You ran edited SQL.</strong> This result comes from the query
+          you changed. The model's description of its original query was:{" "}
+          {editedDescription}
         </p>
       )}
       {sql.rows.length === 0 ? (

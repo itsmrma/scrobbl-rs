@@ -1016,6 +1016,97 @@ async fn ask_sql_requires_owner_session_csrf_and_rejects_read_api_keys() {
 }
 
 #[tokio::test]
+async fn ask_mode_requires_owner_session_csrf_and_rejects_read_api_keys() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    let (status, key_body) = post(
+        &state,
+        &token,
+        "/api/v1/api-keys",
+        json!({"name": "reader", "application": "test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{key_body}");
+    let api_key = key_body["secret"].as_str().unwrap().to_owned();
+
+    let payload = serde_json::to_vec(&json!({
+        "question": "How many times did I listen to Björk?",
+        "mode": "guided",
+    }))
+    .unwrap();
+
+    // Missing session -> 401 Unauthorized.
+    let no_session = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_session.status(), StatusCode::UNAUTHORIZED);
+
+    // Missing CSRF token -> 403 Forbidden.
+    let no_csrf = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(no_csrf.status(), StatusCode::FORBIDDEN);
+
+    // Read API key alone -> 403 Forbidden.
+    let read_key_only = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_key_only.status(), StatusCode::FORBIDDEN);
+
+    // Read API key even alongside owner cookie & CSRF -> 403 Forbidden.
+    let read_key_with_cookie = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/ask")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .header("x-csrf-token", "test-csrf")
+                .header("authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .body(Body::from(payload))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(read_key_with_cookie.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn ask_sql_executes_valid_sql_and_rejects_unsafe_sql_with_rule_code() {
     let (_dir, state, token) = setup(true).await;
     save(&state.storage, &fixture_events()).await;

@@ -125,35 +125,88 @@ impl Drop for InterruptRegistration<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum SandboxRule {
-    EmptySql,
-    SqlTooLong,
-    NulByte,
-    NotSelect,
-    MultipleStatements,
-    BoundParameters,
-    NonReadOnly,
-    UnauthorizedAction,
-    UnauthorizedTable,
-    UnauthorizedColumn,
-    Timeout,
-    InstructionLimit,
-    Cancelled,
-    BlobNotAllowed,
-    OutputTooLarge,
-    SqlError,
-    ProjectionUnavailable,
+/// Declare the stable rule codes once: serde and [`SandboxRule::rule_name`] read
+/// the same wire strings, so a message can never name a different code than the
+/// one the browser receives.
+macro_rules! sandbox_rules {
+    ($($variant:ident => $wire:literal),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+        pub enum SandboxRule {
+            $(#[serde(rename = $wire)] $variant,)+
+        }
+
+        impl SandboxRule {
+            /// The wire name serde uses for this rule, and the name used in
+            /// owner-facing messages.
+            pub fn rule_name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $wire,)+
+                }
+            }
+
+            /// True when the model can plausibly fix the query from the
+            /// sanitized error. Cancellation, a timeout and a missing
+            /// projection cannot be repaired by rewriting the SQL.
+            pub fn is_repairable(self) -> bool {
+                !matches!(
+                    self,
+                    Self::Cancelled | Self::Timeout | Self::ProjectionUnavailable
+                )
+            }
+        }
+    };
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+sandbox_rules! {
+    EmptySql => "empty_sql",
+    SqlTooLong => "sql_too_long",
+    NulByte => "nul_byte",
+    NotSelect => "not_select",
+    MultipleStatements => "multiple_statements",
+    BoundParameters => "bound_parameters",
+    NonReadOnly => "non_read_only",
+    UnauthorizedAction => "unauthorized_action",
+    UnauthorizedTable => "unauthorized_table",
+    UnauthorizedColumn => "unauthorized_column",
+    Timeout => "timeout",
+    InstructionLimit => "instruction_limit",
+    Cancelled => "cancelled",
+    BlobNotAllowed => "blob_not_allowed",
+    OutputTooLarge => "output_too_large",
+    SqlError => "sql_error",
+    ProjectionUnavailable => "projection_unavailable",
+}
+
+/// One typed SQL cell. Serialization is untagged, so the browser receives a JSON
+/// null, number or string.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SqlValue {
     Null,
     Integer(i64),
     Real(f64),
     Text(String),
+}
+
+/// The browser contract for [`SqlValue`]. TypeScript cannot tell `Integer` and
+/// `Real` apart, so it sees one `number`; the Rust variants stay separate so an
+/// integral real never round-trips as an integer. ts-rs cannot spell this on an
+/// untagged enum (`type`/`as` are rejected there), hence the explicit impl.
+impl TS for SqlValue {
+    type WithoutGenerics = Self;
+    type OptionInnerType = Self;
+
+    fn name(_: &ts_rs::Config) -> String {
+        "SqlValue".to_owned()
+    }
+
+    fn inline(_: &ts_rs::Config) -> String {
+        "null | number | string".to_owned()
+    }
+
+    fn decl(cfg: &ts_rs::Config) -> String {
+        format!("type {} = {};", Self::name(cfg), Self::inline(cfg))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -191,7 +244,7 @@ impl SandboxRejection {
     }
 
     pub fn rule_name(&self) -> &'static str {
-        rule_name(self.rule)
+        self.rule.rule_name()
     }
 }
 
@@ -935,7 +988,7 @@ fn map_sqlite_error(
     cancel: Option<&SandboxCancel>,
 ) -> SandboxRejection {
     if let Some((rule, detail)) = denied.lock().unwrap().take() {
-        let name = rule_name(rule);
+        let name = rule.rule_name();
         let message = format!("Query rejected by rule `{name}`: {detail}.");
         let model_error = format!("{name}: {detail}");
         return SandboxRejection::new(rule, message, model_error, detail);
@@ -1004,28 +1057,6 @@ fn map_sqlite_error(
                 class,
             )
         }
-    }
-}
-
-fn rule_name(rule: SandboxRule) -> &'static str {
-    match rule {
-        SandboxRule::EmptySql => "empty_sql",
-        SandboxRule::SqlTooLong => "sql_too_long",
-        SandboxRule::NulByte => "nul_byte",
-        SandboxRule::NotSelect => "not_select",
-        SandboxRule::MultipleStatements => "multiple_statements",
-        SandboxRule::BoundParameters => "bound_parameters",
-        SandboxRule::NonReadOnly => "non_read_only",
-        SandboxRule::UnauthorizedAction => "unauthorized_action",
-        SandboxRule::UnauthorizedTable => "unauthorized_table",
-        SandboxRule::UnauthorizedColumn => "unauthorized_column",
-        SandboxRule::Timeout => "timeout",
-        SandboxRule::InstructionLimit => "instruction_limit",
-        SandboxRule::Cancelled => "cancelled",
-        SandboxRule::BlobNotAllowed => "blob_not_allowed",
-        SandboxRule::OutputTooLarge => "output_too_large",
-        SandboxRule::SqlError => "sql_error",
-        SandboxRule::ProjectionUnavailable => "projection_unavailable",
     }
 }
 
@@ -1296,6 +1327,40 @@ mod tests {
     use crate::ask::projection;
     use rusqlite::Connection;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn every_rule_code_matches_the_serde_wire_name() {
+        for rule in [
+            SandboxRule::EmptySql,
+            SandboxRule::SqlTooLong,
+            SandboxRule::NulByte,
+            SandboxRule::NotSelect,
+            SandboxRule::MultipleStatements,
+            SandboxRule::BoundParameters,
+            SandboxRule::NonReadOnly,
+            SandboxRule::UnauthorizedAction,
+            SandboxRule::UnauthorizedTable,
+            SandboxRule::UnauthorizedColumn,
+            SandboxRule::Timeout,
+            SandboxRule::InstructionLimit,
+            SandboxRule::Cancelled,
+            SandboxRule::BlobNotAllowed,
+            SandboxRule::OutputTooLarge,
+            SandboxRule::SqlError,
+            SandboxRule::ProjectionUnavailable,
+        ] {
+            assert_eq!(
+                serde_json::to_value(rule).unwrap(),
+                serde_json::Value::String(rule.rule_name().into()),
+                "{rule:?}"
+            );
+        }
+        assert!(!SandboxRule::Timeout.is_repairable());
+        assert!(!SandboxRule::Cancelled.is_repairable());
+        assert!(!SandboxRule::ProjectionUnavailable.is_repairable());
+        assert!(SandboxRule::SqlError.is_repairable());
+        assert!(SandboxRule::UnauthorizedTable.is_repairable());
+    }
 
     fn fixture_projection() -> NamedTempFile {
         let file = NamedTempFile::new().unwrap();

@@ -704,6 +704,34 @@ fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
         "sql prompt is about {estimated_tokens} tokens"
     );
 
+    // A repair round adds the failed statements and the sanitized errors, and
+    // must still fit: the local engine uses the same SQL grammar and budget.
+    let repair = prompt::build_sql_repair_prompt(
+        "What are my top tracks in 2024?",
+        None,
+        &[
+            (
+                "SELECT missing_col FROM listens",
+                "sql_error (no_such_column): missing_col",
+            ),
+            (
+                "SELECT * FROM nonexistent_table",
+                "sql_error (no_such_table): nonexistent_table",
+            ),
+        ],
+        "2026-11-16",
+    );
+    let repair_tokens = repair.chars().count() / 3;
+    assert!(
+        repair_tokens as i32 + runtime::MAX_SQL_NEW_TOKENS <= runtime::SQL_CONTEXT_TOKENS as i32,
+        "sql repair prompt is about {repair_tokens} tokens"
+    );
+    assert!(
+        repair.contains("SELECT missing_col FROM listens"),
+        "{repair}"
+    );
+    assert!(repair.contains("no_such_column"), "{repair}");
+
     let grammar = grammar::to_gbnf(&schema::sql_schema()).unwrap();
     assert!(grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"));
 }

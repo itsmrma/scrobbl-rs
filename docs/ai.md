@@ -204,10 +204,12 @@ metadata. If a future value cannot be verified, the entry must use
 or selected in v1.
 
 Catalog metadata also records license, minimum/recommended RAM, CPU cores,
-optional GPU, 3072-token context, backend, measured speed and parser scores
-from the versioned evaluation set (#181): intent accuracy, slot F1, refusal
-accuracy, exact-match accuracy and per-language exact match. Entries that were
-not measured keep `null` rather than an estimate. Every entry also carries a
+optional GPU, the guided-mode 3072-token context, backend, measured speed and
+parser scores from the versioned evaluation set (#181): intent accuracy, slot
+F1, refusal accuracy, exact-match accuracy and per-language exact match. Entries
+that were not measured keep `null` rather than an estimate. The catalog's
+`context_tokens` figure describes guided questions only; free questions (SQL)
+run with a 4096-token context. Every entry also carries a
 fixed `recommendation`: `guided` for every downloadable local model. The
 "bring your own AI" option recommends `sql`; `AiCatalog.remote_recommendation`
 reports that fixed value. No measured SQL accuracy is stored or shown.
@@ -229,8 +231,9 @@ the 4B is the closest but roughly twice as slow. Keep the feature opt-in, treat
 the interpretation chips as part of the answer, and read the
 [evaluation report](reports/ask-eval.md) before recommending a model.
 
-8B and 32B entries remain `gpu_future` and are not selectable in v1. The
-context is 3072 tokens and one model is loaded at a time, so the loaded model
+8B and 32B entries remain `gpu_future` and are not selectable in v1. Guided
+questions use a 3072-token context; free questions (SQL) use 4096 tokens. One
+model is loaded at a time either way, so the loaded model
 needs its file size plus roughly 1–2 GiB of working memory; use the catalog's
 minimum/recommended RAM values as the authoritative figures. The downloader
 refuses to start without enough free disk space for the remaining bytes and
@@ -377,14 +380,22 @@ a oneshot; inference never runs on a tokio worker. Behaviour:
 - Timeout via `SCROBBL_ASK_TIMEOUT_MS` (default `30000`). Cancellation is
   checked between sampled tokens. On timeout the request returns an explicit
   error and the context is dropped/reset; no half-decoded sequence is reused.
+- The SQL sandbox has its own wall-clock budget, `SCROBBL_ASK_SQL_TIMEOUT_MS`
+  (default `3000`, any positive whole number of milliseconds, no upper bound).
+  It is read once when Ask is installed, so it applies to every sandbox run:
+  model SQL, each repair round and owner-edited `POST /api/v1/ask/sql`. The
+  instruction budget stays fixed at 5,000,000. See
+  [Ask projection and SQL sandbox](ask-projection.md#5-time-and-cancellation).
 - After `ai_unload_minutes` of inactivity the model is dropped. The next
   question re-reads settings and pays the load cost.
-- Context 3072 tokens, greedy sampling, at most 256 new tokens. Output is
-  accumulated as bytes and decoded once as UTF-8, so a multi-byte character
-  split across tokens cannot be corrupted.
 - `LlamaSampler::sample` already accepts the token; the adapter never calls
   `accept` afterwards (utilityai/llama-cpp-rs#1007). Timing measurement is off
   by default; set `SCROBBL_ASK_DEBUG=1` to enable it (and llama.cpp logs).
+- Guided questions use a 3072-token context and at most 256 new tokens. Free
+  questions (SQL) use a 4096-token context and at most 512 new tokens; the SQL
+  grammar needs the extra room for a full statement. Output is accumulated as
+  bytes and decoded once as UTF-8, so a multi-byte character split across
+  tokens cannot be corrupted.
 - A missing or corrupt GGUF returns an explicit error; the worker is detached
   with a cancellation signal on shutdown and never panics on filesystem races.
 
@@ -431,8 +442,8 @@ $env:UPDATE_ASK_SCHEMA='1'; cargo test --lib checked_in_schema_matches_the_gener
 ```
 
 The prompt (`src/ask/prompt.rs`) is compact English with EN/IT examples and
-embeds the schema without descriptions to stay well inside the 3072-token
-context; a test bounds its size. It
+embeds the schema without descriptions to stay well inside the guided
+3072-token context; a test bounds its size. It
 states that names are copied literally, that time words such as "today",
 "Fridays" and "last month" never enter `name`, that the model never writes SQL,
 and that out-of-scope or injection requests use `metric: "unsupported"`. Qwen3
@@ -521,6 +532,15 @@ format is in [`evals/ask/README.md`](../evals/ask/README.md).
 - `POST /api/v1/ai/test` — reports runtime/model readiness without loading or
   running inference.
 - `GET /api/v1/ask/status` — enabled/runtime/model-ready state for the Ask page.
+- `POST /api/v1/ask` — asks a question; body `{question, context?, previous?,
+  mode?, request_id?}`. `mode` (`guided` or `sql`) applies to that request only
+  and is never persisted; an unknown value is a `400`, and omitting it keeps the
+  stored mode for the selected engine.
+- `POST /api/v1/ask/sql` — runs owner-edited SQL through the same sandbox.
+- `POST /api/v1/ask/cancel` — requests cancellation of an in-flight Ask; body
+  `{request_id?}`, where omitting it cancels every active question.
+- Every Ask route requires the owner session and CSRF. A read API key is denied
+  (`403`), even alongside an owner cookie.
 - `POST /api/v1/ai/settings` also accepts `provider`, `remote_url`,
   `remote_model` and `remote_key` (omit it to keep the stored key, send `""` to
   clear it). `POST /api/v1/ai/test` contacts the remote server when

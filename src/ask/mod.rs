@@ -34,12 +34,12 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
-use tokio::sync::Notify;
+use tokio::sync::{Notify, Semaphore};
 use ts_rs::TS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -199,6 +199,11 @@ pub struct AskRequest {
     /// The answer this question follows up on, when the owner continues from it.
     #[serde(default)]
     pub previous: Option<AskPrevious>,
+    /// Answer mode for this request only, overriding the stored per-engine
+    /// mode. Never persisted; an unknown value is rejected with 400.
+    #[serde(default)]
+    #[ts(optional, type = "\"guided\" | \"sql\"")]
+    pub mode: Option<String>,
     #[serde(default)]
     #[ts(optional)]
     pub request_id: Option<String>,
@@ -559,15 +564,6 @@ impl Ask {
         self.parser.parse_follow_up(question, previous).await
     }
 
-    pub async fn parse_for_mode(
-        &self,
-        question: &str,
-        previous: Option<&Previous>,
-        mode: ai::AnswerMode,
-    ) -> Result<ParsedQuestion> {
-        self.parser.parse_for_mode(question, previous, mode).await
-    }
-
     pub async fn parse_for_mode_with_cancel(
         &self,
         question: &str,
@@ -642,6 +638,16 @@ pub async fn ask(
 ) -> Result<Json<AskResponse>> {
     auth::session(&state, &headers).await?;
     let question = request.question.trim().to_owned();
+    let requested_mode = match request.mode.as_deref() {
+        None => None,
+        Some("guided") => Some(ai::AnswerMode::Guided),
+        Some("sql") => Some(ai::AnswerMode::Sql),
+        Some(other) => {
+            return Err(AppError::BadRequest(format!(
+                "Unknown answer mode `{other}`. Use `guided` or `sql`."
+            )));
+        }
+    };
     let stored = match gate(&state).await? {
         Ok(stored) => stored,
         Err(mut refusal) => {
@@ -677,7 +683,7 @@ pub async fn ask(
         res = state.ask.parse_for_mode_with_cancel(
             &question,
             previous.as_ref(),
-            stored.effective_answer_mode(),
+            requested_mode.unwrap_or_else(|| stored.effective_answer_mode()),
             &ask_cancel.token,
         ) => match res {
             Ok(parsed) => parsed,
@@ -990,13 +996,6 @@ fn match_columns(actual: &[String], declared: &[SqlColumnSpec]) -> Vec<SqlColumn
 
 pub const MAX_SQL_REPAIR_ROUNDS: usize = 2;
 
-fn is_repairable_rule(rule: SandboxRule) -> bool {
-    !matches!(
-        rule,
-        SandboxRule::Cancelled | SandboxRule::Timeout | SandboxRule::ProjectionUnavailable
-    )
-}
-
 struct SqlExecution {
     as_of_ms: Option<i64>,
     table: sandbox::SandboxOutput,
@@ -1012,6 +1011,35 @@ enum SqlAttempt {
         rejection: sandbox::SandboxRejection,
     },
     Cancelled,
+}
+
+/// One sandbox execution process-wide. Two projects can share an instance and
+/// two questions can arrive at once, so the SQL sandbox itself is serialized:
+/// the permit is taken before the blocking task starts and released after it
+/// (including on cancellation) by the guard's drop.
+static SANDBOX_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+fn sandbox_slots() -> &'static Arc<Semaphore> {
+    SANDBOX_SLOTS.get_or_init(|| Arc::new(Semaphore::new(1)))
+}
+
+/// Wait for the single sandbox slot, honouring cancellation while waiting.
+async fn acquire_sandbox_slot(
+    ask_cancel: Option<&AskCancel>,
+) -> Result<Option<tokio::sync::OwnedSemaphorePermit>> {
+    let slot = Arc::clone(sandbox_slots());
+    match ask_cancel {
+        Some(cancel) => tokio::select! {
+            biased;
+            () = cancel.cancelled() => Ok(None),
+            permit = slot.acquire_owned() => permit.map(Some).map_err(|_| AppError::Internal),
+        },
+        None => slot
+            .acquire_owned()
+            .await
+            .map(Some)
+            .map_err(|_| AppError::Internal),
+    }
 }
 
 async fn execute_sql_once(
@@ -1033,6 +1061,9 @@ async fn execute_sql_once(
     let limits = state.ask.sql_limits;
     let sandbox_cancel = ask_cancel.map(|c| c.sandbox.clone());
     let (as_of_ms, outcome) = {
+        let Some(_slot) = acquire_sandbox_slot(ask_cancel).await? else {
+            return Ok(SqlAttempt::Cancelled);
+        };
         let _read = match ask_cancel {
             Some(cancel) => tokio::select! {
                 biased;
@@ -1156,7 +1187,7 @@ async fn run_sql_once(
             as_of_ms,
             rejection,
         } => {
-            let message = if local_engine && is_repairable_rule(rejection.rule) {
+            let message = if local_engine && rejection.rule.is_repairable() {
                 format!(
                     "{} Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
                     rejection.message
@@ -1197,7 +1228,7 @@ async fn run_sql(
                     return Ok(cancelled_response(state, question, Some(output)));
                 }
                 let mut repair_note: Option<String> = None;
-                if is_repairable_rule(rejection.rule) && round < MAX_SQL_REPAIR_ROUNDS {
+                if rejection.rule.is_repairable() && round < MAX_SQL_REPAIR_ROUNDS {
                     failed_attempts.push((output.sql.clone(), rejection.model_error.clone()));
                     let refs: Vec<(&str, &str)> = failed_attempts
                         .iter()
@@ -1238,7 +1269,7 @@ async fn run_sql(
                         Err(err) => return Err(err),
                     }
                 }
-                let local_hint = if local_engine && is_repairable_rule(rejection.rule) {
+                let local_hint = if local_engine && rejection.rule.is_repairable() {
                     " Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model."
                 } else {
                     ""
@@ -1248,7 +1279,7 @@ async fn run_sql(
                         "Could not repair the SQL query ({note}) {}{local_hint}",
                         rejection.message
                     )
-                } else if round > 0 && is_repairable_rule(rejection.rule) {
+                } else if round > 0 && rejection.rule.is_repairable() {
                     format!(
                         "Could not produce a valid query after {MAX_SQL_REPAIR_ROUNDS} repair attempts. {}{local_hint}",
                         rejection.message
@@ -1496,5 +1527,59 @@ async fn run(
             earlier: Vec::new(),
             sql: None,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// Both checks share the process-wide semaphore, so they run in one test.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_sql_sandbox_runs_one_query_at_a_time() {
+        // The slot is process-wide: whatever project asks, one permit exists.
+        assert_eq!(sandbox_slots().available_permits(), 1);
+
+        // Three executions that each hold the slot across a blocking task never
+        // overlap, and every permit comes back.
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let active = Arc::clone(&active);
+            let peak = Arc::clone(&peak);
+            tasks.push(tokio::spawn(async move {
+                let _slot = acquire_sandbox_slot(None)
+                    .await
+                    .unwrap()
+                    .expect("an uncancelled request always gets the slot");
+                tokio::task::spawn_blocking(move || {
+                    let running = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(running, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(20));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                })
+                .await
+                .unwrap();
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 1, "sandboxes overlapped");
+        assert_eq!(sandbox_slots().available_permits(), 1);
+
+        // A cancelled question waiting for the slot never runs SQL.
+        let held = sandbox_slots().clone().acquire_owned().await.unwrap();
+        let cancel = AskCancel::new(Duration::from_secs(30));
+        let waiter = cancel.clone();
+        let handle = tokio::spawn(async move { acquire_sandbox_slot(Some(&waiter)).await });
+        tokio::task::yield_now().await;
+        cancel.cancel();
+        let slot = handle.await.unwrap().unwrap();
+        assert!(slot.is_none(), "a cancelled ask must not run SQL");
+        drop(held);
+        assert_eq!(sandbox_slots().available_permits(), 1);
     }
 }

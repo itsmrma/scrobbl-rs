@@ -33,6 +33,11 @@ const statusLabel: Record<string, string> = {
   unverified: "Unverified",
 };
 
+const answerModeLabel: Record<AnswerMode, string> = {
+  guided: "Guided questions",
+  sql: "Free questions (SQL)",
+};
+
 const downloadError: Record<string, string> = {
   model_disk_full:
     "Not enough free disk space. Free space on the server and retry the download.",
@@ -194,6 +199,10 @@ function ModelCard({
         <div>
           <h3 id={`ai-model-${model.id}`}>{model.name}</h3>
           <p className="field-hint">{model.description}</p>
+          <p className="field-hint">
+            <strong>Recommended:</strong>{" "}
+            {answerModeLabel[model.recommendation]}
+          </p>
         </div>
         <div className="ai-badges">
           <span className={`ai-badge ai-badge-${model.tier}`}>
@@ -563,6 +572,11 @@ export function AiSettingsSection() {
               <option value="local">On this server: a model I download</option>
               <option value="remote">My own AI server or API</option>
             </Select>
+            <small className="field-hint">
+              {remote
+                ? `Recommended: ${answerModeLabel[catalog.remote_recommendation]}.`
+                : `Recommended: ${answerModeLabel.guided} for every local catalog model.`}
+            </small>
           </label>
           <div className="ai-answer-mode">
             <span className="ai-answer-mode-label">Answer mode</span>

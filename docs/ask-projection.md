@@ -4,8 +4,11 @@ Free questions (SQL) let the model write one read-only SQL query. The
 application never runs that SQL against the archive. It runs it against a
 separate SQLite file, the **Ask projection**, opened read-only inside the
 **SQL sandbox**: an allow-list authorizer, hard resource limits, a timeout and
-an output cap. Everything that can reach the model's SQL goes through
-`src/ask/sandbox.rs::execute`; there is no other path.
+an output cap. Every piece of **model-written SQL** goes through
+`src/ask/sandbox.rs::execute`; there is no other path for it. The one other
+projection reader is the history-link resolver below: it runs its own fixed
+queries with bound parameters, never model text as SQL, and opens the same file
+read-only.
 
 The two answer modes and their trade-offs are compared in
 [Local AI settings](ai.md#answer-modes). The evaluation that scores SQL answers
@@ -370,8 +373,11 @@ does not exist in the projection. `randomblob`/`zeroblob` are not allowed at all
 
 ### 5. Time and cancellation
 
-A progress handler stops a query after a 3-second wall-clock budget or a
-5,000,000-instruction budget, whichever comes first. The owner's **Cancel**
+A progress handler stops a query after the wall-clock budget or a
+5,000,000-instruction budget, whichever comes first. The wall-clock budget is
+3 seconds by default and is configurable with `SCROBBL_ASK_SQL_TIMEOUT_MS`
+(positive whole milliseconds, read once when Ask is installed; see
+[Local AI settings](ai.md#ask-parser-runtime-178)). The owner's **Cancel**
 action flips a cancellation flag and interrupts the live SQLite connection; a
 cancelled query never returns a partial answer. The archive writer and other
 readers are unaffected because the projection is a separate file.
@@ -385,9 +391,21 @@ BLOBs are rejected rather than rendered.
 ### 7. Isolation
 
 Each query runs on a dedicated blocking worker (`tokio::task::spawn_blocking`)
-with its own connection. Ask never blocks the archive writer or other readers,
+with its own connection. The sandbox is serialized process-wide: one semaphore
+permit is taken before the blocking task starts and released after it finishes
+or is cancelled, so two projects or two questions on one instance never run
+sandbox SQL concurrently. Ask never blocks the archive writer or other readers,
 and a slow query cannot hold a tokio worker. Rejection is local and the server
 keeps serving other requests.
+
+### 8. History links
+
+After an answer, `src/ask/history_link.rs` may add `/history?...` links to a
+result, or `/music/...` links to artist, album and track cells. It opens the
+projection read-only as well, with `query_only = ON`, and runs only its own
+fixed lookup queries with bound parameters; model text is parsed for filters,
+never executed as SQL. That is why it is not routed through the sandbox above:
+it is not model-written SQL.
 
 ### Stable rejection rule codes
 

@@ -340,17 +340,6 @@ impl Runtime {
         .await
     }
 
-    pub async fn infer_with_grammar(
-        &self,
-        spec: &ModelSpec,
-        prompt: &str,
-        grammar: GrammarKind,
-        timeout: Duration,
-    ) -> Result<String, RuntimeError> {
-        self.infer_with_grammar_and_cancel(spec, prompt, grammar, CancelToken::new(timeout))
-            .await
-    }
-
     pub async fn infer_with_cancel(
         &self,
         spec: &ModelSpec,

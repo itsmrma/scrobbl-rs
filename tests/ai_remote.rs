@@ -12,7 +12,11 @@ use axum::{
 use http_body_util::BodyExt;
 use scrobbl_rs::{
     AppState,
-    ask::{Ask, parser::ModelParser},
+    ask::{
+        Ask,
+        parser::ModelParser,
+        runtime::{self, Runtime},
+    },
     auth,
     config::Config,
     db, web,
@@ -1506,4 +1510,319 @@ async fn ask_cancel_requires_owner_session_and_csrf_and_rejects_api_keys() {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
+}
+
+// ---- Per-request answer mode (#208) ---------------------------------------
+
+#[tokio::test]
+async fn ask_accepts_a_per_request_mode_without_persisting_it() {
+    let mock = Mock::default();
+    let sql_answer = json!({
+        "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+        "title": "Total plays",
+        "computed": "Total counted plays across all time.",
+        "answer_kind": "value",
+        "columns": [{"name": "plays", "format": "count"}],
+    })
+    .to_string();
+    let url = serve(mock.clone()).await;
+    let (_dir, state, token) = setup(&url).await;
+    seed(&state).await;
+
+    // Stored mode is guided, but one request may ask for SQL.
+    {
+        let mut replies = mock.replies.lock().unwrap();
+        replies.push_back(sql_answer.clone());
+        replies.push_back(PLAYS_OF_BJORK.to_string());
+        replies.push_back(PLAYS_OF_BJORK.to_string());
+    }
+    let (status, sql_body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "How many plays do I have?", "mode": "sql"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sql_body}");
+    assert_eq!(sql_body["status"], "ok", "{sql_body}");
+    assert_eq!(sql_body["sql"]["rows"], json!([[5]]), "{sql_body}");
+    assert!(sql_body["result"].is_null(), "{sql_body}");
+
+    // The stored mode did not change: guided is still the default here.
+    let (_, ai) = request(&state, &token, "GET", "/api/v1/ai/settings", None).await;
+    assert_eq!(ai["answer_mode"], "guided", "{ai}");
+    let (_, ask_status) = request(&state, &token, "GET", "/api/v1/ask/status", None).await;
+    assert_eq!(ask_status["answer_mode"], "guided", "{ask_status}");
+
+    // An explicit guided override answers exactly like the stored guided mode.
+    let question = "How many times did I listen to Björk?";
+    let (status, stored_guided) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": question})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stored_guided}");
+    let (status, explicit_guided) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": question, "mode": "guided"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{explicit_guided}");
+    assert_eq!(explicit_guided, stored_guided);
+    assert_eq!(stored_guided["result"]["scalar"], 4, "{stored_guided}");
+
+    // An unknown mode is a bad request naming both allowed values.
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": question, "mode": "free"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    let message = body["error"].as_str().unwrap_or_default();
+    assert!(message.contains("free"), "{message}");
+    assert!(
+        message.contains("guided") && message.contains("sql"),
+        "{message}"
+    );
+    assert_eq!(
+        mock.seen.lock().unwrap().len(),
+        3,
+        "a rejected mode never reaches the model"
+    );
+}
+
+// ---- Local engine SQL repair rounds (#208) --------------------------------
+
+type SeenPrompts = Arc<Mutex<Vec<(String, runtime::GrammarKind)>>>;
+
+/// Replays queued SQL answers and records every prompt and grammar.
+struct ScriptedSqlEngine {
+    seen: SeenPrompts,
+    replies: Arc<Mutex<VecDeque<String>>>,
+}
+
+impl runtime::Engine for ScriptedSqlEngine {
+    fn load(&mut self, _spec: &runtime::ModelSpec) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn unload(&mut self) {}
+
+    fn generate(
+        &mut self,
+        prompt: &str,
+        _cancel: &runtime::CancelToken,
+    ) -> Result<String, runtime::InferenceError> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((prompt.to_string(), runtime::GrammarKind::Guided));
+        Ok(String::new())
+    }
+
+    fn generate_with_grammar(
+        &mut self,
+        prompt: &str,
+        grammar: runtime::GrammarKind,
+        cancel: &runtime::CancelToken,
+    ) -> Result<String, runtime::InferenceError> {
+        if cancel.should_stop() {
+            return Err(runtime::InferenceError::Cancelled);
+        }
+        self.seen
+            .lock()
+            .unwrap()
+            .push((prompt.to_string(), grammar));
+        Ok(self
+            .replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| "not json".to_string()))
+    }
+}
+
+fn local_metadata(id: &str, file: &str) -> Value {
+    json!({
+        "catalog_id": id,
+        "file": file,
+        "sha256": "0".repeat(64),
+        "size_bytes": 16,
+        "installed_at_ms": 1_760_000_000_000_i64,
+        "license": "Apache-2.0",
+        "checksum_verified": true,
+    })
+}
+
+/// A local SQL-mode Ask backed by a scripted engine instead of llama.cpp.
+async fn setup_scripted_local_sql(
+    replies: Vec<String>,
+) -> (tempfile::TempDir, AppState, String, SeenPrompts) {
+    let dir = tempfile::tempdir().unwrap();
+    let storage = db::open(dir.path()).await.unwrap();
+    let config = Config {
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        port: 3210,
+        data_dir: dir.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let token = auth::random_secret();
+    sqlx::query("INSERT INTO sessions VALUES(?,'test-csrf',9999999999999)")
+        .bind(auth::digest(&token))
+        .execute(&storage.private)
+        .await
+        .unwrap();
+    let mut state = AppState::new(storage, config);
+
+    let id = "qwen3-1.7b-q4_k_m";
+    let catalog = scrobbl_rs::ai::catalog::find(id).unwrap();
+    let model_dir = dir.path().join("models").join(id);
+    std::fs::create_dir_all(&model_dir).unwrap();
+    std::fs::write(model_dir.join(&catalog.download.file), b"dummy gguf bytes").unwrap();
+    std::fs::write(
+        model_dir.join("metadata.json"),
+        serde_json::to_vec(&local_metadata(id, &catalog.download.file)).unwrap(),
+    )
+    .unwrap();
+    for (key, value) in [
+        ("ai_enabled", "1"),
+        ("ai_provider", "local"),
+        ("ai_answer_mode_local", "sql"),
+        ("ai_active_model", id),
+        ("ai_threads", "4"),
+        ("ai_unload_minutes", "15"),
+    ] {
+        sqlx::query("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)")
+            .bind(key)
+            .bind(value)
+            .execute(&state.db)
+            .await
+            .unwrap();
+    }
+
+    let seen: SeenPrompts = Arc::new(Mutex::new(Vec::new()));
+    let engine = ScriptedSqlEngine {
+        seen: Arc::clone(&seen),
+        replies: Arc::new(Mutex::new(replies.into())),
+    };
+    let parser = ModelParser::new(
+        state.db.clone(),
+        dir.path().to_path_buf(),
+        Runtime::spawn(Box::new(engine), 4),
+        Duration::from_secs(5),
+    );
+    state.ask = Ask::with_parser(Arc::new(parser), true, true, true);
+    state.ask.sql_limits.timeout = Duration::from_secs(10);
+    (dir, state, token, seen)
+}
+
+fn sql_reply_with(computed: &str, sql: &str) -> String {
+    sql_reply(
+        sql,
+        "Plays",
+        computed,
+        "value",
+        json!([{"name": "plays", "format": "count"}]),
+    )
+}
+
+#[tokio::test]
+async fn local_sql_mode_repairs_a_rejected_query() {
+    let (_dir, state, token, seen) = setup_scripted_local_sql(vec![
+        sql_reply_with("Attempted a bad column.", "SELECT missing_col FROM listens"),
+        sql_reply_with(
+            "Counted plays across all time.",
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
+        ),
+    ])
+    .await;
+    seed(&state).await;
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "How many plays do I have?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "ok", "{body}");
+    assert_eq!(body["sql"]["rows"], json!([[5]]), "{body}");
+
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2, "expected initial + one repair round");
+    assert!(
+        seen.iter()
+            .all(|(_, grammar)| *grammar == runtime::GrammarKind::Sql)
+    );
+    let repair_prompt = &seen[1].0;
+    assert!(
+        repair_prompt.contains("SELECT missing_col FROM listens"),
+        "repair prompt must include the failed SQL: {repair_prompt}"
+    );
+    assert!(
+        repair_prompt.contains("How many plays do I have?"),
+        "repair prompt must include the question: {repair_prompt}"
+    );
+    assert!(
+        repair_prompt.contains("no_such_column") && repair_prompt.contains("missing_col"),
+        "repair prompt must include the sanitized error: {repair_prompt}"
+    );
+    for secret in ["Jóga", "Hunter", "Creep"] {
+        assert!(
+            !repair_prompt.contains(secret),
+            "repair prompt leaked `{secret}`: {repair_prompt}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn local_sql_mode_stops_after_two_repair_rounds() {
+    let (_dir, state, token, seen) = setup_scripted_local_sql(vec![
+        sql_reply_with("Read settings.", "SELECT value FROM settings"),
+        sql_reply_with("Delete listens.", "DELETE FROM listens"),
+        sql_reply_with("Read bad_col.", "SELECT bad_col FROM listens"),
+    ])
+    .await;
+    seed(&state).await;
+
+    let (status, body) = request(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/ask",
+        Some(json!({"question": "How many plays do I have?"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "failed", "{body}");
+    assert_eq!(body["sql"]["rule_code"], "sql_error", "{body}");
+    let message = body["message"].as_str().unwrap();
+    assert!(message.contains("2 repair attempts"), "{message}");
+    assert!(
+        message.contains("Guided questions") && message.contains("larger model"),
+        "local exhaustion keeps the guided hint: {message}"
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        3,
+        "expected 1 initial + 2 repair calls"
+    );
 }

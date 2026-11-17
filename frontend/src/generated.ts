@@ -105,7 +105,7 @@ export type AskStatus = "ok" | "unsupported" | "ambiguous" | "model_unavailable"
 export type SqlAnswerKind = "value" | "table" | "series" | "ranking" | "unsupported";
 export type ColumnFormat = "count" | "duration_ms" | "date" | "datetime" | "percent" | "text" | "artist" | "album" | "track";
 export type SandboxRule = "empty_sql" | "sql_too_long" | "nul_byte" | "not_select" | "multiple_statements" | "bound_parameters" | "non_read_only" | "unauthorized_action" | "unauthorized_table" | "unauthorized_column" | "timeout" | "instruction_limit" | "cancelled" | "blob_not_allowed" | "output_too_large" | "sql_error" | "projection_unavailable";
-export type SqlValue = null | number | number | string;
+export type SqlValue = null | number | string;
 export type SqlColumn = { name: string, format: ColumnFormat, };
 export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, as_of_ms?: number, cell_links: Array<Array<string | null>>, history_href: string | null, };
 export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
@@ -142,7 +142,12 @@ export type AskRequest = { question: string, context: AskContext | null,
 /**
  * The answer this question follows up on, when the owner continues from it.
  */
-previous: AskPrevious | null, request_id?: string, };
+previous: AskPrevious | null, 
+/**
+ * Answer mode for this request only, overriding the stored per-engine
+ * mode. Never persisted; an unknown value is rejected with 400.
+ */
+mode?: "guided" | "sql", request_id?: string, };
 export type AskCancelRequest = { request_id?: string, };
 export type AskCancelResponse = { cancelled: boolean, };
 export type AskContext = { kind: EntityKind, id: string, };
