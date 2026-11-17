@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scrobbl.rs</title>
+  <meta name="description" content="A self-hosted personal listening archive and music library.">
+  <meta name="theme-color" content="#13151b">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <!-- Stylesheets: one file per page area, so parallel tickets rarely touch the same file. -->
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/hero.css">
+  <link rel="stylesheet" href="/css/accent-picker.css">
+  <link rel="stylesheet" href="/css/features.css">
+  <link rel="stylesheet" href="/css/trust.css">
+  <link rel="stylesheet" href="/css/install.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="scrobbl.rs, home">
+        <span class="tile" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></svg>
+        </span>
+        <span>scrobbl<span class="accent">.</span>rs</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#trust">How it counts</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/itsmrma/scrobbl-rs" rel="noopener">GitHub</a>
+        <a class="btn primary" href="#install">Get started</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- SECTION hero (ticket: hero + app preview) -->
+    <section id="hero" class="block hero">
+      <div class="wrap">
+        <h1>Your listening history, kept on your server<span class="accent">.</span></h1>
+      </div>
+    </section>
+
+    <!-- SECTION accent-picker (ticket: "Make it yours" strip; script: js/accent-picker.js) -->
+
+    <!-- SECTION features (ticket: six feature panels) -->
+
+    <!-- SECTION trust (ticket: "Numbers you can trust" notices; anchor id="trust") -->
+
+    <!-- SECTION install (ticket: steps, Docker / From source tabs, copy; script: js/install.js; anchor id="install") -->
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="scrobbl.rs, home">
+        <span>scrobbl<span class="accent">.</span>rs</span>
+      </a>
+      <p>
+        Licensed under GPL-3.0-or-later. Inspired by
+        <a href="https://github.com/krateng/maloja" rel="noopener">Maloja</a>.
+        Every artist, track and number on this page is demo data.
+      </p>
+    </div>
+  </footer>
+
+  <script src="/js/accent-picker.js" defer></script>
+  <script src="/js/install.js" defer></script>
+</body>
+</html>
