@@ -1,1 +1,36 @@
-/* install section styles (placeholder for its ticket). */
+/* Install section: numbered steps, tabs and command blocks. */
+.install { padding: 72px 0; }
+.install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; align-items: start; }
+.install h2 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 28px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 20px; }
+.steps li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 16px; }
+.steps h3 { font-size: 17px; margin-bottom: 4px; }
+.steps p { margin: 0; }
+.step-n {
+  display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); font-weight: 700;
+}
+.install-panel { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+.tab {
+  min-height: 44px; padding: 10px 16px; border-radius: 8px; cursor: pointer;
+  font: 600 13px var(--font); color: var(--muted); background: transparent; border: 1px solid transparent;
+}
+.tab[aria-selected="true"] { color: var(--text); background: var(--surface-raised); border-color: var(--border); }
+.tabpanel[hidden] { display: none; }
+.tabpanel p { margin: 12px 0 0; }
+.tabpanel code { font-family: var(--mono); font-size: 13px; }
+.code { position: relative; }
+.code pre {
+  margin: 0; padding: 16px; padding-top: 56px; overflow-x: auto; max-width: 100%;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  font: 13px/1.7 var(--mono);
+}
+.code .line { display: block; white-space: pre; }
+.code .note { color: var(--muted); }
+.copy { position: absolute; top: 8px; right: 8px; }
+.copy-buffer { position: fixed; top: 0; left: -9999px; }
+@media (max-width: 900px) {
+  .install-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .install { padding: 48px 0; }
+}
