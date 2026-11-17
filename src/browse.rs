@@ -448,7 +448,7 @@ pub async fn listening_calendar(
                 Some(bucket_bounds(today, "year", calendar.week_start)?.0),
                 Some(today),
             ),
-            "7d" | "30d" | "365d" => {
+            "7d" | "30d" | "90d" | "180d" | "365d" => {
                 let days = period
                     .trim_end_matches('d')
                     .parse::<i64>()
@@ -757,7 +757,7 @@ pub async fn activity_chart(
                     Some(bucket_bounds(today, "year", calendar.week_start)?.0),
                     Some(today),
                 ),
-                "7d" | "30d" | "365d" => {
+                "7d" | "30d" | "90d" | "180d" | "365d" => {
                     let days = period
                         .trim_end_matches('d')
                         .parse::<i64>()
@@ -797,7 +797,7 @@ pub async fn activity_chart(
     let mut buckets = BTreeMap::<NaiveDate, ActivityBucket>::new();
     let partial = matches!(
         period,
-        "today" | "week" | "month" | "year" | "7d" | "30d" | "365d"
+        "today" | "week" | "month" | "year" | "7d" | "30d" | "90d" | "180d" | "365d"
     ) && !custom;
     for (from, through, week_start) in &ranges {
         let mut day = bucket_bounds(*from, grain, *week_start)?.0;

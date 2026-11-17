@@ -9,19 +9,63 @@ API and Activities expose.
 
 AI is enabled only in **Settings → AI**. Enabling it downloads nothing and loads
 nothing; the owner must still choose a catalog model and start its download.
-Disabling it cancels active downloads and unloads the model. With AI off there
-is no model load, no inference and no network request related to AI.
+Disabling it cancels active downloads, unloads the model and deletes the Ask
+projection. With AI off there is no model load, no inference and no network
+request related to AI.
 
-The model never sees archive rows. The Rust prompt contains only the question,
-the supported DSL vocabulary and examples; the model emits DSL JSON constrained
-by a grammar. Rust executes that DSL against the canonical consultation
-selection and computes every number. By default there is no cloud AI call and no
-telemetry. The only additional outbound request is the model file download from
-the pinned catalog URL, started explicitly by the owner. The one exception is
-the opt-in [bring your own AI](#bring-your-own-ai) engine, which sends the
-question text to a server the owner names. Questions and results
-stay in the instance. Model files are treated as untrusted input, are verified
-by SHA-256 before use and cannot inject SQL.
+The model never sees archive rows. What it receives depends on the answer mode:
+
+- **Guided questions.** The Rust prompt contains only the question, the
+  supported DSL vocabulary and examples; the model emits DSL JSON constrained
+  by a grammar. Rust executes that DSL against the canonical consultation
+  selection and computes every number.
+- **Free questions (SQL).** The model receives the Ask projection's schema and
+  column meanings (generated from `TABLES`), the counting rules, today's date,
+  the question, and on failure a sanitized SQLite error that names only the
+  error class and identifiers from the model's own SQL. It never receives
+  archive values, names, counts, results, prior results or credentials. Its SQL
+  runs read-only against a separate projection file inside the
+  [SQL sandbox](ask-projection.md), never against the archive.
+
+By default there is no cloud AI call and no telemetry. The only additional
+outbound request is the model file download from the pinned catalog URL,
+started explicitly by the owner. The one exception is the opt-in
+[bring your own AI](#bring-your-own-ai) engine, which sends the question text
+(and, in free mode, the schema and sanitized errors) to a server the owner
+names. Questions and results stay in the instance. Model files are treated as
+untrusted input, are verified by SHA-256 before use and cannot inject SQL.
+
+## Answer modes
+
+Ask answers in one of two modes, chosen per engine in **Settings → AI**. Guided
+questions are the default for the downloaded local model; free questions (SQL)
+are the default for "bring your own AI". The choice is stored per engine, so
+switching engines restores that engine's mode, and the Ask page shows the active
+mode with a link to change it.
+
+| | Guided questions | Free questions (SQL) |
+| --- | --- | --- |
+| What it answers | the metrics, filters, periods and groupings in the frozen vocabulary | anything in the Ask projection: devices, countries, shuffle, skips, offline, combined conditions, comparisons, ties, first/last play, gaps and streaks |
+| When the model misunderstands | refuses, or the chips show the wrong interpretation and can be edited before or after asking | may return a wrong but plausible result; the "computed" sentence and the SQL show what it did, and the SQL can be edited and re-run |
+| Who computes the numbers | tested Rust executors | SQLite, on the model's query, inside the read-only sandbox |
+| Privacy | the model never sees archive values | the same, plus the SQL sandbox: only the schema, question and sanitized errors leave, and the projection is a separate file with no settings or credentials |
+| Recommended for | every downloaded local catalog model (0.6B–4B) | your own AI server or a hosted API with a larger model |
+
+Guided questions are **frozen** after the rolling 90/180-day periods of
+[#201](https://github.com/itsmrma/scrobbl-rs/issues/201): new metrics, filters
+and periods are not added. A question the vocabulary cannot express is answered
+by switching to free questions, not by extending guided questions.
+
+The recommendations are fixed, not measured per model: every local catalog
+entry reports `recommendation: "guided"`, the "bring your own AI" option
+recommends free questions, and the catalog stores no SQL accuracy field.
+Measured guided accuracy (#181) is in the
+[Ask parser evaluation](reports/ask-eval.md); the SQL evaluation that scores
+free answers by result, including what was **not** measured, is in the
+[Ask SQL evaluation](reports/ask-eval-sql.md). The projection data model and
+every sandbox layer and rejection rule are documented in
+[Ask projection and SQL sandbox](ask-projection.md).
+
 
 ## Settings keys
 
@@ -39,6 +83,8 @@ archive writer after `auth::require_write` (owner session + CSRF).
 | `ai_remote_url` | `""` | OpenAI-compatible base URL, e.g. `http://192.168.1.20:11434/v1` |
 | `ai_remote_model` | `""` | model name sent to that server |
 | `ai_remote_key` | `""` | optional API key; stored like the Spotify client secret and never returned (`remote_key_set` only) |
+| `ai_answer_mode_local` | `"guided"` | answer mode for the downloaded local engine: `guided` or `sql` |
+| `ai_answer_mode_remote` | `"sql"` | answer mode for the remote engine: `guided` or `sql` |
 
 Enabling AI does not download anything. If no model is installed the settings
 response says so explicitly. Disabling AI cancels active model downloads so no
@@ -62,11 +108,13 @@ use the provider endpoint behind them.
 
 What changes and what does not:
 
-- The server receives the system prompt (the Ask vocabulary and examples) and
-  the question text. It never receives archive rows, names from the library,
-  numbers or results. Rust still validates the reply, resolves names and
-  computes every number, so a remote model can only pick vocabulary, exactly
-  like the local one.
+- The server receives the system prompt and the question text. In guided mode
+  that is the Ask vocabulary and examples; in free mode it is the projection
+  schema, the counting rules and the question. It never receives archive rows,
+  names from the library, numbers or results. Guided replies are validated and
+  every number is computed by Rust; free replies are SQL that runs read-only in
+  the [SQL sandbox](ask-projection.md). Only sanitized errors, never values, go
+  back for a repair round.
 - The request asks for schema-constrained JSON (`response_format: json_schema`).
   A server that answers 400/422 is retried with `json_object`, then without
   `response_format`; the JSON is extracted from the reply even when it comes
@@ -96,7 +144,14 @@ still only emits typed vocabulary; it never reads the archive or any result.
 - **Precise questions.** Besides the usual fields a step can carry an inclusive
   `from`/`to` date range (`YYYY-MM-DD`, validated), an `hour` (0-23, local
   time) and a `source` (`spotify_import`, `spotify_api`, `listenbrainz`). The
-  range replaces the period and the year and appears as editable chips.
+  range replaces the period and the year and appears as editable chips. The
+  system prompt states today's date (UTC) so the model can turn relative
+  ranges such as "the last two weeks" into dates; nothing else about the
+  archive is added.
+- **Rolling periods.** Both engines can choose `last_90_days` ("last 3
+  months") and `last_180_days` ("last 6 months") besides 7, 30 and 365 days.
+  Before these existed, "last 3 months" could only be mapped to "last month"
+  ([#201](https://github.com/itsmrma/scrobbl-rs/issues/201)).
 - **Follow-ups.** After an answer, "Continue from the previous answer" (on by
   default with a remote AI) sends the previous question and its interpretation
   chips, so "and last year?" or "what about Radiohead?" work. Results are never
@@ -149,10 +204,15 @@ metadata. If a future value cannot be verified, the entry must use
 or selected in v1.
 
 Catalog metadata also records license, minimum/recommended RAM, CPU cores,
-optional GPU, 3072-token context, backend, measured speed and parser scores
-from the versioned evaluation set (#181): intent accuracy, slot F1, refusal
-accuracy, exact-match accuracy and per-language exact match. Entries that were
-not measured keep `null` rather than an estimate.
+optional GPU, the guided-mode 3072-token context, backend, measured speed and
+parser scores from the versioned evaluation set (#181): intent accuracy, slot
+F1, refusal accuracy, exact-match accuracy and per-language exact match. Entries
+that were not measured keep `null` rather than an estimate. The catalog's
+`context_tokens` figure describes guided questions only; free questions (SQL)
+run with a 4096-token context. Every entry also carries a
+fixed `recommendation`: `guided` for every downloadable local model. The
+"bring your own AI" option recommends `sql`; `AiCatalog.remote_recommendation`
+reports that fixed value. No measured SQL accuracy is stored or shown.
 
 ## Model choice and memory
 
@@ -171,8 +231,9 @@ the 4B is the closest but roughly twice as slow. Keep the feature opt-in, treat
 the interpretation chips as part of the answer, and read the
 [evaluation report](reports/ask-eval.md) before recommending a model.
 
-8B and 32B entries remain `gpu_future` and are not selectable in v1. The
-context is 3072 tokens and one model is loaded at a time, so the loaded model
+8B and 32B entries remain `gpu_future` and are not selectable in v1. Guided
+questions use a 3072-token context; free questions (SQL) use 4096 tokens. One
+model is loaded at a time either way, so the loaded model
 needs its file size plus roughly 1–2 GiB of working memory; use the catalog's
 minimum/recommended RAM values as the authoritative figures. The downloader
 refuses to start without enough free disk space for the remaining bytes and
@@ -319,14 +380,22 @@ a oneshot; inference never runs on a tokio worker. Behaviour:
 - Timeout via `SCROBBL_ASK_TIMEOUT_MS` (default `30000`). Cancellation is
   checked between sampled tokens. On timeout the request returns an explicit
   error and the context is dropped/reset; no half-decoded sequence is reused.
+- The SQL sandbox has its own wall-clock budget, `SCROBBL_ASK_SQL_TIMEOUT_MS`
+  (default `3000`, any positive whole number of milliseconds, no upper bound).
+  It is read once when Ask is installed, so it applies to every sandbox run:
+  model SQL, each repair round and owner-edited `POST /api/v1/ask/sql`. The
+  instruction budget stays fixed at 5,000,000. See
+  [Ask projection and SQL sandbox](ask-projection.md#5-time-and-cancellation).
 - After `ai_unload_minutes` of inactivity the model is dropped. The next
   question re-reads settings and pays the load cost.
-- Context 3072 tokens, greedy sampling, at most 256 new tokens. Output is
-  accumulated as bytes and decoded once as UTF-8, so a multi-byte character
-  split across tokens cannot be corrupted.
 - `LlamaSampler::sample` already accepts the token; the adapter never calls
   `accept` afterwards (utilityai/llama-cpp-rs#1007). Timing measurement is off
   by default; set `SCROBBL_ASK_DEBUG=1` to enable it (and llama.cpp logs).
+- Guided questions use a 3072-token context and at most 256 new tokens. Free
+  questions (SQL) use a 4096-token context and at most 512 new tokens; the SQL
+  grammar needs the extra room for a full statement. Output is accumulated as
+  bytes and decoded once as UTF-8, so a multi-byte character split across
+  tokens cannot be corrupted.
 - A missing or corrupt GGUF returns an explicit error; the worker is detached
   with a cancellation signal on shutdown and never panics on filesystem races.
 
@@ -373,8 +442,8 @@ $env:UPDATE_ASK_SCHEMA='1'; cargo test --lib checked_in_schema_matches_the_gener
 ```
 
 The prompt (`src/ask/prompt.rs`) is compact English with EN/IT examples and
-embeds the schema without descriptions to stay well inside the 3072-token
-context; a test bounds its size. It
+embeds the schema without descriptions to stay well inside the guided
+3072-token context; a test bounds its size. It
 states that names are copied literally, that time words such as "today",
 "Fridays" and "last month" never enter `name`, that the model never writes SQL,
 and that out-of-scope or injection requests use `metric: "unsupported"`. Qwen3
@@ -440,6 +509,13 @@ therefore provisional and its catalog description warns to treat the chips as
 part of the answer. The full per-language, slot and refusal results and the
 target verdict are in the [evaluation report](reports/ask-eval.md).
 
+Free questions have their own evaluation: it scores SQL answers **by typed
+result** on a fixed synthetic fixture and reports correct answers, honest
+failures and wrong-but-plausible answers. The reference remote model was not
+measured in this environment, and local catalog models are not measured; both
+facts are stated in the [Ask SQL evaluation](reports/ask-eval-sql.md). The corpus
+format is in [`evals/ask/README.md`](../evals/ask/README.md).
+
 ## API summary
 
 - `GET /api/v1/ai/settings` — owner session; defaults and effective model folder.
@@ -456,6 +532,15 @@ target verdict are in the [evaluation report](reports/ask-eval.md).
 - `POST /api/v1/ai/test` — reports runtime/model readiness without loading or
   running inference.
 - `GET /api/v1/ask/status` — enabled/runtime/model-ready state for the Ask page.
+- `POST /api/v1/ask` — asks a question; body `{question, context?, previous?,
+  mode?, request_id?}`. `mode` (`guided` or `sql`) applies to that request only
+  and is never persisted; an unknown value is a `400`, and omitting it keeps the
+  stored mode for the selected engine.
+- `POST /api/v1/ask/sql` — runs owner-edited SQL through the same sandbox.
+- `POST /api/v1/ask/cancel` — requests cancellation of an in-flight Ask; body
+  `{request_id?}`, where omitting it cancels every active question.
+- Every Ask route requires the owner session and CSRF. A read API key is denied
+  (`403`), even alongside an owner cookie.
 - `POST /api/v1/ai/settings` also accepts `provider`, `remote_url`,
   `remote_model` and `remote_key` (omit it to keep the stored key, send `""` to
   clear it). `POST /api/v1/ai/test` contacts the remote server when

@@ -90,14 +90,21 @@ New question: {question}",
     )
 }
 
-fn body(config: &RemoteConfig, question: &str, previous: Option<&Previous>, mode: Mode) -> Value {
+fn body(
+    config: &RemoteConfig,
+    system: &str,
+    user: &str,
+    schema_name: &str,
+    schema: Value,
+    mode: Mode,
+) -> Value {
     let mut body = json!({
         "model": config.model,
         "temperature": 0,
         "max_tokens": 1200,
         "messages": [
-            {"role": "system", "content": prompt::remote_system_prompt()},
-            {"role": "user", "content": user_message(question, previous)},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     });
     match mode {
@@ -105,9 +112,9 @@ fn body(config: &RemoteConfig, question: &str, previous: Option<&Previous>, mode
             body["response_format"] = json!({
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "scrobbl_ask",
+                    "name": schema_name,
                     "strict": true,
-                    "schema": schema::advanced_schema(),
+                    "schema": schema,
                 },
             });
         }
@@ -156,11 +163,124 @@ fn server_message(body: &str) -> String {
         .unwrap_or_else(|| short(body))
 }
 
-/// Ask the server to interpret `question`. Returns the JSON text of the reply.
+/// Ask the server to interpret `question` in guided mode. Returns the JSON text of the reply.
 pub async fn infer(
     config: &RemoteConfig,
     question: &str,
     previous: Option<&Previous>,
+    timeout: Duration,
+) -> Result<String> {
+    let system = format!(
+        "{}\nToday is {} (UTC). Use it only to turn relative ranges the periods do not cover (\"the last two weeks\", \"since the summer\", \"the last 4 months\") into from and to dates.",
+        prompt::remote_system_prompt(),
+        chrono::Utc::now().format("%Y-%m-%d"),
+    );
+    let user = user_message(question, previous);
+    infer_with(
+        config,
+        &system,
+        &user,
+        "scrobbl_ask",
+        schema::advanced_schema(),
+        timeout,
+    )
+    .await
+}
+
+fn sql_user_message(question: &str, previous: Option<&Previous>) -> String {
+    let question = question.trim();
+    let Some(previous) = previous else {
+        return question.to_owned();
+    };
+    let Some(sql) = previous.sql.as_ref().filter(|s| !s.sql.trim().is_empty()) else {
+        return question.to_owned();
+    };
+    let mut parts = vec![format!("Previous question: {}", previous.question.trim())];
+    if !sql.title.trim().is_empty() {
+        parts.push(format!("Previous title: {}", sql.title.trim()));
+    }
+    if !sql.computed.trim().is_empty() {
+        parts.push(format!("Previous computed: {}", sql.computed.trim()));
+    }
+    parts.push(format!("Previous SQL: {}", sql.sql.trim()));
+    parts.push(format!("New question: {question}"));
+    parts.join("\n")
+}
+
+/// Ask the server to translate `question` into a read-only SQL query over the
+/// Ask projection. Returns the JSON text of the reply.
+pub async fn infer_sql(
+    config: &RemoteConfig,
+    question: &str,
+    previous: Option<&Previous>,
+    today: &str,
+    timeout: Duration,
+) -> Result<String> {
+    let system = prompt::remote_sql_system_prompt(today);
+    let user = sql_user_message(question, previous);
+    infer_with(
+        config,
+        &system,
+        &user,
+        "scrobbl_ask_sql",
+        schema::sql_schema(),
+        timeout,
+    )
+    .await
+}
+
+fn sql_repair_user_message(
+    question: &str,
+    previous: Option<&Previous>,
+    attempts: &[(&str, &str)],
+) -> String {
+    let mut text = format!("{}\n", sql_user_message(question, previous));
+    for (index, (sql, error)) in attempts.iter().enumerate() {
+        let attempt = index + 1;
+        let clipped_sql: String = sql
+            .chars()
+            .take(crate::ask::sandbox::MAX_SQL_BYTES)
+            .collect();
+        text.push_str(&format!(
+            "\nAttempt {attempt} failed.\nSQL: {clipped_sql}\nError: {error}\n"
+        ));
+    }
+    text.push_str(
+        "\nFix the SQL query and return the corrected JSON object matching the schema. \
+         Do not guess or approximate results, and set answer_kind to \"unsupported\" if the question cannot be answered from the Ask projection.",
+    );
+    text
+}
+
+/// Ask the server to repair a rejected or failing SQL query using only the
+/// model's own SQL and the sanitized error (never archive values).
+pub async fn infer_sql_repair(
+    config: &RemoteConfig,
+    question: &str,
+    previous: Option<&Previous>,
+    attempts: &[(&str, &str)],
+    today: &str,
+    timeout: Duration,
+) -> Result<String> {
+    let system = prompt::remote_sql_system_prompt(today);
+    let user = sql_repair_user_message(question, previous, attempts);
+    infer_with(
+        config,
+        &system,
+        &user,
+        "scrobbl_ask_sql",
+        schema::sql_schema(),
+        timeout,
+    )
+    .await
+}
+
+async fn infer_with(
+    config: &RemoteConfig,
+    system: &str,
+    user: &str,
+    schema_name: &str,
+    schema: Value,
     timeout: Duration,
 ) -> Result<String> {
     let url = endpoint(&config.base_url)?;
@@ -174,9 +294,14 @@ pub async fn infer(
 
     let mut last_problem = String::new();
     for (index, mode) in MODES.iter().enumerate() {
-        let mut request = client
-            .post(url.clone())
-            .json(&body(config, question, previous, *mode));
+        let mut request = client.post(url.clone()).json(&body(
+            config,
+            system,
+            user,
+            schema_name,
+            schema.clone(),
+            *mode,
+        ));
         if let Some(key) = config.api_key.as_deref().filter(|key| !key.is_empty()) {
             request = request.bearer_auth(key);
         }

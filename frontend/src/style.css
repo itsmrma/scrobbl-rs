@@ -2401,15 +2401,17 @@ dialog.artwork-lightbox {
 }
 
 /* Listen Rows */
+/* Every grid that places the cover sizes its first column with this same
+   variable, so the artwork can never overlap the title next to it. */
 .listen-row {
-  --listen-cover-size: clamp(52px, var(--listen-artwork, 56px), 76px);
+  --listen-cover-size: 64px;
   position: relative;
   padding: 10px 14px;
 }
 
 @media (max-width: 600px) {
   .listen-row {
-    --listen-cover-size: clamp(48px, var(--listen-artwork, 52px), 64px);
+    --listen-cover-size: 52px;
   }
 }
 
@@ -2517,22 +2519,13 @@ dialog.artwork-lightbox {
   grid-template-columns: var(--listen-columns);
 }
 
-.listen-context .listen-main::after {
-  content: "";
-  position: absolute;
-  bottom: -10px;
-  left: -16px;
-  right: -52px;
-  border-top: 1px solid var(--border);
-}
-
 .listen-row.listen-context-albums .listen-main > .cover {
   display: none;
 }
 
 .listen-context-artists {
-  --listen-columns: 44px minmax(110px, 1.3fr) minmax(90px, 1fr)
-    minmax(130px, 0.9fr) 86px;
+  --listen-columns: var(--listen-cover-size) minmax(110px, 1.3fr)
+    minmax(90px, 1fr) minmax(130px, 0.9fr) 86px;
 }
 
 .listen-context-albums {
@@ -4068,90 +4061,22 @@ dialog.artwork-lightbox {
   gap: 6px;
 }
 
+/* The form has its own clear button; the browser's would be a second one. */
+.library-search-form input::-webkit-search-cancel-button {
+  appearance: none;
+  display: none;
+}
+
+.search-clear-btn,
+.search-submit-btn {
+  height: 40px !important;
+  min-height: 40px !important;
+}
+
 .search-clear-btn {
-  width: 34px !important;
-  min-width: 34px !important;
-  height: 34px !important;
-  min-height: 34px !important;
-}
-
-.search-autocomplete {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 900;
-  max-height: 360px;
-  overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 6px;
-  border-radius: var(--radius-lg);
-  background: var(--surface-overlay);
-  border: 1px solid var(--border-strong);
-  box-shadow: var(--shadow-md);
-  display: grid;
-  gap: 4px;
-}
-
-.search-autocomplete-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.search-autocomplete-item {
-  width: 100%;
-  min-height: 60px;
-  display: grid !important;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 10px;
-  border-radius: var(--radius-control);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.search-autocomplete-item:hover,
-.search-autocomplete-item.is-active {
-  background: var(--row-hover);
-  border-color: var(--row-border);
-}
-
-.search-autocomplete-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
-}
-
-.search-autocomplete-copy strong,
-.search-autocomplete-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.search-autocomplete-copy small {
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.search-autocomplete-kind {
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
+  width: 40px !important;
+  min-width: 40px !important;
+  padding: 0 !important;
 }
 
 .search-result-groups {
@@ -4211,11 +4136,6 @@ dialog.artwork-lightbox {
 .search-result-list > li {
   display: grid;
   gap: 4px;
-}
-
-.search-autocomplete-item .cover {
-  width: 48px;
-  height: 48px;
 }
 
 .search-result-list > li > a {
@@ -4508,6 +4428,17 @@ dialog.artwork-lightbox {
   gap: 12px;
 }
 
+/* Help disclosures are separate sections: a rule above each one keeps them
+   from reading as part of the paragraph or button before them. */
+.listenbrainz-import .import-help {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.import-help > p:last-child {
+  margin-bottom: 6px;
+}
+
 .listenbrainz-dates {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -4664,6 +4595,12 @@ dialog.artwork-lightbox {
   min-width: 0;
 }
 
+.review-evidence small .material-icons-outlined {
+  font-size: 14px;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
+
 .review-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4704,13 +4641,32 @@ dialog.artwork-lightbox {
   }
 }
 
+.automatic-review {
+  margin-bottom: 16px;
+}
+
 .automatic-review-body {
   padding: 0 20px 16px;
   font-size: 13px;
 }
 
-.automatic-review-body > p:first-child {
+.automatic-review-body > :first-child {
   margin-top: 0;
+}
+
+.automatic-review-body > :is(ul, p) {
+  max-width: 110ch;
+}
+
+.automatic-review-body > ul {
+  display: grid;
+  gap: 8px;
+  padding-left: 1.2em;
+  color: var(--muted);
+}
+
+.automatic-review-body > ul strong {
+  color: var(--text);
 }
 
 .automatic-review .review-actions {
@@ -4898,6 +4854,16 @@ dialog.artwork-lightbox {
 .settings-form > a.button,
 .settings-form > button {
   justify-self: start;
+}
+
+/* Match the upload card while both are short; once a selection or report
+   makes the upload card tall, the notes keep their natural height. */
+.two-column > .import-notes {
+  align-self: stretch;
+}
+
+.two-column:has(#import-result, .upload-selection) > .import-notes {
+  align-self: start;
 }
 
 .import-notes ul {
@@ -5459,6 +5425,43 @@ dialog.artwork-lightbox {
 .api-key-create {
   display: grid;
   gap: 10px;
+  align-content: start;
+}
+
+/* The three steps share one row: content starts under each header and every
+   step's action sits on the same bottom line instead of floating mid-card. */
+.api-connection-steps > .api-step-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.api-connection-steps .api-step-content {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.api-connection-steps .api-step-content > p {
+  margin: 0;
+}
+
+.api-connection-steps .api-step-content > form {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.api-connection-steps .api-step-content > form > p {
+  margin: 0;
+}
+
+.api-connection-steps .api-step-content > button:last-child,
+.api-connection-steps .api-step-content > .copy-control:last-child,
+.api-connection-steps .api-step-content > form > button:last-child {
+  margin-top: auto;
+  align-self: flex-start;
 }
 
 .api-keys-list {
@@ -5533,7 +5536,9 @@ dialog.artwork-lightbox {
    -------------------------------------------------------------------------- */
 @media (max-width: 1100px) {
   .listen-main {
-    grid-template-columns: 44px minmax(0, 1.4fr) minmax(120px, 1fr) 84px;
+    grid-template-columns:
+      var(--listen-cover-size) minmax(0, 1.4fr) minmax(120px, 1fr)
+      84px;
   }
   .listen-main > .listen-album {
     display: none;
@@ -5624,7 +5629,7 @@ dialog.artwork-lightbox {
   }
 
   .listen-context-artists {
-    --listen-columns: 44px minmax(0, 1fr) 82px;
+    --listen-columns: var(--listen-cover-size) minmax(0, 1fr) 82px;
   }
   .listen-context-artists .listen-date {
     grid-column: 2 / 4;
@@ -5745,23 +5750,48 @@ dialog.artwork-lightbox {
   }
 
   .listen-main {
-    grid-template-columns: 40px minmax(0, 1fr) auto;
-    gap: 6px 10px;
+    grid-template-columns: var(--listen-cover-size) minmax(0, 1fr) auto;
+    gap: 6px 12px;
   }
 
   .listen-main > .listen-date {
     grid-column: 2 / -1;
   }
 
+  /* Rows with artwork: the title takes the whole width beside the cover and
+     the time sits next to the date, instead of on a row of its own. */
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-title {
+    grid-column: 2 / -1;
+  }
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-date {
+    grid-column: 2;
+  }
+  .listen-row:not(.listen-context-albums, .listen-context-tracks)
+    .listen-main
+    > .listen-duration {
+    grid-row: 2;
+    grid-column: 3;
+    align-self: end;
+  }
+  /* "Time listened" would collide with the date in a narrow column; the
+     value and its Actual/Estimated line already say what it is. */
+  .listen-context .listen-duration > small:first-child {
+    display: none;
+  }
+
   .listen-context-albums {
-    --listen-columns: 40px minmax(0, 1fr) 74px;
+    --listen-columns: minmax(0, 1fr) auto;
   }
   .listen-context-albums .listen-date {
-    grid-column: 2 / -1;
+    grid-column: 1 / -1;
   }
 
   .listen-context-artists {
-    --listen-columns: 40px minmax(0, 1fr) auto;
+    --listen-columns: var(--listen-cover-size) minmax(0, 1fr) auto;
   }
   .listen-context-artists .listen-album {
     display: none !important;
@@ -5775,12 +5805,6 @@ dialog.artwork-lightbox {
   }
   .listen-context-tracks .listen-date {
     grid-column: 1;
-  }
-
-  .listen-context .listen-main::after {
-    left: -12px;
-    right: -12px;
-    bottom: -10px;
   }
 
   .ranking-toolbar .search-inline {
@@ -6024,6 +6048,7 @@ dialog.artwork-lightbox {
 .ask-result {
   display: grid;
   gap: 10px;
+  min-width: 0;
   margin-bottom: 18px;
 }
 
@@ -6151,7 +6176,8 @@ dialog.artwork-lightbox {
   overflow-wrap: anywhere;
 }
 
-.ask-table tbody th a {
+.ask-table tbody th a,
+.ask-table tbody td a {
   display: inline-flex;
   align-items: center;
   min-height: 44px;
@@ -6936,4 +6962,104 @@ dialog.artwork-lightbox {
   gap: 8px;
   min-height: 44px;
   font-size: 13px;
+}
+
+.ask-sql-computed {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ask-sql-disclosure {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.ask-sql-disclosure summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.ask-sql-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.ask-sql-code {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.ask-sql-code:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 2px var(--focus);
+}
+
+.ask-sql-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-result-value a {
+  color: inherit;
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 600px) {
+  .ask-sql-actions .btn {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+}
+
+.ask-mode-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.ai-answer-mode {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-answer-mode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.ai-mode-explanations {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-mode-explanations .field-hint {
+  margin: 0;
 }

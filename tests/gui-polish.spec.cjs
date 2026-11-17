@@ -215,17 +215,15 @@ test("gui polish fixes: registration match, account menu, app storage, ai downlo
   }
   await page.unroute("**/api/v1/ai/catalog");
 
-  // 6. Search autocomplete + debounced auto-search
+  // 6. Debounced auto-search shows results directly, without a suggestion menu
   await page.goto("/search");
   const searchInput = page.getByPlaceholder("Artist, album or track name");
   await searchInput.fill("Test");
-  await expect(page.locator(".search-autocomplete")).toBeVisible({
-    timeout: 5000,
-  });
-  await expect(page.locator(".search-autocomplete")).toContainText(
+  await expect(page).toHaveURL(/\/search\?q=Test/, { timeout: 5000 });
+  await expect(page.locator(".search-result-groups")).toContainText(
     "Test Artist",
   );
-  await expect(page).toHaveURL(/\/search\?q=Test/, { timeout: 5000 });
+  await expect(page.getByRole("listbox")).toHaveCount(0);
 
   // 7. Music page Edit button single space + Choose artwork selects actual current candidate
   await page

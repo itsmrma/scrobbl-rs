@@ -1488,3 +1488,161 @@ async fn owner_can_cancel_every_job_kind() {
     }
     state.storage.close().await;
 }
+
+async fn import_export(state: &AppState, rows: Value) {
+    let storage = &state.storage;
+    let limits = scrobbl_rs::imports::ImportLimits::default();
+    let id = storage
+        .enqueue("spotify_import", None, Some("Test history"), &json!(limits))
+        .await
+        .unwrap();
+    let bytes = rows.to_string().into_bytes();
+    let file = storage
+        .receive(&mut bytes.as_slice(), limits.upload_bytes)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO job_inputs(job_id,ordinal,file_id,filename) VALUES(?,1,?,'data.json')",
+    )
+    .bind(&id)
+    .bind(file)
+    .execute(&storage.writer)
+    .await
+    .unwrap();
+    let lease = storage.claim("spotify_import").await.unwrap().unwrap();
+    scrobbl_rs::import_worker::run(storage, lease)
+        .await
+        .unwrap();
+}
+
+fn export_row(ts: &str, track: u8, ms: i64, platform: &str, offline: Option<i64>) -> Value {
+    json!({
+        "ts": ts, "ms_played": ms, "platform": platform,
+        "master_metadata_track_name": format!("Song {track}"),
+        "master_metadata_album_artist_name": "Artist",
+        "master_metadata_album_album_name": "Album",
+        "spotify_track_uri": format!("spotify:track:00000000000000000000{track:02}"),
+        "offline": offline.is_some(), "offline_timestamp": offline,
+        "reason_start": "trackdone", "reason_end": "endplay",
+    })
+}
+
+#[tokio::test]
+async fn export_rows_of_one_playback_resolve_automatically_and_offline_sessions_stay_separate() {
+    let (_dir, state, token) = setup().await;
+    import_export(
+        &state,
+        json!([
+            // One online playback logged twice in the same second.
+            export_row("2025-06-01T10:00:05Z", 11, 55, "ios", None),
+            export_row("2025-06-01T10:00:05Z", 11, 780, "ios", None),
+            // One offline session synced at 12:00: two real plays with their own starts.
+            export_row(
+                "2025-06-01T12:00:00Z",
+                12,
+                200000,
+                "android",
+                Some(1_748_772_000)
+            ),
+            export_row(
+                "2025-06-01T12:00:00Z",
+                12,
+                200000,
+                "android",
+                Some(1_748_772_201)
+            ),
+            // Offline rows without a usable start, as archived before this change.
+            export_row(
+                "2025-06-01T13:00:00Z",
+                13,
+                1000,
+                "android",
+                Some(1_900_000_000)
+            ),
+            export_row(
+                "2025-06-01T13:00:00Z",
+                13,
+                2000,
+                "android",
+                Some(1_900_000_000)
+            ),
+            // Online and offline rows mixed together stay manual.
+            export_row("2025-06-01T14:00:00Z", 14, 1000, "ios", None),
+            export_row(
+                "2025-06-01T14:00:00Z",
+                14,
+                2000,
+                "android",
+                Some(1_900_000_000)
+            ),
+        ]),
+    )
+    .await;
+    let starts: Vec<i64> = sqlx::query_scalar(
+        "SELECT l.played_at_ms FROM listens l JOIN tracks t ON t.id=l.track_id WHERE t.title='Song 12' ORDER BY 1",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(starts, [1_748_772_000_000, 1_748_772_201_000]);
+    let review = get(&state, &token, "/api/v1/review").await;
+    assert_eq!(review["total"], 6, "{review}");
+    let devices: Vec<&str> = review["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|g| g["items"].as_array().unwrap())
+        .filter_map(|item| item["playback"]["device"].as_str())
+        .collect();
+    assert!(
+        devices.contains(&"ios") && devices.contains(&"android"),
+        "{devices:?}"
+    );
+
+    let preview = get(&state, &token, "/api/v1/review/automatic").await;
+    assert_eq!(preview["groups"], 2, "{preview}");
+    assert_eq!(preview["trash"], 1);
+    assert_eq!(preview["separate"], 1);
+    assert_eq!(preview["remaining"], 2);
+    let (status, body) = call(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/review/automatic",
+        serde_json::to_vec(&json!({"token":preview["token"]})).unwrap(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let kept: Vec<(i64, bool)> = sqlx::query_as(
+        "SELECT l.listened_ms, l.trashed_at_ms IS NOT NULL FROM listens l JOIN tracks t ON t.id=l.track_id WHERE t.title='Song 11' ORDER BY 1",
+    )
+    .fetch_all(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(kept, [(55, true), (780, false)]);
+    let separate: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM listens l JOIN tracks t ON t.id=l.track_id WHERE t.title='Song 13' AND l.trashed_at_ms IS NULL AND l.needs_review=0",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert_eq!(separate, 2);
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 2);
+
+    let decision = serde_json::from_slice::<Value>(&body).unwrap()["decision_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (status, _) = call(
+        &state,
+        &token,
+        "POST",
+        &format!("/api/v1/review/{decision}/undo"),
+        b"{}".to_vec(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 6);
+}

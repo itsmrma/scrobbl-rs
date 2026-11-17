@@ -1,0 +1,16 @@
+{
+  "name": "scrobbl-site",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Public presentation site for scrobbl.rs, served by a static-assets-only Cloudflare Worker",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "wrangler dev --port 8788 --ip 127.0.0.1",
+    "test": "playwright test",
+    "deploy:dry-run": "wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "wrangler": "4.163.0"
+  }
+}

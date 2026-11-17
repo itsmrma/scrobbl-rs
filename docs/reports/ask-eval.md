@@ -229,3 +229,10 @@ silent score edit.
 - Qwen2.5-1.5B remains unmeasured; any comparison must run the same corpus and
   commands above, not reuse Qwen3 numbers.
 
+## Free questions (SQL)
+
+This report measures guided interpretation only. The separate evaluation that
+scores SQL answers by result on a fixed fixture, and its explicit "not measured"
+status for the reference remote model and local catalog models, is in
+[Ask SQL evaluation](ask-eval-sql.md).
+
