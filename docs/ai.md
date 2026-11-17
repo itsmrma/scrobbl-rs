@@ -9,19 +9,63 @@ API and Activities expose.
 
 AI is enabled only in **Settings → AI**. Enabling it downloads nothing and loads
 nothing; the owner must still choose a catalog model and start its download.
-Disabling it cancels active downloads and unloads the model. With AI off there
-is no model load, no inference and no network request related to AI.
+Disabling it cancels active downloads, unloads the model and deletes the Ask
+projection. With AI off there is no model load, no inference and no network
+request related to AI.
 
-The model never sees archive rows. The Rust prompt contains only the question,
-the supported DSL vocabulary and examples; the model emits DSL JSON constrained
-by a grammar. Rust executes that DSL against the canonical consultation
-selection and computes every number. By default there is no cloud AI call and no
-telemetry. The only additional outbound request is the model file download from
-the pinned catalog URL, started explicitly by the owner. The one exception is
-the opt-in [bring your own AI](#bring-your-own-ai) engine, which sends the
-question text to a server the owner names. Questions and results
-stay in the instance. Model files are treated as untrusted input, are verified
-by SHA-256 before use and cannot inject SQL.
+The model never sees archive rows. What it receives depends on the answer mode:
+
+- **Guided questions.** The Rust prompt contains only the question, the
+  supported DSL vocabulary and examples; the model emits DSL JSON constrained
+  by a grammar. Rust executes that DSL against the canonical consultation
+  selection and computes every number.
+- **Free questions (SQL).** The model receives the Ask projection's schema and
+  column meanings (generated from `TABLES`), the counting rules, today's date,
+  the question, and on failure a sanitized SQLite error that names only the
+  error class and identifiers from the model's own SQL. It never receives
+  archive values, names, counts, results, prior results or credentials. Its SQL
+  runs read-only against a separate projection file inside the
+  [SQL sandbox](ask-projection.md), never against the archive.
+
+By default there is no cloud AI call and no telemetry. The only additional
+outbound request is the model file download from the pinned catalog URL,
+started explicitly by the owner. The one exception is the opt-in
+[bring your own AI](#bring-your-own-ai) engine, which sends the question text
+(and, in free mode, the schema and sanitized errors) to a server the owner
+names. Questions and results stay in the instance. Model files are treated as
+untrusted input, are verified by SHA-256 before use and cannot inject SQL.
+
+## Answer modes
+
+Ask answers in one of two modes, chosen per engine in **Settings → AI**. Guided
+questions are the default for the downloaded local model; free questions (SQL)
+are the default for "bring your own AI". The choice is stored per engine, so
+switching engines restores that engine's mode, and the Ask page shows the active
+mode with a link to change it.
+
+| | Guided questions | Free questions (SQL) |
+| --- | --- | --- |
+| What it answers | the metrics, filters, periods and groupings in the frozen vocabulary | anything in the Ask projection: devices, countries, shuffle, skips, offline, combined conditions, comparisons, ties, first/last play, gaps and streaks |
+| When the model misunderstands | refuses, or the chips show the wrong interpretation and can be edited before or after asking | may return a wrong but plausible result; the "computed" sentence and the SQL show what it did, and the SQL can be edited and re-run |
+| Who computes the numbers | tested Rust executors | SQLite, on the model's query, inside the read-only sandbox |
+| Privacy | the model never sees archive values | the same, plus the SQL sandbox: only the schema, question and sanitized errors leave, and the projection is a separate file with no settings or credentials |
+| Recommended for | every downloaded local catalog model (0.6B–4B) | your own AI server or a hosted API with a larger model |
+
+Guided questions are **frozen** after the rolling 90/180-day periods of
+[#201](https://github.com/itsmrma/scrobbl-rs/issues/201): new metrics, filters
+and periods are not added. A question the vocabulary cannot express is answered
+by switching to free questions, not by extending guided questions.
+
+The recommendations are fixed, not measured per model: every local catalog
+entry reports `recommendation: "guided"`, the "bring your own AI" option
+recommends free questions, and the catalog stores no SQL accuracy field.
+Measured guided accuracy (#181) is in the
+[Ask parser evaluation](reports/ask-eval.md); the SQL evaluation that scores
+free answers by result, including what was **not** measured, is in the
+[Ask SQL evaluation](reports/ask-eval-sql.md). The projection data model and
+every sandbox layer and rejection rule are documented in
+[Ask projection and SQL sandbox](ask-projection.md).
+
 
 ## Settings keys
 
@@ -39,6 +83,8 @@ archive writer after `auth::require_write` (owner session + CSRF).
 | `ai_remote_url` | `""` | OpenAI-compatible base URL, e.g. `http://192.168.1.20:11434/v1` |
 | `ai_remote_model` | `""` | model name sent to that server |
 | `ai_remote_key` | `""` | optional API key; stored like the Spotify client secret and never returned (`remote_key_set` only) |
+| `ai_answer_mode_local` | `"guided"` | answer mode for the downloaded local engine: `guided` or `sql` |
+| `ai_answer_mode_remote` | `"sql"` | answer mode for the remote engine: `guided` or `sql` |
 
 Enabling AI does not download anything. If no model is installed the settings
 response says so explicitly. Disabling AI cancels active model downloads so no
@@ -62,11 +108,13 @@ use the provider endpoint behind them.
 
 What changes and what does not:
 
-- The server receives the system prompt (the Ask vocabulary and examples) and
-  the question text. It never receives archive rows, names from the library,
-  numbers or results. Rust still validates the reply, resolves names and
-  computes every number, so a remote model can only pick vocabulary, exactly
-  like the local one.
+- The server receives the system prompt and the question text. In guided mode
+  that is the Ask vocabulary and examples; in free mode it is the projection
+  schema, the counting rules and the question. It never receives archive rows,
+  names from the library, numbers or results. Guided replies are validated and
+  every number is computed by Rust; free replies are SQL that runs read-only in
+  the [SQL sandbox](ask-projection.md). Only sanitized errors, never values, go
+  back for a repair round.
 - The request asks for schema-constrained JSON (`response_format: json_schema`).
   A server that answers 400/422 is retried with `json_object`, then without
   `response_format`; the JSON is extracted from the reply even when it comes
@@ -159,7 +207,10 @@ Catalog metadata also records license, minimum/recommended RAM, CPU cores,
 optional GPU, 3072-token context, backend, measured speed and parser scores
 from the versioned evaluation set (#181): intent accuracy, slot F1, refusal
 accuracy, exact-match accuracy and per-language exact match. Entries that were
-not measured keep `null` rather than an estimate.
+not measured keep `null` rather than an estimate. Every entry also carries a
+fixed `recommendation`: `guided` for every downloadable local model. The
+"bring your own AI" option recommends `sql`; `AiCatalog.remote_recommendation`
+reports that fixed value. No measured SQL accuracy is stored or shown.
 
 ## Model choice and memory
 
@@ -446,6 +497,13 @@ The measured #181 intent accuracy is **55.77%** for the 0.6B, **78.85%** for the
 therefore provisional and its catalog description warns to treat the chips as
 part of the answer. The full per-language, slot and refusal results and the
 target verdict are in the [evaluation report](reports/ask-eval.md).
+
+Free questions have their own evaluation: it scores SQL answers **by typed
+result** on a fixed synthetic fixture and reports correct answers, honest
+failures and wrong-but-plausible answers. The reference remote model was not
+measured in this environment, and local catalog models are not measured; both
+facts are stated in the [Ask SQL evaluation](reports/ask-eval-sql.md). The corpus
+format is in [`evals/ask/README.md`](../evals/ask/README.md).
 
 ## API summary
 
