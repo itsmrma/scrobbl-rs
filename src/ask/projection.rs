@@ -1341,6 +1341,12 @@ pub fn schema_markdown() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Generous deadline for the background worker: CI machines run the whole
+    /// lib test binary in parallel, so a projection build can take seconds even
+    /// though it is fast in isolation. The test asserts eventual behaviour,
+    /// not a latency budget.
+    const WORKER_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
     use crate::{
         ask::sandbox::{self, SandboxLimits, SqlValue},
         db::{self, DurationKind, Event},
@@ -1916,7 +1922,7 @@ mod tests {
         tx.commit().await.unwrap();
         gate.notify();
 
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(WORKER_DEADLINE, async {
             loop {
                 if path(dir.path()).is_file() {
                     break;
@@ -1970,7 +1976,7 @@ mod tests {
         tx.commit().await.unwrap();
         gate.notify();
 
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(WORKER_DEADLINE, async {
             loop {
                 let guard = gate.read_lock().await;
                 let rev = sandbox::execute(
@@ -1996,7 +2002,7 @@ mod tests {
         tx.commit().await.unwrap();
         gate.notify();
 
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(WORKER_DEADLINE, async {
             loop {
                 if !path(dir.path()).exists() {
                     break;
