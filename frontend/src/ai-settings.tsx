@@ -4,10 +4,19 @@ import type {
   AiCatalogModel,
   AiInstalledModel,
   AiSettings,
+  AnswerMode,
 } from "./generated";
 import { api } from "./api";
 import { Select } from "./select";
-import { Button, ErrorText, Icon, Modal, number, useToast } from "./ui";
+import {
+  Button,
+  ErrorText,
+  Icon,
+  Modal,
+  SegmentedControl,
+  number,
+  useToast,
+} from "./ui";
 
 const GIB = 1024 * 1024 * 1024;
 
@@ -22,6 +31,11 @@ const statusLabel: Record<string, string> = {
   available: "Available",
   gpu_future: "GPU · later release",
   unverified: "Unverified",
+};
+
+const answerModeLabel: Record<AnswerMode, string> = {
+  guided: "Guided questions",
+  sql: "Free questions (SQL)",
 };
 
 const downloadError: Record<string, string> = {
@@ -185,6 +199,10 @@ function ModelCard({
         <div>
           <h3 id={`ai-model-${model.id}`}>{model.name}</h3>
           <p className="field-hint">{model.description}</p>
+          <p className="field-hint">
+            <strong>Recommended:</strong>{" "}
+            {answerModeLabel[model.recommendation]}
+          </p>
         </div>
         <div className="ai-badges">
           <span className={`ai-badge ai-badge-${model.tier}`}>
@@ -307,6 +325,8 @@ export function AiSettingsSection() {
   const [threads, setThreads] = useState("4");
   const [unload, setUnload] = useState("15");
   const [provider, setProvider] = useState("local");
+  const [localAnswerMode, setLocalAnswerMode] = useState<AnswerMode>("guided");
+  const [remoteAnswerMode, setRemoteAnswerMode] = useState<AnswerMode>("sql");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteModel, setRemoteModel] = useState("");
   const [remoteKey, setRemoteKey] = useState("");
@@ -326,6 +346,8 @@ export function AiSettingsSection() {
     setThreads(String(next.threads));
     setUnload(String(next.unload_minutes));
     setProvider(next.provider);
+    setLocalAnswerMode(next.local_answer_mode);
+    setRemoteAnswerMode(next.remote_answer_mode);
     setRemoteUrl(next.remote_url ?? "");
     setRemoteModel(next.remote_model ?? "");
     setRemoteKey("");
@@ -388,6 +410,9 @@ export function AiSettingsSection() {
         unload_minutes: Number(unload),
         model_dir: settings?.model_dir ?? null,
         provider,
+        answer_mode: answerMode,
+        local_answer_mode: localAnswerMode,
+        remote_answer_mode: remoteAnswerMode,
         remote_url: remoteUrl.trim() || null,
         remote_model: remoteModel.trim() || null,
         // null keeps the stored key, an empty string removes it.
@@ -454,6 +479,14 @@ export function AiSettingsSection() {
   }
 
   const remote = provider === "remote";
+  const answerMode = remote ? remoteAnswerMode : localAnswerMode;
+  function updateAnswerMode(nextMode: AnswerMode) {
+    if (remote) {
+      setRemoteAnswerMode(nextMode);
+    } else {
+      setLocalAnswerMode(nextMode);
+    }
+  }
   const installedUsable = catalog.installed.filter(
     (model) => model.checksum_verified && !model.error,
   );
@@ -539,7 +572,48 @@ export function AiSettingsSection() {
               <option value="local">On this server: a model I download</option>
               <option value="remote">My own AI server or API</option>
             </Select>
+            <small className="field-hint">
+              {remote
+                ? `Recommended: ${answerModeLabel[catalog.remote_recommendation]}.`
+                : `Recommended: ${answerModeLabel.guided} for every local catalog model.`}
+            </small>
           </label>
+          <div className="ai-answer-mode">
+            <span className="ai-answer-mode-label">Answer mode</span>
+            <SegmentedControl
+              ariaLabel="Answer mode"
+              data-value={answerMode}
+              value={answerMode}
+              onChange={updateAnswerMode}
+              options={[
+                { value: "guided", label: "Guided questions" },
+                { value: "sql", label: "Free questions (SQL)" },
+              ]}
+            />
+            <div className="ai-mode-explanations">
+              <p className="field-hint">
+                <strong>Guided questions:</strong> Fixed vocabulary answered by
+                tested Rust calculations; smaller scope, predictable numbers.
+              </p>
+              <p className="field-hint">
+                <strong>Free questions (SQL):</strong> The AI writes read-only
+                SQL over your listening projection; answers anything,
+                correctness depends on the model.
+              </p>
+            </div>
+            {!remote && answerMode === "sql" && (
+              <div className="notice notice-warning" role="status">
+                <Icon>warning</Icon>
+                <div className="notice-body">
+                  <strong>Small local models struggle with SQL.</strong>{" "}
+                  <span>
+                    Answers can be wrong but plausible. Guided questions are
+                    recommended for local catalog models.
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
           {remote && (
             <>
               <label>

@@ -349,7 +349,15 @@ pub(crate) fn ingest(
     for event in events {
         let fingerprint = db::payload_fingerprint(&event.raw);
         let context = crate::listening_patterns::context(event.source, &event.raw);
-        let existing=rows(conn,"SELECT o.id,o.listen_id,EXISTS(SELECT 1 FROM observation_variants v WHERE v.observation_id=o.id AND fingerprint=?) AS same FROM observations o WHERE source=? AND source_key=?",params![fingerprint,event.source,event.source_key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?)))?.pop();
+        let mut existing=rows(conn,"SELECT o.id,o.listen_id,EXISTS(SELECT 1 FROM observation_variants v WHERE v.observation_id=o.id AND fingerprint=?) AS same FROM observations o WHERE source=? AND source_key=?",params![fingerprint,event.source,event.source_key],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?)))?.pop();
+        if existing.is_none()
+            && let Some(legacy) = crate::imports::legacy_offline_key(event)
+        {
+            // Archives imported before offline plays kept their own start time
+            // stored this exact row under the session's shared key. Recognise
+            // it there; a row never seen before is a new offline play.
+            existing = rows(conn,"SELECT o.id,o.listen_id,1 FROM observations o JOIN observation_variants v ON v.observation_id=o.id WHERE o.source=? AND o.source_key=? AND v.fingerprint=? LIMIT 1",params![event.source,legacy,fingerprint],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,bool>(2)?)))?.pop();
+        }
         if existing.as_ref().is_some_and(|r| r.2) {
             let (observation, listen, _) = existing.as_ref().ok_or(AppError::Internal)?;
             if execute(
@@ -566,12 +574,19 @@ pub(crate) fn review_spotify_imports(conn: &Connection, events: &[Event]) -> Res
             continue;
         };
         let uncertain = !event.track.id.starts_with("spotify:track:");
+        // Plays from one offline session all carry the sync time; each has its
+        // own start, so sharing that time does not make them the same play.
+        if !uncertain && crate::imports::has_offline_start(event) {
+            continue;
+        }
         let peers = if uncertain {
             vec![]
         } else {
+            // Only rows placed at "end time minus duration" can describe one
+            // overlapping playback; offline plays at their own start cannot.
             ids(
                 conn,
-                "SELECT o.listen_id FROM observations o JOIN listens l ON l.id=o.listen_id WHERE o.source='spotify_import' AND l.track_id=? AND o.source_timestamp_ms=? AND o.source_key!=?",
+                "SELECT o.listen_id FROM observations o JOIN listens l ON l.id=o.listen_id WHERE o.source='spotify_import' AND l.track_id=? AND o.source_timestamp_ms=? AND o.source_key!=? AND EXISTS(SELECT 1 FROM observation_variants v WHERE v.observation_id=o.id AND v.played_at_ms+COALESCE(v.listened_ms,0)=o.source_timestamp_ms)",
                 params![track, event.source_timestamp_ms, event.source_key],
             )?
         };
@@ -623,12 +638,18 @@ pub(crate) fn import_rows(
         let (payload_id, variant, outcome, reason) = match row {
             SourceRow::Event(_) => {
                 let event = accepted.next().ok_or(AppError::Internal)?;
+                // A reimported offline row may live under its legacy key; see
+                // `imports::legacy_offline_key`.
+                let legacy = crate::imports::legacy_offline_key(event);
                 let (variant, payload_id): (String, i64) = conn.prepare_cached(
-                    "SELECT v.id,v.payload_id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key=? AND v.fingerprint=?",
+                    "SELECT v.id,v.payload_id FROM observation_variants v JOIN observations o ON o.id=v.observation_id WHERE o.source=? AND o.source_key IN (?,COALESCE(?,?)) AND v.fingerprint=? ORDER BY o.source_key=? DESC LIMIT 1",
                 )?.query_row(params![
                         event.source,
                         event.source_key,
-                        db::payload_fingerprint(&event.raw)
+                        legacy,
+                        event.source_key,
+                        db::payload_fingerprint(&event.raw),
+                        event.source_key
                     ], |r| Ok((r.get(0)?, r.get(1)?)))?;
                 (
                     payload_id,

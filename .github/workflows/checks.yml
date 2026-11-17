@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       run_checks: ${{ steps.filter.outputs.run_checks }}
+      run_site: ${{ steps.filter.outputs.run_site }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,7 +33,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: filter
-        name: Skip heavy checks for documentation-only changes
+        name: Classify changes as documentation, site or application
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -41,6 +42,7 @@ jobs:
         run: |
           if [[ "$REF" == refs/tags/* || "$BASE_SHA" =~ ^0+$ ]]; then
             echo "run_checks=true" >> "$GITHUB_OUTPUT"
+            echo "run_site=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -51,15 +53,23 @@ jobs:
           fi
 
           run_checks=false
+          run_site=false
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
-            if [[ "$file" != docs/* && "$file" != *.md ]]; then
+            if [[ "$file" == docs/* || "$file" == *.md ]]; then
+              continue
+            elif [[ "$file" == site/* ]]; then
+              run_site=true
+            elif [[ "$file" == .github/workflows/checks.yml ]]; then
               run_checks=true
-              break
+              run_site=true
+            else
+              run_checks=true
             fi
           done <<< "$changed_files"
 
           echo "run_checks=$run_checks" >> "$GITHUB_OUTPUT"
+          echo "run_site=$run_site" >> "$GITHUB_OUTPUT"
 
   backend:
     name: Backend (${{ matrix.platform }})
@@ -112,7 +122,7 @@ jobs:
     if: needs.changes.outputs.run_checks == 'true'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
     env:
       HOME: /root
     timeout-minutes: 30
@@ -169,6 +179,44 @@ jobs:
             playwright-report/
           retention-days: 7
 
+  site:
+    name: Site
+    needs: changes
+    if: needs.changes.outputs.run_site == 'true'
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.65.0-noble
+    env:
+      HOME: /root
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - run: npm test
+        env:
+          CI: "true"
+      - name: Validate the Worker configuration
+        run: npx wrangler deploy --dry-run
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: site-${{ github.run_attempt }}
+          path: |
+            site/test-results/
+            site/playwright-report/
+          retention-days: 7
+
   docker:
     name: Docker
     needs: changes
@@ -213,7 +261,7 @@ jobs:
   required:
     name: PR checks
     if: always()
-    needs: [changes, backend, frontend, docker]
+    needs: [changes, backend, frontend, docker, site]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -222,9 +270,17 @@ jobs:
           BACKEND: ${{ needs.backend.result }}
           FRONTEND: ${{ needs.frontend.result }}
           DOCKER: ${{ needs.docker.result }}
+          SITE: ${{ needs.site.result }}
           RUN_CHECKS: ${{ needs.changes.outputs.run_checks }}
+          RUN_SITE: ${{ needs.changes.outputs.run_site }}
         run: |
-          printf 'run_checks=%s backend=%s frontend=%s docker=%s\n' "$RUN_CHECKS" "$BACKEND" "$FRONTEND" "$DOCKER"
+          printf 'run_checks=%s run_site=%s backend=%s frontend=%s docker=%s site=%s\n' "$RUN_CHECKS" "$RUN_SITE" "$BACKEND" "$FRONTEND" "$DOCKER" "$SITE"
+          if [[ "$RUN_SITE" == true ]]; then
+            test "$SITE" = success
+          else
+            test "$RUN_SITE" = false
+            test "$SITE" = skipped
+          fi
           if [[ "$RUN_CHECKS" == true ]]; then
             test "$BACKEND" = success
             test "$FRONTEND" = success
@@ -251,7 +307,7 @@ jobs:
         with:
           name: tested-image-${{ github.sha }}
       - run: docker load --input tested-image.tar
-      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

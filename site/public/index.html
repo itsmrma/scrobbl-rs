@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>scrobbl.rs</title>
+  <meta name="description" content="A self-hosted personal listening archive and music library.">
+  <meta name="theme-color" content="#13151b">
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <!-- SITE_ORIGIN placeholder: replace https://scrobblrs.benassimatteo.dev everywhere (see site/README.md, "Set the production origin"). -->
+  <link rel="canonical" href="https://scrobblrs.benassimatteo.dev/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="scrobbl.rs">
+  <meta property="og:title" content="scrobbl.rs">
+  <meta property="og:description" content="A self-hosted personal listening archive and music library.">
+  <meta property="og:url" content="https://scrobblrs.benassimatteo.dev/">
+  <meta property="og:image" content="https://scrobblrs.benassimatteo.dev/social.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="675">
+  <meta property="og:image:alt" content="The scrobbl.rs Overview with a demo archive">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="scrobbl.rs">
+  <meta name="twitter:description" content="A self-hosted personal listening archive and music library.">
+  <meta name="twitter:image" content="https://scrobblrs.benassimatteo.dev/social.jpg">
+  <!-- Stylesheets: one file per page area, so parallel tickets rarely touch the same file. -->
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/layout.css">
+  <link rel="stylesheet" href="/css/hero.css">
+  <link rel="stylesheet" href="/css/accent-picker.css">
+  <link rel="stylesheet" href="/css/features.css">
+  <link rel="stylesheet" href="/css/trust.css">
+  <link rel="stylesheet" href="/css/install.css">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="scrobbl.rs, home">
+        <span class="tile" aria-hidden="true">
+          <svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></svg>
+        </span>
+        <span>scrobbl<span class="accent">.</span>rs</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#features">Features</a>
+        <a href="#trust">How it counts</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/itsmrma/scrobbl-rs" rel="noopener">GitHub</a>
+        <a class="btn primary" href="#install">Get started</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <!-- SECTION hero (ticket: hero + app preview) -->
+    <section id="hero" class="block hero">
+      <div class="wrap hero-grid">
+        <div class="hero-copy">
+          <h1>Your listening history, kept on your server<span class="accent">.</span></h1>
+          <p class="lede">scrobbl.rs collects your Spotify listens, imports years of history, and turns it into a searchable archive, with rankings, charts and a page for every artist, album and track.</p>
+          <div class="cta">
+            <a class="btn primary" href="#install">Install with Docker</a>
+            <a class="btn secondary" href="https://github.com/itsmrma/scrobbl-rs" rel="noopener">View source</a>
+          </div>
+          <ul class="facts" aria-label="Highlights">
+            <li>Rust + SQLite</li>
+            <li>Self-hosted</li>
+            <li>No telemetry</li>
+            <li>GPL-3.0-or-later</li>
+          </ul>
+        </div>
+
+        <div class="hero-preview">
+          <div class="mock" role="img" aria-label="Preview of the scrobbl.rs Overview page, built with demo data: a sidebar with now playing, three statistics, a 12-month activity chart and a top artists ranking. All names and numbers are invented.">
+            <div class="mock-side">
+              <b class="mock-brand"><span class="tile"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></svg></span>scrobbl.rs</b>
+              <span class="item on">Overview</span><span class="item">Listening history</span><span class="item">Rankings</span><span class="item">Ask</span>
+              <span class="eyebrow">YOUR LIBRARY</span>
+              <span class="item">Artists</span><span class="item">Albums</span><span class="item">Tracks</span>
+              <div class="now"><span class="cover c2"></span><div><span class="now-label">Now playing</span>Low Tide Radio<small>Harbor Lights</small></div></div>
+            </div>
+            <div class="mock-main">
+              <div class="mock-title">Overview<span class="accent">.</span></div>
+              <div class="sub">Your listening, at a glance</div>
+              <div class="stats">
+                <div class="stat"><span>Listens</span><strong>212,404</strong></div>
+                <div class="stat"><span>Artists</span><strong>6,918</strong></div>
+                <div class="stat"><span>Listening time</span><strong>11,240 h</strong></div>
+              </div>
+              <div class="two">
+                <div class="card"><div class="card-title">Activity <small>last 12 months</small></div>
+                  <div class="bars"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+                </div>
+                <div class="card rank"><div class="card-title">Top artists <small>2026</small></div>
+                  <div class="row"><em>1</em><span class="cover c1"></span><span class="t">Mina Sol<small>1,204 listens</small></span></div>
+                  <div class="row"><em>2</em><span class="cover c3"></span><span class="t">The Quiet Margins<small>987 listens</small></span></div>
+                  <div class="row"><em>3</em><span class="cover c4"></span><span class="t">Ostrava<small>812 listens</small></span></div>
+                  <div class="row"><em>4</em><span class="cover c5"></span><span class="t">Velvet Arcade<small>640 listens</small></span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION accent-picker (ticket: "Make it yours" strip; script: js/accent-picker.js) -->
+    <section id="accent-picker" class="block accent-picker" aria-labelledby="accent-picker-title">
+      <div class="wrap accent-strip">
+        <p id="accent-picker-title"><strong>Make it yours.</strong> <span class="muted">Every surface absorbs your accent colour. Try it on this page.</span></p>
+        <div class="swatches" role="group" aria-label="Accent colour">
+          <button type="button" aria-label="Lime" aria-pressed="true" data-color="#c9ee8b"><i></i></button>
+          <button type="button" aria-label="Sky" aria-pressed="false" data-color="#91c9f7"><i></i></button>
+          <button type="button" aria-label="Lavender" aria-pressed="false" data-color="#c5a3ee"><i></i></button>
+          <button type="button" aria-label="Peach" aria-pressed="false" data-color="#f7b68b"><i></i></button>
+          <button type="button" aria-label="Rose" aria-pressed="false" data-color="#f099ad"><i></i></button>
+          <button type="button" aria-label="Mint" aria-pressed="false" data-color="#64d9c3"><i></i></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION features (ticket: six feature panels) -->
+    <section id="features" class="block features">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Everything you've played, in one ledger<span class="accent">.</span></h2>
+          <p>Collection runs in the background. Imports reconstruct the past. Everything else is for reading it back.</p>
+        </div>
+        <div class="grid">
+          <article class="panel">
+            <h3>Collect</h3>
+            <p>Connect your own Spotify app once. Listens are collected in the background while the server runs, with now playing shown as it happens.</p>
+            <div class="demo">
+              <div class="row"><span class="cover c2" aria-hidden="true"></span><span class="t">Low Tide Radio<small>Harbor Lights</small></span><em>now playing</em></div>
+              <div class="row"><span class="cover c1" aria-hidden="true"></span><span class="t">Glass Orchard<small>Mina Sol</small></span><em>4 min ago</em></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Import</h3>
+            <p>Bring in Spotify Extended Streaming History and ListenBrainz JSON, JSONL or ZIP exports. Interrupted imports resume, and repeating one never counts a listen twice.</p>
+            <div class="demo">
+              <dl class="kv"><dt>Files read</dt><dd>18</dd><dt>Listens added</dt><dd>212,404</dd><dt>Already present</dt><dd>3,117</dd></dl>
+              <div class="ok">Import complete</div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Explore</h3>
+            <p>Search the full history, browse artist, album and track pages and complete rankings, and chart activity by day, week, month or year.</p>
+            <div class="demo">
+              <div class="prow"><span class="muted">Mornings</span><span class="track"><span class="w38"></span></span><em>18%</em></div>
+              <div class="prow"><span class="muted">Afternoons</span><span class="track"><span class="w62"></span></span><em>31%</em></div>
+              <div class="prow"><span class="muted">Evenings</span><span class="track"><span class="w88"></span></span><em>41%</em></div>
+              <div class="prow"><span class="muted">Night</span><span class="track"><span class="w22"></span></span><em>10%</em></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Curate</h3>
+            <p>Correct names and titles, pick artwork, rate music from half a star to five, and reversibly group namesakes without losing the originals.</p>
+            <div class="demo">
+              <div class="row"><span class="cover c4" aria-hidden="true"></span><span class="t">Northbound (Deluxe)<small>Ostrava</small></span><span class="stars" role="img" aria-label="4.5 stars">&#9733;&#9733;&#9733;&#9733;<span class="half">&#9733;</span></span></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Ask</h3>
+            <p>Optional and off by default. Ask questions in plain words: the model never sees your archive rows, and Rust computes every number. Use a local model, or point it at your own OpenAI-compatible server.</p>
+            <div class="demo">
+              <div class="q">Which album did I play most last winter?</div>
+              <div class="answer"><strong>Northbound</strong><span class="muted">Ostrava &middot; 214 listens &middot; Dec&ndash;Feb</span></div>
+              <div class="chips"><span class="chip">Local model</span><span class="chip">Off by default</span></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Keep</h3>
+            <p>Export JSON or CSV, make portable backups and verify a restore. Upgrades take a verified safety copy first.</p>
+            <div class="demo">
+              <dl class="kv"><dt>Backup</dt><dd>archive-2026-11-17.zip</dd><dt>Size</dt><dd>48.2 MB</dd></dl>
+              <div class="ok">Restore verified</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION trust (ticket: "Numbers you can trust" notices; anchor id="trust") -->
+    <section id="trust" class="block trust">
+      <div class="wrap trust-layout">
+        <div class="section-head">
+          <h2>Numbers you can trust<span class="accent">.</span></h2>
+          <p>Statistics are only useful if you know what they count. These are the rules the archive follows.</p>
+        </div>
+        <div class="notices">
+          <div class="notice notice-success"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg><div><b>Imported plays count from 30 seconds</b><p>Imported plays of 30 seconds or longer count in statistics. Shorter records stay searchable in your history.</p></div></div>
+          <div class="notice notice-warning"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><b>Unknown stays unknown</b><p>A missing listening time is never shown as zero, and an estimated time is labelled as an estimate.</p></div></div>
+          <div class="notice notice-info"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><div><b>Possible duplicates wait for you</b><p>Uncertain matches stay separate until a review. Removed listens go to a recoverable trash, and a decision can be undone.</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION install (ticket: steps, Docker / From source tabs, copy; script: js/install.js; anchor id="install") -->
+    <section id="install" class="block install" aria-labelledby="install-title">
+      <div class="wrap install-grid">
+        <div class="install-steps">
+          <h2 id="install-title">Install in three steps<span class="accent">.</span></h2>
+          <ol class="steps">
+            <li>
+              <span class="step-n" aria-hidden="true">1</span>
+              <div><h3>Start the container</h3><p class="muted">Run the prebuilt image with Docker Compose, or run from source on your own machine.</p></div>
+            </li>
+            <li>
+              <span class="step-n" aria-hidden="true">2</span>
+              <div><h3>Create the owner account</h3><p class="muted">Open the configured address and choose an owner password of at least 12 characters.</p></div>
+            </li>
+            <li>
+              <span class="step-n" aria-hidden="true">3</span>
+              <div><h3>Connect Spotify and import</h3><p class="muted">Connect Spotify in Settings to collect new listens, and import your Extended Streaming History or ListenBrainz export.</p></div>
+            </li>
+          </ol>
+        </div>
+
+        <div class="install-panel">
+          <div class="install-bar">
+            <div class="tabs" role="tablist" aria-label="Installation method">
+              <button type="button" role="tab" id="tab-docker" aria-controls="panel-docker" aria-selected="true" class="tab">Docker</button>
+              <button type="button" role="tab" id="tab-source" aria-controls="panel-source" aria-selected="false" class="tab">From source</button>
+            </div>
+            <button type="button" class="btn secondary copy" data-copy><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg><span data-copy-label>Copy</span></button>
+          </div>
+
+          <div role="tabpanel" id="panel-docker" aria-labelledby="tab-docker" class="tabpanel">
+            <pre class="code" data-code tabindex="0"><code><span class="line note"># Get the Compose file</span>
+<span class="line">curl -fsSLO https://raw.githubusercontent.com/itsmrma/scrobbl-rs/main/compose.yaml</span>
+<span class="line note"># A new, dedicated data directory on a local disk</span>
+<span class="line">sudo install -d -o 10001 -g 10001 -m 0700 /srv/scrobbl/data</span>
+<span class="line note"># Pin the image to a commit from a successful Docker run, not a floating tag</span>
+<span class="line">export SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:sha-FULL_COMMIT</span>
+<span class="line">export SCROBBL_EXTERNAL_ORIGIN=http://192.0.2.10:3210</span>
+<span class="line">export SCROBBL_HOST_IP=192.0.2.10</span>
+<span class="line">export SCROBBL_DATA_PATH=/srv/scrobbl/data</span>
+<span class="line note"># Start it</span>
+<span class="line">docker compose pull</span>
+<span class="line">docker compose up -d</span></code></pre>
+            <p class="muted">Replace the documentation addresses with yours and pin <code>SCROBBL_IMAGE</code> to a commit or digest. See the <a href="https://github.com/itsmrma/scrobbl-rs/blob/main/docs/docker.md" rel="noopener">full Docker guide</a> for UID/GID, HTTPS and Spotify.</p>
+          </div>
+
+          <div role="tabpanel" id="panel-source" aria-labelledby="tab-source" class="tabpanel" hidden>
+            <pre class="code" data-code tabindex="0"><code><span class="line note"># Needs a stable Rust toolchain</span>
+<span class="line">./scripts/run-local.sh</span></code></pre>
+            <p class="muted">Then open <strong>http://127.0.0.1:3210</strong> and create the owner account. Keep the process running to collect listens.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="scrobbl.rs, home">
+        <span>scrobbl<span class="accent">.</span>rs</span>
+      </a>
+      <p>
+        Licensed under GPL-3.0-or-later. Inspired by
+        <a href="https://github.com/krateng/maloja" rel="noopener">Maloja</a>.
+        Every artist, track and number on this page is demo data.
+      </p>
+    </div>
+  </footer>
+
+  <script src="/js/accent-picker.js" defer></script>
+  <script src="/js/install.js" defer></script>
+</body>
+</html>

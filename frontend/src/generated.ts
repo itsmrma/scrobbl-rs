@@ -94,7 +94,7 @@ name: string,
  * Set after resolution or by an explicit candidate/context choice.
  */
 id: string | null, };
-export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year" | "last_7_days" | "last_30_days" | "last_365_days";
+export type Period = "all_time" | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "this_year" | "last_year" | "last_7_days" | "last_30_days" | "last_90_days" | "last_180_days" | "last_365_days";
 export type Weekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
 export type GroupBy = "day" | "week" | "month" | "year" | "hour" | "weekday" | "artist" | "album" | "track";
 export type SortBy = "metric" | "date";
@@ -102,12 +102,22 @@ export type SortOrder = "asc" | "desc";
 export type Limit = "one" | "five" | "ten" | "twenty_five" | "fifty" | "hundred";
 export type Chip = { key: string, label: string, value: string, };
 export type AskStatus = "ok" | "unsupported" | "ambiguous" | "model_unavailable" | "model_missing" | "failed";
+export type SqlAnswerKind = "value" | "table" | "series" | "ranking" | "unsupported";
+export type ColumnFormat = "count" | "duration_ms" | "date" | "datetime" | "percent" | "text" | "artist" | "album" | "track";
+export type SandboxRule = "empty_sql" | "sql_too_long" | "nul_byte" | "not_select" | "multiple_statements" | "bound_parameters" | "non_read_only" | "unauthorized_action" | "unauthorized_table" | "unauthorized_column" | "timeout" | "instruction_limit" | "cancelled" | "blob_not_allowed" | "output_too_large" | "sql_error" | "projection_unavailable";
+export type SqlValue = null | number | string;
+export type SqlColumn = { name: string, format: ColumnFormat, };
+export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, as_of_ms?: number, cell_links: Array<Array<string | null>>, history_href: string | null, };
 export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
 /**
  * Steps that ran before this one when the question was chained, oldest
  * first. This response is always the last step that ran.
  */
-earlier: Array<AskStep>, };
+earlier: Array<AskStep>, 
+/**
+ * Free-question (SQL mode) answer or rejection details, present only in SQL mode.
+ */
+sql?: SqlAnswer, };
 export type AskResult = { metric: Metric, 
 /**
  * Count, or timestamp in milliseconds for first/last.
@@ -118,7 +128,8 @@ scalar: number | null, time: TimeCoverage | null, rows: Array<ResultRow>, first:
  */
 total: number, links: Array<ResultLink>, };
 export type AskStep = { query: Query | null, chips: Array<Chip>, result: AskResult | null, };
-export type AskPrevious = { question: string, chips: Array<Chip>, };
+export type SqlPrevious = { title: string, computed: string, sql: string, };
+export type AskPrevious = { question: string, chips: Array<Chip>, sql?: SqlPrevious, };
 export type TimeCoverage = { known_ms: number, actual_ms: number, estimated_ms: number, unknown_listens: number, unknown_percent: number, };
 export type ResultRow = { label: string, key: string, plays: number, time: TimeCoverage | null, href: string | null, };
 export type ListenPoint = { played_at_ms: number, title: string, artist: string, album: string | null, track_id: string, };
@@ -131,15 +142,24 @@ export type AskRequest = { question: string, context: AskContext | null,
 /**
  * The answer this question follows up on, when the owner continues from it.
  */
-previous: AskPrevious | null, };
+previous: AskPrevious | null, 
+/**
+ * Answer mode for this request only, overriding the stored per-engine
+ * mode. Never persisted; an unknown value is rejected with 400.
+ */
+mode?: "guided" | "sql", request_id?: string, };
+export type AskCancelRequest = { request_id?: string, };
+export type AskCancelResponse = { cancelled: boolean, };
 export type AskContext = { kind: EntityKind, id: string, };
 export type AskQueryRequest = { query: Query, };
+export type AskSqlRequest = { sql: string, title: string | null, computed: string | null, answer_kind: SqlAnswerKind | null, columns: Array<SqlColumn>, };
+export type AnswerMode = "guided" | "sql";
 export type AiSettings = { 
 /**
  * `local` or `remote`.
  */
-provider: string, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
-export type SaveAiSettings = { provider: string | null, remote_url: string | null, remote_model: string | null, 
+provider: string, answer_mode: AnswerMode, local_answer_mode: AnswerMode, remote_answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, local_answer_mode?: AnswerMode, remote_answer_mode?: AnswerMode, remote_url: string | null, remote_model: string | null, 
 /**
  * `None` keeps the stored key, an empty string clears it.
  */
@@ -148,7 +168,7 @@ export type AiAskStatus = {
 /**
  * `local` or `remote`.
  */
-provider: string, remote_model: string | null, enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
+provider: string, answer_mode: AnswerMode, remote_model: string | null, enabled: boolean, runtime_available: boolean, model_ready: boolean, model_loading: boolean, };
 export type AiLicense = { name: string, url: string, };
 export type AiDownload = { repo: string, revision: string, file: string, sha256: string, size_bytes: number, };
 export type AiRequirements = { disk_bytes: number, ram_min_bytes: number, ram_recommended_bytes: number, cpu_cores: number, gpu_optional: boolean, context_tokens: number, };
@@ -156,9 +176,20 @@ export type AiLanguageScore = { language: string, exact_match: number | null, ca
 export type AiParserScores = { intent: number | null, slots: number | null, refusals: number | null, exact_match: number | null, };
 export type AiSpeed = { p50_ms: number, p95_ms: number, ttft_ms: number, decode_tokens_per_second: number, prefill_tokens_per_second: number, measured_on: string, };
 export type AiDownloadJob = { id: string, state: string, processed_bytes: number, expected_bytes: number, bytes_per_second: number | null, eta_seconds: number | null, cancel_requested: boolean, error_code: string | null, };
-export type AiCatalogModel = { id: string, name: string, tier: string, status: string, description: string, license: AiLicense, download: AiDownload, requirements: AiRequirements, languages: Array<AiLanguageScore>, parser: AiParserScores, speed: AiSpeed | null, backend: string, selectable: boolean, installed: boolean, installed_size_bytes: number | null, checksum_verified: boolean, error: string | null, download_job: AiDownloadJob | null, };
+export type AiCatalogModel = { id: string, name: string, tier: string, status: string, description: string, license: AiLicense, download: AiDownload, requirements: AiRequirements, languages: Array<AiLanguageScore>, parser: AiParserScores, speed: AiSpeed | null, backend: string, selectable: boolean, 
+/**
+ * Fixed recommendation: guided questions for every local catalog model.
+ * No measured SQL accuracy is stored or shown.
+ */
+recommendation: AnswerMode, installed: boolean, installed_size_bytes: number | null, checksum_verified: boolean, error: string | null, download_job: AiDownloadJob | null, };
 export type AiInstalledModel = { id: string, name: string | null, file: string | null, size_bytes: number, installed_at_ms: number | null, checksum_verified: boolean, error: string | null, };
-export type AiCatalog = { runtime_available: boolean, model_dir: string, models: Array<AiCatalogModel>, installed: Array<AiInstalledModel>, total_installed_bytes: number, disk_used_bytes: number, };
+export type AiCatalog = { runtime_available: boolean, model_dir: string, models: Array<AiCatalogModel>, installed: Array<AiInstalledModel>, total_installed_bytes: number, disk_used_bytes: number, 
+/**
+ * Fixed recommendation for the "bring your own AI" option: free questions
+ * (SQL), because a larger remote model can write SQL and the archive never
+ * leaves the instance.
+ */
+remote_recommendation: AnswerMode, };
 export type AiDownloadStarted = { job_id: string, };
 export type AiDeleteRequest = { confirm: boolean, force: boolean, };
 export type AiDeleteResult = { id: string, freed_bytes: number, };

@@ -35,6 +35,7 @@ import type {
   ListeningMilestones,
   AskPrevious,
   AskResponse,
+  AskSqlRequest,
   Query,
   AiSettings,
   SaveAiSettings,
@@ -80,6 +81,7 @@ export type ApplicationInfo = {
   listens_bytes: number;
   models_bytes: number;
   backups_bytes: number;
+  projection_bytes: number;
   total_storage_bytes: number;
   listens: number;
   tracks: number;
@@ -195,11 +197,25 @@ export type ConnectOutcome = {
   message: string | null;
 };
 
+/** Spotify export details, when every export variant of the listen agrees. */
+export type PlaybackContext = {
+  device: string | null;
+  offline: boolean | null;
+  skipped: boolean | null;
+  reason_start: string | null;
+  reason_end: string | null;
+};
+
+export type ReviewRecord = Listen & {
+  revision: number;
+  playback?: PlaybackContext;
+};
+
 export type ReviewPage = {
   total: number;
   page: number;
   decisions_total: number;
-  groups: { id: string; items: (Listen & { revision: number })[] }[];
+  groups: { id: string; items: ReviewRecord[] }[];
   recent: { id: string; at_ms: number; count: number; removed: number }[];
 };
 
@@ -277,6 +293,8 @@ export const api = {
       token: string;
       groups: number;
       records: number;
+      trash: number;
+      separate: number;
       remaining: number;
     }>("/api/v1/review/automatic"),
   executeAutomaticReview: (token: string) =>
@@ -417,13 +435,25 @@ export const api = {
     question: string,
     context: { kind: string; id: string } | null,
     previous: AskPrevious | null = null,
+    options?: { signal?: AbortSignal; requestId?: string },
   ) =>
-    post<AskResponse>("/api/v1/ask", {
-      question,
-      context,
-      ...(previous ? { previous } : {}),
+    post<AskResponse>(
+      "/api/v1/ask",
+      {
+        question,
+        context,
+        ...(previous ? { previous } : {}),
+        ...(options?.requestId ? { request_id: options.requestId } : {}),
+      },
+      options?.signal,
+    ),
+  cancelAsk: (request_id?: string) =>
+    post<{ cancelled: boolean }>("/api/v1/ask/cancel", {
+      ...(request_id ? { request_id } : {}),
     }),
   askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
+  askSql: (payload: AskSqlRequest) =>
+    post<AskResponse>("/api/v1/ask/sql", payload),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),
   saveSpotifyIntervals: (intervals: SpotifyIntervals) =>
     post<SpotifyIntervals>("/api/spotify/intervals", intervals),
