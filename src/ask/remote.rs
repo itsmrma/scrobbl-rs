@@ -237,7 +237,10 @@ fn sql_repair_user_message(
     let mut text = format!("{}\n", sql_user_message(question, previous));
     for (index, (sql, error)) in attempts.iter().enumerate() {
         let attempt = index + 1;
-        let clipped_sql: String = sql.chars().take(crate::ask::sandbox::MAX_SQL_BYTES).collect();
+        let clipped_sql: String = sql
+            .chars()
+            .take(crate::ask::sandbox::MAX_SQL_BYTES)
+            .collect();
         text.push_str(&format!(
             "\nAttempt {attempt} failed.\nSQL: {clipped_sql}\nError: {error}\n"
         ));

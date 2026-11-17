@@ -1078,7 +1078,10 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(cancel.is_cancelled(), "dropping infer future must cancel token");
+        assert!(
+            cancel.is_cancelled(),
+            "dropping infer future must cancel token"
+        );
         assert!(state.resets.load(Ordering::SeqCst) > 0);
         assert_eq!(state.active.load(Ordering::SeqCst), 0);
     }

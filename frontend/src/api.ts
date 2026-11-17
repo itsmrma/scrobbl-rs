@@ -435,11 +435,21 @@ export const api = {
     question: string,
     context: { kind: string; id: string } | null,
     previous: AskPrevious | null = null,
+    options?: { signal?: AbortSignal; requestId?: string },
   ) =>
-    post<AskResponse>("/api/v1/ask", {
-      question,
-      context,
-      ...(previous ? { previous } : {}),
+    post<AskResponse>(
+      "/api/v1/ask",
+      {
+        question,
+        context,
+        ...(previous ? { previous } : {}),
+        ...(options?.requestId ? { request_id: options.requestId } : {}),
+      },
+      options?.signal,
+    ),
+  cancelAsk: (request_id?: string) =>
+    post<{ cancelled: boolean }>("/api/v1/ask/cancel", {
+      ...(request_id ? { request_id } : {}),
     }),
   askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
   askSql: (payload: AskSqlRequest) =>

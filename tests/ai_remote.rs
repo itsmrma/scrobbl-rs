@@ -951,7 +951,10 @@ async fn remote_sql_mode_exhausts_two_repair_rounds_and_returns_honest_failure()
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "failed", "{body}");
-    assert!(body["query"].is_null(), "must never switch to guided: {body}");
+    assert!(
+        body["query"].is_null(),
+        "must never switch to guided: {body}"
+    );
     assert!(body["result"].is_null(), "{body}");
     assert_eq!(body["sql"]["rule_code"], "sql_error", "{body}");
     assert_eq!(body["sql"]["rows"], json!([]), "{body}");
@@ -968,7 +971,10 @@ async fn remote_sql_mode_exhausts_two_repair_rounds_and_returns_honest_failure()
     let seen = mock.seen.lock().unwrap();
     assert_eq!(seen.len(), 3, "expected 1 initial + 2 repair calls");
     let third_user = seen[2].1["messages"][1]["content"].as_str().unwrap();
-    assert!(third_user.contains("SELECT value FROM settings"), "{third_user}");
+    assert!(
+        third_user.contains("SELECT value FROM settings"),
+        "{third_user}"
+    );
     assert!(third_user.contains("unauthorized_table"), "{third_user}");
     assert!(third_user.contains("DELETE FROM listens"), "{third_user}");
     assert!(third_user.contains("not_select"), "{third_user}");
@@ -1045,10 +1051,7 @@ async fn remote_sql_mode_repair_can_conclude_unsupported_or_handle_bad_repair_js
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "unsupported", "{body}");
     assert!(
-        body["message"]
-            .as_str()
-            .unwrap()
-            .contains("moods"),
+        body["message"].as_str().unwrap().contains("moods"),
         "{body}"
     );
 

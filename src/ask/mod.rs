@@ -372,10 +372,12 @@ impl InFlightAsks {
                 .unwrap_or_else(|poison| poison.into_inner());
             entries
                 .iter()
-                .filter(|entry| match request_id.map(str::trim).filter(|s| !s.is_empty()) {
-                    Some(id) => entry.id == id,
-                    None => true,
-                })
+                .filter(
+                    |entry| match request_id.map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(id) => entry.id == id,
+                        None => true,
+                    },
+                )
                 .filter(|entry| !entry.cancel.is_cancelled())
                 .map(|entry| entry.cancel.clone())
                 .collect()
@@ -764,7 +766,9 @@ pub async fn sql(
             })
             .collect(),
     };
-    Ok(Json(run_sql_once(&state, String::new(), output, false, None).await?))
+    Ok(Json(
+        run_sql_once(&state, String::new(), output, false, None).await?,
+    ))
 }
 
 /// Run a chained question step by step. A step that builds on an earlier one
@@ -1222,7 +1226,8 @@ async fn run_sql(
                                 sql: None,
                             });
                         }
-                        Ok(Some(ParsedQuestion::Query(_) | ParsedQuestion::Plan(_))) | Ok(None) => {}
+                        Ok(Some(ParsedQuestion::Query(_) | ParsedQuestion::Plan(_))) | Ok(None) => {
+                        }
                         Err(_) if ask_cancel.is_cancelled() => {
                             return Ok(cancelled_response(state, question, Some(output)));
                         }
