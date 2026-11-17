@@ -107,7 +107,7 @@ export type ColumnFormat = "count" | "duration_ms" | "date" | "datetime" | "perc
 export type SandboxRule = "empty_sql" | "sql_too_long" | "nul_byte" | "not_select" | "multiple_statements" | "bound_parameters" | "non_read_only" | "unauthorized_action" | "unauthorized_table" | "unauthorized_column" | "timeout" | "instruction_limit" | "cancelled" | "blob_not_allowed" | "output_too_large" | "sql_error" | "projection_unavailable";
 export type SqlValue = null | number | number | string;
 export type SqlColumn = { name: string, format: ColumnFormat, };
-export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, as_of_ms?: number, };
+export type SqlAnswer = { title: string, computed: string, answer_kind: SqlAnswerKind, sql: string, columns: Array<SqlColumn>, rows: Array<Array<SqlValue>>, truncated: boolean, rule_code: SandboxRule | null, as_of_ms?: number, cell_links: Array<Array<string | null>>, history_href: string | null, };
 export type AskResponse = { status: AskStatus, question: string, query: Query | null, chips: Array<Chip>, result: AskResult | null, message: string | null, candidates: Array<EntityCandidate>, runtime_available: boolean, 
 /**
  * Steps that ran before this one when the question was chained, oldest
@@ -147,13 +147,14 @@ export type AskCancelRequest = { request_id?: string, };
 export type AskCancelResponse = { cancelled: boolean, };
 export type AskContext = { kind: EntityKind, id: string, };
 export type AskQueryRequest = { query: Query, };
+export type AskSqlRequest = { sql: string, title: string | null, computed: string | null, answer_kind: SqlAnswerKind | null, columns: Array<SqlColumn>, };
 export type AnswerMode = "guided" | "sql";
 export type AiSettings = { 
 /**
  * `local` or `remote`.
  */
-provider: string, answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
-export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, remote_url: string | null, remote_model: string | null, 
+provider: string, answer_mode: AnswerMode, local_answer_mode: AnswerMode, remote_answer_mode: AnswerMode, remote_url: string | null, remote_model: string | null, remote_key_set: boolean, enabled: boolean, active_model: string | null, threads: number, unload_minutes: number, model_dir: string | null, effective_model_dir: string, runtime_available: boolean, model_installed: boolean, model_ready: boolean, message: string | null, };
+export type SaveAiSettings = { provider: string | null, answer_mode: AnswerMode | null, local_answer_mode?: AnswerMode, remote_answer_mode?: AnswerMode, remote_url: string | null, remote_model: string | null, 
 /**
  * `None` keeps the stored key, an empty string clears it.
  */
