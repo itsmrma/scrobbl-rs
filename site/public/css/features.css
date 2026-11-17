@@ -1,15 +1,15 @@
 /* Features section: six panels with the app's panel anatomy (DESIGN.md, Panels). */
 .section-head { margin-bottom: 32px; max-width: 46em; }
 .section-head h2 { font-size: clamp(26px, 3.2vw, 38px); }
-.section-head p { margin: 10px 0 0; color: var(--muted); }
+.section-head p { margin: 12px 0 0; color: var(--muted); }
 
 #features .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
 #features .panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-  padding: 26px; min-width: 0; display: flex; flex-direction: column;
+  padding: 24px; min-width: 0; display: flex; flex-direction: column;
 }
-#features .panel h3 { font-size: 20px; margin-bottom: 6px; }
-#features .panel > p { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+#features .panel h3 { font-size: 20px; margin-bottom: 8px; }
+#features .panel > p { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
 #features .demo {
   margin-top: auto; background: var(--bg); border: 1px solid var(--border);
   border-radius: 10px; padding: 12px; font-size: 12px; min-width: 0;

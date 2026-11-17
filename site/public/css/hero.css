@@ -2,17 +2,12 @@
 .hero { padding-top: 72px; }
 .hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 48px; align-items: center; }
 .hero h1 { font-size: clamp(36px, 5vw, 60px); max-width: 14em; }
-.hero .lede { font-size: 18px; color: var(--muted); max-width: 30em; margin: 20px 0 28px; }
+.hero .lede { font-size: 18px; color: var(--muted); max-width: 30em; margin: 20px 0 32px; }
 .hero .cta { display: flex; gap: 10px; flex-wrap: wrap; }
-.hero .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 28px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
-.hero .facts li::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
+.hero .facts { display: flex; flex-wrap: wrap; gap: 4px 0; margin: 24px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+.hero .facts li + li::before { content: "\00b7"; margin: 0 8px; }
 
 .hero-preview { min-width: 0; }
-.hero .demo-tag {
-  display: inline-block; margin-bottom: 18px; padding: 3px 8px; border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  color: var(--accent-text); font-size: 10px; letter-spacing: .15em; font-weight: 600;
-}
 
 /* App preview: same components as the app, invented data. */
 .mock {
@@ -33,9 +28,9 @@
 .mock .now > div { min-width: 0; }
 .mock .now small, .now .now-label { display: block; color: var(--muted); font-size: 10px; }
 
-.mock-main { padding: 18px; min-width: 0; }
+.mock-main { padding: 16px; min-width: 0; }
 .mock-title { font-size: 20px; font-weight: 600; letter-spacing: -0.035em; line-height: 1.2; }
-.mock .sub { margin: 2px 0 14px; color: var(--muted); }
+.mock .sub { margin: 4px 0 16px; color: var(--muted); }
 .mock .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
 .mock .stat { min-width: 0; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
 .mock .stat span { color: var(--muted); font-size: 11px; }

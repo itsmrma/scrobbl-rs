@@ -16,9 +16,10 @@ test("hero shows title, description, both calls to action and the fact line", as
   await expect(facts.getByRole("listitem")).toHaveText(["Rust + SQLite", "Self-hosted", "No telemetry", "GPL-3.0-or-later"]);
 });
 
-test("Overview preview is labelled as demo data and has an accessible name saying so", async ({ page }) => {
+test("Overview preview has an accessible name saying it is demo data, with no visible tag", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("#hero").getByText("DEMO ARCHIVE")).toBeVisible();
+  await expect(page.locator("#hero").getByText(/demo archive/i)).toHaveCount(0);
+  await expect(page.locator("footer")).toContainText("demo data");
   const preview = page.locator("#hero [role=img]");
   await expect(preview).toHaveAttribute("aria-label", /demo data/i);
   await expect(preview).toBeVisible();
@@ -101,12 +102,10 @@ test("without reduced motion the bars grow", async ({ browser, baseURL }) => {
   await ctx.close();
 });
 
-test("buttons and demo tag follow DESIGN.md metrics", async ({ page }) => {
+test("buttons follow DESIGN.md metrics", async ({ page }) => {
   await page.goto("/");
   const btn = await page.locator(".btn").first().evaluate((el) => getComputedStyle(el).padding);
   expect(btn).toBe("10px 15px");
-  const ls = await page.locator(".hero .demo-tag").evaluate((el) => parseFloat(getComputedStyle(el).letterSpacing) / parseFloat(getComputedStyle(el).fontSize));
-  expect(ls).toBeCloseTo(0.15, 2);
   const small = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((el) => el.childNodes.length && parseFloat(getComputedStyle(el).fontSize) === 9).length);
   expect(small).toBe(0);
 });

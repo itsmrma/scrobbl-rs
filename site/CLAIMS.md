@@ -8,7 +8,7 @@ no software behaviour beyond the claim listed next to them.
 
 | Where | Claim on the page | Source |
 | --- | --- | --- |
-| Lede | Self-hosted on your own server, so your listening history stays yours | `README.md` intro ("self-hosted, single-owner archive for music listening"), Data and privacy ("designed for one owner on a private server") |
+| Headline | Your listening history, kept on your server | `README.md` intro ("self-hosted, single-owner archive for music listening"), Data and privacy ("designed for one owner on a private server") |
 
 ## Features
 
