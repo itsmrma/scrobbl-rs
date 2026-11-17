@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://scrobbl-site.example.workers.dev/sitemap.xml
