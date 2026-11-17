@@ -1,0 +1,2 @@
+.hero { padding-top: 72px; }
+.hero h1 { font-size: clamp(36px, 5vw, 60px); max-width: 14em; }

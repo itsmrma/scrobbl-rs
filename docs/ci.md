@@ -2,8 +2,12 @@
 
 `Checks` runs for every PR targeting `main` on opening, a new commit, reopening
 and becoming ready for review, including drafts. Pushes to `main` and `v*` tags
-run the same verification. A detection job skips the heavy jobs when every changed
-path is under `docs/` or ends in `.md`; version tags always run the full suite.
+run the same verification. A detection job sorts every changed path into three
+cases: documentation (under `docs/` or ending in `.md`), site (under `site/`) and
+application (everything else). Documentation-only changes skip every verification;
+site-only changes skip Backend, Browser and Docker and run only `Site`; any
+application change runs the full application suite, plus `Site` when the site also
+changed. Version tags and new branches always run everything.
 The workflow itself always runs, so required checks are not stranded. A new
 PR run cancels the superseded run for that PR; separate PRs and trusted pushes
 have separate concurrency groups. Running trusted push workflows are allowed to finish.
@@ -22,7 +26,11 @@ and requires a PR with **zero** additional approving reviews:
 | `Browser (firefox)` | The same frontend checks in Firefox |
 | `Browser (webkit)` | The same frontend checks in WebKit |
 | `Docker / linux/amd64` | Image build, distribution budget, generic Compose startup and persistent-volume smoke |
-| `PR checks` | Always runs; requires successful verification for application changes or the explicit documentation-only skip |
+| `Site` | In `site/`: locked npm install, Playwright tests of the site (chromium, firefox, webkit) served by `wrangler dev`, and `wrangler deploy --dry-run` |
+| `PR checks` | Always runs; requires successful verification for application changes, a successful `Site` for site changes, or the explicit documentation-only skip |
+
+`Site` runs only when the site changed, so it is skipped on other PRs. Add it to
+the required checks of the protection on `main` (owner step, not automated).
 
 The `Checks` workflow also has a standalone `Docker / linux/arm64` build job
 (buildx on native `ubuntu-24.04-arm`, `load: false`). It runs only on trusted pushes
@@ -32,8 +40,9 @@ required amd64 check or block publication. The publish job continues to push onl
 the exact amd64 image tar that passed the smoke test.
 
 A failed or canceled verification cannot make `PR checks` pass. For application
-changes, every verification must succeed; for documentation-only changes, all
-three job groups must be skipped and the detector must report `false`. Only the
+changes, every verification must succeed; for site-only changes, `Site` must succeed and
+the three application job groups must be skipped; for documentation-only changes, all
+four job groups must be skipped and the detector must report `false` for both cases. Only the
 current PR revision can satisfy required checks. GitHub's up-to-date requirement
 also prevents using checks against an obsolete base. Keep these names and the
 repository protection synchronized when changing the workflow.
@@ -77,6 +86,16 @@ The `git ls-files` command must print nothing: new untracked build outputs also
 mean committed assets are stale. Browser tests create a temporary archive;
 Rust tests use temporary databases and local fake Spotify responses. No NAS,
 personal account, listening archive or provider credentials are required.
+
+For the site (self-contained in `site/`, with its own lockfile):
+
+```sh
+cd site
+npm ci
+npx playwright install --with-deps chromium firefox webkit
+npm test
+npx wrangler deploy --dry-run
+```
 
 On a Linux Docker host, build and run the same disposable Compose smoke:
 

@@ -20,3 +20,9 @@ __pycache__/
 /.github/agents/
 /.github/hooks/
 /.github/skills/
+
+# Site module
+/site/node_modules/
+/site/.wrangler/
+/site/test-results/
+/site/playwright-report/
