@@ -298,7 +298,7 @@ SOFTWARE.
 
 --------------------
 
-vite 8.3.5 — MIT
+vite 8.3.6 — MIT
 
 # Vite core license
 Vite is released under the MIT license:
