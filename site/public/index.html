@@ -106,8 +106,81 @@
     </section>
 
     <!-- SECTION features (ticket: six feature panels) -->
+    <section id="features" class="block features">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Everything you've played, in one ledger<span class="accent">.</span></h2>
+          <p>Collection runs in the background. Imports reconstruct the past. Everything else is for reading it back.</p>
+        </div>
+        <div class="grid">
+          <article class="panel">
+            <h3>Collect</h3>
+            <p>Connect your own Spotify app once. Listens are collected in the background while the server runs, with now playing shown as it happens.</p>
+            <div class="demo">
+              <div class="row"><span class="cover c2" aria-hidden="true"></span><span class="t">Low Tide Radio<small>Harbor Lights</small></span><em>now playing</em></div>
+              <div class="row"><span class="cover c1" aria-hidden="true"></span><span class="t">Glass Orchard<small>Mina Sol</small></span><em>4 min ago</em></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Import</h3>
+            <p>Bring in Spotify Extended Streaming History and ListenBrainz JSON, JSONL or ZIP exports. Interrupted imports resume, and repeating one never counts a listen twice.</p>
+            <div class="demo">
+              <dl class="kv"><dt>Files read</dt><dd>18</dd><dt>Listens added</dt><dd>212,404</dd><dt>Already present</dt><dd>3,117</dd></dl>
+              <div class="ok">Import complete</div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Explore</h3>
+            <p>Search the full history, browse artist, album and track pages and complete rankings, and chart activity by day, week, month or year.</p>
+            <div class="demo">
+              <div class="prow"><span class="muted">Mornings</span><span class="track"><span class="w38"></span></span><em>18%</em></div>
+              <div class="prow"><span class="muted">Afternoons</span><span class="track"><span class="w62"></span></span><em>31%</em></div>
+              <div class="prow"><span class="muted">Evenings</span><span class="track"><span class="w88"></span></span><em>41%</em></div>
+              <div class="prow"><span class="muted">Night</span><span class="track"><span class="w22"></span></span><em>10%</em></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Curate</h3>
+            <p>Correct names and titles, pick artwork, rate music from half a star to five, and reversibly group namesakes without losing the originals.</p>
+            <div class="demo">
+              <div class="row"><span class="cover c4" aria-hidden="true"></span><span class="t">Northbound (Deluxe)<small>Ostrava</small></span><span class="stars" role="img" aria-label="4.5 stars">&#9733;&#9733;&#9733;&#9733;<span class="half">&#9733;</span></span></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Ask</h3>
+            <p>Optional and off by default. Ask questions in plain words: the model never sees your archive rows, and Rust computes every number. Use a local model, or point it at your own OpenAI-compatible server.</p>
+            <div class="demo">
+              <div class="q">Which album did I play most last winter?</div>
+              <div class="answer"><strong>Northbound</strong><span class="muted">Ostrava &middot; 214 listens &middot; Dec&ndash;Feb</span></div>
+              <div class="chips"><span class="chip">Local model</span><span class="chip">Off by default</span></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h3>Keep</h3>
+            <p>Export JSON or CSV, make portable backups and verify a restore. Upgrades take a verified safety copy first.</p>
+            <div class="demo">
+              <dl class="kv"><dt>Backup</dt><dd>archive-2026-11-17.zip</dd><dt>Size</dt><dd>48.2 MB</dd></dl>
+              <div class="ok">Restore verified</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
     <!-- SECTION trust (ticket: "Numbers you can trust" notices; anchor id="trust") -->
+    <section id="trust" class="block trust">
+      <div class="wrap trust-layout">
+        <div class="section-head">
+          <h2>Numbers you can trust<span class="accent">.</span></h2>
+          <p>Statistics are only useful if you know what they count. These are the rules the archive follows.</p>
+        </div>
+        <div class="notices">
+          <div class="notice notice-success"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg><div><b>Plays count from 30 seconds</b><p>Imported plays of 30 seconds or longer count in statistics. Shorter records stay searchable in your history.</p></div></div>
+          <div class="notice notice-warning"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><b>Unknown stays unknown</b><p>A missing listening time is never shown as zero, and an estimated time is labelled as an estimate.</p></div></div>
+          <div class="notice notice-info"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><div><b>Possible duplicates wait for you</b><p>Uncertain matches stay separate until a review. Removed listens go to a recoverable trash, and a decision can be undone.</p></div></div>
+        </div>
+      </div>
+    </section>
 
     <!-- SECTION install (ticket: steps, Docker / From source tabs, copy; script: js/install.js; anchor id="install") -->
     <section id="install" class="block install" aria-labelledby="install-title">
