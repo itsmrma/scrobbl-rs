@@ -1535,7 +1535,7 @@ export function DataRecovery({
     </article>
   );
 }
-const SECTIONS: [string, string, string][] = [
+export const SECTIONS: [string, string, string][] = [
   ["general", "General", "tune"],
   ["account", "Account", "person"],
   ["application", "Application", "apps"],
