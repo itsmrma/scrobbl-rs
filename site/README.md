@@ -49,8 +49,9 @@ DNS record and certificate on the next deploy.
 ## Set the production origin
 
 Share metadata needs absolute URLs, so the production origin is written in
-four places as the placeholder `https://scrobbl-site.example.workers.dev`:
+several places as the placeholder `https://scrobbl-site.example.workers.dev`:
 
+- `../README.md` (repository root, outside `site/`): the "Website" link
 - `public/index.html`: `canonical`, `og:url`, `og:image`, `twitter:image`
 - `public/robots.txt`: the `Sitemap:` line
 - `public/sitemap.xml`: the single `<loc>`
@@ -59,7 +60,7 @@ After the first deploy, replace it with the real address (the
 `scrobbl-site.<account>.workers.dev` URL, or the custom domain once added):
 
 ```sh
-grep -rl 'scrobbl-site.example.workers.dev' public | xargs sed -i '' 's#https://scrobbl-site.example.workers.dev#https://YOUR-ORIGIN#g'
+grep -rl 'scrobbl-site.example.workers.dev' public ../README.md | xargs sed -i '' 's#https://scrobbl-site.example.workers.dev#https://YOUR-ORIGIN#g'
 ```
 
 (On Linux use `sed -i` without the empty string.) The tests only require that

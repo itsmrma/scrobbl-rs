@@ -18,7 +18,7 @@ a { color: inherit; text-underline-offset: 3px; }
 
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 44px; padding: 10px 16px; border-radius: 8px;
+  min-height: 44px; padding: 10px 15px; border-radius: 8px;
   font: 600 13px var(--font); text-decoration: none; cursor: pointer;
   border: 1px solid transparent;
 }

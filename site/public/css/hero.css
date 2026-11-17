@@ -11,7 +11,7 @@
 .hero .demo-tag {
   display: inline-block; margin-bottom: 18px; padding: 3px 8px; border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  color: var(--accent-text); font-size: 10px; letter-spacing: .1em; font-weight: 600;
+  color: var(--accent-text); font-size: 10px; letter-spacing: .15em; font-weight: 600;
 }
 
 /* App preview: same components as the app, invented data. */
@@ -27,7 +27,7 @@
 .mock-brand .tile svg { width: 12px; height: 12px; }
 .mock-side .item { padding: 7px 8px; border-radius: 6px; color: var(--muted); }
 .mock-side .item.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.mock-side .eyebrow { margin: 12px 8px 4px; font-size: 9px; letter-spacing: .15em; font-weight: 600; color: var(--muted); }
+.mock-side .eyebrow { margin: 12px 8px 4px; font-size: 10px; letter-spacing: .15em; font-weight: 600; color: var(--muted); }
 .mock .now { margin-top: auto; padding: 8px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .mock .now .cover { width: 28px; height: 28px; }
 .mock .now > div { min-width: 0; }

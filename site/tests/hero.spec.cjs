@@ -100,3 +100,13 @@ test("without reduced motion the bars grow", async ({ browser, baseURL }) => {
   expect(name).not.toBe("none");
   await ctx.close();
 });
+
+test("buttons and demo tag follow DESIGN.md metrics", async ({ page }) => {
+  await page.goto("/");
+  const btn = await page.locator(".btn").first().evaluate((el) => getComputedStyle(el).padding);
+  expect(btn).toBe("10px 15px");
+  const ls = await page.locator(".hero .demo-tag").evaluate((el) => parseFloat(getComputedStyle(el).letterSpacing) / parseFloat(getComputedStyle(el).fontSize));
+  expect(ls).toBeCloseTo(0.15, 2);
+  const small = await page.evaluate(() => [...document.querySelectorAll("body *")].filter((el) => el.childNodes.length && parseFloat(getComputedStyle(el).fontSize) === 9).length);
+  expect(small).toBe(0);
+});

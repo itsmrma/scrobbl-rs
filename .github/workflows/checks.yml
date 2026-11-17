@@ -60,6 +60,9 @@ jobs:
               continue
             elif [[ "$file" == site/* ]]; then
               run_site=true
+            elif [[ "$file" == .github/workflows/checks.yml ]]; then
+              run_checks=true
+              run_site=true
             else
               run_checks=true
             fi

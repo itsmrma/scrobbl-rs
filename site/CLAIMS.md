@@ -4,6 +4,12 @@ Each claim on the page with its source in the repository. Demo examples (track
 names, counts, file names) are fictional, as the page footer states, and assert
 no software behaviour beyond the claim listed next to them.
 
+## Hero
+
+| Where | Claim on the page | Source |
+| --- | --- | --- |
+| Lede | Self-hosted on your own server, so your listening history stays yours | `README.md` intro ("self-hosted, single-owner archive for music listening"), Data and privacy ("designed for one owner on a private server") |
+
 ## Features
 
 | Panel | Claim on the page | Source |
@@ -38,7 +44,7 @@ no software behaviour beyond the claim listed next to them.
 
 | Notice | Claim on the page | Source |
 | --- | --- | --- |
-| Success | Imported plays of 30 seconds or longer count in statistics | `README.md` Data and privacy ("Imported music plays count in statistics at 30,000 ms or longer") |
+| Success | Imported plays of 30 seconds or longer count in statistics (notice title: "Imported plays count from 30 seconds"; the threshold applies to imported music plays, so the title does not generalise to collected listens) | `README.md` Data and privacy ("Imported music plays count in statistics at 30,000 ms or longer") |
 | Success | Shorter records stay searchable in history | `README.md` Data and privacy ("Shorter records remain searchable in history") |
 | Warning | A missing listening time is never shown as zero | `README.md` Data and privacy ("A missing duration stays unknown, not zero"); `GLOSSARY.md` Tempo ascoltato sconosciuto |
 | Warning | Estimated time is labelled as an estimate | `README.md` Data and privacy ("API recent-history duration is an estimate, never presented as measured listening time"); `GLOSSARY.md` Tempo ascoltato stimato |

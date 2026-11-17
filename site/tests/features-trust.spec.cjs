@@ -4,7 +4,7 @@ const { test, expect } = require("@playwright/test");
 
 const PANELS = ["Collect", "Import", "Explore", "Curate", "Ask", "Keep"];
 const NOTICES = [
-  { kind: "success", title: /30 seconds/i },
+  { kind: "success", title: /imported plays count from 30 seconds/i },
   { kind: "warning", title: /unknown stays unknown/i },
   { kind: "info", title: /duplicates/i },
 ];

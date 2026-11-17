@@ -29,7 +29,7 @@ and requires a PR with **zero** additional approving reviews:
 | `Site` | In `site/`: locked npm install, Playwright tests of the site (chromium, firefox, webkit) served by `wrangler dev`, and `wrangler deploy --dry-run` |
 | `PR checks` | Always runs; requires successful verification for application changes, a successful `Site` for site changes, or the explicit documentation-only skip |
 
-`Site` runs only when the site changed, so it is skipped on other PRs. Add it to
+`Site` runs only when the site changed or when `.github/workflows/checks.yml` itself changes (which also runs the full application suite), so it is skipped on other PRs. Add it to
 the required checks of the protection on `main` (owner step, not automated).
 
 The `Checks` workflow also has a standalone `Docker / linux/arm64` build job
