@@ -1,0 +1,11 @@
+// PROTOTYPE: throwaway marketing-site variants. Not production.
+// Static-assets-only Worker: `npm run site:prototype` serves ./public locally.
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "scrobbl-site-prototype",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "not_found_handling": "404-page"
+  }
+}

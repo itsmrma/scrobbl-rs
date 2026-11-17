@@ -1,0 +1,179 @@
+<!-- PROTOTYPE variant B — "Liner notes": the site as the back of a record sleeve. -->
+<style>
+  :root {
+    --paper: #f1ebdf;
+    --paper-2: #e8e0cf;
+    --ink: #1f1b16;
+    --ink-2: #5a5146;
+    --rule: #c9bea9;
+    --olive: #4a6514;
+    --lime: #c9ee8b;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html { background: var(--paper); }
+  body { background: var(--paper); color: var(--ink); font: 18px/1.65 var(--serif); -webkit-font-smoothing: antialiased; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .35; mix-blend-mode: multiply;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .4 0 0 0 0 .32 0 0 0 .18 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+  * { box-sizing: border-box; }
+  a { color: inherit; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+  a:hover { color: var(--olive); }
+  :focus-visible { outline: 2px solid var(--olive); outline-offset: 3px; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 0 32px; position: relative; }
+
+  .mast { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 22px 0 14px; border-bottom: 2px solid var(--ink); font: 600 12px/1 var(--sans); letter-spacing: .14em; text-transform: uppercase; }
+  .mast nav { display: flex; gap: 22px; }
+  .mast a { text-decoration: none; }
+  .mast .cat { font-family: var(--mono); letter-spacing: .04em; text-transform: none; font-weight: 500; color: var(--ink-2); }
+
+  .front { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 56px; padding: 56px 0 48px; border-bottom: 1px solid var(--rule); align-items: end; }
+  .front h1 { font-weight: 400; font-size: clamp(54px, 9vw, 124px); line-height: .9; letter-spacing: -0.04em; margin: 0; }
+  .front h1 em { font-style: italic; color: var(--olive); }
+  .front .deck { font-size: 22px; line-height: 1.45; margin: 28px 0 0; max-width: 24em; color: var(--ink-2); }
+  .front { overflow-x: clip; }
+  .sleeve { aspect-ratio: 1; position: relative; width: 82%; }
+  .sleeve .disc { position: absolute; width: 94%; aspect-ratio: 1; left: 3%; top: 3%; border-radius: 50%; z-index: 0;
+    background: repeating-radial-gradient(circle, #111 0 2px, #1d1d1d 2px 4px); transform: translateX(14%) rotate(0); transition: transform .7s cubic-bezier(.2,.8,.2,1); }
+  .sleeve:hover .disc { transform: translateX(22%) rotate(40deg); }
+  .sleeve .disc::after { content: ""; position: absolute; inset: 36%; border-radius: 50%; background: var(--lime); box-shadow: inset 0 0 0 9px #192912; }
+  .sleeve .art { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; background: var(--lime); border-radius: 3px; box-shadow: 1px 1px 0 var(--ink), 10px 12px 0 -4px var(--paper-2), 10px 12px 0 -3px var(--rule); }
+  .sleeve .art svg { width: 46%; }
+  .sleeve .label { position: absolute; z-index: 2; left: 18px; bottom: 16px; font: 600 13px/1.2 var(--sans); color: #192912; }
+  .sleeve .label small { display: block; font-weight: 400; opacity: .7; }
+
+  .essay { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 48px; padding: 56px 0; border-bottom: 1px solid var(--rule); }
+  .side-note { font: 13px/1.5 var(--sans); color: var(--ink-2); border-top: 1px solid var(--ink); padding-top: 10px; }
+  .side-note b { display: block; color: var(--ink); letter-spacing: .1em; text-transform: uppercase; font-size: 11px; margin-bottom: 6px; }
+  .cols { columns: 2 300px; column-gap: 40px; }
+  .cols p { margin: 0 0 1em; hyphens: auto; }
+  .cols p:first-child::first-letter { float: left; font-size: 5.1em; line-height: .8; padding: 6px 10px 0 0; color: var(--olive); }
+
+  .tracklist { padding: 56px 0; display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 48px; border-bottom: 1px solid var(--rule); }
+  .tracklist h2, .section-title { font: 600 12px/1 var(--sans); letter-spacing: .16em; text-transform: uppercase; margin: 0 0 18px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); display: flex; justify-content: space-between; }
+  .tracklist h2 span { color: var(--ink-2); font-weight: 400; letter-spacing: .04em; text-transform: none; font-family: var(--mono); }
+  details { border-bottom: 1px dotted var(--rule); }
+  summary { list-style: none; display: grid; grid-template-columns: 36px auto 1fr auto; gap: 10px; align-items: baseline; padding: 12px 0; cursor: pointer; }
+  summary::-webkit-details-marker { display: none; }
+  summary .n { font: 13px var(--mono); color: var(--ink-2); }
+  summary .title { font-size: 21px; }
+  summary .lead { border-bottom: 1px dotted var(--ink-2); transform: translateY(-5px); min-width: 20px; }
+  summary .len { font: 13px var(--mono); color: var(--ink-2); }
+  details[open] summary .title { font-style: italic; color: var(--olive); }
+  details p { margin: 0 0 14px 46px; font-size: 16px; color: var(--ink-2); max-width: 32em; }
+
+  .pull { padding: 72px 0; border-bottom: 1px solid var(--rule); text-align: center; }
+  .pull blockquote { margin: 0 auto; max-width: 18em; font-size: clamp(32px, 5vw, 56px); line-height: 1.12; letter-spacing: -0.02em; font-style: italic; }
+  .pull blockquote::before { content: "“"; display: block; font-size: 1.6em; line-height: .6; color: var(--olive); }
+  .pull cite { display: block; margin-top: 18px; font: 13px var(--sans); font-style: normal; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
+
+  .play { padding: 56px 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; border-bottom: 1px solid var(--rule); }
+  .play > *, .front > *, .essay > *, .tracklist > * { min-width: 0; }
+  .play h2 { font-weight: 400; font-size: clamp(36px, 5vw, 56px); line-height: 1; margin: 0 0 16px; letter-spacing: -0.03em; }
+  .play ol { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  .play li { counter-increment: s; padding: 0 0 22px 56px; position: relative; }
+  .play li::before { content: counter(s, upper-roman) "."; position: absolute; left: 0; top: 0; font-style: italic; color: var(--olive); font-size: 22px; }
+  .play li b { font-weight: 600; font-family: var(--sans); font-size: 15px; display: block; margin-bottom: 6px; }
+  code, pre { font-family: var(--mono); font-size: 13.5px; }
+  pre { background: var(--ink); color: var(--paper); padding: 14px 16px; border-radius: 3px; margin: 0; overflow-x: auto; line-height: 1.6; }
+  pre .c { color: #a49a88; }
+
+  .credits { padding: 56px 0 120px; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 40px; font: 14px/1.6 var(--sans); }
+  .credits dl { margin: 0; }
+  .credits dt { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-2); margin-top: 14px; }
+  .credits dd { margin: 2px 0 0; font-family: var(--serif); font-size: 18px; }
+  .credits .fine { font-size: 12px; color: var(--ink-2); grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 16px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .sticker { display: inline-block; transform: rotate(-4deg); background: var(--lime); color: #192912; font: 700 12px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; padding: 10px 12px; border-radius: 2px; box-shadow: 2px 3px 0 var(--ink); text-decoration: none; }
+  .sticker:hover { color: #192912; transform: rotate(-2deg) translateY(-1px); }
+
+  @media (max-width: 860px) {
+    .front, .essay, .tracklist, .play { grid-template-columns: 1fr; gap: 32px; }
+    .sleeve { max-width: 340px; }
+    .credits { grid-template-columns: 1fr 1fr; }
+    .mast nav a:not(:last-child) { display: none; }
+  }
+  @media (max-width: 600px) {
+    .page { padding: 0 16px; }
+    body { font-size: 17px; }
+    .credits { grid-template-columns: 1fr; }
+    .mast .cat { display: none; }
+    summary .title { font-size: 19px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="page">
+  <header class="mast">
+    <span>scrobbl.rs</span>
+    <span class="cat">SCRB-001 · Self-hosted · GPL-3.0</span>
+    <nav><a href="#tracklist">Tracklist</a><a href="#play">Playing instructions</a><a href="https://github.com/itsmrma/scrobbl-rs">Source</a></nav>
+  </header>
+
+  <section class="front">
+    <div>
+      <h1>A record of <em>every</em> record you've played.</h1>
+      <p class="deck">scrobbl.rs is a listening archive you run yourself. It collects what you play, imports what you played before, and keeps all of it on your own server.</p>
+    </div>
+    <div class="sleeve" aria-hidden="true">
+      <div class="disc"></div>
+      <div class="art"><svg viewBox="0 0 64 64"><g stroke="#18251e" stroke-width="6" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></g></svg></div>
+      <div class="label">scrobbl.rs<small>Your listening history</small></div>
+    </div>
+  </section>
+
+  <section class="essay">
+    <aside class="side-note"><b>Sleeve notes</b>Written for people who still read the back of the record. Everything here is true of the software; the names on the tracks are made up.</aside>
+    <div class="cols">
+      <p>Streaming services remember what you played, until they don't. The yearly summary arrives, the list resets, and a decade of listening becomes something you can download once as a ZIP and never open again.</p>
+      <p>scrobbl.rs opens it. Feed it your Spotify Extended Streaming History or a ListenBrainz export and it rebuilds the past, file by file, without duplicating a single listen if you feed it twice. Connect your own Spotify app and it keeps going, quietly, as long as the server runs.</p>
+      <p>Then it gives the archive back to you: every artist, album and track with its own page, rankings for any period, the hours and days you listen, the devices you listen on. Rename what's misnamed. Rate what you love. Group the namesakes, and separate them again when you change your mind.</p>
+      <p>It is one Rust binary with the interface inside it, one SQLite file for your music, and one owner. No account on someone else's server. No telemetry. No reason for it to stop working in ten years.</p>
+    </div>
+  </section>
+
+  <section class="tracklist" id="tracklist">
+    <div>
+      <h2>Side A <span>Collect</span></h2>
+      <details open><summary><span class="n">A1</span><span class="title">Now Playing</span><span class="lead"></span><span class="len">Spotify</span></summary><p>Listens are collected in the background from your own Spotify app, with what's playing right now in the sidebar.</p></details>
+      <details><summary><span class="n">A2</span><span class="title">The Long Import</span><span class="lead"></span><span class="len">ZIP · JSON</span></summary><p>Extended Streaming History and ListenBrainz JSON, JSONL or ZIP. Interrupted imports resume; repeated imports are idempotent.</p></details>
+      <details><summary><span class="n">A3</span><span class="title">Thirty Seconds</span><span class="lead"></span><span class="len">0:30</span></summary><p>Plays count in statistics from 30 seconds. Shorter ones remain searchable in history, but don't pad the numbers.</p></details>
+      <details><summary><span class="n">A4</span><span class="title">Possible Duplicates</span><span class="lead"></span><span class="len">review</span></summary><p>When sources disagree, records stay separate until you decide. Anything you remove goes to a trash you can recover from.</p></details>
+      <details><summary><span class="n">A5</span><span class="title">Unknown, Not Zero</span><span class="lead"></span><span class="len">—:——</span></summary><p>A missing duration stays unknown. Estimated listening time is labelled as an estimate, never passed off as measured.</p></details>
+    </div>
+    <div>
+      <h2>Side B <span>Keep</span></h2>
+      <details><summary><span class="n">B1</span><span class="title">Rankings for Any Year</span><span class="lead"></span><span class="len">charts</span></summary><p>Complete rankings and activity by day, week, month or year, with pages for every artist, album and track.</p></details>
+      <details><summary><span class="n">B2</span><span class="title">Half a Star</span><span class="lead"></span><span class="len">½ – 5</span></summary><p>Personal ratings in half-star steps, personal artwork, local corrections to names and titles. The originals are kept underneath.</p></details>
+      <details><summary><span class="n">B3</span><span class="title">Ask the Archive</span><span class="lead"></span><span class="len">optional</span></summary><p>Ask in plain words. A local model, off by default, only translates the question; Rust computes every number. Or point it at your own AI server.</p></details>
+      <details><summary><span class="n">B4</span><span class="title">Collage</span><span class="lead"></span><span class="len">grid</span></summary><p>Turn any period's top albums or artists into a square collage of covers.</p></details>
+      <details><summary><span class="n">B5</span><span class="title">Backup &amp; Restore (Verified)</span><span class="lead"></span><span class="len">JSON · CSV</span></summary><p>Exports, portable backups and verified restores. Upgrades make a checked safety copy before touching the schema.</p></details>
+    </div>
+  </section>
+
+  <section class="pull">
+    <blockquote>A missing duration stays unknown, not zero.</blockquote>
+    <cite>From the design notes</cite>
+  </section>
+
+  <section class="play" id="play">
+    <div>
+      <h2>Playing instructions</h2>
+      <p style="color:var(--ink-2)">Best enjoyed on a small server at home, reached over your LAN, a VPN or private HTTPS. Also plays fine on a laptop.</p>
+      <p><a class="sticker" href="https://github.com/itsmrma/scrobbl-rs">Get it on GitHub →</a></p>
+    </div>
+    <ol>
+      <li><b>Put on the container</b><pre><span class="c"># with compose.yaml from the repository</span>
+SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:main \
+docker compose up -d</pre></li>
+      <li><b>Or play it from source</b><pre>./scripts/run-local.sh   <span class="c"># → 127.0.0.1:3210</span></pre></li>
+      <li><b>Sign the sleeve</b>Create the owner account, connect your Spotify app in Settings, and drop in your export.</li>
+    </ol>
+  </section>
+
+  <footer class="credits">
+    <dl><dt>Recorded at</dt><dd>Your server</dd><dt>Produced by</dt><dd>One owner, for one owner</dd></dl>
+    <dl><dt>Engineering</dt><dd>Rust, SQLite</dd><dt>Interface</dt><dd>TypeScript &amp; React</dd></dl>
+    <dl><dt>Inspired by</dt><dd>Maloja</dd><dt>Released under</dt><dd>GPL-3.0-or-later</dd></dl>
+    <div class="fine"><span>scrobbl.rs — a personal passion project under active development.</span><span>Track titles above are invented for this sleeve.</span></div>
+  </footer>
+</div>

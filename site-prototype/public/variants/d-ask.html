@@ -1,0 +1,180 @@
+<!-- PROTOTYPE variant D — "Ask": the question box is the hero, then full-bleed preset-colour bands. -->
+<style>
+  :root {
+    --ink: #14161c;
+    --ink-soft: #3b3f4a;
+    --cream: #fbfaf6;
+    --lime: #c9ee8b; --sky: #91c9f7; --lavender: #c5a3ee; --peach: #f7b68b; --rose: #f099ad; --mint: #64d9c3;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html { background: var(--ink); }
+  body { background: var(--ink); color: var(--cream); font: 17px/1.55 var(--font); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  * { box-sizing: border-box; }
+  a { color: inherit; }
+  :focus-visible { outline: 3px solid var(--lime); outline-offset: 3px; }
+
+  .top { display: flex; justify-content: space-between; align-items: center; padding: 20px clamp(16px, 4vw, 48px); }
+  .brand { display: flex; gap: 10px; align-items: center; font-weight: 800; font-size: 18px; letter-spacing: -0.04em; text-decoration: none; }
+  .brand i { width: 28px; height: 28px; border-radius: 8px; background: var(--lime); display: grid; place-items: center; }
+  .brand i svg { width: 17px; }
+  .brand b { color: var(--lime); }
+  .top a.gh { font-weight: 600; font-size: 14px; text-decoration: none; padding: 10px 16px; border: 1.5px solid #ffffff30; border-radius: 999px; min-height: 44px; display: inline-flex; align-items: center; }
+  .top a.gh:hover { border-color: var(--cream); }
+
+  .ask { min-height: calc(100vh - 84px); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px 16px 72px; }
+  .ask h1 { font-size: clamp(44px, 9vw, 120px); line-height: .92; letter-spacing: -0.055em; font-weight: 800; margin: 0 0 32px; }
+  .ask h1 span { color: var(--lime); }
+  .box { width: min(760px, 100%); background: #1f222b; border: 1.5px solid #ffffff1a; border-radius: 20px; padding: 10px 10px 10px 22px; display: flex; gap: 10px; align-items: center; text-align: left; }
+  .box:focus-within { border-color: var(--lime); }
+  .box input { flex: 1; min-width: 0; background: transparent; border: 0; color: var(--cream); font: 500 clamp(17px, 2.2vw, 22px) var(--font); outline: none; padding: 12px 0; }
+  .box input::placeholder { color: #ffffff70; }
+  .box button { min-height: 52px; padding: 0 22px; border-radius: 14px; border: 0; background: var(--lime); color: #192912; font: 700 16px var(--font); cursor: pointer; }
+  .box button:hover { filter: brightness(1.08); }
+  .chips { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 16px; max-width: 760px; }
+  .chips button { min-height: 44px; padding: 8px 16px; border-radius: 999px; border: 1.5px solid #ffffff22; background: transparent; color: #ffffffcc; font: 500 14px var(--font); cursor: pointer; }
+  .chips button:hover { border-color: var(--lime); color: var(--cream); }
+
+  .result { width: min(760px, 100%); margin-top: 22px; background: var(--cream); color: var(--ink); border-radius: 20px; padding: 24px 26px; text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 24px; min-height: 172px; }
+  .result[hidden] { display: none; }
+  .result .lbl { font-size: 13px; color: var(--ink-soft); grid-column: 1 / -1; }
+  .result .big { font-size: clamp(34px, 5vw, 52px); font-weight: 800; letter-spacing: -0.045em; line-height: 1; }
+  .result .sub { color: var(--ink-soft); }
+  .result .viz { grid-row: 2 / 4; grid-column: 2; display: flex; align-items: end; gap: 4px; height: 90px; align-self: end; }
+  .result .viz span { width: 14px; background: var(--ink); border-radius: 4px 4px 0 0; transform-origin: bottom; animation: up .6s cubic-bezier(.2,.8,.2,1) both; }
+  .result .viz span.hl { background: #7fb62e; }
+  @keyframes up { from { transform: scaleY(0); } }
+  .result .how { grid-column: 1 / -1; margin-top: 10px; padding-top: 12px; border-top: 1.5px dashed #14161c30; font-size: 13px; color: var(--ink-soft); display: flex; gap: 8px 16px; flex-wrap: wrap; }
+  .result .how code { font: 12px var(--mono); background: #14161c0d; padding: 2px 6px; border-radius: 4px; }
+  .note { margin-top: 16px; font-size: 13px; color: #ffffff80; }
+
+  .band { color: var(--ink); padding: clamp(56px, 9vw, 120px) clamp(16px, 4vw, 48px); display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 40px; align-items: center; }
+  .band:nth-of-type(even) .num { order: 2; }
+  .band > * { min-width: 0; }
+  .band .num { font-size: clamp(56px, 9vw, 150px); font-weight: 800; letter-spacing: -0.06em; line-height: .85; font-variant-numeric: tabular-nums; }
+  .band .num small { display: block; font-size: clamp(18px, 2vw, 24px); letter-spacing: -0.02em; font-weight: 700; margin-top: 14px; }
+  .band h2 { font-size: clamp(28px, 3.6vw, 46px); letter-spacing: -0.045em; line-height: 1.02; margin: 0 0 14px; font-weight: 800; }
+  .band p { margin: 0; max-width: 30em; color: #14161ccc; font-size: 18px; }
+  .band ul { list-style: none; padding: 0; margin: 18px 0 0; display: flex; flex-wrap: wrap; gap: 8px; }
+  .band li { border: 1.5px solid #14161c40; border-radius: 999px; padding: 6px 14px; font-size: 14px; font-weight: 600; }
+  .b-lime { background: var(--lime); } .b-sky { background: var(--sky); } .b-lavender { background: var(--lavender); }
+  .b-peach { background: var(--peach); } .b-rose { background: var(--rose); } .b-mint { background: var(--mint); }
+
+  .stars { font-size: clamp(48px, 7vw, 108px); letter-spacing: -0.02em; line-height: 1; }
+  .stars .h { position: relative; color: #14161c30; }
+  .stars .h::before { content: "★"; position: absolute; left: 0; width: 50%; overflow: hidden; color: var(--ink); }
+
+  .get { padding: clamp(64px, 10vw, 128px) clamp(16px, 4vw, 48px) 140px; text-align: center; }
+  .get h2 { font-size: clamp(40px, 7vw, 92px); letter-spacing: -0.055em; line-height: .95; font-weight: 800; margin: 0 0 28px; }
+  .get h2 span { color: var(--lime); }
+  .term { display: inline-flex; align-items: center; gap: 12px; max-width: 100%; background: #1f222b; border-radius: 14px; padding: 10px 10px 10px 20px; font: 14px var(--mono); text-align: left; }
+  .term code { overflow-x: auto; white-space: nowrap; }
+  .term code::before { content: "$ "; color: var(--lime); }
+  .term button { flex: none; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 0; background: var(--cream); color: var(--ink); font: 700 14px var(--font); cursor: pointer; }
+  .get .links { margin-top: 22px; display: flex; gap: 18px; justify-content: center; flex-wrap: wrap; color: #ffffffaa; font-size: 14px; }
+  .get .links a { text-underline-offset: 4px; }
+
+  @media (max-width: 800px) {
+    .band { grid-template-columns: 1fr; gap: 20px; }
+    .band:nth-of-type(even) .num { order: 0; }
+    .result { grid-template-columns: 1fr; }
+    .result .viz { grid-row: auto; grid-column: 1; height: 64px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+
+<header class="top">
+  <a class="brand" href="#"><i><svg viewBox="0 0 64 64"><g stroke="#18251e" stroke-width="7" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></g></svg></i><span>scrobbl<b>.</b>rs</span></a>
+  <a class="gh" href="https://github.com/itsmrma/scrobbl-rs">GitHub</a>
+</header>
+
+<section class="ask">
+  <h1>Ask your<br />listening history<span>.</span></h1>
+  <form class="box" id="d-form" autocomplete="off">
+    <input id="d-input" aria-label="Ask a question about your listening" placeholder="" />
+    <button type="submit">Ask</button>
+  </form>
+  <div class="chips" id="d-chips"></div>
+  <div class="result" id="d-result" hidden aria-live="polite"></div>
+  <p class="note">Demo archive. Every answer is computed by scrobbl.rs from your own data, on your own server.</p>
+</section>
+
+<section class="band b-lime">
+  <div class="num">212,404<small>listens, back to 2014</small></div>
+  <div><h2>Bring your whole past with you.</h2><p>Import Spotify Extended Streaming History or ListenBrainz exports. Interrupted imports resume where they stopped; importing twice never counts twice.</p><ul><li>ZIP</li><li>JSON</li><li>JSONL</li><li>ListenBrainz</li></ul></div>
+</section>
+
+<section class="band b-sky">
+  <div class="num">Now<small>playing, and collected</small></div>
+  <div><h2>Then let it keep listening.</h2><p>Connect your own Spotify app and new listens are collected in the background while the server runs. Plays under 30 seconds stay in history but never pad your stats.</p></div>
+</section>
+
+<section class="band b-lavender">
+  <div class="num stars" aria-label="Four and a half stars">★★★★<span class="h">★</span><small style="font-size:clamp(18px,2vw,24px)">half a star to five</small></div>
+  <div><h2>Your library, your words.</h2><p>Rate artists, albums and tracks. Fix names and titles, choose artwork, group namesakes and split them again. The original data stays underneath, untouched.</p><ul><li>Ratings</li><li>Corrections</li><li>Artwork</li><li>Collage</li></ul></div>
+</section>
+
+<section class="band b-peach">
+  <div class="num">0<small>rows shown to the model</small></div>
+  <div><h2>AI that only reads the question.</h2><p>Ask is optional and off by default. A local model turns your words into a query; Rust runs it and computes every number. Prefer your own server? Point it at any OpenAI-compatible endpoint.</p></div>
+</section>
+
+<section class="band b-rose">
+  <div class="num">1<small>binary. 1 owner. 0 telemetry.</small></div>
+  <div><h2>Kept on your server.</h2><p>Rust backend, embedded interface, SQLite storage. Run it on a home server over LAN, VPN or HTTPS. Export JSON or CSV, make portable backups, verify a restore.</p><ul><li>Rust</li><li>SQLite</li><li>Docker</li><li>GPL-3.0</li></ul></div>
+</section>
+
+<section class="get">
+  <h2>Start your archive<span>.</span></h2>
+  <div class="term"><code id="d-cmd">SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:main docker compose up -d</code><button type="button" id="d-copy">Copy</button></div>
+  <div class="links"><a href="https://github.com/itsmrma/scrobbl-rs">Source on GitHub</a><a href="https://github.com/itsmrma/scrobbl-rs/blob/main/docs/docker.md">Docker guide</a><span>Inspired by Maloja</span></div>
+</section>
+
+<script>
+  (() => {
+    const QA = [
+      { q: "Which album did I play most last winter?", lbl: "Top album · Dec 2025 – Feb 2026", big: "Northbound", sub: "Ostrava · 214 listens · 13 h 40 min", viz: [40, 55, 100, 62, 48, 30], hl: 2, how: "top albums · 2025-12-01 → 2026-02-28 · limit 1" },
+      { q: "When did I first listen to Mina Sol?", lbl: "First listen", big: "14 Mar 2019", sub: "Glass Orchard · 23:41 · then 1,204 more", viz: [4, 10, 28, 46, 70, 100, 88], hl: 0, how: "first listen · artist = Mina Sol" },
+      { q: "How many hours did I listen in October?", lbl: "Listening time · October 2026", big: "61 h", sub: "1,148 listens · busiest on Fridays", viz: [52, 60, 48, 66, 100, 70, 44], hl: 4, how: "listening time · 2026-10 · split by weekday" },
+      { q: "What's my longest daily streak?", lbl: "Longest streak", big: "214 days", sub: "2 Jan – 3 Aug 2024 · still going: 41 days", viz: [30, 50, 70, 100, 70, 40, 60], hl: 3, how: "streak · days with ≥ 1 listen" },
+    ];
+    const input = document.getElementById("d-input");
+    const chips = document.getElementById("d-chips");
+    const result = document.getElementById("d-result");
+    chips.innerHTML = QA.map((x, i) => `<button type="button" data-i="${i}">${x.q}</button>`).join("");
+
+    function show(i) {
+      const a = QA[i];
+      input.value = a.q;
+      result.hidden = false;
+      result.innerHTML = `<span class="lbl">${a.lbl}</span><div class="big">${a.big}</div><div class="viz">${a.viz.map((h, j) => `<span class="${j === a.hl ? "hl" : ""}" style="height:${h}%;animation-delay:${j * 50}ms"></span>`).join("")}</div><div class="sub">${a.sub}</div><div class="how"><span>Understood as <code>${a.how}</code></span><span>Counted by Rust from the archive</span></div>`;
+    }
+    chips.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { typing = false; show(+b.dataset.i); } });
+    document.getElementById("d-form").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const v = input.value.toLowerCase();
+      const i = QA.findIndex((x) => v.split(/\W+/).filter((w) => w.length > 4).some((w) => x.q.toLowerCase().includes(w)));
+      if (i >= 0) return show(i);
+      result.hidden = false;
+      result.innerHTML = `<span class="lbl">Demo archive</span><div class="big" style="font-size:28px">Try one of the questions above.</div><div class="sub">On your own instance, Ask covers rankings, periods, first listens, streaks, comparisons and follow-ups.</div>`;
+    });
+
+    // Typewriter placeholder until the visitor interacts.
+    let typing = !matchMedia("(prefers-reduced-motion: reduce)").matches, qi = 0, ci = 0, dir = 1;
+    input.addEventListener("focus", () => { typing = false; input.placeholder = "Ask anything about your listening…"; });
+    (function tick() {
+      if (!typing) return;
+      const s = QA[qi].q;
+      ci += dir;
+      input.placeholder = s.slice(0, ci);
+      let delay = dir > 0 ? 45 : 18;
+      if (ci >= s.length) { dir = -1; delay = 1800; }
+      if (ci <= 0) { dir = 1; qi = (qi + 1) % QA.length; delay = 300; }
+      setTimeout(tick, delay);
+    })();
+    if (!typing) input.placeholder = QA[0].q;
+
+    const copy = document.getElementById("d-copy");
+    copy.addEventListener("click", () => { navigator.clipboard?.writeText(document.getElementById("d-cmd").textContent); copy.textContent = "Copied"; setTimeout(() => (copy.textContent = "Copy"), 1400); });
+  })();
+</script>

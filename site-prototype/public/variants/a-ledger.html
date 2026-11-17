@@ -1,0 +1,385 @@
+<!-- PROTOTYPE variant A — "Ledger": the app's own design system (DESIGN.md). -->
+<style>
+  :root {
+    --accent: #c9ee8b;
+    --accent-ink: #192912;
+    --bg: color-mix(in oklab, #13151b 96%, var(--accent));
+    --surface: color-mix(in oklab, #1c1f27 95%, var(--accent));
+    --surface-raised: color-mix(in oklab, #292d38 91%, var(--accent));
+    --border: color-mix(in oklab, #454a58 90%, var(--accent));
+    --text: #f2f3f7;
+    --muted: #bac0cc;
+    --success: #86dba2;
+    --warning: #e5c685;
+    --focus: color-mix(in srgb, var(--accent) 45%, white);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: color-mix(in oklab, #f5f6fa 95%, var(--accent));
+      --surface: color-mix(in oklab, #ffffff 97%, var(--accent));
+      --surface-raised: color-mix(in oklab, #e9ecf3 90%, var(--accent));
+      --border: color-mix(in oklab, #9da7b6 94%, var(--accent));
+      --text: #18212d;
+      --muted: #425065;
+      --success: #246e3c;
+      --warning: #795609;
+      --focus: #354559;
+    }
+    .accent, .demo-tag { color: color-mix(in oklab, var(--accent) 45%, #18212d) !important; }
+    .demo-tag { border-color: currentColor !important; }
+  }
+  html { background: var(--bg); color-scheme: dark light; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.6 var(--font); -webkit-font-smoothing: antialiased; transition: background .25s; }
+  * { box-sizing: border-box; }
+  h1, h2, h3 { letter-spacing: -0.035em; line-height: 1.2; text-wrap: balance; font-weight: 600; margin: 0; }
+  a { color: inherit; text-underline-offset: 3px; }
+  .accent { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+  .btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 8px; font: 600 13px var(--font); text-decoration: none; border: 1px solid transparent; cursor: pointer; transition: filter .15s, box-shadow .15s, transform .1s; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.primary:hover { filter: brightness(1.1); box-shadow: 0 4px 12px #0002; }
+  .btn.secondary { background: var(--surface-raised); color: var(--text); border-color: var(--border); }
+  .btn.secondary:hover { background: var(--bg); border-color: var(--muted); }
+  .btn:active { transform: scale(.98); }
+
+  /* nav */
+  .nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; letter-spacing: -0.03em; text-decoration: none; }
+  .tile { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; }
+  .tile svg { width: 18px; height: 18px; }
+  .wordmark-suffix { color: var(--muted); font-weight: 500; }
+  .nav-links { display: flex; gap: 4px; align-items: center; }
+  .nav-links a:not(.btn) { padding: 10px 12px; border-radius: 8px; text-decoration: none; color: var(--muted); font-size: 14px; }
+  .nav-links a:not(.btn):hover { color: var(--text); background: var(--surface); }
+
+  /* hero */
+  .hero { padding: 72px 0 40px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 48px; align-items: center; }
+  .hero h1 { font-size: clamp(36px, 5vw, 60px); }
+  .hero p.lede { font-size: 18px; color: var(--muted); max-width: 30em; margin: 20px 0 28px; }
+  .cta { display: flex; gap: 10px; flex-wrap: wrap; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 28px; font-size: 12px; color: var(--muted); }
+  .facts span::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 8px; vertical-align: 1px; }
+
+  /* app mock */
+  .mock { background: var(--bg); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; display: grid; grid-template-columns: 150px minmax(0, 1fr); box-shadow: 0 28px 72px rgba(0,0,0,.35); font-size: 12px; }
+  .mock-side { background: color-mix(in oklab, #191c24 94%, var(--accent)); padding: 14px 10px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+  @media (prefers-color-scheme: light) { .mock-side { background: color-mix(in oklab, #eef0f6 94%, var(--accent)); } }
+  .mock-side b { display: flex; align-items: center; gap: 7px; font-size: 13px; margin: 0 4px 12px; letter-spacing: -0.02em; }
+  .mock-side b .tile { width: 20px; height: 20px; border-radius: 5px; }
+  .mock-side b .tile svg { width: 12px; height: 12px; }
+  .mock-side i { font-style: normal; padding: 7px 8px; border-radius: 6px; color: var(--muted); }
+  .mock-side i.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .mock-side .eyebrow { font-size: 9px; letter-spacing: .15em; font-weight: 600; color: var(--muted); margin: 12px 8px 4px; }
+  .now { margin-top: auto; padding: 8px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: center; }
+  .now .cover { width: 28px; height: 28px; }
+  .now small { display: block; color: var(--muted); font-size: 10px; }
+  .mock-main { padding: 18px; min-width: 0; }
+  .mock-main h3 { font-size: 20px; }
+  .mock-main .sub { color: var(--muted); margin: 2px 0 14px; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin-bottom: 8px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  .stat strong { display: block; font-size: 22px; font-weight: 500; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+  .two { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 8px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; min-width: 0; }
+  .card h4 { margin: 0 0 10px; font-size: 13px; letter-spacing: -0.02em; display: flex; justify-content: space-between; }
+  .card h4 small { color: var(--muted); font-weight: 400; }
+  .bars { display: flex; align-items: end; gap: 5px; height: 96px; border-bottom: 1px solid var(--border); }
+  .bars span { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; opacity: .9; transform-origin: bottom; animation: grow .8s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes grow { from { transform: scaleY(0); } }
+  .row { display: grid; grid-template-columns: 14px 26px minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 5px 0; }
+  .row + .row { border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent); }
+  .row em { font-style: normal; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .t small { display: block; color: var(--muted); font-size: 10px; }
+  .cover { width: 26px; height: 26px; border-radius: 6px; display: block; }
+  .c1 { background: linear-gradient(135deg, #e7a66b, #8b4e7a); }
+  .c2 { background: linear-gradient(135deg, #5b8fd6, #1d2b55); }
+  .c3 { background: linear-gradient(135deg, #b5d36a, #2e5a3a); }
+  .c4 { background: linear-gradient(135deg, #f2d27a, #c4553d); }
+  .c5 { background: linear-gradient(135deg, #a58be0, #3a2d63); }
+  .demo-tag { display: inline-block; font-size: 10px; letter-spacing: .1em; font-weight: 600; padding: 3px 8px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); margin-bottom: 18px; }
+
+  /* accent */
+  .tint { margin: 40px 0 8px; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap; padding: 18px 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .tint p { margin: 0; }
+  .tint p strong { display: block; font-size: 16px; letter-spacing: -0.03em; }
+  .swatches { display: flex; gap: 6px; }
+  .swatches button { width: 44px; height: 44px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-raised); display: grid; place-items: center; cursor: pointer; }
+  .swatches button i { width: 20px; height: 20px; border-radius: 50%; display: block; }
+  .swatches button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+  /* sections */
+  section.block { padding: 72px 0 24px; }
+  .section-head { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 24px; flex-wrap: wrap; }
+  .section-head h2 { font-size: clamp(28px, 3vw, 40px); }
+  .section-head p { color: var(--muted); max-width: 34em; margin: 8px 0 0; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 26px; min-width: 0; display: flex; flex-direction: column; }
+  .panel h3 { font-size: 20px; margin-bottom: 6px; }
+  .panel > p { color: var(--muted); margin: 0 0 18px; font-size: 14px; }
+  .panel .demo { margin-top: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 12px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-variant-numeric: tabular-nums; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; font-weight: 600; }
+  .ok { color: var(--success); font-weight: 600; display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .ok::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .track { height: 8px; border-radius: 3px; background: var(--surface-raised); overflow: hidden; }
+  .track span { display: block; height: 100%; background: var(--accent); }
+  .prow { display: grid; grid-template-columns: 74px minmax(0,1fr) 38px; gap: 10px; align-items: center; padding: 3px 0; font-variant-numeric: tabular-nums; }
+  .prow b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .prow em { font-style: normal; color: var(--muted); text-align: right; }
+  .stars { color: var(--accent); letter-spacing: 2px; font-size: 15px; }
+  .stars .half { position: relative; color: var(--surface-raised); }
+  .stars .half::before { content: "★"; position: absolute; inset: 0; width: 50%; overflow: hidden; color: var(--accent); }
+  .q { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; margin-bottom: 8px; }
+  .q::before { content: "Ask  "; color: var(--muted); font-weight: 600; }
+  .answer strong { font-size: 26px; font-weight: 500; letter-spacing: -0.04em; display: block; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); font-size: 11px; margin: 2px 2px 0 0; }
+
+  .honest { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 36px; align-items: start; }
+  .notice { display: flex; gap: 12px; border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; border: 1px solid color-mix(in srgb, var(--nc) 35%, var(--border)); background: color-mix(in srgb, var(--nc) 7%, var(--surface)); }
+  .notice svg { flex: none; color: var(--nc); margin-top: 2px; }
+  .notice b { display: block; }
+  .notice p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+
+  .install { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 36px; align-items: start; }
+  .tabs { display: flex; gap: 4px; padding: 4px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px; width: fit-content; margin-bottom: 12px; }
+  .tabs button { min-height: 36px; padding: 6px 14px; border-radius: 7px; border: 0; background: transparent; color: var(--muted); font: 600 13px var(--font); cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+  pre { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 18px; overflow-x: auto; font: 13px/1.7 var(--mono); position: relative; }
+  pre .c { color: var(--muted); }
+  .copy { position: absolute; top: 8px; right: 8px; min-height: 32px; padding: 4px 10px; font-size: 12px; }
+  ol.steps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  ol.steps li { counter-increment: s; display: grid; grid-template-columns: 32px 1fr; gap: 12px; padding: 10px 0; }
+  ol.steps li::before { content: counter(s); width: 28px; height: 28px; border-radius: 50%; background: var(--surface-raised); border: 1px solid var(--border); display: grid; place-items: center; font-size: 12px; font-weight: 600; }
+  ol.steps li p { margin: 0; color: var(--muted); font-size: 14px; }
+
+  footer { margin-top: 80px; border-top: 1px solid var(--border); padding: 28px 0 96px; color: var(--muted); font-size: 13px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+
+  @media (max-width: 900px) {
+    .hero, .honest, .install { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr 1fr; }
+    .nav-links a:not(.btn) { display: none; }
+  }
+  @media (max-width: 600px) {
+    .wrap { padding: 0 16px; }
+    .hero { padding-top: 40px; }
+    .grid { grid-template-columns: 1fr; }
+    .panel { padding: 16px; }
+    .mock { grid-template-columns: 1fr; }
+    .mock-side { display: none; }
+    .stats { grid-template-columns: 1fr 1fr 1fr; }
+    .stat strong { font-size: 17px; }
+    .two { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="wave" viewBox="0 0 64 64"><g stroke="var(--accent-ink)" stroke-width="7" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></g></symbol>
+</svg>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="tile"><svg><use href="#wave"/></svg></span><span>scrobbl<span class="accent">.</span><span class="wordmark-suffix">rs</span></span></a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <a href="#honest">How it counts</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/itsmrma/scrobbl-rs">GitHub</a>
+      <a class="btn primary" href="#install">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="top">
+  <div class="hero">
+    <div>
+      <h1>Your listening history, kept on your server<span class="accent">.</span></h1>
+      <p class="lede">scrobbl.rs collects your Spotify listens, imports years of history, and turns it into a searchable archive with rankings, charts and pages for every artist, album and track. One binary. One owner. Your data.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install with Docker</a>
+        <a class="btn secondary" href="https://github.com/itsmrma/scrobbl-rs">View source</a>
+      </div>
+      <div class="facts"><span>Rust + SQLite</span><span>Self-hosted</span><span>No telemetry</span><span>GPL-3.0-or-later</span></div>
+    </div>
+
+    <div>
+      <span class="demo-tag">DEMO ARCHIVE</span>
+      <div class="mock" aria-label="Preview of the scrobbl.rs overview with demo data">
+        <div class="mock-side">
+          <b><span class="tile"><svg><use href="#wave"/></svg></span>scrobbl.rs</b>
+          <i class="on">Overview</i><i>Listening history</i><i>Rankings</i><i>Ask</i>
+          <span class="eyebrow">YOUR LIBRARY</span>
+          <i>Artists</i><i>Albums</i><i>Tracks</i>
+          <div class="now" style="margin-top:28px"><span class="cover c2"></span><div>Low Tide Radio<small>Harbor Lights · now</small></div></div>
+        </div>
+        <div class="mock-main">
+          <h3>Overview<span class="accent">.</span></h3>
+          <div class="sub">Your listening, at a glance</div>
+          <div class="stats">
+            <div class="stat"><span>Listens</span><strong>212,404</strong></div>
+            <div class="stat"><span>Artists</span><strong>6,918</strong></div>
+            <div class="stat"><span>Listening time</span><strong>11,240 h</strong></div>
+          </div>
+          <div class="two">
+            <div class="card"><h4>Activity <small>last 12 months</small></h4>
+              <div class="bars" id="a-bars"></div>
+            </div>
+            <div class="card"><h4>Top artists <small>2026</small></h4>
+              <div class="row"><em>1</em><span class="cover c1"></span><span class="t">Mina Sol<small>1,204 listens</small></span></div>
+              <div class="row"><em>2</em><span class="cover c3"></span><span class="t">The Quiet Margins<small>987 listens</small></span></div>
+              <div class="row"><em>3</em><span class="cover c4"></span><span class="t">Ostrava<small>812 listens</small></span></div>
+              <div class="row"><em>4</em><span class="cover c5"></span><span class="t">Velvet Arcade<small>640 listens</small></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tint">
+    <p><strong>Make it yours.</strong><span class="muted">Every surface absorbs your accent colour. Try it on this page.</span></p>
+    <div class="swatches" role="group" aria-label="Accent colour">
+      <button type="button" data-c="#c9ee8b" aria-label="Lime" aria-pressed="true"><i style="background:#c9ee8b"></i></button>
+      <button type="button" data-c="#91c9f7" aria-label="Sky"><i style="background:#91c9f7"></i></button>
+      <button type="button" data-c="#c5a3ee" aria-label="Lavender"><i style="background:#c5a3ee"></i></button>
+      <button type="button" data-c="#f7b68b" aria-label="Peach"><i style="background:#f7b68b"></i></button>
+      <button type="button" data-c="#f099ad" aria-label="Rose"><i style="background:#f099ad"></i></button>
+      <button type="button" data-c="#64d9c3" aria-label="Mint"><i style="background:#64d9c3"></i></button>
+    </div>
+  </div>
+
+  <section class="block" id="features">
+    <div class="section-head">
+      <div><h2>Everything you've played, in one ledger<span class="accent">.</span></h2>
+      <p>Collection runs in the background. Imports reconstruct the past. Everything else is for reading it back.</p></div>
+    </div>
+    <div class="grid">
+      <article class="panel">
+        <h3>Collect</h3>
+        <p>Connect your own Spotify app once. Listens are collected while the server runs, with now playing in the sidebar.</p>
+        <div class="demo"><div class="row" style="grid-template-columns:26px minmax(0,1fr) auto"><span class="cover c2"></span><span class="t">Low Tide Radio<small>Harbor Lights</small></span><em>now</em></div>
+        <div class="row" style="grid-template-columns:26px minmax(0,1fr) auto"><span class="cover c1"></span><span class="t">Glass Orchard<small>Mina Sol</small></span><em>4 min ago</em></div></div>
+      </article>
+      <article class="panel">
+        <h3>Import</h3>
+        <p>Drop in Spotify Extended Streaming History or ListenBrainz exports. Interrupted imports resume; repeating one never duplicates.</p>
+        <div class="demo"><dl class="kv" style="margin:0"><dt>Files read</dt><dd>18</dd><dt>Listens added</dt><dd>212,404</dd><dt>Already present</dt><dd>3,117</dd></dl><div class="ok">Import complete</div></div>
+      </article>
+      <article class="panel">
+        <h3>Explore</h3>
+        <p>Search the full history. Rankings, activity by day, week, month or year, and when, where and on what you listen.</p>
+        <div class="demo">
+          <div class="prow"><span class="muted">Mornings</span><span class="track"><span style="width:38%"></span></span><em>18%</em></div>
+          <div class="prow"><span class="muted">Afternoons</span><span class="track"><span style="width:62%"></span></span><em>31%</em></div>
+          <div class="prow"><span class="muted">Evenings</span><span class="track"><span style="width:88%"></span></span><em>41%</em></div>
+          <div class="prow"><span class="muted">Night</span><span class="track"><span style="width:22%"></span></span><em>10%</em></div>
+        </div>
+      </article>
+      <article class="panel">
+        <h3>Curate</h3>
+        <p>Fix names and titles, pick artwork, rate from half a star to five, and group namesakes without losing the originals.</p>
+        <div class="demo"><div class="row" style="grid-template-columns:26px minmax(0,1fr) auto"><span class="cover c4"></span><span class="t">Northbound (Deluxe)<small>Ostrava</small></span><span class="stars" aria-label="4.5 stars">★★★★<span class="half">★</span></span></div></div>
+      </article>
+      <article class="panel">
+        <h3>Ask</h3>
+        <p>Ask questions in plain words. An optional local model reads the question; Rust computes every number from your archive.</p>
+        <div class="demo"><div class="q">Which album did I play most last winter?</div>
+          <div class="answer"><strong>Northbound</strong><span class="muted">Ostrava · 214 listens · Dec–Feb</span></div>
+          <span class="chip">Local model</span><span class="chip">Off by default</span></div>
+      </article>
+      <article class="panel">
+        <h3>Keep</h3>
+        <p>Export JSON or CSV, make portable backups and verify a restore. Upgrades take a verified safety copy first.</p>
+        <div class="demo"><dl class="kv" style="margin:0"><dt>Backup</dt><dd>archive-2026-11-17.zip</dd><dt>Size</dt><dd>48.2 MB</dd></dl><div class="ok">Restore verified</div></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="block" id="honest">
+    <div class="honest">
+      <div class="section-head" style="display:block">
+        <h2>Numbers you can trust<span class="accent">.</span></h2>
+        <p>An archive is only useful if it doesn't guess. scrobbl.rs keeps the evidence, separates it from your corrections, and says when it doesn't know.</p>
+      </div>
+      <div>
+        <div class="notice" style="--nc: var(--success)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg><div><b>Plays count at 30 seconds</b><p>Shorter records stay searchable in history but don't inflate your statistics.</p></div></div>
+        <div class="notice" style="--nc: var(--warning)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><div><b>Unknown stays unknown</b><p>A missing duration is never shown as zero, and estimated time is labelled as an estimate.</p></div></div>
+        <div class="notice" style="--nc: var(--muted)"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg><div><b>Uncertain matches stay separate</b><p>Possible duplicates wait for your review. Decisions go to a recoverable trash and can be undone.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="install">
+    <div class="install">
+      <div>
+        <div class="section-head" style="display:block"><h2>Up in a few minutes<span class="accent">.</span></h2><p>Runs on your own machine or a private server, reached over your LAN, VPN or HTTPS.</p></div>
+        <ol class="steps">
+          <li><div><b>Start the container</b><p>A published image for linux/amd64, or build from source with Rust.</p></div></li>
+          <li><div><b>Create the owner account</b><p>One archive, one owner. Sessions and secrets live in a separate database.</p></div></li>
+          <li><div><b>Connect Spotify and import</b><p>Use your own Spotify app, then add your extended history export.</p></div></li>
+        </ol>
+      </div>
+      <div class="panel">
+        <div class="tabs" role="tablist">
+          <button role="tab" aria-selected="true" data-tab="docker">Docker</button>
+          <button role="tab" aria-selected="false" data-tab="local">From source</button>
+        </div>
+        <pre data-pane="docker"><button class="btn secondary copy" type="button">Copy</button><span class="c"># compose.yaml lives in the repository</span>
+export SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:main
+export SCROBBL_EXTERNAL_ORIGIN=https://music.example.lan
+export SCROBBL_HOST_IP=192.168.1.20
+export SCROBBL_DATA_PATH=/srv/scrobbl/data
+docker compose up -d</pre>
+        <pre data-pane="local" hidden><button class="btn secondary copy" type="button">Copy</button>git clone https://github.com/itsmrma/scrobbl-rs
+cd scrobbl-rs
+./scripts/run-local.sh
+<span class="c"># open http://127.0.0.1:3210</span></pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>scrobbl<span class="accent">.</span>rs · GPL-3.0-or-later · Inspired by Maloja</span>
+    <span>All artists, tracks and numbers on this page are demo data.</span>
+  </div>
+</footer>
+
+<script>
+  (() => {
+    const heights = [42, 55, 48, 70, 62, 58, 80, 74, 66, 90, 84, 100];
+    const bars = document.getElementById("a-bars");
+    bars.innerHTML = heights.map((h, i) => `<span style="height:${h}%;animation-delay:${i * 40}ms"></span>`).join("");
+
+    const ink = (hex) => {
+      const n = parseInt(hex.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+      return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.55 ? "#192912" : "#ffffff";
+    };
+    document.querySelector(".swatches").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-c]"); if (!b) return;
+      document.documentElement.style.setProperty("--accent", b.dataset.c);
+      document.documentElement.style.setProperty("--accent-ink", ink(b.dataset.c));
+      document.querySelectorAll(".swatches button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    });
+
+    document.querySelectorAll(".tabs button").forEach((t) => t.addEventListener("click", () => {
+      document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
+      document.querySelectorAll("pre[data-pane]").forEach((p) => (p.hidden = p.dataset.pane !== t.dataset.tab));
+    }));
+    document.querySelectorAll(".copy").forEach((c) => c.addEventListener("click", () => {
+      const text = c.parentElement.innerText.replace(/^Copy\n?/, "").split("\n").filter((l) => !l.startsWith("#")).join("\n");
+      navigator.clipboard?.writeText(text);
+      c.textContent = "Copied"; setTimeout(() => (c.textContent = "Copy"), 1400);
+    }));
+  })();
+</script>

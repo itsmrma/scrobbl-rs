@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  PROTOTYPE — four marketing-site variants for scrobbl.rs on one route,
+  switchable via ?variant=A|B|C|D and the floating bottom bar. Throwaway.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>scrobbl.rs</title>
+    <meta name="description" content="Your listening history, kept on your server. A self-hosted music listening archive." />
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+    <style>
+      html, body { margin: 0; }
+      #prototype-loading { font: 14px/1.5 system-ui, sans-serif; padding: 24px; color: #888; }
+    </style>
+  </head>
+  <body>
+    <div id="root"><p id="prototype-loading">Loading variant…</p></div>
+    <script src="/switcher.js"></script>
+  </body>
+</html>

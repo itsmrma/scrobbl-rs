@@ -1,0 +1,249 @@
+<!-- PROTOTYPE variant C — "Console": monospace split pane with a live listening log. -->
+<style>
+  :root {
+    --bg: #0c0d0f;
+    --panel: #121418;
+    --line: #23262d;
+    --text: #e6e8ec;
+    --dim: #8b919c;
+    --faint: #555b66;
+    --lime: #c9ee8b;
+    --amber: #e5c685;
+    --sky: #91c9f7;
+    --rose: #f099ad;
+    --mono: "JetBrains Mono", "Berkeley Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  html { background: var(--bg); }
+  body { background: var(--bg); color: var(--text); font: 14px/1.6 var(--mono); -webkit-font-smoothing: antialiased; }
+  * { box-sizing: border-box; }
+  ::selection { background: var(--lime); color: #111; }
+  a { color: var(--text); text-decoration: none; }
+  :focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+
+  .shell { display: grid; grid-template-columns: minmax(340px, 38%) minmax(0, 1fr); min-height: 100vh; }
+
+  .left { position: sticky; top: 0; height: 100vh; padding: 36px 40px 32px; border-right: 1px solid var(--line); display: flex; flex-direction: column; gap: 28px; overflow-y: auto; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 15px; }
+  .brand i { width: 22px; height: 22px; background: var(--lime); border-radius: 5px; display: grid; place-items: center; }
+  .brand i svg { width: 14px; }
+  .brand .v { color: var(--faint); font-weight: 400; margin-left: auto; font-size: 12px; }
+  h1 { font-size: clamp(28px, 2.8vw, 40px); line-height: 1.12; letter-spacing: -0.04em; margin: 0; font-weight: 700; }
+  h1 .cursor { display: inline-block; width: .55em; height: .9em; background: var(--lime); vertical-align: -0.08em; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .pitch { color: var(--dim); margin: 0; max-width: 36ch; }
+
+  .cmd { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; }
+  .cmd-tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .cmd-tabs button { all: unset; cursor: pointer; padding: 10px 14px; color: var(--dim); font-size: 12px; min-height: 24px; }
+  .cmd-tabs button[aria-selected="true"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--lime); }
+  .cmd-body { display: flex; align-items: center; gap: 12px; padding: 14px; }
+  .cmd-body code { flex: 1; white-space: pre-wrap; word-break: break-all; font-size: 13px; }
+  .cmd-body code::before { content: "$ "; color: var(--lime); }
+  .cmd-body button { all: unset; cursor: pointer; border: 1px solid var(--line); padding: 8px 12px; border-radius: 4px; color: var(--dim); font-size: 12px; min-height: 28px; display: grid; place-items: center; }
+  .cmd-body button:hover { color: var(--text); border-color: var(--dim); }
+
+  .toc { list-style: none; margin: 0; padding: 0; }
+  .toc a { display: grid; grid-template-columns: 34px 1fr auto; padding: 7px 0; color: var(--dim); border-bottom: 1px dashed var(--line); }
+  .toc a span:first-child { color: var(--faint); }
+  .toc a span:last-child { color: var(--faint); }
+  .toc a:hover, .toc a.on { color: var(--text); }
+  .toc a.on span:first-child { color: var(--lime); }
+  .meta { margin-top: auto; color: var(--faint); font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .meta a { color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+
+  .right { min-width: 0; padding: 0 0 120px; }
+  .bar { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; gap: 12px; padding: 12px 40px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); color: var(--faint); font-size: 12px; }
+  .bar .live { color: var(--lime); }
+  .bar .live::before { content: "●"; margin-right: 6px; animation: blink 1.6s steps(1) infinite; }
+
+  .block { padding: 40px 40px 8px; border-bottom: 1px solid var(--line); scroll-margin-top: 44px; }
+  .block > header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 18px; }
+  .block > header b { color: var(--lime); font-weight: 400; }
+  .block > header h2 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
+  .block > header small { color: var(--faint); margin-left: auto; font-size: 11px; }
+  .block > p { color: var(--dim); max-width: 64ch; margin: 0 0 20px; }
+
+  .log { font-size: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; margin-bottom: 32px; }
+  .log-row { display: grid; grid-template-columns: 86px 76px minmax(0, 1fr) 70px 64px; gap: 12px; padding: 7px 14px; border-bottom: 1px solid #1a1d22; white-space: nowrap; }
+  .log-row:last-child { border-bottom: 0; }
+  .log-row > * { overflow: hidden; text-overflow: ellipsis; }
+  .log-row.head { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .log-row .t { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .log-row .src-spotify { color: var(--lime); }
+  .log-row .src-import { color: var(--sky); }
+  .log-row .src-lb { color: var(--rose); }
+  .log-row .ok { color: var(--lime); text-align: right; }
+  .log-row .no { color: var(--faint); text-align: right; }
+  .log-row .ms { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+  .log-row.new { animation: flash 1.4s ease-out; }
+  @keyframes flash { from { background: color-mix(in srgb, var(--lime) 16%, transparent); } }
+
+  .out { font-size: 13px; white-space: pre; overflow-x: auto; border-left: 2px solid var(--line); padding: 4px 0 4px 18px; margin: 0 0 32px; color: var(--dim); line-height: 1.75; }
+  .out .k { color: var(--text); }
+  .out .g { color: var(--lime); }
+  .out .a { color: var(--amber); }
+  .out .s { color: var(--sky); }
+  .out .f { color: var(--faint); }
+  .hint { font-size: 11px; color: var(--faint); margin: -24px 0 32px; }
+
+  .specs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 32px; }
+  .specs div { background: var(--bg); padding: 18px; }
+  .specs dt { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+  .specs dd { margin: 6px 0 0; font-size: 15px; }
+
+  @media (max-width: 960px) {
+    .shell { grid-template-columns: 1fr; }
+    .left { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 28px 16px; }
+    .toc, .meta { display: none; }
+    .bar, .block { padding-left: 16px; padding-right: 16px; }
+    .log-row { grid-template-columns: 64px minmax(0, 1fr) 36px; }
+    .specs { grid-template-columns: 1fr 1fr; }
+    .log-row .src, .log-row .ms { display: none; }
+    .log-row .t { font-size: 11px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+
+<div class="shell">
+  <aside class="left">
+    <div class="brand"><i><svg viewBox="0 0 64 64"><g stroke="#18251e" stroke-width="7" stroke-linecap="round"><path d="M17 27v10M27 17v30M37 23v18M47 29v6"/></g></svg></i>scrobbl.rs<span class="v">self-hosted</span></div>
+    <h1>Every listen, logged on hardware you own<span class="cursor"></span></h1>
+    <p class="pitch">A listening archive in one Rust binary and one SQLite file. Collects Spotify, imports your full history, answers questions about it. No cloud in between.</p>
+
+    <div class="cmd">
+      <div class="cmd-tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-cmd="SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:main docker compose up -d">docker</button>
+        <button role="tab" aria-selected="false" data-cmd="./scripts/run-local.sh">source</button>
+        <button role="tab" aria-selected="false" data-cmd="cargo run --locked">cargo</button>
+      </div>
+      <div class="cmd-body"><code id="c-cmd">SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:main docker compose up -d</code><button type="button" id="c-copy">copy</button></div>
+    </div>
+
+    <ol class="toc" id="c-toc">
+      <li><a href="#c-tail"><span>01</span><span>collect</span><span>live</span></a></li>
+      <li><a href="#c-import"><span>02</span><span>import</span><span>zip/json</span></a></li>
+      <li><a href="#c-rank"><span>03</span><span>rankings</span><span>any period</span></a></li>
+      <li><a href="#c-ask"><span>04</span><span>ask</span><span>local ai</span></a></li>
+      <li><a href="#c-keep"><span>05</span><span>keep</span><span>backup</span></a></li>
+      <li><a href="#c-spec"><span>06</span><span>specs</span><span></span></a></li>
+    </ol>
+
+    <div class="meta"><a href="https://github.com/itsmrma/scrobbl-rs">github</a><span>GPL-3.0-or-later</span><span>inspired by Maloja</span></div>
+  </aside>
+
+  <main class="right">
+    <div class="bar"><span class="live">collecting</span><span>demo data · illustrative output</span><span id="c-count">212,404 listens</span></div>
+
+    <section class="block" id="c-tail">
+      <header><b>01</b><h2>collect</h2><small>background · now playing</small></header>
+      <p>Connect your own Spotify app and listens arrive while the server runs. Plays shorter than 30 seconds stay in history but never count in statistics.</p>
+      <div class="log" id="c-log" aria-live="off">
+        <div class="log-row head"><span>time</span><span class="src">source</span><span>track</span><span class="ms">played</span><span class="ok" style="color:inherit">stats</span></div>
+      </div>
+    </section>
+
+    <section class="block" id="c-import">
+      <header><b>02</b><h2>import</h2><small>spotify extended history · listenbrainz</small></header>
+      <p>Years of history from ZIP, JSON or JSONL. Interrupted imports pick up where they left off. Import the same file twice and nothing is counted twice.</p>
+<div class="out"><span class="k">my_spotify_data.zip</span>  <span class="f">18 files · 1.4 GB expanded</span>
+  Streaming_History_Audio_2014-2016_0.json   <span class="g">████████████████████</span> <span class="k">31,208</span>
+  Streaming_History_Audio_2017-2018_1.json   <span class="g">████████████████████</span> <span class="k">28,944</span>
+  Streaming_History_Audio_2019_2.json        <span class="g">████████████████████</span> <span class="k">24,017</span>
+  <span class="f">…  15 more</span>
+  <span class="g">✓</span> listens added       <span class="k">212,404</span>
+  <span class="g">✓</span> already present      <span class="k">3,117</span>   <span class="f">idempotent</span>
+  <span class="a">!</span> possible duplicates     <span class="k">42</span>   <span class="f">kept separate, waiting for review</span></div>
+    </section>
+
+    <section class="block" id="c-rank">
+      <header><b>03</b><h2>rankings</h2><small>day · week · month · year · all time</small></header>
+      <p>Complete rankings for any period, pages for every artist, album and track, and when and on what you listen.</p>
+<div class="out"><span class="k">top artists · 2026</span>
+   1  Mina Sol              <span class="g">██████████████████████████</span>  1,204
+   2  The Quiet Margins     <span class="g">█████████████████████▍</span>       987
+   3  Ostrava               <span class="g">█████████████████▋</span>           812
+   4  Velvet Arcade         <span class="g">█████████████▉</span>               640
+   5  Harbor Lights         <span class="g">███████████▌</span>                 531
+
+<span class="k">by hour</span>   <span class="s">▁▁▁▁▁▂▃▄▅▅▄▄▅▅▄▅▆▇█▇▆▄▃▂</span>
+          <span class="f">00          12          23</span></div>
+    </section>
+
+    <section class="block" id="c-ask">
+      <header><b>04</b><h2>ask</h2><small>optional · off by default</small></header>
+      <p>Ask in plain words. A local model translates the question into a query; Rust runs it and computes every number. The model never sees your rows. Or bring your own OpenAI-compatible server.</p>
+<div class="out"><span class="g">?</span> <span class="k" id="c-q">which album did I play most last winter</span>
+<span class="f">  → query  top albums · 2025-12-01 … 2026-02-28 · limit 1</span>
+<span class="g">  Northbound</span> — Ostrava   <span class="k">214 listens</span>   <span class="f">13 h 40 min</span></div>
+    </section>
+
+    <section class="block" id="c-keep">
+      <header><b>05</b><h2>keep</h2><small>export · backup · restore</small></header>
+      <p>Export JSON or CSV, make portable backups, and verify a restore before you need it. Schema upgrades take a checked safety copy first.</p>
+<div class="out">backup   <span class="k">archive-2026-11-17.zip</span>   <span class="f">48.2 MB · credentials omitted</span>
+verify   <span class="g">✓ restore verified</span>   <span class="f">212,404 listens · 6,918 artists</span></div>
+    </section>
+
+    <section class="block" id="c-spec">
+      <header><b>06</b><h2>specs</h2></header>
+      <dl class="specs">
+        <div><dt>backend</dt><dd>Rust</dd></div>
+        <div><dt>storage</dt><dd>SQLite, one data dir</dd></div>
+        <div><dt>interface</dt><dd>React, embedded</dd></div>
+        <div><dt>image</dt><dd>linux/amd64</dd></div>
+        <div><dt>owners</dt><dd>exactly one</dd></div>
+        <div><dt>telemetry</dt><dd>none</dd></div>
+        <div><dt>api</dt><dd>read-only keys</dd></div>
+        <div><dt>license</dt><dd>GPL-3.0-or-later</dd></div>
+      </dl>
+    </section>
+  </main>
+</div>
+
+<script>
+  (() => {
+    const tracks = [
+      ["Low Tide Radio", "Harbor Lights"], ["Glass Orchard", "Mina Sol"], ["Northbound", "Ostrava"],
+      ["Paper Lanterns", "The Quiet Margins"], ["Neon Psalm", "Velvet Arcade"], ["Salt & Static", "Lumen Drive"],
+      ["Second Window", "Mina Sol"], ["Copper Field", "Ostrava"], ["Afterhours", "Harbor Lights"],
+      ["A Slow Return", "The Quiet Margins"], ["Brightwater", "Lumen Drive"], ["Echo Room", "Velvet Arcade"],
+    ];
+    const srcs = [["spotify", "src-spotify"], ["spotify", "src-spotify"], ["import", "src-import"], ["listenbrainz", "src-lb"]];
+    const log = document.getElementById("c-log");
+    const count = document.getElementById("c-count");
+    let n = 212404, k = 0;
+    const t0 = new Date(2026, 10, 17, 21, 4, 12);
+    const pad = (x) => String(x).padStart(2, "0");
+    function add(i, animate) {
+      const [title, artist] = tracks[k++ % tracks.length];
+      const [src, cls] = srcs[(k * 7) % srcs.length];
+      const sec = (k % 5 === 0) ? 12 + (k % 15) : 95 + ((k * 37) % 200);
+      const d = new Date(t0.getTime() + i * 197000);
+      const row = document.createElement("div");
+      row.className = "log-row" + (animate ? " new" : "");
+      const counted = sec >= 30;
+      row.innerHTML = `<span class="t">${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}</span><span class="src ${cls}">${src}</span><span>${title} <span style="color:var(--faint)">— ${artist}</span></span><span class="ms">${Math.floor(sec / 60)}:${pad(sec % 60)}</span><span class="${counted ? "ok" : "no"}">${counted ? "✓" : "<30s"}</span>`;
+      log.querySelector(".head").after(row);
+      const rows = log.querySelectorAll(".log-row:not(.head)");
+      if (rows.length > 8) rows[rows.length - 1].remove();
+      if (counted && animate) count.textContent = (++n).toLocaleString("en-US") + " listens";
+    }
+    for (let i = 0; i < 8; i++) add(i, false);
+    let i = 8;
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(() => add(i++, true), 2600);
+
+    const code = document.getElementById("c-cmd");
+    document.querySelectorAll(".cmd-tabs button").forEach((b) => b.addEventListener("click", () => {
+      document.querySelectorAll(".cmd-tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === b)));
+      code.textContent = b.dataset.cmd;
+    }));
+    const copy = document.getElementById("c-copy");
+    copy.addEventListener("click", () => { navigator.clipboard?.writeText(code.textContent); copy.textContent = "copied"; setTimeout(() => (copy.textContent = "copy"), 1400); });
+
+    const links = [...document.querySelectorAll("#c-toc a")];
+    const io = new IntersectionObserver((es) => es.forEach((e) => {
+      if (e.isIntersecting) links.forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + e.target.id));
+    }), { rootMargin: "-40% 0px -55% 0px" });
+    document.querySelectorAll(".block").forEach((b) => io.observe(b));
+  })();
+</script>
