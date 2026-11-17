@@ -37,21 +37,29 @@
     return ok;
   };
 
-  for (const btn of document.querySelectorAll("#install [data-copy]")) {
-    let timer;
-    btn.addEventListener("click", async () => {
-      const text = commandsOf(btn.closest("[data-code]"));
-      let ok = false;
-      try {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } catch {
-        ok = fallbackCopy(text);
-      }
-      if (!ok) return;
-      btn.textContent = "Copied";
-      clearTimeout(timer);
-      timer = setTimeout(() => { btn.textContent = "Copy"; }, 1500);
-    });
-  }
+  // One Copy button in the panel bar copies the commands of the visible tab.
+  const btn = document.querySelector("#install [data-copy]");
+  const label = btn && btn.querySelector("[data-copy-label]");
+  if (!btn || !label) return;
+  let timer;
+  btn.addEventListener("click", async () => {
+    const block = document.querySelector('#install [role="tabpanel"]:not([hidden]) [data-code]');
+    if (!block) return;
+    const text = commandsOf(block);
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      ok = fallbackCopy(text);
+    }
+    if (!ok) return;
+    label.textContent = "Copied";
+    btn.classList.add("is-copied");
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      label.textContent = "Copy";
+      btn.classList.remove("is-copied");
+    }, 1500);
+  });
 })();

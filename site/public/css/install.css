@@ -10,25 +10,37 @@
   display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
   background: var(--accent); color: var(--accent-ink); font-weight: 600;
 }
-.install-panel { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+/* Install panel: one terminal-like window. The bar holds the app's segmented
+   control and the Copy button, so the button never sits on the commands. */
+.install-panel { min-width: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.install-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 8px; border-bottom: 1px solid var(--border);
+}
+.tabs {
+  display: inline-flex; gap: 2px; padding: 3px; max-width: 100%;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 10px;
+}
 .tab {
-  min-height: 44px; padding: 10px 16px; border-radius: 8px; cursor: pointer;
+  min-width: 44px; min-height: 44px; padding: 6px 14px; border-radius: 7px; cursor: pointer;
   font: 600 13px var(--font); color: var(--muted); background: transparent; border: 1px solid transparent;
+  transition: background-color .15s ease-out, color .15s ease-out, border-color .15s ease-out;
 }
-.tab[aria-selected="true"] { color: var(--text); background: var(--surface-raised); border-color: var(--border); }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { color: var(--text); background: var(--surface); border-color: var(--border); }
+.copy { color: var(--muted); }
+.copy:hover { color: var(--text); }
+.copy.is-copied { color: var(--success); }
 .tabpanel[hidden] { display: none; }
-.tabpanel p { margin: 12px 0 0; }
+.tabpanel > p { margin: 0; padding: 16px 20px; font-size: 14px; border-top: 1px solid var(--border); }
 .tabpanel code { font-family: var(--mono); font-size: 13px; }
-.code { position: relative; }
-.code pre {
-  margin: 0; padding: 16px; padding-top: 56px; overflow-x: auto; max-width: 100%;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  font: 13px/1.7 var(--mono);
+.code {
+  margin: 0; padding: 20px; overflow-x: auto; max-width: 100%;
+  background: var(--bg); font: 13px/1.8 var(--mono);
 }
-.code .line { display: inline; }
-.code .note { color: var(--muted); }
-.copy { position: absolute; top: 8px; right: 8px; }
+.code .line.note { color: var(--muted); }
+.code .line:not(.note)::before { content: "$ "; color: var(--muted); user-select: none; }
+.code .line.note:not(:first-child) { display: inline-block; margin-top: 12px; }
 .copy-buffer { position: fixed; top: 0; left: -9999px; }
 @media (max-width: 900px) {
   .install-grid { grid-template-columns: minmax(0, 1fr); gap: 32px; }
