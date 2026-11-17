@@ -237,6 +237,24 @@ pub async fn music(
         let totals: String = query.build_query_scalar().fetch_one(&mut *conn).await?;
         serde_json::from_str(&totals).map_err(|_| AppError::Internal)?
     };
+    // The badge mirrors the matching ranking page: same period, ordered by
+    // plays, with shared positions for equal play counts. It is part of the
+    // page header, so it does not depend on the totals widget being shown.
+    let table = kind_table(&kind)?;
+    let mut ranking = filters.clone();
+    ranking.artist = None;
+    ranking.album = None;
+    ranking.track = None;
+    ranking.q = None;
+    let mut query = consultation::selection_at(conn, &ranking, false, auth::now_ms()).await?;
+    query.push(include_str!("ranking-aggregates.sql"));
+    query.push(format!("SELECT position FROM (SELECT id, RANK() OVER(ORDER BY plays DESC) AS position FROM {table}) WHERE id="));
+    query.push_bind(id.as_str());
+    let rank: Option<i64> = query
+        .build_query_scalar::<Option<i64>>()
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten();
     Ok(Json(MusicPage {
         id,
         name: row.get("name"),
@@ -246,6 +264,7 @@ pub async fn music(
         album: row.get("album"),
         artists,
         totals,
+        rank,
     }))
 }
 

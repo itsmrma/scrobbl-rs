@@ -274,16 +274,18 @@ function Stats({
   periodOverride,
   loading = false,
   embedded = false,
+  showTracks = true,
 }: {
   totals: Totals;
   loading?: boolean;
   embedded?: boolean;
   ids?: boolean;
   periodOverride?: string | null;
+  showTracks?: boolean;
 }) {
   return (
     <>
-      <div className="stats-grid">
+      <div className={showTracks ? "stats-grid" : "stats-grid is-pair"}>
         <article className={embedded ? "stat" : "panel stat"}>
           <span>
             Total listens
@@ -316,17 +318,19 @@ function Stats({
             )}
           </strong>
         </article>
-        <article className={embedded ? "stat" : "panel stat"}>
-          <span>Different tracks</span>
-          <strong id={ids ? "total-tracks" : undefined}>
-            {loading ? (
-              <SkeletonBlock width="60%" height={45} />
-            ) : (
-              number.format(totals.tracks)
-            )}
-          </strong>
-        </article>
-      </div>
+        {showTracks && (
+          <article className={embedded ? "stat" : "panel stat"}>
+            <span>Different tracks</span>
+            <strong id={ids ? "total-tracks" : undefined}>
+              {loading ? (
+                <SkeletonBlock width="60%" height={45} />
+              ) : (
+                number.format(totals.tracks)
+              )}
+            </strong>
+          </article>
+        )}
+      </div>{" "}
       {(embedded || totals.unknown_durations > 0) && (
         <p className={embedded ? "warning widget-totals-note" : "warning"}>
           {totals.unknown_durations > 0 && (
@@ -1158,11 +1162,13 @@ export function TotalsWidget({
   ids = true,
   periodOverride,
   loading = false,
+  showTracks = true,
 }: {
   totals?: Totals;
   ids?: boolean;
   periodOverride?: string | null;
   loading?: boolean;
+  showTracks?: boolean;
 }) {
   return (
     <article className="panel padded widget-totals" aria-busy={loading}>
@@ -1180,6 +1186,7 @@ export function TotalsWidget({
         ids={ids && !loading}
         periodOverride={periodOverride}
         loading={loading}
+        showTracks={showTracks}
         embedded
       />
     </article>
@@ -2588,6 +2595,7 @@ function OverriddenArtistTotalsWidget({
         }}
         ids
         periodOverride={periodOverride}
+        showTracks={kind !== "tracks"}
       />
     );
   }
@@ -2604,6 +2612,7 @@ function OverriddenArtistTotalsWidget({
       totals={result.data.totals}
       ids
       periodOverride={periodOverride}
+      showTracks={kind !== "tracks"}
     />
   );
 }
@@ -3573,6 +3582,7 @@ export function MusicPage({
         ? [{ id: "preview-artist", name: "Preview artist" }]
         : [],
     totals: dummyTotals,
+    rank: null,
   };
 
   const needsTotals = useMemo(() => {
@@ -3664,6 +3674,7 @@ export function MusicPage({
                 totals={dummyTotals}
                 ids
                 periodOverride={widget.periodOverride}
+                showTracks={kind !== "tracks"}
               />
             );
           }
@@ -3677,7 +3688,11 @@ export function MusicPage({
           );
         }
         return result.data?.totals ? (
-          <TotalsWidget totals={result.data.totals} ids />
+          <TotalsWidget
+            totals={result.data.totals}
+            ids
+            showTracks={kind !== "tracks"}
+          />
         ) : (
           <TotalsSkeleton />
         );
@@ -3834,31 +3849,45 @@ export function MusicPage({
           </Cover>
           <div className="music-header-content" ref={introduction}>
             <div className="music-title-row">
-              <Heading title={result.data.name}>
-                {kind === "albums" && "Album by "}
-                {kind === "tracks" && "Track by "}
-                {result.data.artists.map(
-                  (a: { id: string; name: string }, i: number) => (
-                    <span key={a.id}>
-                      {i > 0 && ", "}
-                      <Link to={musicLink("artists", a.id, params)}>
-                        {a.name}
+              <div className="music-title-main">
+                <Heading title={result.data.name}>
+                  {kind === "albums" && "Album by "}
+                  {kind === "tracks" && "Track by "}
+                  {result.data.artists.map(
+                    (a: { id: string; name: string }, i: number) => (
+                      <span key={a.id}>
+                        {i > 0 && ", "}
+                        <Link to={musicLink("artists", a.id, params)}>
+                          {a.name}
+                        </Link>
+                      </span>
+                    ),
+                  )}
+                  {result.data.album_id && (
+                    <>
+                      {" "}
+                      ·{" "}
+                      <Link
+                        to={musicLink("albums", result.data.album_id, params)}
+                      >
+                        {result.data.album}
                       </Link>
+                    </>
+                  )}
+                </Heading>
+                {result.data.rank !== null && (
+                  <span
+                    className="rank-badge"
+                    title={`Position ${result.data.rank} by plays in this period`}
+                  >
+                    #{result.data.rank}
+                    <span className="visually-hidden">
+                      {" "}
+                      in the ranking by plays for this period
                     </span>
-                  ),
+                  </span>
                 )}
-                {result.data.album_id && (
-                  <>
-                    {" "}
-                    ·{" "}
-                    <Link
-                      to={musicLink("albums", result.data.album_id, params)}
-                    >
-                      {result.data.album}
-                    </Link>
-                  </>
-                )}
-              </Heading>
+              </div>
               <BackButton
                 fallback={`/rankings/${kind}?${context(selection.params)}`}
               />
@@ -3908,7 +3937,7 @@ export function MusicPage({
           </div>
         </div>
       ) : (
-        !result.error && <MusicPageSkeleton />
+        !result.error && <MusicPageSkeleton stats={kind === "tracks" ? 2 : 3} />
       )}
 
       {!isPreview &&

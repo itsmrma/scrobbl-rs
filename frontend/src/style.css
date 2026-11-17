@@ -3255,6 +3255,30 @@ dialog.artwork-lightbox {
   width: 100%;
 }
 
+/* The position badge sits on the title baseline and wraps under it when the
+   title is long, without moving the back button. */
+.music-title-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.rank-badge {
+  display: inline-flex;
+  align-items: baseline;
+  padding: 1px 9px;
+  border: 1px solid var(--row-border);
+  border-radius: 999px;
+  background: var(--row-bg);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .music-back {
   /* Override .btn's max-width: 100% so Firefox does not clamp to the auto track shrunk by margin-right: -10px. */
   max-width: none;
