@@ -158,12 +158,30 @@ impl CancelToken {
     }
 }
 
+/// Which GBNF grammar constrains the local model's JSON output.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GrammarKind {
+    #[default]
+    Guided,
+    Sql,
+}
+
 /// The thing that owns a loaded model. Implementations must not panic on a
 /// missing or corrupt file; they return an explicit error instead.
 pub trait Engine: Send {
     fn load(&mut self, spec: &ModelSpec) -> Result<(), String>;
     fn unload(&mut self);
     fn generate(&mut self, prompt: &str, cancel: &CancelToken) -> Result<String, InferenceError>;
+    /// Generate with an explicit grammar mode. Simple engines that do not
+    /// distinguish grammars inherit the guided default.
+    fn generate_with_grammar(
+        &mut self,
+        prompt: &str,
+        _grammar: GrammarKind,
+        cancel: &CancelToken,
+    ) -> Result<String, InferenceError> {
+        self.generate(prompt, cancel)
+    }
     /// One generation with timings. Adapters with real measurements override
     /// this; the default keeps simple engines (and tests) working unchanged.
     fn generate_timed(
@@ -210,6 +228,7 @@ pub struct RuntimeState {
 struct Job {
     spec: ModelSpec,
     prompt: String,
+    grammar: GrammarKind,
     cancel: CancelToken,
     reply: oneshot::Sender<Result<String, InferenceError>>,
 }
@@ -312,14 +331,30 @@ impl Runtime {
         prompt: &str,
         timeout: Duration,
     ) -> Result<String, RuntimeError> {
-        self.infer_with_cancel(spec, prompt, CancelToken::new(timeout))
-            .await
+        self.infer_with_grammar_and_cancel(
+            spec,
+            prompt,
+            GrammarKind::Guided,
+            CancelToken::new(timeout),
+        )
+        .await
     }
 
     pub async fn infer_with_cancel(
         &self,
         spec: &ModelSpec,
         prompt: &str,
+        cancel: CancelToken,
+    ) -> Result<String, RuntimeError> {
+        self.infer_with_grammar_and_cancel(spec, prompt, GrammarKind::Guided, cancel)
+            .await
+    }
+
+    pub async fn infer_with_grammar_and_cancel(
+        &self,
+        spec: &ModelSpec,
+        prompt: &str,
+        grammar: GrammarKind,
         cancel: CancelToken,
     ) -> Result<String, RuntimeError> {
         if self.inner.shutdown.load(Ordering::SeqCst) {
@@ -329,20 +364,38 @@ impl Runtime {
         // covers an engine blocked inside one long decode call.
         let guard = cancel.remaining() + OUTER_TIMEOUT_GRACE;
         let cancel_on_timeout = cancel.clone();
+        struct CancelOnDrop<'a>(&'a CancelToken, bool);
+        impl Drop for CancelOnDrop<'_> {
+            fn drop(&mut self) {
+                if !self.1 {
+                    self.0.cancel();
+                }
+            }
+        }
+        let mut drop_guard = CancelOnDrop(&cancel_on_timeout, false);
         let (reply, response) = oneshot::channel();
         let job = Box::new(Job {
             spec: spec.clone(),
             prompt: prompt.to_string(),
+            grammar,
             cancel,
             reply,
         });
         match self.inner.sender.try_send(Message::Infer(job)) {
             Ok(()) => {}
-            Err(TrySendError::Full(_)) => return Err(RuntimeError::Busy),
-            Err(TrySendError::Disconnected(_)) => return Err(RuntimeError::Closed),
+            Err(TrySendError::Full(_)) => {
+                drop_guard.1 = true;
+                return Err(RuntimeError::Busy);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                drop_guard.1 = true;
+                return Err(RuntimeError::Closed);
+            }
         }
 
-        match tokio::time::timeout(guard, response).await {
+        let outcome = tokio::time::timeout(guard, response).await;
+        drop_guard.1 = true;
+        match outcome {
             Err(_) => {
                 cancel_on_timeout.cancel();
                 Err(RuntimeError::Timeout)
@@ -400,6 +453,7 @@ fn worker(
         let Job {
             spec,
             prompt,
+            grammar,
             cancel,
             reply,
         } = *job;
@@ -443,7 +497,7 @@ fn worker(
         }
 
         *lock(&active) = Some(cancel.clone());
-        let result = engine.generate(&prompt, &cancel);
+        let result = engine.generate_with_grammar(&prompt, grammar, &cancel);
         if result.is_err() {
             // A timeout, cancellation or engine failure must never leave a
             // partially decoded sequence available to the next question.
@@ -485,11 +539,15 @@ mod llama {
     };
 
     pub const CONTEXT_TOKENS: u32 = 3072;
+    pub const SQL_CONTEXT_TOKENS: u32 = 4096;
     pub const MAX_NEW_TOKENS: i32 = 256;
+    pub const MAX_SQL_NEW_TOKENS: i32 = 512;
     const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 
     static GRAMMAR: LazyLock<Result<String, String>> =
         LazyLock::new(|| grammar::to_gbnf(&schema::schema_json()));
+    static SQL_GRAMMAR: LazyLock<Result<String, String>> =
+        LazyLock::new(|| grammar::to_gbnf(&schema::sql_schema()));
     static LOGS: Once = Once::new();
 
     /// CPU-only llama.cpp engine. The backend and model stay loaded between
@@ -512,52 +570,11 @@ mod llama {
                 debug,
             }
         }
-    }
 
-    impl Default for LlamaEngine {
-        fn default() -> Self {
-            Self::new()
-        }
-    }
-
-    impl Engine for LlamaEngine {
-        fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
-            if !spec.path.is_file() {
-                return Err("The selected model file is missing.".into());
-            }
-            if !self.debug {
-                LOGS.call_once(|| {
-                    send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
-                });
-            }
-            let backend = LlamaBackend::init()
-                .map_err(|error| format!("Could not start the llama backend: {error}"))?;
-            let model =
-                LlamaModel::load_from_file(&backend, &spec.path, &LlamaModelParams::default())
-                    .map_err(|error| format!("Could not load the model file: {error}"))?;
-            self.backend = Some(backend);
-            self.model = Some(model);
-            self.threads = spec.threads.clamp(1, 64);
-            Ok(())
-        }
-
-        fn unload(&mut self) {
-            self.model = None;
-            self.backend = None;
-        }
-
-        fn generate(
+        pub fn generate_timed_with_grammar(
             &mut self,
             prompt: &str,
-            cancel: &CancelToken,
-        ) -> Result<String, InferenceError> {
-            self.generate_timed(prompt, cancel)
-                .map(|generation| generation.text)
-        }
-
-        fn generate_timed(
-            &mut self,
-            prompt: &str,
+            grammar_kind: GrammarKind,
             cancel: &CancelToken,
         ) -> Result<Generation, InferenceError> {
             let started = Instant::now();
@@ -571,13 +588,23 @@ mod llama {
             let backend = self.backend.as_ref().ok_or_else(|| {
                 InferenceError::Failed("The llama backend is not loaded.".to_string())
             })?;
-            let grammar = GRAMMAR
-                .as_ref()
-                .map_err(|error| InferenceError::Failed(error.clone()))?;
+            let grammar = match grammar_kind {
+                GrammarKind::Guided => GRAMMAR.as_ref(),
+                GrammarKind::Sql => SQL_GRAMMAR.as_ref(),
+            }
+            .map_err(|error| InferenceError::Failed(error.clone()))?;
+            let context_tokens = match grammar_kind {
+                GrammarKind::Guided => CONTEXT_TOKENS,
+                GrammarKind::Sql => SQL_CONTEXT_TOKENS,
+            };
+            let max_new_tokens = match grammar_kind {
+                GrammarKind::Guided => MAX_NEW_TOKENS,
+                GrammarKind::Sql => MAX_SQL_NEW_TOKENS,
+            };
 
             let mut params = LlamaContextParams::default()
                 .with_n_ctx(Some(
-                    NonZeroU32::new(CONTEXT_TOKENS).expect("constant context size is non-zero"),
+                    NonZeroU32::new(context_tokens).expect("constant context size is non-zero"),
                 ))
                 .with_n_threads(i32::try_from(self.threads).unwrap_or(4))
                 .with_n_threads_batch(i32::try_from(self.threads).unwrap_or(4));
@@ -597,7 +624,7 @@ mod llama {
                     "The model tokenizer produced an empty prompt.".to_string(),
                 ));
             }
-            if tokens.len() as i32 + MAX_NEW_TOKENS > context.n_ctx() as i32 {
+            if tokens.len() as i32 + max_new_tokens > context.n_ctx() as i32 {
                 return Err(InferenceError::Failed(format!(
                     "The question is too long for the model context ({} prompt tokens, {} context tokens).",
                     tokens.len(),
@@ -655,7 +682,7 @@ mod llama {
                     ));
                 }
                 generated += 1;
-                if generated >= MAX_NEW_TOKENS {
+                if generated >= max_new_tokens {
                     break;
                 }
                 batch.clear();
@@ -699,10 +726,72 @@ mod llama {
             })
         }
     }
+
+    impl Default for LlamaEngine {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl Engine for LlamaEngine {
+        fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
+            if !spec.path.is_file() {
+                return Err("The selected model file is missing.".into());
+            }
+            if !self.debug {
+                LOGS.call_once(|| {
+                    send_logs_to_tracing(LogOptions::default().with_logs_enabled(false));
+                });
+            }
+            let backend = LlamaBackend::init()
+                .map_err(|error| format!("Could not start the llama backend: {error}"))?;
+            let model =
+                LlamaModel::load_from_file(&backend, &spec.path, &LlamaModelParams::default())
+                    .map_err(|error| format!("Could not load the model file: {error}"))?;
+            self.backend = Some(backend);
+            self.model = Some(model);
+            self.threads = spec.threads.clamp(1, 64);
+            Ok(())
+        }
+
+        fn unload(&mut self) {
+            self.model = None;
+            self.backend = None;
+        }
+
+        fn generate(
+            &mut self,
+            prompt: &str,
+            cancel: &CancelToken,
+        ) -> Result<String, InferenceError> {
+            self.generate_timed(prompt, cancel)
+                .map(|generation| generation.text)
+        }
+
+        fn generate_with_grammar(
+            &mut self,
+            prompt: &str,
+            grammar: GrammarKind,
+            cancel: &CancelToken,
+        ) -> Result<String, InferenceError> {
+            self.generate_timed_with_grammar(prompt, grammar, cancel)
+                .map(|generation| generation.text)
+        }
+
+        fn generate_timed(
+            &mut self,
+            prompt: &str,
+            cancel: &CancelToken,
+        ) -> Result<Generation, InferenceError> {
+            self.generate_timed_with_grammar(prompt, GrammarKind::Guided, cancel)
+        }
+    }
 }
 
 #[cfg(feature = "llama")]
-pub use llama::{CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS};
+pub use llama::{
+    CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS, MAX_SQL_NEW_TOKENS, SQL_CONTEXT_TOKENS,
+};
 
 /// A loaded engine reused for many prompts. Offline tools (the eval harness)
 /// use it to measure one model across a corpus without reloading the weights;
@@ -948,5 +1037,41 @@ mod tests {
         let expired = CancelToken::new(Duration::from_millis(0));
         assert_eq!(expired.error(), InferenceError::Timeout);
         assert!(expired.should_stop());
+    }
+
+    #[tokio::test]
+    async fn dropping_infer_future_cancels_the_token_and_resets_engine() {
+        let (runtime, state) = mock(Duration::from_secs(5));
+        let spec = spec(Duration::from_secs(10));
+        let cancel = CancelToken::new(Duration::from_secs(10));
+        let handle = tokio::spawn({
+            let runtime = runtime.clone();
+            let spec = spec.clone();
+            let cancel = cancel.clone();
+            async move {
+                let _ = runtime.infer_with_cancel(&spec, "drop me", cancel).await;
+            }
+        });
+        for _ in 0..100 {
+            if state.started.load(Ordering::SeqCst) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(state.started.load(Ordering::SeqCst), 1);
+        handle.abort();
+        let _ = handle.await;
+        for _ in 0..100 {
+            if state.resets.load(Ordering::SeqCst) > 0 && state.active.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            cancel.is_cancelled(),
+            "dropping infer future must cancel token"
+        );
+        assert!(state.resets.load(Ordering::SeqCst) > 0);
+        assert_eq!(state.active.load(Ordering::SeqCst), 0);
     }
 }

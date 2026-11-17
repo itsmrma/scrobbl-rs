@@ -41,6 +41,8 @@ const periods: { value: Period; label: string }[] = [
   { value: "last_year", label: "Last year" },
   { value: "last_7_days", label: "Last 7 days" },
   { value: "last_30_days", label: "Last 30 days" },
+  { value: "last_90_days", label: "Last 90 days" },
+  { value: "last_180_days", label: "Last 180 days" },
   { value: "last_365_days", label: "Last 365 days" },
 ];
 

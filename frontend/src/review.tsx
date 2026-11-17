@@ -18,6 +18,59 @@ import {
 } from "./ui";
 import { SkeletonCardList, SkeletonList, SkeletonText } from "./skeleton";
 
+const DEVICES: Record<string, string> = {
+  ios: "iPhone / iPad",
+  android: "Android",
+  windows: "Windows",
+  osx: "Mac",
+  macos: "Mac",
+  linux: "Linux",
+  web_player: "Web player",
+  not_applicable: "Spotify Connect device",
+};
+
+/** Spotify's platform string, readable: "Android OS 8.0.0 API 26 (samsung,
+ * SM-A520F)" becomes "Android · samsung SM-A520F". */
+export function deviceLabel(platform: string): string {
+  const raw = platform.trim();
+  const known = DEVICES[raw.toLowerCase()];
+  if (known) return known;
+  const android = /^android os[^(]*\(([^)]*)\)/i.exec(raw);
+  if (android) return `Android · ${android[1].replace(/,\s*/g, " ")}`;
+  const ios = /^ios [\d.]+ \(([^)]*)\)/i.exec(raw);
+  if (ios) return `iOS · ${ios[1]}`;
+  const partner = /^partner\s+(.*)$/i.exec(raw);
+  const text = (partner ? partner[1] : raw)
+    .split(";")
+    .filter(Boolean)
+    .join(" ")
+    .replace(/_/g, " ");
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text;
+}
+
+const ENDINGS: Record<string, string> = {
+  trackdone: "Played to the end",
+  endplay: "Playback stopped",
+  fwdbtn: "Skipped forward",
+  backbtn: "Went back",
+  clickrow: "Another track chosen",
+  remote: "Changed from another device",
+  logout: "Logged out",
+  playbtn: "Paused",
+  "unexpected-exit": "App closed",
+  "unexpected-exit-while-paused": "App closed while paused",
+};
+
+/** Short plays differ by fractions of a second; m:ss would show them all as 0:00. */
+function preciseDuration(ms: number | null): string {
+  if (ms == null || ms >= 60_000) return duration(ms);
+  return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+}
+
+function endLabel(reason: string): string {
+  return ENDINGS[reason] || `Ended: ${reason.replace(/[_-]/g, " ")}`;
+}
+
 function Trash({
   preferences,
   version,
@@ -181,20 +234,29 @@ function Comparison({
                   timezone: item.timezone,
                 })}
               </strong>
-              <small>{item.timezone}</small>
+              <small>
+                <Icon>devices</Icon>
+                {item.playback?.device
+                  ? deviceLabel(item.playback.device)
+                  : "Device not reported"}
+                {item.playback?.offline ? " · offline" : ""}
+              </small>
               <small>{formatSources(item.sources)}</small>
             </span>
             <span className="review-duration">
               {item.duration_kind === "estimated" ? "≈ " : ""}
-              {duration(item.listened_ms)}
+              {preciseDuration(item.listened_ms)}
               <small>
                 {item.duration_kind === "actual"
                   ? "Actual playback"
                   : item.duration_kind === "estimated"
                     ? "Estimated"
                     : "No duration"}
+                {item.counted ? "" : " · under 30 s"}
               </small>
-              <small>{new Date(item.played_at_ms).toISOString()}</small>
+              {item.playback?.reason_end && (
+                <small>{endLabel(item.playback.reason_end)}</small>
+              )}
             </span>
           </label>
         ))}
@@ -404,7 +466,7 @@ export function ReviewPage({
                   {automatic.error ? (
                     "Preview unavailable"
                   ) : automatic.data ? (
-                    `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "pair" : "pairs"}`
+                    `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "group" : "groups"}`
                   ) : (
                     <>
                       <span className="visually-hidden">
@@ -417,17 +479,29 @@ export function ReviewPage({
                 <Icon>expand_more</Icon>
               </summary>
               <div className="automatic-review-body">
+                <ul>
+                  <li>
+                    <strong>
+                      Same Spotify playback logged more than once.
+                    </strong>{" "}
+                    Export rows for one track that end in the same second
+                    overlap, so they are one listen: the row with the longest
+                    playback is kept. Rows from an offline session share the
+                    time the device synced and are separate plays, so they are
+                    all kept.
+                  </li>
+                  <li>
+                    <strong>Same listen from two sources.</strong> Isolated
+                    pairs starting less than one second apart, with the same
+                    Spotify track or exactly matching title, album and artists.
+                    Actual playback time wins over an estimate.
+                  </li>
+                </ul>
                 <p>
-                  Only isolated pairs starting less than one second apart
-                  qualify. They must describe the same Spotify track, or have
-                  exactly matching title, album and artist credits. Repeats,
-                  competing nearby records, incomplete metadata and conflicting
-                  playback evidence stay for manual review.
-                </p>
-                <p>
-                  The record with actual playback time takes priority, followed
-                  by estimated time. Other records move to trash; every original
-                  stays saved. You can undo the whole batch below.
+                  Anything else, such as online and offline rows mixed together
+                  or missing device details, stays for manual review. Removed
+                  records move to trash, every original stays saved, and Undo
+                  below restores the whole batch.
                 </p>
                 <ErrorText>{automatic.error}</ErrorText>
                 {automatic.data ? (
@@ -435,11 +509,14 @@ export function ReviewPage({
                     <span role="status">
                       <strong>
                         {number.format(automatic.data.groups)} matching{" "}
-                        {automatic.data.groups === 1 ? "pair" : "pairs"}
+                        {automatic.data.groups === 1 ? "group" : "groups"}
                       </strong>{" "}
-                      · {number.format(automatic.data.records)} records ·{" "}
-                      {number.format(automatic.data.remaining)} remain for
-                      manual review
+                      · {number.format(automatic.data.trash)} to trash ·{" "}
+                      {number.format(
+                        automatic.data.records - automatic.data.trash,
+                      )}{" "}
+                      kept · {number.format(automatic.data.remaining)} remain
+                      for manual review
                     </span>
                     <button
                       className="primary"
@@ -454,7 +531,7 @@ export function ReviewPage({
                     >
                       <Icon>done_all</Icon>Resolve{" "}
                       {number.format(automatic.data.groups)}{" "}
-                      {automatic.data.groups === 1 ? "pair" : "pairs"}{" "}
+                      {automatic.data.groups === 1 ? "group" : "groups"}{" "}
                       automatically
                     </button>
                   </div>

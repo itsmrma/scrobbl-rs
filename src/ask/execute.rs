@@ -556,6 +556,8 @@ fn period_key(period: Period) -> &'static str {
         Period::LastYear => "last_year",
         Period::Last7Days => "7d",
         Period::Last30Days => "30d",
+        Period::Last90Days => "90d",
+        Period::Last180Days => "180d",
         Period::Last365Days => "365d",
     }
 }

@@ -1,6 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "./api";
-import type { SearchItem } from "./generated";
 import { useLoad } from "./load";
 import { Link, navigate, useSearch } from "./navigation";
 import { kinds } from "./selection";
@@ -23,15 +22,8 @@ const labels: Record<Kind, string> = {
   tracks: "Tracks",
 };
 
-const singularLabels: Record<Kind, string> = {
-  artists: "Artist",
-  albums: "Album",
-  tracks: "Track",
-};
-
 const OVERVIEW_LIMIT = 8;
 const AUTO_SEARCH_MS = 380;
-const AUTOCOMPLETE_MS = 160;
 
 function SearchResults({
   kind,
@@ -173,11 +165,6 @@ function SearchResults({
   );
 }
 
-type Suggestion = {
-  kind: Kind;
-  item: SearchItem;
-};
-
 export function SearchPage() {
   const search = useSearch();
   const params = new URLSearchParams(search);
@@ -185,13 +172,7 @@ export function SearchPage() {
   const selected = params.get("kind");
   const kind = kinds.includes(selected as Kind) ? (selected as Kind) : null;
   const [draft, setDraft] = useState(query);
-  const [suggestOpen, setSuggestOpen] = useState(false);
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [suggestLoading, setSuggestLoading] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(-1);
-  const formWrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const listboxId = useId();
 
   useEffect(() => setDraft(query), [query]);
 
@@ -205,7 +186,8 @@ export function SearchPage() {
     }
   }
 
-  // Auto-search shortly after typing pauses.
+  // Results update shortly after typing pauses. There is no separate
+  // suggestion menu: the result groups below are the suggestions.
   useEffect(() => {
     const trimmed = draft.trim();
     if (trimmed === query) return;
@@ -215,104 +197,19 @@ export function SearchPage() {
     return () => window.clearTimeout(timer);
   }, [draft, query, kind]);
 
-  // Fetch autocomplete suggestions with cancellation only while actively interacting.
-  useEffect(() => {
-    const trimmed = draft.trim();
-    if (!suggestOpen || !trimmed) {
-      if (!trimmed) setSuggestions([]);
-      setSuggestLoading(false);
-      setActiveIndex(-1);
-      return;
-    }
-    const controller = new AbortController();
-    setSuggestLoading(true);
-    const timer = window.setTimeout(() => {
-      const scope = kind ? [kind] : kinds;
-      void Promise.all(
-        scope.map((type) =>
-          api
-            .search(type, trimmed, controller.signal)
-            .then((items) =>
-              items
-                .slice(0, kind ? 8 : 4)
-                .map((item) => ({ kind: type, item })),
-            )
-            .catch(() => [] as Suggestion[]),
-        ),
-      )
-        .then((groups) => {
-          if (controller.signal.aborted) return;
-          setSuggestions(groups.flat());
-          setActiveIndex(-1);
-          setSuggestLoading(false);
-        })
-        .catch(() => {
-          if (!controller.signal.aborted) setSuggestLoading(false);
-        });
-    }, AUTOCOMPLETE_MS);
-    return () => {
-      window.clearTimeout(timer);
-      controller.abort();
-    };
-  }, [draft, kind, suggestOpen]);
-
-  const showSuggestions =
-    suggestOpen &&
-    draft.trim().length > 0 &&
-    (suggestLoading || suggestions.length > 0);
   const pendingAutoSearch = draft.trim() !== query;
-
-  function openSuggestion(entry: Suggestion) {
-    setSuggestOpen(false);
-    setActiveIndex(-1);
-    navigate(
-      `/music/${entry.kind}/${encodeURIComponent(entry.item.id)}?period=all`,
-    );
-  }
 
   return (
     <div className="library-search">
       <Heading title="Search your library">
         Find an artist, album or track in your archive.
       </Heading>
-      <div
-        ref={formWrapRef}
-        className="library-search-box"
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget)) {
-            setSuggestOpen(false);
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            setSuggestOpen(false);
-            setActiveIndex(-1);
-          } else if (
-            (event.key === "ArrowDown" || event.key === "ArrowUp") &&
-            draft.trim().length > 0
-          ) {
-            event.preventDefault();
-            setSuggestOpen(true);
-            if (suggestions.length > 0) {
-              setActiveIndex((prev) =>
-                event.key === "ArrowDown"
-                  ? (prev + 1) % suggestions.length
-                  : (prev - 1 + suggestions.length) % suggestions.length,
-              );
-            }
-          }
-        }}
-      >
+      <div className="library-search-box">
         <form
           role="search"
           className="library-search-form"
           onSubmit={(event) => {
             event.preventDefault();
-            if (activeIndex >= 0 && suggestions[activeIndex]) {
-              openSuggestion(suggestions[activeIndex]);
-              return;
-            }
-            setSuggestOpen(false);
             change(draft.trim(), kind);
           }}
         >
@@ -330,33 +227,17 @@ export function SearchPage() {
             autoFocus
             placeholder="Artist, album or track name"
             autoComplete="off"
-            aria-autocomplete="list"
-            aria-expanded={showSuggestions}
-            aria-controls={listboxId}
-            aria-activedescendant={
-              activeIndex >= 0 ? `${listboxId}-opt-${activeIndex}` : undefined
-            }
-            onPointerDown={() => {
-              if (draft.trim().length > 0) setSuggestOpen(true);
-            }}
-            onChange={(event) => {
-              const next = event.target.value;
-              setDraft(next);
-              setSuggestOpen(next.trim().length > 0);
-            }}
+            onChange={(event) => setDraft(event.target.value)}
           />
           <div className="library-search-controls">
-            {(suggestLoading || pendingAutoSearch) && <Spinner />}
+            {pendingAutoSearch && <Spinner />}
             {draft.length > 0 && (
               <button
                 type="button"
-                className="btn-icon icon-button search-clear-btn"
+                className="secondary search-clear-btn"
                 aria-label="Clear search"
                 onClick={() => {
                   setDraft("");
-                  setSuggestions([]);
-                  setSuggestOpen(false);
-                  setActiveIndex(-1);
                   change("", kind);
                   inputRef.current?.focus();
                 }}
@@ -364,52 +245,11 @@ export function SearchPage() {
                 <Icon>close</Icon>
               </button>
             )}
-            <button type="submit" className="secondary">
+            <button type="submit" className="secondary search-submit-btn">
               Search
             </button>
           </div>
         </form>
-        {showSuggestions && (
-          <ul
-            id={listboxId}
-            role="listbox"
-            className="search-autocomplete"
-            aria-label="Search suggestions"
-          >
-            {suggestLoading && suggestions.length === 0 ? (
-              <li className="search-autocomplete-loading" role="status">
-                <Spinner />
-                <span>Looking for matches</span>
-                <LoadingDots />
-              </li>
-            ) : (
-              suggestions.map((entry, idx) => (
-                <li key={`${entry.kind}:${entry.item.id}`}>
-                  <button
-                    id={`${listboxId}-opt-${idx}`}
-                    type="button"
-                    role="option"
-                    aria-selected={idx === activeIndex}
-                    className={`search-autocomplete-item ${idx === activeIndex ? "is-active" : ""}`}
-                    onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => openSuggestion(entry)}
-                  >
-                    <Cover url={entry.item.cover_url} />
-                    <span className="search-autocomplete-copy">
-                      <strong>{entry.item.name}</strong>
-                      {entry.item.subtitle && (
-                        <small>{entry.item.subtitle}</small>
-                      )}
-                    </span>
-                    <span className="search-autocomplete-kind">
-                      {singularLabels[entry.kind]}
-                    </span>
-                  </button>
-                </li>
-              ))
-            )}
-          </ul>
-        )}
       </div>
       <SegmentedControl
         className="search-type-filters"

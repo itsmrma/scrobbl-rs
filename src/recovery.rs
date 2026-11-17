@@ -995,6 +995,11 @@ pub async fn activate_pending(directory: &Path) -> anyhow::Result<()> {
     }
     // Databases and all required files are now active. Old data and access storage remain
     // private on the destination, never in the downloadable backup.
+    let stale_projection = crate::ask::projection::path(directory);
+    if stale_projection.exists() {
+        std::fs::remove_file(&stale_projection)?;
+    }
+    crate::ask::projection::cleanup_temp_files(directory);
     std::fs::rename(&marker, stage.join("activated"))?;
     storage::sync_directory(&stage)?;
     storage::sync_directory(directory)?;
