@@ -7,8 +7,8 @@ use std::fmt::Write as _;
 /// `string` mirrors llama.cpp's built-in JSON grammar: it accepts any Unicode
 /// bytes and the standard JSON escape sequences but nothing that could escape
 /// the string slot.
-const COMMON_RULES: &str = r#"ws ::= [ \t\n\r]*
-string ::= "\"" ( [^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) )* "\""
+const COMMON_RULES: &str = r#"ws ::= " "?
+string ::= "\"" ( [^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) )* "\""
 integer ::= "-"? ([0-9] | [1-9] [0-9]*)
 "#;
 
@@ -96,7 +96,7 @@ impl Generator {
         let items = schema
             .get("items")
             .ok_or_else(|| format!("array {name} has no items"))?;
-        let item_name = format!("{name}_item");
+        let item_name = format!("{name}-item");
         let item = self.expr(items, &item_name)?;
         Ok(format!("\"[\" ws ({item} (ws \",\" ws {item})*)? ws \"]\""))
     }
@@ -123,14 +123,20 @@ impl Generator {
             .map(|values| values.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
 
-        let mut parts = Vec::with_capacity(properties.len());
-        for (key, child) in properties {
+        for key in properties.keys() {
             if !required.contains(&key.as_str()) {
                 return Err(format!(
                     "optional property {key:?} is not supported; use an explicit enum value instead"
                 ));
             }
-            let child_name = format!("{name}_{key}");
+        }
+
+        let mut parts = Vec::with_capacity(required.len());
+        for &key in &required {
+            let child = properties.get(key).ok_or_else(|| {
+                format!("required property {key:?} is missing from properties in {name}")
+            })?;
+            let child_name = format!("{name}-{key}");
             let value = self.expr(child, &child_name)?;
             parts.push(format!("{} ws \":\" ws {value}", json_literal(key)));
         }
@@ -141,17 +147,18 @@ impl Generator {
 }
 
 fn sanitize(name: &str) -> String {
+    // llama.cpp GBNF rule names only allow ASCII letters, digits, and `-`.
     let mut out: String = name
         .chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
+            if ch.is_ascii_alphanumeric() || ch == '-' {
                 ch
             } else {
-                '_'
+                '-'
             }
         })
         .collect();
-    if out.is_empty() || out.starts_with(|ch: char| ch.is_ascii_digit()) {
+    if out.is_empty() || out.starts_with(|ch: char| !ch.is_ascii_alphabetic()) {
         out.insert(0, 'r');
     }
     out
@@ -219,8 +226,8 @@ mod tests {
     fn the_string_rule_accepts_any_unicode_byte() {
         let grammar = to_gbnf(&trial_schema()).unwrap();
         assert!(
-            grammar.contains("[^\"\\\\]"),
-            "the string rule must not restrict names to ASCII: {grammar}"
+            grammar.contains("[^\"\\\\\\x7F\\x00-\\x1F]"),
+            "the string rule must disallow raw control chars without restricting names to ASCII: {grammar}"
         );
         assert!(!grammar.contains("[a-zA-Z]"), "{grammar}");
     }
@@ -253,7 +260,7 @@ mod tests {
             grammar.contains("\"\\\"columns\\\"\" ws \":\" ws \"[\""),
             "{grammar}"
         );
-        assert!(grammar.contains("root_columns_item ::= "), "{grammar}");
+        assert!(grammar.contains("root-columns-item ::= "), "{grammar}");
         assert!(
             grammar.contains(&gbnf_json_string("unsupported")),
             "{grammar}"
@@ -261,6 +268,38 @@ mod tests {
         assert!(
             grammar.contains(&gbnf_json_string("duration_ms")),
             "{grammar}"
+        );
+    }
+
+    #[test]
+    fn sql_schema_gbnf_preserves_required_field_order() {
+        let grammar = from_sql_schema().unwrap();
+        let root_line = grammar
+            .lines()
+            .find(|line| line.starts_with("root ::= "))
+            .expect("missing root rule");
+        let title_pos = root_line.find(&gbnf_json_string("title")).unwrap();
+        let computed_pos = root_line.find(&gbnf_json_string("computed")).unwrap();
+        let kind_pos = root_line.find(&gbnf_json_string("answer_kind")).unwrap();
+        let sql_pos = root_line.find(&gbnf_json_string("sql")).unwrap();
+        let cols_pos = root_line.find(&gbnf_json_string("columns")).unwrap();
+        assert!(
+            title_pos < computed_pos
+                && computed_pos < kind_pos
+                && kind_pos < sql_pos
+                && sql_pos < cols_pos,
+            "unexpected field order in root rule: {root_line}"
+        );
+
+        let item_line = grammar
+            .lines()
+            .find(|line| line.starts_with("root-columns-item ::= "))
+            .expect("missing root-columns-item rule");
+        let name_pos = item_line.find(&gbnf_json_string("name")).unwrap();
+        let format_pos = item_line.find(&gbnf_json_string("format")).unwrap();
+        assert!(
+            name_pos < format_pos,
+            "unexpected field order in column item rule: {item_line}"
         );
     }
 }

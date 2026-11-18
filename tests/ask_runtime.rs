@@ -36,8 +36,8 @@ fn sql_grammar_contains_expected_root_and_unicode_string_rule() {
     }
     assert!(grammar.contains("string ::= "), "{grammar}");
     assert!(
-        grammar.contains("[^\"\\\\]"),
-        "the string rule must accept Unicode strings: {grammar}"
+        grammar.contains("[^\"\\\\\\x7F\\x00-\\x1F]"),
+        "the string rule must disallow raw control chars while accepting Unicode strings: {grammar}"
     );
 }
 
@@ -331,7 +331,7 @@ async fn app_state_installs_the_local_runtime_without_loading_a_model() {
 #[ignore = "loads a real GGUF model; set SCROBBL_TEST_MODEL"]
 async fn real_model_answers_three_supported_questions() {
     let model = std::env::var("SCROBBL_TEST_MODEL")
-        .expect("set SCROBBL_TEST_MODEL to a Qwen3 GGUF file (see docs/ai.md)");
+        .expect("set SCROBBL_TEST_MODEL to a Qwen3.5 GGUF file (see docs/ai.md)");
     let model = std::path::PathBuf::from(model);
     assert!(
         model.is_file(),
@@ -341,7 +341,7 @@ async fn real_model_answers_three_supported_questions() {
     let dir = tempfile::tempdir().unwrap();
     let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
     let data_dir = dir.path().to_path_buf();
-    let id = "qwen3-0.6b-q4_k_m";
+    let id = "qwen3.5-0.8b-q4_k_m";
     let catalog = scrobbl_rs::ai::catalog::find(id).unwrap();
     let model_dir = data_dir.join("models").join(id);
     std::fs::create_dir_all(&model_dir).unwrap();
@@ -468,7 +468,7 @@ impl runtime::Engine for RecordingEngine {
 async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_output() {
     let dir = tempfile::tempdir().unwrap();
     let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
-    let id = "qwen3-1.7b-q4_k_m";
+    let id = "qwen3.5-2b-q4_k_m";
     let catalog = scrobbl_rs::ai::catalog::find(id).unwrap();
     let model_dir = dir.path().join("models").join(id);
     std::fs::create_dir_all(&model_dir).unwrap();
@@ -564,4 +564,23 @@ async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_ou
     let err = bad_parser.parse("How many plays?").await.unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("SQL interpretation"), "{msg}");
+}
+
+#[test]
+fn interpret_local_sql_strips_think_blocks_and_markdown_fences() {
+    let raw_plain = r#"{"sql":"SELECT COUNT(*) AS plays FROM listens WHERE counted = 1","title":"Plays","computed":"Total counted plays.","answer_kind":"value","columns":[{"name":"plays","format":"count"}]}"#;
+    let raw_think = format!("<think>\nreasoning step\n</think>\n\n{raw_plain}");
+    let raw_fenced = format!("<think>ok</think>\n```json\n{raw_plain}\n```");
+
+    for raw in [raw_plain, raw_think.as_str(), raw_fenced.as_str()] {
+        let parsed = scrobbl_rs::ask::parser::interpret_local_sql(raw).unwrap();
+        let ParsedQuestion::Sql(out) = parsed else {
+            panic!("expected SQL output for {raw}");
+        };
+        assert_eq!(
+            out.sql,
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1"
+        );
+        assert_eq!(out.answer_kind, SqlAnswerKind::Value);
+    }
 }

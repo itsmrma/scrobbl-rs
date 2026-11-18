@@ -36,6 +36,7 @@ use tokio::sync::{Notify, Semaphore};
 use ts_rs::TS;
 
 const MAX_IN_FLIGHT_ASKS: usize = 16;
+pub const MAX_QUESTION_CHARS: usize = 2000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -321,6 +322,20 @@ fn sql_limits_from_env() -> SandboxLimits {
     {
         limits.timeout = std::time::Duration::from_millis(ms);
     }
+    if let Some(instructions) = std::env::var("SCROBBL_ASK_SQL_MAX_INSTRUCTIONS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+    {
+        limits.max_instructions = instructions;
+    }
+    if let Some(rows) = std::env::var("SCROBBL_ASK_SQL_MAX_ROWS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+    {
+        limits.max_rows = rows.clamp(1, 10_000);
+    }
     limits
 }
 
@@ -499,6 +514,11 @@ pub async fn ask(
 ) -> Result<Json<AskResponse>> {
     auth::session(&state, &headers).await?;
     let question = request.question.trim().to_owned();
+    if question.chars().count() > MAX_QUESTION_CHARS {
+        return Err(AppError::BadRequest(
+            "Question is too long (maximum 2,000 characters).".into(),
+        ));
+    }
     if let Err(mut refusal) = gate(&state).await? {
         refusal.question = question;
         return Ok(Json(refusal));

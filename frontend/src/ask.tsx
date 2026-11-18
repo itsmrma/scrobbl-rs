@@ -222,8 +222,8 @@ export function AskPage({
 
       {status?.enabled && status.runtime_available && !status.model_ready && (
         <Notice title="No model is ready" tone="warning">
-          Download a local Qwen3 model or set a custom local GGUF model path in
-          AI settings before asking questions.
+          Download a local Qwen3.5 model or set a custom local GGUF model path
+          in AI settings before asking questions.
           <div className="ask-notice-action">
             <Link to="/settings/ai" className="btn btn-secondary secondary">
               <Icon>settings</Icon>

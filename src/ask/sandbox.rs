@@ -276,6 +276,7 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "coalesce",
     "concat",
     "concat_ws",
+    "fold",
     "format",
     "glob",
     "hex",
@@ -284,6 +285,8 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "instr",
     "length",
     "like",
+    "likelihood",
+    "likely",
     "lower",
     "ltrim",
     "nullif",
@@ -298,6 +301,9 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "trim",
     "typeof",
     "unicode",
+    "unistr",
+    "unistr_quote",
+    "unlikely",
     "upper",
     // Math
     "acos",
@@ -342,6 +348,7 @@ const ALLOWED_FUNCTIONS: &[&str] = &[
     "json_array_length",
     "json_each",
     "json_extract",
+    "json_quote",
     "json_tree",
     "json_type",
     "json_valid",
@@ -781,6 +788,7 @@ fn configure_connection(conn: &Connection, limits: SandboxLimits) -> rusqlite::R
     conn.set_limit(Limit::SQLITE_LIMIT_LENGTH, 1_048_576)?;
     conn.set_limit(Limit::SQLITE_LIMIT_WORKER_THREADS, 0)?;
     conn.set_limit(Limit::SQLITE_LIMIT_VDBE_OP, 25_000)?;
+    projection::register_text_functions(conn)?;
     Ok(())
 }
 
@@ -1061,6 +1069,30 @@ fn sanitize_prepare_error(
             "A LIKE or GLOB pattern exceeds the sandbox limit (rule `sql_error`).",
             "sql_error (pattern_limit)",
             "pattern_limit",
+        );
+    }
+    if text.contains("sub-select returns") || text.contains("row value misused") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "A scalar subquery returned an unexpected number of columns (rule `sql_error`).",
+            "sql_error (subquery_column_count): scalar subquery must return a single column",
+            "subquery_column_count",
+        );
+    }
+    if text.contains("circularly defined") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "A CTE in the SQL query is circularly defined (rule `sql_error`).",
+            "sql_error (circular_cte): CTE is circularly defined",
+            "circular_cte",
+        );
+    }
+    if text.contains("recursive aggregate") {
+        return SandboxRejection::new(
+            SandboxRule::SqlError,
+            "Aggregate functions are not allowed inside recursive CTE terms (rule `sql_error`).",
+            "sql_error (recursive_aggregate): aggregate functions are not allowed in recursive CTE terms",
+            "recursive_aggregate",
         );
     }
     let class = format!("prepare_error:{:?}", err.code);
@@ -2030,5 +2062,33 @@ mod tests {
             err.model_error.contains("sqlite_version"),
             "expected disallowed function in model_error: {err:?}"
         );
+    }
+
+    #[test]
+    fn unicode_case_and_accent_folding_work_in_sandbox() {
+        let proj = fixture_projection();
+        let out = execute(
+            proj.path(),
+            "SELECT name FROM artists WHERE LOWER(name) = LOWER('BJÖRK')",
+            SandboxLimits::default(),
+        )
+        .expect("Unicode LOWER must match Björk");
+        assert_eq!(out.rows, vec![vec![SqlValue::Text("Björk".into())]]);
+
+        let out_upper = execute(
+            proj.path(),
+            "SELECT UPPER(name) FROM artists WHERE id = 'a1'",
+            SandboxLimits::default(),
+        )
+        .expect("Unicode UPPER must convert Björk");
+        assert_eq!(out_upper.rows, vec![vec![SqlValue::Text("BJÖRK".into())]]);
+
+        let out_fold = execute(
+            proj.path(),
+            "SELECT name FROM artists WHERE fold(name) = fold('bjork')",
+            SandboxLimits::default(),
+        )
+        .expect("fold() must match Björk and bjork");
+        assert_eq!(out_fold.rows, vec![vec![SqlValue::Text("Björk".into())]]);
     }
 }

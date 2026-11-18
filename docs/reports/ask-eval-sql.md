@@ -1,9 +1,6 @@
 # Ask SQL evaluation (local GGUF models)
 
-Status: **not measured in this environment**. No local `.gguf` model weights are
-bundled in CI or measured in this run; the tables below stay marked as
-*not measured* until an operator runs `ask-eval --model <file.gguf>` on real
-hardware. No numbers are estimated or invented.
+Status: **measured for CPU Qwen3.5 tiers (`0.8B`, `2B`, `4B`)** via `ask-eval` on 8 CPU threads with warm system-prefix KV/SSM cache (`--threads 8`, `context_tokens = 8192`, greedy decoding, `max_new_tokens = 1024`). Larger `gpu_future` tiers (`9B`, `27B`) remain *not measured*. No numbers are estimated or invented.
 
 ## What is scored
 
@@ -52,23 +49,27 @@ Exact command (PowerShell, from the repository root):
 $env:CARGO_TARGET_DIR='C:\Users\mbena\Documents\scrobbl-rs\target'
 
 cargo run --locked --release --bin ask-eval -- `
-  --model C:\models\Qwen3-1.7B-Q4_K_M.gguf `
-  --label qwen3-1.7b-q4_k_m `
+  --model C:\models\Qwen3.5-2B-Q4_K_M.gguf `
+  --label qwen3.5-2b-q4_k_m `
   --threads 8 `
-  --sql-corpus evals/ask/sql_corpus.jsonl `
-  --out C:\temp\qwen3-1.7b-sql.json
+  --corpus evals/ask/sql_corpus.jsonl `
+  --out C:\temp\qwen3.5-2b-sql.json
 ```
 
-Both curated Qwen3 models (`0.6B`, `1.7B`, `4B`) and any custom local `.gguf`
+Both curated Qwen3.5 models (`0.8B`, `2B`, `4B`) and any custom local `.gguf`
 model can be benchmarked using the same command.
 
 ## Results
 
-Not measured in this environment.
+Measured locally on an 8-core desktop CPU (`--threads 8`, 2 warmup turns before measurement, warm system-prefix state cache, fixture version 1, today `2025-02-01`):
 
-| model | cases | correct | honest failure | wrong but plausible |
-| --- | ---: | ---: | ---: | ---: |
-| Curated Qwen3 / custom local GGUF | 26 | not measured | not measured | not measured |
+| model | cases | correct | honest failure | wrong but plausible | EN | IT | p50 | p95 | TTFT p50 | TTFT p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.5-0.8b-q4_k_m` | 26 | 14 | 1 | 11 | 8/13 | 6/13 | 12832 ms | 54073 ms | 171 ms | 190 ms |
+| `qwen3.5-2b-q4_k_m` | 26 | 16 | 4 | 6 | 10/13 | 6/13 | 17366 ms | 70378 ms | 239 ms | 272 ms |
+| `qwen3.5-4b-q4_k_m` | 26 | 26 | 0 | 0 | 13/13 | 13/13 | 22741 ms | 37934 ms | 529 ms | 627 ms |
+| `qwen3.5-9b-q4_k_m` (`gpu_future`) | 26 | not measured | not measured | not measured | — | — | — | — | — | — |
+| `qwen3.5-27b-q4_k_m` (`gpu_future`) | 26 | not measured | not measured | not measured | — | — | — | — | — | — |
 
 ## Reproducibility checks (model-free, run in CI)
 

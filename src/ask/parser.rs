@@ -264,7 +264,7 @@ pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
     }
 }
 
-const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const DEFAULT_TIMEOUT_MS: u64 = 90_000;
 
 pub fn inference_timeout() -> Duration {
     std::env::var("SCROBBL_ASK_TIMEOUT_MS")
@@ -413,10 +413,34 @@ async fn active_calendar_today(db: &sqlx::SqlitePool) -> String {
     now.format("%Y-%m-%d").to_string()
 }
 
+fn extract_json_payload(raw: &str) -> &str {
+    let mut text = raw.trim();
+    if let Some(after_think_open) = text.strip_prefix("<think>")
+        && let Some((_, after)) = after_think_open.split_once("</think>")
+    {
+        text = after.trim();
+    } else if let Some((before, after)) = text.split_once("</think>")
+        && !before.trim_start().starts_with('{')
+    {
+        text = after.trim();
+    }
+    if let Some(rest) = text.strip_prefix("```") {
+        let inner = match rest.split_once('\n') {
+            Some((_, after_lang)) => after_lang,
+            None => rest,
+        };
+        if let Some((body, _)) = inner.rsplit_once("```") {
+            text = body.trim();
+        }
+    }
+    text
+}
+
 pub fn interpret_local_sql(raw: &str) -> Result<ParsedQuestion> {
-    let output: SqlModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
+    let payload = extract_json_payload(raw);
+    let output: SqlModelOutput = serde_json::from_str(payload).map_err(|_| {
         AppError::BadRequest(
-            "The local model returned a SQL interpretation that does not match the expected format. Try rephrasing the question, choosing a larger Qwen3 model, or configuring a custom local GGUF model."
+            "The local model returned a SQL interpretation that does not match the expected format. Try rephrasing the question, choosing a larger Qwen3.5 model, or configuring a custom local GGUF model."
                 .into(),
         )
     })?;

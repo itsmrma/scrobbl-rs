@@ -493,31 +493,75 @@ mod llama {
     use crate::ask::grammar;
     use llama_cpp_2::{
         LogOptions,
-        context::params::LlamaContextParams,
+        context::{
+            LlamaContext,
+            params::LlamaContextParams,
+            session::{LlamaStateSeqFlags, SeqState},
+        },
         llama_backend::LlamaBackend,
         llama_batch::LlamaBatch,
         model::{LlamaModel, params::LlamaModelParams},
         sampling::LlamaSampler,
         send_logs_to_tracing,
+        token::LlamaToken,
     };
     use std::{
         num::NonZeroU32,
         sync::{LazyLock, Once},
     };
 
-    pub const SQL_CONTEXT_TOKENS: u32 = 4096;
-    pub const MAX_SQL_NEW_TOKENS: i32 = 512;
-    const MAX_OUTPUT_BYTES: usize = 16 * 1024;
+    pub const SQL_CONTEXT_TOKENS: u32 = 8192;
+    pub const MAX_SQL_NEW_TOKENS: i32 = 1024;
+    const MAX_OUTPUT_BYTES: usize = 32 * 1024;
+    const PREFILL_BATCH_TOKENS: usize = 512;
 
     static SQL_GRAMMAR: LazyLock<Result<String, String>> = LazyLock::new(grammar::from_sql_schema);
     static LOGS: Once = Once::new();
 
-    /// CPU-only llama.cpp engine. The backend and model stay loaded between
-    /// questions; a context is created per request and dropped on every exit
-    /// path, so a timeout cannot leave a partially decoded sequence behind.
+    struct PrefixCache {
+        prefix_str: String,
+        prefix_tokens: Vec<LlamaToken>,
+        state: SeqState,
+    }
+
+    fn decode_token_slice(
+        context: &mut LlamaContext<'_>,
+        batch: &mut LlamaBatch<'_>,
+        tokens: &[LlamaToken],
+        start_pos: usize,
+        mark_last_logits: bool,
+        cancel: &CancelToken,
+    ) -> Result<(), InferenceError> {
+        let last_offset = tokens.len().saturating_sub(1);
+        for chunk_start in (0..tokens.len()).step_by(PREFILL_BATCH_TOKENS) {
+            if cancel.should_stop() {
+                return Err(cancel.error());
+            }
+            batch.clear();
+            let chunk_end = (chunk_start + PREFILL_BATCH_TOKENS).min(tokens.len());
+            for (offset, token) in tokens[chunk_start..chunk_end].iter().enumerate() {
+                let rel_index = chunk_start + offset;
+                let pos = (start_pos + rel_index) as i32;
+                let logits = mark_last_logits && rel_index == last_offset;
+                batch.add(*token, pos, &[0], logits).map_err(|error| {
+                    InferenceError::Failed(format!("Prompt batch error: {error}"))
+                })?;
+            }
+            context.decode(batch).map_err(|error| {
+                InferenceError::Failed(format!("Prompt decode failed: {error}"))
+            })?;
+        }
+        Ok(())
+    }
+
+    /// CPU-only llama.cpp engine. The backend, model, and evaluated system
+    /// prompt prefix state stay cached between questions; a fresh context is
+    /// created per request and dropped on every exit path, so a timeout cannot
+    /// leave a partially decoded sequence behind.
     pub struct LlamaEngine {
         backend: Option<LlamaBackend>,
         model: Option<LlamaModel>,
+        prefix_cache: Option<PrefixCache>,
         threads: u32,
         debug: bool,
     }
@@ -528,6 +572,7 @@ mod llama {
             Self {
                 backend: None,
                 model: None,
+                prefix_cache: None,
                 threads: 4,
                 debug,
             }
@@ -557,6 +602,8 @@ mod llama {
                 .with_n_ctx(Some(
                     NonZeroU32::new(SQL_CONTEXT_TOKENS).unwrap_or(NonZeroU32::MIN),
                 ))
+                .with_n_batch(SQL_CONTEXT_TOKENS)
+                .with_n_ubatch(PREFILL_BATCH_TOKENS as u32)
                 .with_n_threads(i32::try_from(self.threads).unwrap_or(4))
                 .with_n_threads_batch(i32::try_from(self.threads).unwrap_or(4));
             if self.debug {
@@ -581,21 +628,64 @@ mod llama {
                 )));
             }
 
-            let mut batch = LlamaBatch::new(tokens.len().max(1), 1);
-            let last_index = tokens.len() - 1;
-            for (index, token) in tokens.iter().enumerate() {
-                batch
-                    .add(*token, index as i32, &[0], index == last_index)
-                    .map_err(|error| {
-                        InferenceError::Failed(format!("Prompt batch error: {error}"))
-                    })?;
+            let mut batch = LlamaBatch::new(PREFILL_BATCH_TOKENS.max(1), 1);
+            let system_prefix = prompt
+                .starts_with("<|im_start|>system\n")
+                .then(|| {
+                    prompt
+                        .find("<|im_end|>\n")
+                        .map(|end| &prompt[..end + "<|im_end|>\n".len()])
+                })
+                .flatten();
+
+            let mut decode_start = 0_usize;
+            if let Some(prefix_str) = system_prefix {
+                if let Some(cached) = self.prefix_cache.as_ref().filter(|c| {
+                    c.prefix_str == prefix_str
+                        && tokens.len() > c.prefix_tokens.len()
+                        && tokens.starts_with(&c.prefix_tokens)
+                }) {
+                    if context.state_seq_set(&cached.state, 0).is_ok() {
+                        decode_start = cached.prefix_tokens.len();
+                    } else {
+                        context.clear_kv_cache();
+                        self.prefix_cache = None;
+                    }
+                }
+                if decode_start == 0 {
+                    let prefix_tokens = vocab.tokenize(prefix_str.as_bytes(), true, true);
+                    if !prefix_tokens.is_empty()
+                        && prefix_tokens.len() < tokens.len()
+                        && tokens.starts_with(&prefix_tokens)
+                    {
+                        decode_token_slice(
+                            &mut context,
+                            &mut batch,
+                            &prefix_tokens,
+                            0,
+                            false,
+                            cancel,
+                        )?;
+                        if let Ok(state) = context.state_seq_get(0, LlamaStateSeqFlags::empty()) {
+                            self.prefix_cache = Some(PrefixCache {
+                                prefix_str: prefix_str.to_string(),
+                                prefix_tokens: prefix_tokens.clone(),
+                                state,
+                            });
+                        }
+                        decode_start = prefix_tokens.len();
+                    }
+                }
             }
-            if cancel.should_stop() {
-                return Err(cancel.error());
-            }
-            context.decode(&mut batch).map_err(|error| {
-                InferenceError::Failed(format!("Prompt decode failed: {error}"))
-            })?;
+
+            decode_token_slice(
+                &mut context,
+                &mut batch,
+                &tokens[decode_start..],
+                decode_start,
+                true,
+                cancel,
+            )?;
 
             let mut sampler = LlamaSampler::chain_simple([
                 LlamaSampler::grammar(model, grammar, "root").map_err(|error| {
@@ -700,8 +790,13 @@ mod llama {
         }
 
         fn unload(&mut self) {
+            self.prefix_cache = None;
             self.model = None;
             self.backend = None;
+        }
+
+        fn reset(&mut self) {
+            self.prefix_cache = None;
         }
 
         fn generate(

@@ -49,7 +49,7 @@ pub fn sql_schema() -> Value {
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["sql", "title", "computed", "answer_kind", "columns"],
+        "required": ["title", "computed", "answer_kind", "sql", "columns"],
         "properties": {
             "sql": { "type": "string" },
             "title": { "type": "string" },
@@ -87,7 +87,7 @@ mod tests {
         assert_eq!(schema["additionalProperties"], json!(false));
         assert_eq!(
             schema["required"],
-            json!(["sql", "title", "computed", "answer_kind", "columns"])
+            json!(["title", "computed", "answer_kind", "sql", "columns"])
         );
         let sample = json!({
             "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",

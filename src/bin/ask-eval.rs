@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::disallowed_methods)]
-//! Offline eval harness for local Ask SQL models (Qwen3 or custom GGUF).
+//! Offline eval harness for local Ask SQL models (Qwen3.5 or custom GGUF).
 //!
 //! Reads `evals/ask/sql_corpus.jsonl`, builds the fixed synthetic fixture from
 //! `ask::fixture`, runs one local GGUF file via `ask::runtime::Session` with
@@ -10,10 +10,10 @@
 //!
 //! ```text
 //! cargo run --locked --release --bin ask-eval -- \
-//!   --model C:\models\Qwen3-1.7B-Q4_K_M.gguf \
-//!   --label qwen3-1.7b-q4_k_m \
+//!   --model C:\models\Qwen3.5-2B-Q4_K_M.gguf \
+//!   --label qwen3.5-2b-q4_k_m \
 //!   --threads 8 \
-//!   --out C:\temp\qwen3-1.7b-sql.json
+//!   --out C:\temp\qwen3.5-2b-sql.json
 //! ```
 use scrobbl_rs::{
     ai::models,
@@ -408,6 +408,9 @@ fn observe_sql_case(session: &mut Session, case: &SqlCase, projection: &Path) ->
             };
         }
     };
+    if std::env::var_os("SCROBBL_ASK_DEBUG").is_some() {
+        eprintln!("ask-eval [{}]: {}", case.id, generation.text);
+    }
     let mut total_ms = generation.total_ms;
     let first_ttft = generation.ttft_ms;
     let fail = |detail: String, latency_ms: f64| SqlObservation {

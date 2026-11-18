@@ -9,7 +9,7 @@ Nessuna modifica può aggirare questi confini (nessun `#[allow(...)]` ingiustifi
 ## 1. Superficie di attacco e invarianti di sicurezza
 
 ### 1.1 Ask: solo modelli SQL locali e Sandbox SQLite
-- **Solo modelli locali `.gguf`**: Ask non supporta più server AI remoti (BYO AI), server MCP né domande guidate DSL. Opera esclusivamente traducendo domande in linguaggio naturale in query SQL `SELECT`/`WITH` di sola lettura tramite modelli locali (Qwen3 dal catalogo curato o un file `.gguf` locale indicato tramite `ai_custom_model_path` / `ai_model_dir`).
+- **Solo modelli locali `.gguf`**: Ask non supporta più server AI remoti (BYO AI), server MCP né domande guidate DSL. Opera esclusivamente traducendo domande in linguaggio naturale in query SQL `SELECT`/`WITH` di sola lettura tramite modelli locali (Qwen3.5 dal catalogo curato o un file `.gguf` locale indicato tramite `ai_custom_model_path` / `ai_model_dir`).
 - **Separazione fisica dei database**: I modelli AI non interrogano **mai** `data/archive.db` né `data/private/auth.db`. Ogni query generata dal modello o modificata dall'utente passa **esclusivamente** da `src/ask/sandbox.rs::execute` su `ask_projection.db`, aperto in sola lettura (`SQLITE_OPEN_READ_ONLY`, `query_only = ON`, `trusted_schema = OFF`, `DEFENSIVE`, estensioni disabilitate).
 - **Difesa in profondità nella sandbox (`src/ask/sandbox.rs`)**:
   - Controllo statico pre-prepare UTF-8 safe (`char_indices()`, mai byte slicing diretto `&sql[i..j]`), limite 8 KB, rifiuto NUL byte, rifiuto parametri (`?`, `:x`, `@x`, `$x`), singolo statement `SELECT`/`WITH`, tracking delle CTE dichiarate (`WithFrame` con `AS (` esplicito).
@@ -18,7 +18,7 @@ Nessuna modifica può aggirare questi confini (nessun `#[allow(...)]` ingiustifi
   - Sanitizzazione errori: nei round di riparazione e nei log non vanno **mai** esportati valori letti dal DB, solo classe di errore e identificatori SQL presenti nella query stessa.
 
 ### 1.2 Modelli GGUF locali (`src/ai/models.rs`, `src/ai/mod.rs`)
-- I modelli del catalogo Qwen3 vengono scaricati solo da revisioni Hugging Face pinnate a compile-time con verifica esatta di dimensione e SHA-256.
+- I modelli del catalogo Qwen3.5 vengono scaricati solo da revisioni Hugging Face pinnate a compile-time con verifica esatta di dimensione e SHA-256.
 - I file modello importati dall'utente (via `custom_model_path` / `ai_custom_model_path` o sottocartella dedicata dentro `ai_model_dir`) sono trattati come **input non fidato**:
   - `validate_gguf_file` verifica che il percorso esista, **non** sia un symlink (`symlink_metadata`), sia un file regolare con estensione `.gguf`, dimensione minima di 64 byte e intestazione binaria esatta `b"GGUF"`.
   - `models::scan` ignora directory arbitrarie dell'host che non contengano né `metadata.json` né un singolo `.gguf` valido.

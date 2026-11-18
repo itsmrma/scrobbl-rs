@@ -468,7 +468,7 @@ export function AiSettingsSection() {
           projection, and every number is computed locally inside a sandbox.
         </p>
         <p className="field-hint">
-          AI is off by default. You can download a curated Qwen3 model, drop a
+          AI is off by default. You can download a curated Qwen3.5 model, drop a
           custom GGUF folder inside the model folder, or point to any local GGUF
           file on the server. The model only loads when AI is turned on.
         </p>
@@ -546,7 +546,7 @@ export function AiSettingsSection() {
             <input
               value={customModelPath}
               onChange={(event) => setCustomModelPath(event.target.value)}
-              placeholder="e.g. /models/my-qwen3.gguf or my-model/model.gguf"
+              placeholder="e.g. /models/my-qwen3.5.gguf or my-model/model.gguf"
               autoComplete="off"
               spellCheck={false}
             />
@@ -594,7 +594,7 @@ export function AiSettingsSection() {
           </span>
         </div>
         <p className="field-hint">
-          Default local SQL models (Qwen3) can be downloaded from this curated
+          Default local SQL models (Qwen3.5) can be downloaded from this curated
           catalog with pinned revisions and SHA-256 verification. You can also
           import any local <code>.gguf</code> model via a subfolder in{" "}
           <code>{catalog.model_dir}</code> or by setting the custom path above.

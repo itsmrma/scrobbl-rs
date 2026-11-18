@@ -2,7 +2,7 @@
 
 AI is optional and **off by default**. Ask operates exclusively with **local GGUF models** running inside scrobbl.rs that translate natural-language questions into read-only SQL queries over the [Ask projection](ask-projection.md). Remote AI servers ("bring your own AI"), external MCP integrations, Guided DSL execution, and UI-control actions are not supported.
 
-You can use curated **Qwen3** models from the built-in catalog by default, or import your own local `.gguf` model on the server.
+You can use curated **Qwen3.5** models from the built-in catalog by default, or import your own local `.gguf` model on the server.
 
 ## Activation and privacy
 
@@ -32,25 +32,25 @@ Enabling AI does not download anything. Saving a custom path or switching the ac
 
 `GET /api/v1/ask/status` reports `enabled`, `active_model`, `custom_model_path`, `runtime_available`, `model_ready` and `model_loading`. `model_ready` reflects verified filesystem readiness for the selected model; `model_loading` comes from the live inference worker and is true only while a load is in progress.
 
-## Curated catalog (Qwen3 defaults)
+## Curated catalog (Qwen3.5 defaults)
 
 The curated catalog is compiled into the binary (`src/ai/catalog.rs`). A download URL is derived from the pinned repository, revision and file; clients never supply a URL for catalog downloads. Weights are verified by exact byte size and SHA-256 against the Hugging Face LFS object ids.
 
 | id | repo | revision | file | bytes | SHA-256 |
 | --- | --- | --- | --- | ---: | --- |
-| `qwen3-0.6b-q4_k_m` | `unsloth/Qwen3-0.6B-GGUF` | `50968a4468ef4233ed78cd7c3de230dd1d61a56b` | `Qwen3-0.6B-Q4_K_M.gguf` | 396,705,472 | `ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a` |
-| `qwen3-1.7b-q4_k_m` | `ggml-org/Qwen3-1.7B-GGUF` | `daeb8e2d528a760970442092f6bf1e55c3b659eb` | `Qwen3-1.7B-Q4_K_M.gguf` | 1,282,439,264 | `d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5` |
-| `qwen3-4b-q4_k_m` | `Qwen/Qwen3-4B-GGUF` | `bc640142c66e1fdd12af0bd68f40445458f3869b` | `Qwen3-4B-Q4_K_M.gguf` | 2,497,280,256 | `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5` |
-| `qwen3-8b-q4_k_m` | `Qwen/Qwen3-8B-GGUF` | `7c41481f57cb95916b40956ab2f0b139b296d974` | `Qwen3-8B-Q4_K_M.gguf` | 5,027,783,488 | `d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785` |
-| `qwen3-32b-q4_k_m` | `Qwen/Qwen3-32B-GGUF` | `938a7432affaec9157f883a87164e2646ae17555` | `Qwen3-32B-Q4_K_M.gguf` | 19,762,149,024 | `efd971561896866f0e910cce52761ca77b1b138090c7f15fe284676d57d1f689` |
+| `qwen3.5-0.8b-q4_k_m` | `unsloth/Qwen3.5-0.8B-GGUF` | `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` | `Qwen3.5-0.8B-Q4_K_M.gguf` | 532,517,120 | `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517` |
+| `qwen3.5-2b-q4_k_m` | `unsloth/Qwen3.5-2B-GGUF` | `f6d5376be1edb4d416d56da11e5397a961aca8ae` | `Qwen3.5-2B-Q4_K_M.gguf` | 1,280,835,840 | `aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223` |
+| `qwen3.5-4b-q4_k_m` | `unsloth/Qwen3.5-4B-GGUF` | `e87f176479d0855a907a41277aca2f8ee7a09523` | `Qwen3.5-4B-Q4_K_M.gguf` | 2,740,937,888 | `00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4` |
+| `qwen3.5-9b-q4_k_m` | `unsloth/Qwen3.5-9B-GGUF` | `3885219b6810b007914f3a7950a8d1b469d598a5` | `Qwen3.5-9B-Q4_K_M.gguf` | 5,680,522,464 | `03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8` |
+| `qwen3.5-27b-q4_k_m` | `unsloth/Qwen3.5-27B-GGUF` | `3221f178a6b842d04f1fb42f1c413534adcc0a6a` | `Qwen3.5-27B-Q4_K_M.gguf` | 16,740,812,704 | `84b5f7f112156d63836a01a69dc3f11a6ba63b10a23b8ca7a7efaf52d5a2d806` |
 
-`8B` and `32B` entries are present with `status: "gpu_future"` and `selectable: false`; they are listed for planning only and cannot be downloaded or selected in this CPU-only release.
+`9B` and `27B` entries are present with `status: "gpu_future"` and `selectable: false`; they are listed for planning only and cannot be downloaded or selected in this CPU-only release.
 
-All selectable models run SQL generation with a **4096-token** context window and up to **512** generated tokens (`src/ask/runtime.rs`).
+All selectable models run SQL generation with an **8192-token** context window and up to **1024** generated tokens (`src/ask/runtime.rs`).
 
 ## Using custom local `.gguf` models
 
-You can run any GGUF model compatible with `llama.cpp` instead of the default Qwen3 catalog models:
+You can run any GGUF model compatible with `llama.cpp` instead of the default Qwen3.5 catalog models:
 
 1. **Direct file path (`ai_custom_model_path`)**: In **Settings → AI → Custom local model path (.gguf)**, enter either an absolute path on the server (e.g. `/models/qwen2.5-coder-7b-q4_k_m.gguf`) or a path relative to `ai_model_dir` (e.g. `custom-qwen/model.gguf`).
 2. **Managed subfolder in `ai_model_dir`**: Place a subfolder inside `<data_dir>/models/<your-model-id>/` containing a single `.gguf` file. `models::scan` detects valid single-GGUF directories automatically as selectable custom entries.
@@ -91,7 +91,7 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 `AppState::new` installs `ModelParser` when `llama` is enabled (`StubParser` in unit/integration tests when constructed with a stub). On each question:
 
 1. `ModelParser` resolves the local `.gguf` path (`ai_custom_model_path` first if set, otherwise verified installed `ai_active_model`).
-2. `src/ask/prompt.rs::local_sql_system_prompt` and `build_sql_prompt_with_previous` build the SQL prompt (up to 4096 context tokens, Qwen3 `<think>` block suppressed cleanly).
+2. `src/ask/prompt.rs::local_sql_system_prompt` and `build_sql_prompt_with_previous` build the SQL prompt (up to 8192 context tokens, Qwen3.5 `<think>` block suppressed cleanly).
 3. `src/ask/grammar.rs::from_sql_schema` constrains the model's JSON output to `src/ask/schema.rs::SqlModelOutput` (`title`, `computed`, `answer_kind`, `sql`, `columns`).
 4. `src/ask/sandbox.rs::execute` runs the SQL against `ask_projection.db` inside a dedicated `tokio::task::spawn_blocking` worker. On repairable errors (`sql_error`, `unauthorized_table`, `unauthorized_column`, etc.), up to `MAX_SQL_REPAIR_ROUNDS` sanitized repair attempts run automatically without ever leaking DB row values into prompts.
 5. `src/ask/history_link.rs` enriches returned artist/album/track cells and summary links using `crate::ask::projection::open_read_only`.
@@ -99,7 +99,7 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 For live local GGUF integration testing (ignored in CI):
 
 ```powershell
-$env:SCROBBL_TEST_MODEL='C:\models\Qwen3-1.7B-Q4_K_M.gguf'
+$env:SCROBBL_TEST_MODEL='C:\models\Qwen3.5-2B-Q4_K_M.gguf'
 cargo test --locked --test ask_runtime -- --ignored --nocapture
 Remove-Item Env:SCROBBL_TEST_MODEL
 ```
@@ -108,7 +108,7 @@ Remove-Item Env:SCROBBL_TEST_MODEL
 
 - `GET /api/v1/ai/settings` — owner session; current local settings (`enabled`, `active_model`, `custom_model_path`, `threads`, `unload_minutes`, `model_dir`).
 - `POST /api/v1/ai/settings` — owner + CSRF; validates `threads`, `unload_minutes`, `model_dir`, `active_model`, and `custom_model_path` (`.gguf` regular file), deletes any legacy deprecated keys, and unloads any loaded session if selection changes.
-- `GET /api/v1/ai/catalog` — curated Qwen3 catalog merged with local installed/custom GGUF entries and download job progress.
+- `GET /api/v1/ai/catalog` — curated Qwen3.5 catalog merged with local installed/custom GGUF entries and download job progress.
 - `POST /api/v1/ai/models/{id}/download` — requires AI enabled; catalog models only.
 - `POST /api/v1/ai/models/{id}/cancel` — cancels active download job.
 - `DELETE /api/v1/ai/models/{id}` — body `{ "confirm": true, "force": bool }`.
