@@ -30,11 +30,10 @@ no software behaviour beyond the claim listed next to them.
 | Curate | Rate from half a star to five | `README.md` What you can do; `GLOSSARY.md` Voto personale |
 | Curate | Reversibly group namesakes, originals kept | `README.md` What you can do ("reversibly group namesakes"); `GLOSSARY.md` Raggruppamento per nome / Separazione dal gruppo ("non cancella ascolti o informazioni originali") |
 | Ask | Optional and off by default | `docs/ai.md` Activation and privacy ("AI is optional and off by default") |
-| Ask | The model never sees archive rows | `docs/ai.md` ("The model never sees archive rows"; Bring your own AI: "It never receives archive rows") |
-| Ask | Rust computes every number | `docs/ai.md` ("Rust executes that DSL ... and computes every number") |
-| Ask | Local model | `docs/ai.md` Settings keys (`ai_provider` = `local`, downloaded model) |
-| Ask | Own OpenAI-compatible server | `docs/ai.md` Bring your own AI ("Any server that implements the OpenAI `POST {base}/chat/completions` protocol works") |
-| Ask | Example question and answer | Demo data; "Ask questions in plain words" per `docs/ai.md` ("natural-language questions" via DSL) |
+| Ask | The model never sees archive rows | `docs/ai.md` ("The model never sees archive rows") |
+| Ask | Local GGUF model writes read-only SQL executed in a sandbox | `docs/ai.md` ("local GGUF models that translate questions into read-only SQL over a sandboxed projection") |
+| Ask | Curated Qwen3 defaults or custom local GGUF path | `docs/ai.md` (curated Qwen3 catalog or custom `.gguf` model file path) |
+| Ask | Example question and answer | Demo data; "Ask questions in plain words" per `docs/ai.md` |
 | Keep | Export JSON or CSV | `README.md` What you can do |
 | Keep | Portable backups | `README.md` What you can do; `docs/recovery.md` |
 | Keep | Verify a restore ("Restore verified") | `README.md` What you can do ("verify a restore"); `docs/recovery.md` ("Only explicit successful verification sets Restore verified") |

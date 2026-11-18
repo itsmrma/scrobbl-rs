@@ -37,7 +37,6 @@ import type {
   AskPrevious,
   AskResponse,
   AskSqlRequest,
-  Query,
   AiSettings,
   SaveAiSettings,
   AiCatalog,
@@ -47,6 +46,13 @@ import type {
   AiSelection,
   AiTestResult,
 } from "./generated";
+
+export interface BootStatus {
+  ready?: boolean;
+  stage?: string;
+  detail?: string;
+  error?: string | null;
+}
 
 class SessionExpired extends Error {}
 let csrf: string | null = null;
@@ -431,10 +437,21 @@ export const api = {
     request<ListeningCalendar>(`/api/v1/consultation/calendar?${params}`),
   milestones: (params: URLSearchParams) =>
     request<ListeningMilestones>(`/api/v1/consultation/milestones?${params}`),
+  bootStatus: async (signal?: AbortSignal): Promise<BootStatus | null> => {
+    try {
+      const res = await fetch("/api/boot-status", {
+        signal,
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as BootStatus;
+    } catch {
+      return null;
+    }
+  },
   askStatus: () => request<AiAskStatus>("/api/v1/ask/status"),
   ask: (
     question: string,
-    context: { kind: string; id: string } | null,
     previous: AskPrevious | null = null,
     options?: { signal?: AbortSignal; requestId?: string },
   ) =>
@@ -442,7 +459,6 @@ export const api = {
       "/api/v1/ask",
       {
         question,
-        context,
         ...(previous ? { previous } : {}),
         ...(options?.requestId ? { request_id: options.requestId } : {}),
       },
@@ -452,7 +468,6 @@ export const api = {
     post<{ cancelled: boolean }>("/api/v1/ask/cancel", {
       ...(request_id ? { request_id } : {}),
     }),
-  askQuery: (query: Query) => post<AskResponse>("/api/v1/ask/query", { query }),
   askSql: (payload: AskSqlRequest) =>
     post<AskResponse>("/api/v1/ask/sql", payload),
   spotify: () => request<SpotifyStatus>("/api/spotify/status"),

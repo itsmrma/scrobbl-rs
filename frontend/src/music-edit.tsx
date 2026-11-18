@@ -436,7 +436,24 @@ export function MusicEdit({ kind, id }: { kind: Kind; id: string }) {
                     accept="image/png,image/jpeg,image/webp"
                     disabled={busy}
                     onChange={(e) => {
-                      setFile(e.target.files?.[0] || null);
+                      const selected = e.target.files?.[0] || null;
+                      if (!selected) {
+                        setFile(null);
+                        return;
+                      }
+                      if (
+                        !selected.type.startsWith("image/") ||
+                        selected.size > 20 * 1024 * 1024
+                      ) {
+                        e.currentTarget.value = "";
+                        setFile(null);
+                        setError(
+                          "Choose a valid image file (PNG, JPEG or WebP).",
+                        );
+                        return;
+                      }
+                      setError("");
+                      setFile(selected);
                       setUrl("");
                     }}
                   />

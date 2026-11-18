@@ -6,6 +6,8 @@ This repo uses a single-context layout.
 
 - Read `GLOSSARY.md` at the repo root.
 - Read relevant decisions in `docs/adr/`.
+- Read `docs/agents/security.md` before changing routes, SQLite queries, Ask/AI,
+  outbound network calls, recovery, or frontend components.
 
 If these files do not exist, proceed silently. Domain modeling creates
 them when terms or decisions are resolved.

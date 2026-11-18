@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use scrobbl_rs::{db, import_worker, imports::ImportLimits, storage::Storage};
 use serde_json::{Value, json};
 use std::io::{Cursor, Write};

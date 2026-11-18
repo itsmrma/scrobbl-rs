@@ -2,14 +2,28 @@ import type { ImageCredit } from "./generated";
 import { useEffect, useId, useRef, useState } from "react";
 import { api } from "./api";
 import { useLoad } from "./load";
-import { Icon } from "./ui";
+import { Icon, lookupRecord, safeExternalUrl } from "./ui";
+
+const PROVIDERS: Record<string, string> = {
+  cover_art_archive: "Cover Art Archive",
+  musicbrainz_image: "MusicBrainz · Wikimedia Commons",
+  wikidata: "Wikidata · Wikimedia Commons",
+  itunes: "Apple iTunes / Deezer",
+};
 
 // Commons attribution metadata contains untrusted HTML. Display its text, never its markup.
 export function plainCredit(value: string | null) {
   if (!value) return "";
-  const template = document.createElement("template");
-  template.innerHTML = value;
-  return template.content.textContent || "";
+  const stripped = value.replace(/<[^>]*>/g, " ");
+  return stripped
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
   const id = useId();
@@ -84,12 +98,7 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
         <span className="image-credit-provider">
           <Icon>photo_library</Icon>
           <span>
-            {{
-              cover_art_archive: "Cover Art Archive",
-              musicbrainz_image: "MusicBrainz · Wikimedia Commons",
-              wikidata: "Wikidata · Wikimedia Commons",
-              itunes: "Apple iTunes / Deezer",
-            }[credit.provider] || credit.provider}
+            {lookupRecord(PROVIDERS, credit.provider) || credit.provider}
           </span>
         </span>
         {credit.author && (
@@ -104,31 +113,41 @@ export function ImageCredits({ credit }: { credit?: ImageCredit | null }) {
           </span>
         )}
         <span className="image-credit-links">
-          <a
-            href={credit.source_url}
-            target="_blank"
-            rel="noreferrer"
-            className="image-credit-link"
-          >
-            <span>View source</span>
-            <Icon>open_in_new</Icon>
-          </a>
-          {credit.license &&
-            (credit.license_url ? (
-              <a
-                href={credit.license_url}
-                target="_blank"
-                rel="noreferrer"
-                className="image-credit-link"
-              >
-                <span>{plainCredit(credit.license)}</span>
-                <Icon>open_in_new</Icon>
-              </a>
-            ) : (
-              <span className="image-credit-badge">
-                {plainCredit(credit.license)}
-              </span>
-            ))}
+          {(() => {
+            const sourceUrl = safeExternalUrl(credit.source_url);
+            const licenseUrl = safeExternalUrl(credit.license_url);
+            return (
+              <>
+                {sourceUrl && (
+                  <a
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="image-credit-link"
+                  >
+                    <span>View source</span>
+                    <Icon>open_in_new</Icon>
+                  </a>
+                )}
+                {credit.license &&
+                  (licenseUrl ? (
+                    <a
+                      href={licenseUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="image-credit-link"
+                    >
+                      <span>{plainCredit(credit.license)}</span>
+                      <Icon>open_in_new</Icon>
+                    </a>
+                  ) : (
+                    <span className="image-credit-badge">
+                      {plainCredit(credit.license)}
+                    </span>
+                  ))}
+              </>
+            );
+          })()}
         </span>
       </span>
     </>

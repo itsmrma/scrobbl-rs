@@ -56,7 +56,6 @@ pub fn router(state: AppState) -> Router {
         .route("/review", get(index))
         .route("/api/v1/ask", post(crate::ask::ask))
         .route("/api/v1/ask/cancel", post(crate::ask::cancel))
-        .route("/api/v1/ask/query", post(crate::ask::query))
         .route("/api/v1/ask/sql", post(crate::ask::sql))
         .route(
             "/api/v1/review",
@@ -380,19 +379,105 @@ async fn icons_font() -> impl IntoResponse {
         include_bytes!("../static/dist/material-icons.woff2").as_slice(),
     )
 }
+pub(crate) fn apply_security_headers(headers: &mut HeaderMap, secure_cookies: bool) {
+    if !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; object-src 'none'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        ),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        axum::http::HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=(), interest-cohort=()"),
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    if secure_cookies {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        );
+    }
+}
+
+fn finish_security_response(mut response: Response, secure_cookies: bool) -> Response {
+    apply_security_headers(response.headers_mut(), secure_cookies);
+    response
+}
+
 async fn security(State(state): State<AppState>, request: Request<Body>, next: Next) -> Response {
+    let secure_cookies = state.config.secure_cookies();
     if !crate::read_api::is_external(request.uri().path())
         && request.headers().contains_key(header::AUTHORIZATION)
     {
-        return AppError::Forbidden.into_response();
+        return finish_security_response(AppError::Forbidden.into_response(), secure_cookies);
     }
-    // All in-flight HTTP requests drain before confirmation. The durable marker rejects
+    let expected_host = state.config.host();
+    if request
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        != Some(expected_host.as_str())
+    {
+        return finish_security_response(AppError::Forbidden.into_response(), secure_cookies);
+    }
+    if crate::read_api::is_external(request.uri().path()) {
+        let gate = state.storage.requests.clone();
+        let _read = gate.read().await;
+        if state.storage.directory.join("recovery.pending").exists()
+            && request.method() != Method::GET
+            && request.method() != Method::HEAD
+        {
+            return finish_security_response(
+                AppError::Conflict(
+                    "Restore is prepared. Restart the container, then sign in with the new password."
+                        .into(),
+                )
+                .into_response(),
+                secure_cookies,
+            );
+        }
+        return finish_security_response(
+            crate::read_api::security(state, request, next).await,
+            secure_cookies,
+        );
+    }
+    // Validate Origin, session, and CSRF BEFORE acquiring any global request
+    // gate lock so unauthenticated callers cannot block concurrent readers.
+    if request.method() != Method::GET && request.method() != Method::HEAD {
+        if request
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            != Some(state.config.origin().as_str())
+        {
+            return finish_security_response(AppError::Forbidden.into_response(), secure_cookies);
+        }
+        if !matches!(request.uri().path(), "/api/login" | "/api/setup")
+            && let Err(e) = auth::require_write(&state, request.headers()).await
+        {
+            return finish_security_response(e.into_response(), secure_cookies);
+        }
+    }
+    // All in-flight HTTP requests drain before restore confirmation. The durable marker rejects
     // later mutations; startup activates only after this process has stopped.
     let gate = state.storage.requests.clone();
     let exclusive =
         request.uri().path() == "/api/v1/recovery/restore" && request.method() == Method::POST;
-    // Status reads and owner/CSRF-protected cancellation only touch job controls,
-    // so they remain available during restore preparation's exclusive barrier.
     let activity_control = (request.method() == Method::GET
         && (request.uri().path() == "/api/v1/activities"
             || request.uri().path().starts_with("/api/v1/activities/")))
@@ -413,54 +498,16 @@ async fn security(State(state): State<AppState>, request: Request<Body>, next: N
         && ((request.method() != Method::GET && request.method() != Method::HEAD)
             || request.uri().path() == "/auth/spotify/callback")
     {
-        return AppError::Conflict(
-            "Restore is prepared. Restart the container, then sign in with the new password."
-                .into(),
-        )
-        .into_response();
+        return finish_security_response(
+            AppError::Conflict(
+                "Restore is prepared. Restart the container, then sign in with the new password."
+                    .into(),
+            )
+            .into_response(),
+            secure_cookies,
+        );
     }
-    let expected_host = state.config.host();
-    if request
-        .headers()
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        != Some(expected_host.as_str())
-    {
-        return AppError::Forbidden.into_response();
-    }
-    if crate::read_api::is_external(request.uri().path()) {
-        return crate::read_api::security(state, request, next).await;
-    }
-    if request.method() != Method::GET && request.method() != Method::HEAD {
-        if request
-            .headers()
-            .get(header::ORIGIN)
-            .and_then(|v| v.to_str().ok())
-            != Some(state.config.origin().as_str())
-        {
-            return AppError::Forbidden.into_response();
-        }
-        if !matches!(request.uri().path(), "/api/login" | "/api/setup")
-            && let Err(e) = auth::require_write(&state, request.headers()).await
-        {
-            return e.into_response();
-        }
-    }
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-    if !headers.contains_key(header::CACHE_CONTROL) {
-        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    }
-    headers.insert(header::CONTENT_SECURITY_POLICY,HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"));
-    headers.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert(
-        header::REFERRER_POLICY,
-        HeaderValue::from_static("no-referrer"),
-    );
-    response
+    finish_security_response(next.run(request).await, secure_cookies)
 }
 pub use crate::consultation::Filters;
 use crate::consultation::selection_at;

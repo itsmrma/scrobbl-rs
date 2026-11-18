@@ -43,14 +43,17 @@ const test = base.extend({
     const context = await browser.newContext({ baseURL });
     try {
       await expect
-        .poll(async () => {
-          if (child.exitCode !== null) throw new Error(logs);
-          try {
-            return (await context.request.get("/healthz")).status();
-          } catch {
-            return 0;
-          }
-        }, { timeout: 20000 })
+        .poll(
+          async () => {
+            if (child.exitCode !== null) throw new Error(logs);
+            try {
+              return (await context.request.get("/healthz")).status();
+            } catch {
+              return 0;
+            }
+          },
+          { timeout: 20000 },
+        )
         .toBe(200);
       await use({ page: await context.newPage(), baseURL });
     } finally {

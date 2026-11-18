@@ -9,21 +9,13 @@ use crate::ask::{
     schema::{ColumnFormat, SqlAnswerKind},
 };
 use chrono::{Days, NaiveDate};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 use std::{collections::HashMap, fmt::Write as _, path::Path};
 
-/// Open the projection for the fixed history-link queries. These queries are
-/// app-generated, bind every parameter and only read; the SQL sandbox is the
-/// path for model-written SQL, not this one.
+/// Open the projection for the fixed history-link queries via the canonical
+/// read-only projection opener.
 fn open_projection_read_only(projection_path: &Path) -> Option<Connection> {
-    let conn = Connection::open_with_flags(
-        projection_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-    // Belt and braces: even a future mistake here cannot write.
-    let _ = conn.pragma_update(None, "query_only", true);
-    Some(conn)
+    crate::ask::projection::open_read_only(projection_path)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

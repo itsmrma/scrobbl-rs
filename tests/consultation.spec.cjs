@@ -1123,7 +1123,9 @@ test.describe("consultation", () => {
       "#1",
     );
     await expect(
-      page.locator(".dashboard-widget[data-widget-type='totals'] .stats-grid .stat"),
+      page.locator(
+        ".dashboard-widget[data-widget-type='totals'] .stats-grid .stat",
+      ),
     ).toHaveCount(3);
 
     // 3. Verify default 6-widget artist template layout in .dashboard-grid

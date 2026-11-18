@@ -479,11 +479,34 @@ fn commons_file(value: &str) -> Option<String> {
             .into_owned();
     decoded.starts_with("File:").then_some(decoded)
 }
+fn strip_html_tags(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    let decoded = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#039;", "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&copy;", "©");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn text(value: &Value, key: &str) -> Option<String> {
-    value[key]["value"]
-        .as_str()
-        .filter(|v| !v.is_empty())
-        .map(str::to_owned)
+    let raw = value[key]["value"].as_str()?;
+    let cleaned = strip_html_tags(raw);
+    (!cleaned.is_empty()).then_some(cleaned)
 }
 /// Commons image with its author and licence; files without them are skipped.
 async fn commons(file: &str) -> Result<Lookup> {

@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use scrobbl_rs::{
     auth,
     calendar::Calendar,

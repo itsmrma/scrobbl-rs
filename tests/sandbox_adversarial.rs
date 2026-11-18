@@ -1,23 +1,21 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
 //! Adversarial SQL sandbox corpus, projection secrecy scan, and server
 //! concurrency tests (#210).
-use axum::{
-    Json, Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    routing::post as post_route,
-};
+use axum::http::StatusCode;
 use rusqlite::Connection;
 use scrobbl_rs::{
     AppState,
     ask::{
         Ask,
-        parser::ModelParser,
+        parser::{ParseFuture, ParsedQuestion, QueryParser},
         projection::{self, ProjectionGate},
         sandbox::{self, SandboxLimits, SandboxRule, SqlValue},
+        schema::SqlModelOutput,
     },
     auth,
     config::Config,
     db::{self, DurationKind, Event},
+    error::AppError,
     spotify::parse_track,
     web,
 };
@@ -321,9 +319,13 @@ async fn projection_file_contains_no_secrets_or_archive_only_tables() {
 
     let mut tx = storage.writer.begin().await.unwrap();
     db::ingest(&mut tx, &[event]).await.unwrap();
-    db::set_setting(&mut tx, "ai_remote_key", "sk-ai-key-canary-54321")
-        .await
-        .unwrap();
+    db::set_setting(
+        &mut tx,
+        "ai_custom_model_path",
+        "/host/secret/path/model.gguf",
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
 
     // Seed private DB secrets (Spotify client secret, sessions, API keys).
@@ -347,7 +349,7 @@ async fn projection_file_contains_no_secrets_or_archive_only_tables() {
 
     for secret in [
         "sp-client-secret-canary-98765",
-        "sk-ai-key-canary-54321",
+        "/host/secret/path/model.gguf",
         "session-canary-digest",
         "apikey-canary-digest",
     ] {
@@ -407,16 +409,17 @@ struct MockAi {
     reply: Arc<Mutex<String>>,
 }
 
-async fn mock_chat(
-    State(mock): State<MockAi>,
-    _headers: HeaderMap,
-    Json(_body): Json<Value>,
-) -> (StatusCode, Json<Value>) {
-    let reply = mock.reply.lock().unwrap().clone();
-    (
-        StatusCode::OK,
-        Json(json!({"choices": [{"message": {"role": "assistant", "content": reply}}]})),
-    )
+struct MockSqlParser(MockAi);
+
+impl QueryParser for MockSqlParser {
+    fn parse<'a>(&'a self, _question: &'a str) -> ParseFuture<'a> {
+        let reply = self.0.reply.lock().unwrap().clone();
+        Box::pin(async move {
+            let out: SqlModelOutput =
+                serde_json::from_str(&reply).map_err(|_| AppError::Internal)?;
+            Ok(ParsedQuestion::Sql(out))
+        })
+    }
 }
 
 #[tokio::test]
@@ -430,14 +433,6 @@ async fn server_keeps_serving_requests_while_sandbox_stops_runaway_sql() {
         "columns": [{"name": "c", "format": "count"}]
     })
     .to_string();
-
-    let mock_router = Router::new()
-        .route("/v1/chat/completions", post_route(mock_chat))
-        .with_state(mock);
-    let mock_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mock_addr = mock_listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(mock_listener, mock_router).await.unwrap() });
-    let mock_url = format!("http://{mock_addr}/v1");
 
     let app_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let app_addr = app_listener.local_addr().unwrap();
@@ -495,22 +490,18 @@ async fn server_keeps_serving_requests_while_sandbox_stops_runaway_sql() {
         env_client_secret: None,
     };
     let mut state = AppState::new(storage, config);
-    state.ask = Ask::with_parser(
-        Arc::new(ModelParser::local(
-            state.db.clone(),
-            dir.path().join("models"),
-        )),
-        false,
-        false,
-        true,
-    );
+    state.ask = Ask::with_parser(Arc::new(MockSqlParser(mock)), true, true, false);
     let router = web::router(state);
     tokio::spawn(async move { axum::serve(app_listener, router).await.unwrap() });
 
     let base = format!("http://{app_addr}");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
 
-    // Configure remote AI in SQL mode.
+    // Enable local AI in SQL mode.
     let res = client
         .post(format!("{base}/api/v1/ai/settings"))
         .header("cookie", format!("scrobbl_session={token}"))
@@ -518,11 +509,8 @@ async fn server_keeps_serving_requests_while_sandbox_stops_runaway_sql() {
         .header("origin", &base)
         .json(&json!({
             "enabled": true,
-            "provider": "remote",
-            "answer_mode": "sql",
-            "remote_url": mock_url,
-            "remote_model": "test-model",
             "active_model": null,
+            "custom_model_path": null,
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null,
@@ -586,4 +574,36 @@ async fn server_keeps_serving_requests_while_sandbox_stops_runaway_sql() {
         elapsed <= SandboxLimits::default().timeout + Duration::from_secs(2),
         "runaway SQL took too long: {elapsed:?}"
     );
+}
+
+#[test]
+fn sandbox_blocks_eponymous_vtables_and_handles_multibyte_utf8_safely() {
+    let file = adversarial_projection();
+
+    // Eponymous virtual tables (e.g. dbstat, sqlite_dbpage) must be denied.
+    for vtable_sql in [
+        "SELECT COUNT(*) FROM dbstat",
+        "SELECT name, pageno FROM dbstat('main')",
+        "SELECT COUNT(*) FROM sqlite_dbpage",
+    ] {
+        let err = sandbox::execute(file.path(), vtable_sql, SandboxLimits::default()).unwrap_err();
+        assert_eq!(
+            err.rule,
+            SandboxRule::UnauthorizedTable,
+            "{vtable_sql}: {err:?}"
+        );
+    }
+
+    // Non-ASCII UTF-8 inside identifiers, strings, comments, and CTE names must not panic
+    // or corrupt slices in scan_static_safety / extract_cte_names.
+    for utf8_sql in [
+        "WITH \"Artisti_Björk_🎵\" AS (SELECT id, name FROM artists) SELECT COUNT(*) FROM \"Artisti_Björk_🎵\"",
+        "/* 音楽コメント Björk */ SELECT 'café ☕' AS label, COUNT(*) FROM listens WHERE counted = 1",
+    ] {
+        let res = sandbox::execute(file.path(), utf8_sql, SandboxLimits::default());
+        assert!(
+            res.is_ok(),
+            "UTF-8 SQL failed unexpectedly `{utf8_sql}`: {res:?}"
+        );
+    }
 }

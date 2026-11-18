@@ -1,9 +1,4 @@
-//! JSON-Schema-subset to GBNF conversion for the Ask grammar.
-//!
-//! The model output schema is deliberately small and every property is
-//! required, so the generated grammar has one fixed key order. Optional
-//! properties are rejected instead of guessed: optionality is expressed with
-//! explicit enum values such as `none` and `any`.
+//! JSON-Schema-subset to GBNF conversion for the Ask local SQL grammar.
 use serde_json::Value;
 use std::fmt::Write as _;
 
@@ -11,12 +6,15 @@ use std::fmt::Write as _;
 ///
 /// `string` mirrors llama.cpp's built-in JSON grammar: it accepts any Unicode
 /// bytes and the standard JSON escape sequences but nothing that could escape
-/// the string slot. That is what keeps names like `Björk`, `坂本龍一` and
-/// `Don't Stop Me Now` intact.
+/// the string slot.
 const COMMON_RULES: &str = r#"ws ::= [ \t\n\r]*
 string ::= "\"" ( [^"\\] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) )* "\""
 integer ::= "-"? ([0-9] | [1-9] [0-9]*)
 "#;
+
+pub fn from_sql_schema() -> Result<String, String> {
+    to_gbnf(&crate::ask::schema::sql_schema())
+}
 
 pub fn to_gbnf(schema: &Value) -> Result<String, String> {
     let mut generator = Generator::default();
@@ -50,7 +48,7 @@ impl Generator {
             .rules
             .iter_mut()
             .find(|(existing, _)| existing == &name)
-            .expect("rule was reserved above");
+            .ok_or_else(|| format!("missing reserved rule {name}"))?;
         slot.1 = body;
         Ok(name)
     }
@@ -181,7 +179,7 @@ fn json_literal(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::to_gbnf;
+    use super::{from_sql_schema, to_gbnf};
     use serde_json::json;
 
     fn trial_schema() -> serde_json::Value {
@@ -245,7 +243,7 @@ mod tests {
 
     #[test]
     fn sql_schema_generates_gbnf_with_free_sql_string_and_columns_array() {
-        let grammar = to_gbnf(&crate::ask::schema::sql_schema()).unwrap();
+        let grammar = from_sql_schema().unwrap();
         assert!(grammar.starts_with("root ::= "), "{grammar}");
         assert!(
             grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"),

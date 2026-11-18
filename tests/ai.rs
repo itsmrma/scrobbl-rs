@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
     body::Body,
     extract::State,
@@ -196,23 +198,11 @@ fn test_model(id: &str, url: String, sha256: String, size_bytes: u64) -> catalog
             ram_recommended_bytes: 2048,
             cpu_cores: 1,
             gpu_optional: false,
-            context_tokens: 2048,
-        },
-        languages: vec![catalog::LanguageScore {
-            language: "en".to_string(),
-            exact_match: Some(1.0),
-            cases: Some(1),
-        }],
-        parser: catalog::ParserScores {
-            intent: None,
-            slots: None,
-            refusals: None,
-            exact_match: None,
+            context_tokens: 4096,
         },
         speed: None,
         backend: "test".to_string(),
         selectable: true,
-        recommendation: scrobbl_rs::ai::AnswerMode::Guided,
     }
 }
 
@@ -290,18 +280,8 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     let (_dir, state, token) = setup().await;
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
     assert_eq!(catalog["runtime_available"], cfg!(feature = "llama"));
-    assert_eq!(
-        catalog["remote_recommendation"], "sql",
-        "the bring-your-own-AI option recommends free questions"
-    );
     let models = catalog["models"].as_array().unwrap();
     assert!(models.len() >= 5);
-    assert!(
-        models
-            .iter()
-            .all(|model| model["recommendation"] == "guided"),
-        "every local catalog model recommends guided questions"
-    );
     let default = models
         .iter()
         .find(|model| model["id"] == "qwen3-1.7b-q4_k_m")
@@ -319,7 +299,7 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     );
     assert_eq!(default["download"]["sha256"].as_str().unwrap().len(), 64);
     assert_eq!(default["download"]["size_bytes"], 1_282_439_264_u64);
-    assert_eq!(default["requirements"]["context_tokens"], 3072);
+    assert_eq!(default["requirements"]["context_tokens"], 4096);
     assert!(default["requirements"]["ram_min_bytes"].as_u64().unwrap() > 0);
     assert!(
         default["requirements"]["ram_recommended_bytes"]
@@ -328,20 +308,6 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
             >= default["requirements"]["ram_min_bytes"].as_u64().unwrap()
     );
     assert_eq!(default["speed"]["p50_ms"], 4138);
-    let languages = default["languages"].as_array().unwrap();
-    assert_eq!(languages.len(), 2);
-    assert!(
-        languages
-            .iter()
-            .all(|language| language["exact_match"].is_number() && language["cases"] == 104),
-        "the measured languages carry 104 cases and an exact-match score"
-    );
-    for field in ["intent", "slots", "refusals", "exact_match"] {
-        assert!(
-            default["parser"][field].is_number(),
-            "measured parser field {field}"
-        );
-    }
 
     let future = models
         .iter()
@@ -349,10 +315,6 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
         .unwrap();
     assert_eq!(future["status"], "gpu_future");
     assert_eq!(future["selectable"], false);
-    assert!(
-        future["parser"]["exact_match"].is_null(),
-        "unmeasured models keep null scores"
-    );
     let large = models
         .iter()
         .find(|model| model["id"] == "qwen3-32b-q4_k_m")
@@ -894,114 +856,124 @@ async fn in_progress_download_is_not_reported_as_installed_or_missing_metadata()
 }
 
 #[tokio::test]
-async fn answer_mode_defaults_per_engine_and_persists_across_switches() {
+async fn custom_model_path_validates_gguf_and_safe_directory_scanning_and_deletion() {
     let _guard = TEST_LOCK.lock().await;
     catalog::clear_test_models();
-    let (_dir, state, token) = setup().await;
+    let (dir, state, token) = setup().await;
+    let root = models::root(&state).await.unwrap();
 
-    let initial = get_json(&state, &token, "/api/v1/ai/settings").await;
-    assert_eq!(initial["provider"], "local");
-    assert_eq!(initial["answer_mode"], "guided");
-    assert_eq!(initial["local_answer_mode"], "guided");
-    assert_eq!(initial["remote_answer_mode"], "sql");
+    // Create an unrelated host directory without metadata.json or .gguf: must be ignored cleanly.
+    let unrelated = root.join("unrelated-host-dir");
+    tokio::fs::create_dir_all(&unrelated).await.unwrap();
+    tokio::fs::write(unrelated.join("README.txt"), b"host notes")
+        .await
+        .unwrap();
+    assert!(
+        models::scan(&root)
+            .iter()
+            .all(|m| m.id != "unrelated-host-dir")
+    );
 
-    let ask = get_json(&state, &token, "/api/v1/ask/status").await;
-    assert_eq!(ask["provider"], "local");
-    assert_eq!(ask["answer_mode"], "guided");
-
-    // Set local engine to sql mode.
-    let (status, saved_local_sql) = post(
+    // Non-.gguf and invalid-magic files must be rejected by custom_model_path and scan/validate.
+    let not_gguf = dir.path().join("weights.bin");
+    tokio::fs::write(&not_gguf, vec![0u8; 128]).await.unwrap();
+    let (status, err) = post(
         &state,
         &token,
         "/api/v1/ai/settings",
         json!({
             "enabled": true,
-            "provider": "local",
-            "answer_mode": "sql",
             "active_model": null,
+            "custom_model_path": not_gguf.display().to_string(),
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{saved_local_sql}");
-    assert_eq!(saved_local_sql["provider"], "local");
-    assert_eq!(saved_local_sql["answer_mode"], "sql");
-    assert_eq!(saved_local_sql["local_answer_mode"], "sql");
-    assert_eq!(saved_local_sql["remote_answer_mode"], "sql");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
 
-    let ask_local_sql = get_json(&state, &token, "/api/v1/ask/status").await;
-    assert_eq!(ask_local_sql["provider"], "local");
-    assert_eq!(ask_local_sql["answer_mode"], "sql");
-
-    // Switch to remote engine and set remote to guided.
-    let (status, saved_remote_guided) = post(
+    let fake_gguf = root.join("custom-bad").join("bad.gguf");
+    tokio::fs::create_dir_all(fake_gguf.parent().unwrap())
+        .await
+        .unwrap();
+    tokio::fs::write(&fake_gguf, vec![b'X'; 128]).await.unwrap();
+    let (status, err) = post(
         &state,
         &token,
         "/api/v1/ai/settings",
         json!({
             "enabled": true,
-            "provider": "remote",
-            "answer_mode": "guided",
-            "remote_url": "http://127.0.0.1:11434/v1",
-            "remote_model": "qwen3:8b",
             "active_model": null,
+            "custom_model_path": "custom-bad/bad.gguf",
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{saved_remote_guided}");
-    assert_eq!(saved_remote_guided["provider"], "remote");
-    assert_eq!(saved_remote_guided["answer_mode"], "guided");
-    assert_eq!(saved_remote_guided["local_answer_mode"], "sql");
-    assert_eq!(saved_remote_guided["remote_answer_mode"], "guided");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{err}");
 
-    let ask_remote = get_json(&state, &token, "/api/v1/ask/status").await;
-    assert_eq!(ask_remote["provider"], "remote");
-    assert_eq!(ask_remote["answer_mode"], "guided");
+    // Removing a directory with unexpected subdirectories or extra files must fail safely.
+    tokio::fs::create_dir_all(unrelated.join("nested"))
+        .await
+        .unwrap();
+    assert!(models::remove(&root, "unrelated-host-dir").await.is_err());
+    assert!(unrelated.join("README.txt").exists());
 
-    // Switch back to local without specifying answer_mode: local's sql choice is restored.
-    let (status, back_to_local) = post(
+    // Valid GGUF header (b"GGUF" + 64+ bytes) is accepted via relative or absolute path.
+    let valid_custom_dir = root.join("my-custom-qwen");
+    tokio::fs::create_dir_all(&valid_custom_dir).await.unwrap();
+    let mut gguf_bytes = b"GGUF".to_vec();
+    gguf_bytes.resize(128, 1);
+    let valid_gguf = valid_custom_dir.join("model.gguf");
+    tokio::fs::write(&valid_gguf, &gguf_bytes).await.unwrap();
+
+    let scanned = models::scan(&root);
+    let custom_entry = scanned.iter().find(|m| m.id == "my-custom-qwen").unwrap();
+    assert!(custom_entry.custom);
+    assert!(!custom_entry.checksum_verified);
+    assert!(custom_entry.usable());
+    assert!(custom_entry.error.is_none());
+
+    let (status, saved) = post(
         &state,
         &token,
         "/api/v1/ai/settings",
         json!({
             "enabled": true,
-            "provider": "local",
             "active_model": null,
+            "custom_model_path": "my-custom-qwen/model.gguf",
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{back_to_local}");
-    assert_eq!(back_to_local["answer_mode"], "sql");
-    assert_eq!(back_to_local["local_answer_mode"], "sql");
-    assert_eq!(back_to_local["remote_answer_mode"], "guided");
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["custom_model_path"], "my-custom-qwen/model.gguf");
+    assert_eq!(saved["model_installed"], true);
+    assert_eq!(saved["model_ready"], cfg!(feature = "llama"));
 
-    // Switch back to remote without specifying answer_mode: remote's guided choice is restored.
-    let (status, back_to_remote) = post(
+    let ask_status = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_status["custom_model_path"], "my-custom-qwen/model.gguf");
+    assert_eq!(ask_status["model_ready"], cfg!(feature = "llama"));
+
+    // Clearing custom_model_path works cleanly.
+    let (status, cleared) = post(
         &state,
         &token,
         "/api/v1/ai/settings",
         json!({
             "enabled": true,
-            "provider": "remote",
-            "remote_url": "http://127.0.0.1:11434/v1",
-            "remote_model": "qwen3:8b",
             "active_model": null,
+            "custom_model_path": "",
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null
         }),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "{back_to_remote}");
-    assert_eq!(back_to_remote["answer_mode"], "guided");
-    assert_eq!(back_to_remote["local_answer_mode"], "sql");
-    assert_eq!(back_to_remote["remote_answer_mode"], "guided");
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert!(cleared["custom_model_path"].is_null());
 }

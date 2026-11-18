@@ -1,16 +1,22 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
-    Json, Router,
     body::Body,
     http::{Request, StatusCode},
-    routing::post,
 };
 use http_body_util::BodyExt;
 use scrobbl_rs::{
     AppState,
-    ask::{Ask, parser::ModelParser, projection},
+    ask::{
+        Ask,
+        parser::{ParseFuture, ParsedQuestion, QueryParser},
+        projection,
+        schema::SqlModelOutput,
+    },
     auth,
     config::Config,
     db::{self, DurationKind, Event},
+    error::AppError,
     exports::{self, ExportSelection},
     recovery,
     spotify::parse_track,
@@ -25,24 +31,17 @@ struct MockSql {
     reply: Arc<Mutex<String>>,
 }
 
-async fn mock_serve(mock: MockSql) -> String {
-    let app = Router::new().route(
-        "/v1/chat/completions",
-        post(move |Json(_body): Json<Value>| {
-            let reply = mock.reply.lock().unwrap().clone();
-            async move {
-                Json(json!({
-                    "choices": [{"message": {"role": "assistant", "content": reply}}]
-                }))
-            }
-        }),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
-    format!("http://{addr}/v1")
+struct MockSqlParser(MockSql);
+
+impl QueryParser for MockSqlParser {
+    fn parse<'a>(&'a self, _question: &'a str) -> ParseFuture<'a> {
+        let reply = self.0.reply.lock().unwrap().clone();
+        Box::pin(async move {
+            let output: SqlModelOutput =
+                serde_json::from_str(&reply).map_err(|_| AppError::Internal)?;
+            Ok(ParsedQuestion::Sql(output))
+        })
+    }
 }
 
 async fn req(
@@ -75,7 +74,7 @@ async fn req(
     (status, serde_json::from_slice(&raw).unwrap_or(Value::Null))
 }
 
-async fn setup_remote_sql(mock_url: &str) -> (tempfile::TempDir, AppState, String) {
+async fn setup_local_sql(mock: MockSql) -> (tempfile::TempDir, AppState, String) {
     let dir = tempfile::tempdir().unwrap();
     let storage = db::open(dir.path()).await.unwrap();
     let config = Config {
@@ -97,15 +96,7 @@ async fn setup_remote_sql(mock_url: &str) -> (tempfile::TempDir, AppState, Strin
         .await
         .unwrap();
     let mut state = AppState::new(storage, config);
-    state.ask = Ask::with_parser(
-        Arc::new(ModelParser::local(
-            state.db.clone(),
-            dir.path().to_path_buf(),
-        )),
-        false,
-        true,
-        true,
-    );
+    state.ask = Ask::with_parser(Arc::new(MockSqlParser(mock)), true, true, false);
     let (status, body) = req(
         &state,
         &token,
@@ -113,10 +104,8 @@ async fn setup_remote_sql(mock_url: &str) -> (tempfile::TempDir, AppState, Strin
         "/api/v1/ai/settings",
         Some(json!({
             "enabled": true,
-            "provider": "remote",
-            "remote_url": mock_url,
-            "remote_model": "test-sql",
             "active_model": null,
+            "custom_model_path": null,
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null,
@@ -156,8 +145,7 @@ fn make_play(source: &'static str, key: &str, ts_str: &str, artist: &str, title:
 async fn ask_answers_reflect_import_review_correction_and_calendar_changes_with_updated_as_of_time()
 {
     let mock = MockSql::default();
-    let url = mock_serve(mock.clone()).await;
-    let (_dir, state, token) = setup_remote_sql(&url).await;
+    let (_dir, state, token) = setup_local_sql(mock.clone()).await;
 
     // 1. Initial ingest of 2 plays on the same track.
     let mut tx = state.storage.writer.begin().await.unwrap();
@@ -314,8 +302,7 @@ async fn disabling_ai_deletes_projection_and_storage_and_backups_stay_clean() {
         "columns": [{"name": "plays", "format": "count"}]
     })
     .to_string();
-    let url = mock_serve(mock).await;
-    let (dir, state, token) = setup_remote_sql(&url).await;
+    let (dir, state, token) = setup_local_sql(mock).await;
 
     let mut tx = state.storage.writer.begin().await.unwrap();
     db::ingest(
@@ -390,10 +377,8 @@ async fn disabling_ai_deletes_projection_and_storage_and_backups_stay_clean() {
         "/api/v1/ai/settings",
         Some(json!({
             "enabled": false,
-            "provider": "remote",
-            "remote_url": url,
-            "remote_model": "test-sql",
             "active_model": null,
+            "custom_model_path": null,
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null,

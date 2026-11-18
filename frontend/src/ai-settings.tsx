@@ -4,7 +4,6 @@ import type {
   AiCatalogModel,
   AiInstalledModel,
   AiSettings,
-  AnswerMode,
 } from "./generated";
 import { api } from "./api";
 import { Select } from "./select";
@@ -13,32 +12,28 @@ import {
   ErrorText,
   Icon,
   Modal,
-  SegmentedControl,
+  lookupRecord,
   number,
+  safeExternalUrl,
   useToast,
 } from "./ui";
 
 const GIB = 1024 * 1024 * 1024;
 
-const tierLabel: Record<string, string> = {
+const TIER_LABELS: Record<string, string> = {
   light: "Light",
   default: "Default",
   quality: "Quality",
   gpu: "GPU",
 };
 
-const statusLabel: Record<string, string> = {
+const STATUS_LABELS: Record<string, string> = {
   available: "Available",
   gpu_future: "GPU · later release",
   unverified: "Unverified",
 };
 
-const answerModeLabel: Record<AnswerMode, string> = {
-  guided: "Guided questions",
-  sql: "Free questions (SQL)",
-};
-
-const downloadError: Record<string, string> = {
+const DOWNLOAD_ERRORS: Record<string, string> = {
   model_disk_full:
     "Not enough free disk space. Free space on the server and retry the download.",
   model_checksum_mismatch:
@@ -77,18 +72,6 @@ function eta(seconds: number): string {
   const hours = Math.floor(mins / 60);
   const remMins = mins % 60;
   return remMins > 0 ? `${hours}h ${remMins}m left` : `${hours}h left`;
-}
-
-function evalLabel(model: AiCatalogModel): string {
-  const scores = model.languages
-    .filter((language) => language.exact_match !== null)
-    .map(
-      (language) =>
-        `${language.language.toUpperCase()} ${Math.round(
-          (language.exact_match ?? 0) * 100,
-        )}%`,
-    );
-  return scores.length ? scores.join(" · ") : "Not measured";
 }
 
 function isRunning(job: AiCatalogModel["download_job"]): boolean {
@@ -151,14 +134,19 @@ function DownloadProgress({
         max={job.expected_bytes || 1}
         aria-label={`Download progress for ${model.name}`}
       />
-      {job.error_code && downloadError[job.error_code] && (
-        <p
-          className={failed ? "form-error" : "field-hint"}
-          role={failed ? "alert" : undefined}
-        >
-          {downloadError[job.error_code]}
-        </p>
-      )}
+      {(() => {
+        const message = lookupRecord(DOWNLOAD_ERRORS, job.error_code);
+        return (
+          message && (
+            <p
+              className={failed ? "form-error" : "field-hint"}
+              role={failed ? "alert" : undefined}
+            >
+              {message}
+            </p>
+          )
+        );
+      })()}
       {running && (
         <Button variant="secondary" onClick={onCancel} disabled={busy}>
           {busy ? (
@@ -199,21 +187,17 @@ function ModelCard({
         <div>
           <h3 id={`ai-model-${model.id}`}>{model.name}</h3>
           <p className="field-hint">{model.description}</p>
-          <p className="field-hint">
-            <strong>Recommended:</strong>{" "}
-            {answerModeLabel[model.recommendation]}
-          </p>
         </div>
         <div className="ai-badges">
           <span className={`ai-badge ai-badge-${model.tier}`}>
-            {tierLabel[model.tier] ?? model.tier}
+            {lookupRecord(TIER_LABELS, model.tier) ?? model.tier}
           </span>
           <span
             className={`ai-badge ${
               model.status === "available" ? "" : "ai-badge-muted"
             }`}
           >
-            {statusLabel[model.status] ?? model.status}
+            {lookupRecord(STATUS_LABELS, model.status) ?? model.status}
           </span>
           {activeModel === model.id && (
             <span className="ai-badge ai-badge-active">Active</span>
@@ -238,6 +222,12 @@ function ModelCard({
           </dd>
         </div>
         <div>
+          <dt>Context window</dt>
+          <dd className="tabular-nums">
+            {number.format(model.requirements.context_tokens)} tokens
+          </dd>
+        </div>
+        <div>
           <dt>Speed (desktop p50)</dt>
           <dd className="tabular-nums">
             {model.speed
@@ -246,24 +236,21 @@ function ModelCard({
           </dd>
         </div>
         <div>
-          <dt>Accuracy (eval)</dt>
-          <dd>{evalLabel(model)}</dd>
-        </div>
-        <div>
           <dt>License</dt>
           <dd>
-            <a href={model.license.url} target="_blank" rel="noreferrer">
-              {model.license.name}
-            </a>
+            {(() => {
+              const licenseUrl = safeExternalUrl(model.license.url);
+              return licenseUrl ? (
+                <a href={licenseUrl} target="_blank" rel="noreferrer">
+                  {model.license.name}
+                </a>
+              ) : (
+                <span>{model.license.name}</span>
+              );
+            })()}
           </dd>
         </div>
       </dl>
-      {model.parser.exact_match === null && (
-        <p className="field-hint">
-          Parser evaluation on the real question set has not been measured for
-          this model.
-        </p>
-      )}
       {model.installed && (
         <p className="ai-installed-note">
           <Icon>check_circle</Icon>
@@ -322,15 +309,9 @@ export function AiSettingsSection() {
   const [catalog, setCatalog] = useState<AiCatalog | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [active, setActive] = useState("");
+  const [customModelPath, setCustomModelPath] = useState("");
   const [threads, setThreads] = useState("4");
   const [unload, setUnload] = useState("15");
-  const [provider, setProvider] = useState("local");
-  const [localAnswerMode, setLocalAnswerMode] = useState<AnswerMode>("guided");
-  const [remoteAnswerMode, setRemoteAnswerMode] = useState<AnswerMode>("sql");
-  const [remoteUrl, setRemoteUrl] = useState("");
-  const [remoteModel, setRemoteModel] = useState("");
-  const [remoteKey, setRemoteKey] = useState("");
-  const [clearKey, setClearKey] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -343,15 +324,9 @@ export function AiSettingsSection() {
     setSettings(next);
     setEnabled(next.enabled);
     setActive(next.active_model ?? "");
+    setCustomModelPath(next.custom_model_path ?? "");
     setThreads(String(next.threads));
     setUnload(String(next.unload_minutes));
-    setProvider(next.provider);
-    setLocalAnswerMode(next.local_answer_mode);
-    setRemoteAnswerMode(next.remote_answer_mode);
-    setRemoteUrl(next.remote_url ?? "");
-    setRemoteModel(next.remote_model ?? "");
-    setRemoteKey("");
-    setClearKey(false);
   }
 
   async function load() {
@@ -406,17 +381,10 @@ export function AiSettingsSection() {
       const next = await api.saveAiSettings({
         enabled,
         active_model: active || null,
+        custom_model_path: customModelPath.trim() || null,
         threads: Number(threads),
         unload_minutes: Number(unload),
         model_dir: settings?.model_dir ?? null,
-        provider,
-        answer_mode: answerMode,
-        local_answer_mode: localAnswerMode,
-        remote_answer_mode: remoteAnswerMode,
-        remote_url: remoteUrl.trim() || null,
-        remote_model: remoteModel.trim() || null,
-        // null keeps the stored key, an empty string removes it.
-        remote_key: remoteKey.trim() ? remoteKey.trim() : clearKey ? "" : null,
       });
       adopt(next);
       setCatalog(await api.aiCatalog());
@@ -478,17 +446,8 @@ export function AiSettingsSection() {
     );
   }
 
-  const remote = provider === "remote";
-  const answerMode = remote ? remoteAnswerMode : localAnswerMode;
-  function updateAnswerMode(nextMode: AnswerMode) {
-    if (remote) {
-      setRemoteAnswerMode(nextMode);
-    } else {
-      setLocalAnswerMode(nextMode);
-    }
-  }
   const installedUsable = catalog.installed.filter(
-    (model) => model.checksum_verified && !model.error,
+    (model) => (model.checksum_verified || model.custom) && !model.error,
   );
   const activeModel = settings.active_model;
 
@@ -504,16 +463,16 @@ export function AiSettingsSection() {
           </span>
         </div>
         <p>
-          Ask questions in natural language about your listening archive. The AI
-          only turns your question into a query and never sees your listens.
-          Every number is calculated by scrobbl.rs.
+          Ask questions in natural language about your listening archive. A
+          local GGUF model writes read-only SQL against your listening
+          projection, and every number is computed locally inside a sandbox.
         </p>
         <p className="field-hint">
-          {remote
-            ? "AI is off by default. With your own AI, the only thing sent to the server is the text of your question and the list of things Ask understands."
-            : "AI is off by default. You can download a model now or enable AI when ready; the model only loads when AI is turned on. The only network request is the model download you start."}
+          AI is off by default. You can download a curated Qwen3 model, drop a
+          custom GGUF folder inside the model folder, or point to any local GGUF
+          file on the server. The model only loads when AI is turned on.
         </p>
-        {!settings.runtime_available && !remote && (
+        {!settings.runtime_available && (
           <div className="notice notice-warning" role="status">
             <Icon>info</Icon>
             <div className="notice-body">
@@ -556,158 +515,58 @@ export function AiSettingsSection() {
             <span>
               <strong>Enable AI</strong>
               <small>
-                {remote
-                  ? "Saving is an explicit consent to send your questions to the AI server below."
-                  : "Saving is an explicit consent to run the selected model on this instance."}
+                Saving is an explicit consent to run local SQL generation on
+                this instance.
               </small>
             </span>
           </label>
           <label>
-            AI engine
+            Active model
             <Select
-              aria-label="AI engine"
-              value={provider}
-              onChange={setProvider}
+              aria-label="Active model"
+              value={active}
+              onChange={setActive}
             >
-              <option value="local">On this server: a model I download</option>
-              <option value="remote">My own AI server or API</option>
+              <option value="">No model selected</option>
+              {installedUsable.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name ?? model.id}
+                </option>
+              ))}
+              {activeModel &&
+                !installedUsable.some((model) => model.id === activeModel) && (
+                  <option value={activeModel} disabled>
+                    {activeModel} (not installed)
+                  </option>
+                )}
             </Select>
+          </label>
+          <label>
+            Custom local model path (.gguf)
+            <input
+              value={customModelPath}
+              onChange={(event) => setCustomModelPath(event.target.value)}
+              placeholder="e.g. /models/my-qwen3.gguf or my-model/model.gguf"
+              autoComplete="off"
+              spellCheck={false}
+            />
             <small className="field-hint">
-              {remote
-                ? `Recommended: ${answerModeLabel[catalog.remote_recommendation]}.`
-                : `Recommended: ${answerModeLabel.guided} for every local catalog model.`}
+              Optional. Point to any local GGUF file on the server (absolute
+              path or relative to <code>{catalog.model_dir}</code>). When set,
+              Ask uses this model instead of the active catalog model above.
             </small>
           </label>
-          <div className="ai-answer-mode">
-            <span className="ai-answer-mode-label">Answer mode</span>
-            <SegmentedControl
-              ariaLabel="Answer mode"
-              data-value={answerMode}
-              value={answerMode}
-              onChange={updateAnswerMode}
-              options={[
-                { value: "guided", label: "Guided questions" },
-                { value: "sql", label: "Free questions (SQL)" },
-              ]}
-            />
-            <div className="ai-mode-explanations">
-              <p className="field-hint">
-                <strong>Guided questions:</strong> Fixed vocabulary answered by
-                tested Rust calculations; smaller scope, predictable numbers.
-              </p>
-              <p className="field-hint">
-                <strong>Free questions (SQL):</strong> The AI writes read-only
-                SQL over your listening projection; answers anything,
-                correctness depends on the model.
-              </p>
-            </div>
-            {!remote && answerMode === "sql" && (
-              <div className="notice notice-warning" role="status">
-                <Icon>warning</Icon>
-                <div className="notice-body">
-                  <strong>Small local models struggle with SQL.</strong>{" "}
-                  <span>
-                    Answers can be wrong but plausible. Guided questions are
-                    recommended for local catalog models.
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
-          {remote && (
-            <>
-              <label>
-                Server address
-                <input
-                  value={remoteUrl}
-                  onChange={(event) => setRemoteUrl(event.target.value)}
-                  placeholder="http://192.168.1.20:11434/v1"
-                  autoComplete="off"
-                  spellCheck={false}
-                  inputMode="url"
-                />
-                <small className="field-hint">
-                  Any OpenAI-compatible address ending in /v1: Ollama, LM
-                  Studio, llama.cpp, vLLM, or a hosted API such as OpenAI,
-                  OpenRouter, Groq or Together.
-                </small>
-              </label>
-              <label>
-                Model name
-                <input
-                  value={remoteModel}
-                  onChange={(event) => setRemoteModel(event.target.value)}
-                  placeholder="qwen3:8b"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </label>
-              <label>
-                API key (optional)
-                <input
-                  type="password"
-                  value={remoteKey}
-                  onChange={(event) => {
-                    setRemoteKey(event.target.value);
-                    setClearKey(false);
-                  }}
-                  placeholder={
-                    settings.remote_key_set && !clearKey
-                      ? "A key is saved. Type to replace it."
-                      : "Leave empty if the server needs none"
-                  }
-                  autoComplete="off"
-                />
-              </label>
-              {settings.remote_key_set && !remoteKey && (
-                <label className="ai-toggle">
-                  <input
-                    type="checkbox"
-                    checked={clearKey}
-                    onChange={(event) => setClearKey(event.target.checked)}
-                  />
-                  <span>
-                    <strong>Remove the saved key</strong>
-                    <small>Applied when you save.</small>
-                  </span>
-                </label>
-              )}
-              <div className="notice notice-info" role="note">
-                <Icon>info</Icon>
-                <div className="notice-body">
-                  Your question is sent to this server with each Ask. Your
-                  listening archive, names and numbers are never sent. If the
-                  address is a hosted API, that provider receives your
-                  questions. The key is stored on this instance and is never
-                  shown again.
-                </div>
-              </div>
-            </>
-          )}
-          {!remote && (
-            <label>
-              Active model
-              <Select
-                aria-label="Active model"
-                value={active}
-                onChange={setActive}
+          {customModelPath.trim() !== "" && (
+            <div className="ai-actions">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setCustomModelPath("")}
               >
-                <option value="">No model selected</option>
-                {installedUsable.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name ?? model.id}
-                  </option>
-                ))}
-                {activeModel &&
-                  !installedUsable.some(
-                    (model) => model.id === activeModel,
-                  ) && (
-                    <option value={activeModel} disabled>
-                      {activeModel} (not installed)
-                    </option>
-                  )}
-              </Select>
-            </label>
+                <Icon>close</Icon>
+                Clear custom path
+              </Button>
+            </div>
           )}
           <div className="ai-actions">
             <Button
@@ -726,130 +585,125 @@ export function AiSettingsSection() {
         </form>
       </article>
 
-      {!remote && (
-        <article className="panel padded">
-          <div className="panel-title">
-            <h2>Models</h2>
-            <span className="field-hint tabular-nums">
-              {bytes(catalog.total_installed_bytes)} installed ·{" "}
-              {bytes(catalog.disk_used_bytes)} on disk
-            </span>
-          </div>
-          <p className="field-hint">
-            Only this curated catalog can be downloaded. Each file is pinned to
-            a repository revision and verified with its SHA-256. GPU entries are
-            listed for planning and cannot be selected in this release.
-          </p>
-          <div className="ai-grid">
-            {catalog.models.map((model) => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                activeModel={activeModel}
-                busy={busy}
-                onDownload={() =>
-                  action(
-                    model.id,
-                    async () => {
-                      await api.downloadAiModel(model.id);
-                    },
-                    "Model download queued. Progress appears here and in Activities.",
-                  )
-                }
-                onCancel={() =>
-                  action(model.id, async () => {
-                    await api.cancelAiModelDownload(model.id);
-                  })
-                }
-                onSelect={() =>
-                  action(
-                    model.id,
-                    async () => {
-                      await api.selectAiModel(model.id);
-                    },
-                    "Active model updated.",
-                  )
-                }
-                onDelete={() =>
-                  setDeleteTarget({
-                    id: model.id,
-                    name: model.name,
-                    file: model.download.file,
-                    size_bytes: model.download.size_bytes,
-                    installed_at_ms: null,
-                    checksum_verified: model.checksum_verified,
-                    error: null,
-                  })
-                }
-              />
-            ))}
-          </div>
-        </article>
-      )}
-
-      {!remote && (
-        <article className="panel padded">
-          <div className="panel-title">
-            <h2>Installed models</h2>
-            <span className="field-hint tabular-nums">
-              {bytes(catalog.disk_used_bytes)} used in {catalog.model_dir}
-            </span>
-          </div>
-          {catalog.installed.length === 0 ? (
-            <div className="empty">
-              <Icon>memory</Icon>
-              <p>No models are installed yet.</p>
-            </div>
-          ) : (
-            <ul className="ai-installed-list">
-              {catalog.installed.map((model) => (
-                <li key={model.id}>
-                  <div>
-                    <strong>{model.name ?? model.id}</strong>
-                    <span className="field-hint">
-                      {model.file ?? "No readable file"} ·{" "}
-                      {bytes(model.size_bytes)}
-                      {model.id === activeModel ? " · Active" : ""}
-                    </span>
-                    {model.error && (
-                      <span className="form-error">{model.error}</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="danger"
-                    onClick={() => setDeleteTarget(model)}
-                    disabled={busy === model.id}
-                  >
-                    <Icon>delete_outline</Icon>
-                    Delete
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-      )}
+      <article className="panel padded">
+        <div className="panel-title">
+          <h2>Models</h2>
+          <span className="field-hint tabular-nums">
+            {bytes(catalog.total_installed_bytes)} installed ·{" "}
+            {bytes(catalog.disk_used_bytes)} on disk
+          </span>
+        </div>
+        <p className="field-hint">
+          Default local SQL models (Qwen3) can be downloaded from this curated
+          catalog with pinned revisions and SHA-256 verification. You can also
+          import any local <code>.gguf</code> model via a subfolder in{" "}
+          <code>{catalog.model_dir}</code> or by setting the custom path above.
+        </p>
+        <div className="ai-grid">
+          {catalog.models.map((model) => (
+            <ModelCard
+              key={model.id}
+              model={model}
+              activeModel={activeModel}
+              busy={busy}
+              onDownload={() =>
+                action(
+                  model.id,
+                  async () => {
+                    await api.downloadAiModel(model.id);
+                  },
+                  "Model download queued. Progress appears here and in Activities.",
+                )
+              }
+              onCancel={() =>
+                action(model.id, async () => {
+                  await api.cancelAiModelDownload(model.id);
+                })
+              }
+              onSelect={() =>
+                action(
+                  model.id,
+                  async () => {
+                    await api.selectAiModel(model.id);
+                  },
+                  "Active model updated.",
+                )
+              }
+              onDelete={() =>
+                setDeleteTarget({
+                  id: model.id,
+                  name: model.name,
+                  file: model.download.file,
+                  size_bytes: model.download.size_bytes,
+                  installed_at_ms: null,
+                  checksum_verified: model.checksum_verified,
+                  custom: false,
+                  error: null,
+                })
+              }
+            />
+          ))}
+        </div>
+      </article>
 
       <article className="panel padded">
         <div className="panel-title">
-          <h2>
-            {remote ? "Test your AI server" : "Test and advanced options"}
-          </h2>
+          <h2>Installed models</h2>
+          <span className="field-hint tabular-nums">
+            {bytes(catalog.disk_used_bytes)} used in {catalog.model_dir}
+          </span>
+        </div>
+        {catalog.installed.length === 0 ? (
+          <div className="empty">
+            <Icon>memory</Icon>
+            <p>No models are installed yet.</p>
+          </div>
+        ) : (
+          <ul className="ai-installed-list">
+            {catalog.installed.map((model) => (
+              <li key={model.id}>
+                <div>
+                  <strong>{model.name ?? model.id}</strong>
+                  <span className="field-hint">
+                    {model.file ?? "No readable file"} ·{" "}
+                    {bytes(model.size_bytes)}
+                    {model.custom ? " · Custom GGUF" : ""}
+                    {model.id === activeModel ? " · Active" : ""}
+                  </span>
+                  {model.error && (
+                    <span className="form-error">{model.error}</span>
+                  )}
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => setDeleteTarget(model)}
+                  disabled={busy === model.id}
+                >
+                  <Icon>delete_outline</Icon>
+                  Delete
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </article>
+
+      <article className="panel padded">
+        <div className="panel-title">
+          <h2>Test and advanced options</h2>
         </div>
         <p className="field-hint">
-          {remote
-            ? "Save first, then test: this sends one sample question to your server to check the address, model name and key."
-            : "The model loads lazily on the first question. Testing only reports whether this build and the selected file can run; it never starts an inference or downloads anything."}
+          The model loads lazily on the first question. Testing only reports
+          whether this build and the selected model file can run; it never
+          starts an inference or downloads anything.
         </p>
         <div className="ai-actions">
           <Button
             variant="secondary"
             onClick={test}
-            disabled={
-              busy === "test" || (!remote && !settings.runtime_available)
-            }
+            disabled={busy === "test" || !settings.runtime_available}
             title={
-              remote || settings.runtime_available
+              settings.runtime_available
                 ? undefined
                 : "This build does not include the inference runtime."
             }
@@ -859,63 +713,55 @@ export function AiSettingsSection() {
             ) : (
               <Icon>play_circle_outline</Icon>
             )}
-            {busy === "test"
-              ? remote
-                ? "Contacting server…"
-                : "Testing model…"
-              : remote
-                ? "Test connection"
-                : "Test active model"}
+            {busy === "test" ? "Testing model…" : "Test active model"}
           </Button>
         </div>
-        {!remote && (
-          <form
-            className="ai-advanced"
-            onSubmit={(event) => {
-              event.preventDefault();
-              save();
-            }}
+        <form
+          className="ai-advanced"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save();
+          }}
+        >
+          <label>
+            Threads
+            <input
+              type="number"
+              min={1}
+              max={64}
+              value={threads}
+              onChange={(event) => setThreads(event.target.value)}
+              inputMode="numeric"
+            />
+          </label>
+          <label>
+            Unload after inactivity (minutes)
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={unload}
+              onChange={(event) => setUnload(event.target.value)}
+              inputMode="numeric"
+            />
+          </label>
+          <label>
+            Model folder
+            <code className="ai-path">{catalog.model_dir}</code>
+          </label>
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={busy === "settings"}
           >
-            <label>
-              Threads
-              <input
-                type="number"
-                min={1}
-                max={64}
-                value={threads}
-                onChange={(event) => setThreads(event.target.value)}
-                inputMode="numeric"
-              />
-            </label>
-            <label>
-              Unload after inactivity (minutes)
-              <input
-                type="number"
-                min={1}
-                max={1440}
-                value={unload}
-                onChange={(event) => setUnload(event.target.value)}
-                inputMode="numeric"
-              />
-            </label>
-            <label>
-              Model folder
-              <code className="ai-path">{catalog.model_dir}</code>
-            </label>
-            <Button
-              type="submit"
-              variant="secondary"
-              disabled={busy === "settings"}
-            >
-              {busy === "settings" ? (
-                <span className="spinner-dot spinner-sm" aria-hidden="true" />
-              ) : (
-                <Icon>save</Icon>
-              )}
-              {busy === "settings" ? "Saving…" : "Save options"}
-            </Button>
-          </form>
-        )}
+            {busy === "settings" ? (
+              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+            ) : (
+              <Icon>save</Icon>
+            )}
+            {busy === "settings" ? "Saving…" : "Save options"}
+          </Button>
+        </form>
       </article>
 
       {deleteTarget && (

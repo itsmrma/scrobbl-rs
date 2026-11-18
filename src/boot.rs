@@ -31,6 +31,8 @@ impl Default for BootStatus {
 pub struct BootManager {
     status: Arc<RwLock<BootStatus>>,
     ready_router: Arc<RwLock<Option<Router>>>,
+    expected_host: Option<String>,
+    secure_cookies: bool,
 }
 
 impl BootManager {
@@ -38,6 +40,17 @@ impl BootManager {
         Self {
             status: Arc::new(RwLock::new(BootStatus::default())),
             ready_router: Arc::new(RwLock::new(None)),
+            expected_host: None,
+            secure_cookies: false,
+        }
+    }
+
+    pub fn with_config(config: &crate::config::Config) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(BootStatus::default())),
+            ready_router: Arc::new(RwLock::new(None)),
+            expected_host: Some(config.host()),
+            secure_cookies: config.secure_cookies(),
         }
     }
 
@@ -107,11 +120,54 @@ pub fn router(boot: BootManager) -> Router {
         .with_state(boot)
 }
 
-async fn boot_status_handler(State(boot): State<BootManager>) -> Json<BootStatus> {
-    Json(boot.status())
+fn check_boot_host(boot: &BootManager, req: &Request<Body>) -> bool {
+    let Some(expected) = boot.expected_host.as_deref() else {
+        return true;
+    };
+    req.headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        == Some(expected)
+}
+
+fn boot_security_headers(mut response: Response, secure_cookies: bool) -> Response {
+    let headers = response.headers_mut();
+    if !headers.contains_key(header::CACHE_CONTROL) {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        axum::http::HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    if secure_cookies {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=63072000; includeSubDomains"),
+        );
+    }
+    response
+}
+
+async fn boot_status_handler(State(boot): State<BootManager>, req: Request<Body>) -> Response {
+    if !check_boot_host(&boot, &req) {
+        return boot_security_headers(StatusCode::FORBIDDEN.into_response(), boot.secure_cookies);
+    }
+    boot_security_headers(Json(boot.status()).into_response(), boot.secure_cookies)
 }
 
 async fn favicon_handler(State(boot): State<BootManager>, req: Request<Body>) -> Response {
+    if !check_boot_host(&boot, &req) {
+        return boot_security_headers(StatusCode::FORBIDDEN.into_response(), boot.secure_cookies);
+    }
     if let Some(router) = boot.ready_router() {
         router
             .oneshot(req)
@@ -132,7 +188,7 @@ async fn favicon_handler(State(boot): State<BootManager>, req: Request<Body>) ->
             ),
             _ => ("image/svg+xml", include_bytes!("../static/favicon.svg")),
         };
-        (
+        let response = (
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, HeaderValue::from_static(mime)),
@@ -143,11 +199,15 @@ async fn favicon_handler(State(boot): State<BootManager>, req: Request<Body>) ->
             ],
             bytes,
         )
-            .into_response()
+            .into_response();
+        boot_security_headers(response, boot.secure_cookies)
     }
 }
 
 async fn dispatch_handler(State(boot): State<BootManager>, req: Request<Body>) -> Response {
+    if !check_boot_host(&boot, &req) {
+        return boot_security_headers(StatusCode::FORBIDDEN.into_response(), boot.secure_cookies);
+    }
     if let Some(router) = boot.ready_router() {
         router
             .oneshot(req)
@@ -170,11 +230,11 @@ async fn dispatch_handler(State(boot): State<BootManager>, req: Request<Body>) -
             response
                 .headers_mut()
                 .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-            response
+            boot_security_headers(response, boot.secure_cookies)
         } else {
             let status = boot.status();
             let html = standalone_splash_html(&status);
-            (
+            let response = (
                 StatusCode::OK,
                 [(
                     header::CONTENT_TYPE,
@@ -182,7 +242,8 @@ async fn dispatch_handler(State(boot): State<BootManager>, req: Request<Body>) -
                 )],
                 html,
             )
-                .into_response()
+                .into_response();
+            boot_security_headers(response, boot.secure_cookies)
         }
     }
 }
@@ -398,12 +459,16 @@ pub fn standalone_splash_html(status: &BootStatus) -> String {
         <div class="splash-error-panel" id="splash-error-panel">
           <div class="splash-error-title">Startup error</div>
           <pre class="splash-error-message" id="splash-error-message">{escaped_error}</pre>
-          <button type="button" class="splash-retry-btn" onclick="location.reload()">Reload page</button>
+          <button type="button" class="splash-retry-btn" id="splash-retry-btn">Reload page</button>
         </div>
       </div>
     </div>
     <script>
       (function() {{
+        var retryBtn = document.getElementById('splash-retry-btn');
+        if (retryBtn) {{
+          retryBtn.addEventListener('click', function() {{ window.location.reload(); }});
+        }}
         var timer = setInterval(function() {{
           fetch('/api/boot-status', {{ cache: 'no-store' }})
             .then(function(r) {{ return r.json(); }})

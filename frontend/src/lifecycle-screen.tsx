@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { api } from "./api";
+import type { BootStatus } from "./api";
 import { Icon, Wordmark } from "./ui";
 
 export interface LifecycleScreenProps {
@@ -7,27 +9,12 @@ export interface LifecycleScreenProps {
   onReconnect?: () => void;
 }
 
-interface BootStatusResponse {
-  ready?: boolean;
-  stage?: string;
-  error?: string | null;
-}
+type BootStatusResponse = BootStatus;
 
 async function fetchBootStatus(
   signal?: AbortSignal,
 ): Promise<BootStatusResponse | null> {
-  try {
-    const response = await fetch("/api/boot-status", {
-      signal,
-      cache: "no-store",
-    });
-    if (response.ok) {
-      return (await response.json()) as BootStatusResponse;
-    }
-  } catch {
-    // Expected during restart/shutdown
-  }
-  return null;
+  return api.bootStatus(signal);
 }
 
 export function LifecycleScreen({

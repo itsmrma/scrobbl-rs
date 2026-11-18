@@ -233,6 +233,8 @@ pub async fn freeze(store: &Storage, path: &Path) -> anyhow::Result<()> {
     storage::sync_file(path)?;
     Ok(())
 }
+const LOCAL_ONLY_AI_SETTINGS_SQL: &str = "DELETE FROM settings WHERE key IN ('ai_remote_key','ai_remote_url','ai_remote_model','ai_provider','ai_answer_mode_local','ai_answer_mode_remote','ai_model_dir','ai_custom_model_path','ai_enabled')";
+
 async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<(Manifest, Vec<(String, i64)>)> {
     let mut conn = connect(snapshot, false).await?;
     // Sanitize the frozen copy only. VACUUM removes deleted bytes from free pages when needed.
@@ -251,6 +253,11 @@ async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<(Manifest, Vec<(S
             .await?
             .rows_affected();
     }
+    // Strip legacy remote AI secrets and host-specific AI directory/model paths.
+    deleted += sqlx::query(LOCAL_ONLY_AI_SETTINGS_SQL)
+        .execute(&mut conn)
+        .await?
+        .rows_affected();
     // Recovery output files are not included recursively. Their jobs have no music provenance.
     deleted += sqlx::query("DELETE FROM recovery_assets")
         .execute(&mut conn)
@@ -858,6 +865,9 @@ async fn prepare_restore_job(
         .await?;
     sqlx::query("INSERT INTO settings(key,value) VALUES('recovery_paused','true') ON CONFLICT(key) DO UPDATE SET value='true'").execute(&mut conn).await?;
     sqlx::query(crate::spotify::RESET_STATUS_SQL)
+        .execute(&mut conn)
+        .await?;
+    sqlx::query(LOCAL_ONLY_AI_SETTINGS_SQL)
         .execute(&mut conn)
         .await?;
     conn.close().await?;

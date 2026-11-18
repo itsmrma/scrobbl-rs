@@ -692,7 +692,7 @@ export function Activities({
               {job.target_timezone && (
                 <p>
                   Requested calendar: {job.target_timezone} · week starts{" "}
-                  {WEEKDAYS[job.target_week_start || 0]}
+                  {WEEKDAYS.at(job.target_week_start || 0) ?? "Monday"}
                 </p>
               )}
               {!!(

@@ -22,7 +22,7 @@ services:
           create_host_path: false
     read_only: true
     tmpfs:
-      - /tmp:rw,noexec,nosuid,size=64m
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     stop_grace_period: 60s

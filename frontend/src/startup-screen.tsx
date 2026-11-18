@@ -1,4 +1,4 @@
-import { Icon, Wordmark } from "./ui";
+import { Icon, lookupRecord, Wordmark } from "./ui";
 
 export type BootStageId =
   "server" | "database" | "session" | "preferences" | "ready";
@@ -65,7 +65,7 @@ export function StartupScreen({
   onDismiss,
   onDismissPreview,
 }: StartupScreenProps) {
-  const currentIdx = STAGE_ORDER[stage] ?? 0;
+  const currentIdx = lookupRecord(STAGE_ORDER, stage) ?? 0;
   const dismiss = onDismiss || onDismissPreview;
   const retry = onReload || onRetry;
   const headline = error

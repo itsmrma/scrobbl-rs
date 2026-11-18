@@ -1,0 +1,11 @@
+# Deterministic architectural guardrails for AI agents and contributors.
+# See docs/agents/security.md for explanations and approved abstractions.
+
+allow-unwrap-in-tests = true
+
+disallowed-methods = [
+  { path = "rusqlite::Connection::open", reason = "Use crate::storage::open(...) or crate::ask::projection::open_read_only(...) (or annotate the projection/sandbox seam directly); never open ad-hoc SQLite connections without security PRAGMAs." },
+  { path = "rusqlite::Connection::open_with_flags", reason = "Use crate::storage::open(...) or crate::ask::projection::open_read_only(...) (or annotate the projection/sandbox seam directly); never open ad-hoc SQLite connections without security PRAGMAs." },
+  { path = "reqwest::Client::new", reason = "Use reqwest::Client::builder() with explicit .timeout(...), .connect_timeout(...), .no_proxy(), and redirect / SSRF validation (see src/artwork_http.rs)." },
+  { path = "reqwest::get", reason = "Never use unconfigured reqwest::get; build an explicit reqwest::Client with timeouts, redirect limits, and .no_proxy()." },
+]

@@ -737,35 +737,26 @@ async function mount() {
   const barEl = rootEl.querySelector<HTMLElement>(".pre-splash-bar");
 
   try {
-    let res = await fetch("/api/boot-status", { cache: "no-store" });
-    if (res.ok) {
-      let data = (await res.json()) as { ready?: boolean; stage?: string };
-      while (data.ready === false) {
-        if (data.stage && statusEl) {
-          statusEl.textContent =
-            data.stage === "migrating" || data.stage === "opening_database"
-              ? "Verifying SQLite WAL archive…"
-              : data.stage === "starting_workers"
-                ? "Starting background workers…"
-                : "Starting scrobbl.rs…";
-          if (barEl) {
-            barEl.style.width =
-              data.stage === "starting_workers"
-                ? "84%"
-                : data.stage === "migrating" ||
-                    data.stage === "opening_database"
-                  ? "58%"
-                  : "32%";
-          }
-        }
-        await new Promise((resolve) => setTimeout(resolve, 450));
-        res = await fetch("/api/boot-status", { cache: "no-store" });
-        if (res.ok) {
-          data = (await res.json()) as { ready?: boolean; stage?: string };
-        } else {
-          break;
+    let data = await api.bootStatus();
+    while (data && data.ready === false) {
+      if (data.stage && statusEl) {
+        statusEl.textContent =
+          data.stage === "migrating" || data.stage === "opening_database"
+            ? "Verifying SQLite WAL archive…"
+            : data.stage === "starting_workers"
+              ? "Starting background workers…"
+              : "Starting scrobbl.rs…";
+        if (barEl) {
+          barEl.style.width =
+            data.stage === "starting_workers"
+              ? "84%"
+              : data.stage === "migrating" || data.stage === "opening_database"
+                ? "58%"
+                : "32%";
         }
       }
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      data = await api.bootStatus();
     }
   } catch {
     // Proceed to mount so React handles connectivity or error states

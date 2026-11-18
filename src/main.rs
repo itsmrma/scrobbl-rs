@@ -60,10 +60,14 @@ async fn start() -> anyhow::Result<scrobbl_rs::account::Action> {
         } else {
             config.bind_ip.to_string()
         };
-        reqwest::Client::new()
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()?;
+        client
             .get(format!("http://{ip}:{}/healthz", config.port))
             .header("Host", config.host())
-            .timeout(std::time::Duration::from_secs(5))
             .send()
             .await?
             .error_for_status()?;
@@ -83,7 +87,7 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
     println!("scrobbl.rs is running at {}", config.origin());
     println!("Keep this process running to collect Spotify listens. Press Ctrl+C to stop.");
 
-    let boot = scrobbl_rs::boot::BootManager::new();
+    let boot = scrobbl_rs::boot::BootManager::with_config(&config);
     let app = scrobbl_rs::boot::router(boot.clone());
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
@@ -101,7 +105,10 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
             let pool = match db::open(&config.data_dir).await {
                 Ok(p) => p,
                 Err(e) => {
-                    boot.set_error(e.to_string());
+                    eprintln!("Startup database initialization failed: {e}");
+                    boot.set_error(
+                        "Startup failed during storage initialization. Check the server logs for details.",
+                    );
                     let _ = boot_result_tx.send(Err(e));
                     let _ = shutdown_tx_action.send(true);
                     return;

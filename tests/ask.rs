@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -195,279 +197,6 @@ async fn post(state: &AppState, token: &str, path: &str, body: Value) -> (Status
     (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
 }
 
-fn query(metric: &str) -> Value {
-    json!({
-        "metric": metric,
-        "entity": null,
-        "period": "all_time",
-        "year": null,
-        "month": null,
-        "weekday": null,
-        "hour": null,
-        "source": null,
-        "group_by": null,
-        "sort_by": "metric",
-        "order": "desc",
-        "limit": null,
-    })
-}
-
-fn artist_entity(name: &str) -> Value {
-    json!({"kind": "artist", "name": name, "id": null})
-}
-
-#[tokio::test]
-async fn ask_counts_and_first_last_match_the_fixture() {
-    let (_dir, state, token) = setup(true).await;
-    save(&state.storage, &fixture_events()).await;
-
-    // The status endpoint is owned by the AI settings surface: this fixture
-    // enables AI but has not downloaded or selected a model.
-    let (status, body) = get(&state, &token, "/api/v1/ask/status").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["enabled"], true);
-    assert_eq!(body["model_ready"], false);
-
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["result"]["scalar"], 3);
-    assert_eq!(body["result"]["metric"], "plays");
-    let chips = body["chips"].as_array().unwrap();
-    assert!(chips.iter().any(|chip| chip["key"] == "metric"));
-    assert!(chips.iter().any(|chip| chip["key"] == "entity"));
-    assert!(
-        chips
-            .iter()
-            .any(|chip| chip["key"] == "entity" && chip["value"] == "Björk")
-    );
-
-    // Italian phrasing reaches the same deterministic result.
-    let (_, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "Quante volte ho ascoltato Björk?", "context": null}),
-    )
-    .await;
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["result"]["scalar"], 3);
-
-    let mut plays = query("plays");
-    plays["year"] = json!(2024);
-    let (status, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": plays})).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["result"]["scalar"], 4);
-
-    let mut plays = query("plays");
-    plays["entity"] = artist_entity("Björk");
-    plays["month"] = json!(5);
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": plays})).await;
-    assert_eq!(body["result"]["scalar"], 3);
-
-    // Assigned calendar weekday: the short listen is excluded, and the
-    // 22:30 UTC listen belongs to Thursday 2 May, not Wednesday.
-    let mut plays = query("plays");
-    plays["weekday"] = json!("wednesday");
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": plays})).await;
-    assert_eq!(body["result"]["scalar"], 2);
-
-    // Hour 00 is the local hour in Europe/Rome, not the UTC hour.
-    let mut plays = query("plays");
-    plays["hour"] = json!(0);
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": plays})).await;
-    assert_eq!(body["result"]["scalar"], 1);
-
-    let mut last = query("last_play");
-    last["entity"] = artist_entity("Björk");
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": last})).await;
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["result"]["scalar"], at("2024-05-02T09:00:00Z"));
-    assert_eq!(body["result"]["last"]["title"], "Jóga");
-    assert_eq!(body["result"]["last"]["artist"], "Björk");
-    assert_eq!(body["result"]["last"]["album"], "Homogenic");
-    assert!(
-        body["result"]["links"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|link| link["href"].as_str().unwrap().starts_with("/music/tracks/"))
-    );
-
-    let mut first = query("first_play");
-    first["entity"] = artist_entity("Radiohead");
-    first["hour"] = json!(0);
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": first})).await;
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["result"]["scalar"], at("2024-05-01T22:30:00Z"));
-    assert!(
-        body["result"]["links"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|link| link["label"] == "Played on 2024-05-02")
-    );
-
-    let mut first = query("first_play");
-    first["entity"] = artist_entity("Björk");
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": first})).await;
-    assert_eq!(body["result"]["scalar"], at("2024-05-01T10:00:00Z"));
-}
-
-#[tokio::test]
-async fn ask_ambiguous_name_returns_candidates() {
-    let (_dir, state, token) = setup(true).await;
-    save(
-        &state.storage,
-        &[
-            event(
-                1,
-                at("2024-05-01T10:00:00Z"),
-                Some(200_000),
-                DurationKind::Actual,
-                "cure-1",
-                "Nina Simone",
-                "album-1",
-                "Album One",
-                "Track One",
-            ),
-            event(
-                2,
-                at("2024-05-02T10:00:00Z"),
-                Some(200_000),
-                DurationKind::Actual,
-                "cure-2",
-                "Nina Hagen",
-                "album-2",
-                "Album Two",
-                "Track Two",
-            ),
-        ],
-    )
-    .await;
-
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen to Nina?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "ambiguous");
-    assert!(body["result"].is_null());
-    let candidates = body["candidates"].as_array().unwrap();
-    assert_eq!(candidates.len(), 2);
-    assert!(
-        candidates
-            .iter()
-            .all(|candidate| candidate["kind"] == "artist")
-    );
-    let names: Vec<&str> = candidates
-        .iter()
-        .map(|candidate| candidate["name"].as_str().unwrap())
-        .collect();
-    assert!(names.contains(&"Nina Simone"));
-    assert!(names.contains(&"Nina Hagen"));
-
-    // A candidate is an explicit user choice; the DSL then carries its ID.
-    let mut chosen = body["query"].clone();
-    chosen["entity"]["id"] = candidates[0]["id"].clone();
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask/query",
-        json!({"query": chosen}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "ok");
-    assert_eq!(body["result"]["scalar"], 1);
-}
-
-#[tokio::test]
-async fn ask_refuses_unsupported_questions_and_metrics_explicitly() {
-    let (_dir, state, token) = setup(true).await;
-    save(&state.storage, &fixture_events()).await;
-
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "What is the weather?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "unsupported");
-    assert!(body["query"].is_null());
-    assert!(body["result"].is_null());
-    let message = body["message"].as_str().unwrap();
-    assert!(message.contains("play counts"));
-    assert!(message.contains("first plays"));
-    assert!(message.contains("last plays"));
-
-    // Valid-but-unimplemented metrics are covered by their owning ticket
-    // (#175 time, #176 grouping/distinct, #177 streak/milestone).
-}
-
-#[tokio::test]
-async fn ask_refuses_empty_and_gibberish_input() {
-    let (_dir, state, token) = setup(true).await;
-    save(&state.storage, &fixture_events()).await;
-
-    for input in ["", "   ", "???", "   !!!   ", "asdkjh qwe zxcv"] {
-        let (status, body) = post(
-            &state,
-            &token,
-            "/api/v1/ask",
-            json!({"question": input, "context": null}),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(
-            body["status"], "unsupported",
-            "input '{input}' should be unsupported"
-        );
-        assert!(body["result"].is_null());
-        assert!(
-            body["message"].is_string() && !body["message"].as_str().unwrap().is_empty(),
-            "message for '{input}' should be clear: {body}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn ask_query_rejects_invalid_dsl() {
-    let (_dir, state, token) = setup(true).await;
-    let mut invalid = query("plays");
-    invalid["month"] = json!(13);
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask/query",
-        json!({"query": invalid}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-
-    let mut invalid = query("plays");
-    invalid["hour"] = json!(24);
-    let (status, _) = post(
-        &state,
-        &token,
-        "/api/v1/ask/query",
-        json!({"query": invalid}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-}
-
 #[tokio::test]
 async fn ask_is_model_unavailable_when_ai_is_off() {
     let (_dir, state, token) = setup(false).await;
@@ -482,12 +211,11 @@ async fn ask_is_model_unavailable_when_ai_is_off() {
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
+        json!({"question": "How many times did I listen to Björk?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "model_unavailable");
-    assert!(body["result"].is_null());
     assert!(
         body["message"]
             .as_str()
@@ -507,7 +235,7 @@ async fn ask_failure_modes_produce_clear_messages() {
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
+        json!({"question": "How many times did I listen to Björk?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -535,7 +263,7 @@ async fn ask_failure_modes_produce_clear_messages() {
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
+        json!({"question": "How many times did I listen to Björk?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -549,7 +277,7 @@ async fn ask_failure_modes_produce_clear_messages() {
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
+        json!({"question": "How many times did I listen to Björk?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -557,38 +285,13 @@ async fn ask_failure_modes_produce_clear_messages() {
     let msg = body["message"].as_str().unwrap();
     assert!(msg.contains("runtime is not available"), "{msg}");
 
-    // 4. Unknown entity
+    // 4. Unsupported input (empty or unmapped in stub)
     state.ask = Ask::stub();
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen to Unknown Artist 9999?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "failed");
-    let msg = body["message"].as_str().unwrap();
-    assert!(msg.contains("couldn't find"), "{msg}");
-
-    // 5. Context entity not in library
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({
-            "question": "how many plays",
-            "context": {"kind": "artist", "id": "nonexistent-id"}
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "failed");
-    let msg = body["message"].as_str().unwrap();
-    assert!(
-        msg.contains("context entity is not in your library"),
-        "{msg}"
-    );
+    for input in ["", "   ", "What is the weather?"] {
+        let (status, body) = post(&state, &token, "/api/v1/ask", json!({"question": input})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "unsupported", "{input}: {body}");
+    }
 }
 
 #[tokio::test]
@@ -607,306 +310,70 @@ async fn ask_requires_the_owner_session() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
-struct FixedParser(scrobbl_rs::ask::dsl::Query);
-
-impl scrobbl_rs::ask::parser::QueryParser for FixedParser {
-    fn parse<'a>(&'a self, _question: &'a str) -> scrobbl_rs::ask::parser::ParseFuture<'a> {
-        let query = self.0.clone();
-        Box::pin(async move { Ok(scrobbl_rs::ask::parser::ParsedQuestion::Query(query)) })
-    }
-}
-
-fn show_events() -> Vec<Event> {
-    vec![
-        // The single, then the album edition of the same song.
-        event(
-            11,
-            at("2023-03-01T10:00:00Z"),
-            Some(240_000),
-            DurationKind::Estimated,
-            "ado",
-            "Ado",
-            "show-single",
-            "Show",
-            "Show",
-        ),
-        event(
-            12,
-            at("2024-02-01T10:00:00Z"),
-            Some(240_000),
-            DurationKind::Estimated,
-            "ado",
-            "Ado",
-            "zanmu",
-            "Zanmu",
-            "Show",
-        ),
-        event(
-            12,
-            at("2024-02-02T10:00:00Z"),
-            Some(240_000),
-            DurationKind::Estimated,
-            "ado",
-            "Ado",
-            "zanmu",
-            "Zanmu",
-            "Show",
-        ),
-        event(
-            13,
-            at("2024-02-03T10:00:00Z"),
-            Some(240_000),
-            DurationKind::Estimated,
-            "ado",
-            "Ado",
-            "zanmu",
-            "Zanmu",
-            "Odo",
-        ),
-        // A homonym by somebody else, played earlier than Ado's.
-        event(
-            14,
-            at("2020-01-01T10:00:00Z"),
-            Some(240_000),
-            DurationKind::Estimated,
-            "other",
-            "Other Band",
-            "other-album",
-            "Other Album",
-            "Show",
-        ),
-    ]
-}
-
 #[tokio::test]
-async fn page_context_scopes_a_named_song_instead_of_replacing_it() {
-    use scrobbl_rs::ask::dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder};
-    let (_dir, mut state, token) = setup(true).await;
-    save(&state.storage, &show_events()).await;
-    let first_show = Query {
-        metric: Metric::FirstPlay,
-        entity: Some(Entity {
-            kind: EntityKind::Track,
-            name: "Show".into(),
-            id: None,
-        }),
-        scope: None,
-        period: Period::AllTime,
-        year: None,
-        month: None,
-        weekday: None,
-        hour: None,
-        source: None,
-        from: None,
-        to: None,
-        group_by: None,
-        sort_by: SortBy::Metric,
-        order: SortOrder::Desc,
-        limit: None,
-    };
-    let ado: String = sqlx::query_scalar("SELECT group_id FROM name_group_members WHERE kind='artists' AND entity_id=(SELECT id FROM artists WHERE name='Ado')")
-        .fetch_one(&state.storage.writer)
-        .await
-        .unwrap();
-    state.ask = Ask::with_parser(
-        std::sync::Arc::new(FixedParser(first_show.clone())),
-        true,
-        true,
-        false,
-    );
-
-    // Asked from Ado's page: the song, not the artist, and Ado's song, not
-    // the homonym. Both editions count, so the single's play is the first.
-    let (status, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "When did I first listen to Show?", "context": {"kind": "artist", "id": ado}}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["query"]["entity"]["kind"], "track");
-    assert_eq!(body["result"]["scalar"], at("2023-03-01T10:00:00Z"));
-    assert_eq!(body["result"]["first"]["artist"], "Ado");
-
-    // Without a page, the same name is ambiguous between two artists.
-    let (_, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "When did I first listen to Show?", "context": null}),
-    )
-    .await;
-    assert_eq!(body["status"], "ambiguous", "{body}");
-
-    // An explicit artist in the question scopes it the same way.
-    let mut scoped = first_show.clone();
-    scoped.scope = Some(Entity {
-        kind: EntityKind::Artist,
-        name: "Ado".into(),
-        id: None,
-    });
-    let (_, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask/query",
-        json!({"query": scoped}),
-    )
-    .await;
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["result"]["scalar"], at("2023-03-01T10:00:00Z"));
-    assert!(
-        body["chips"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|chip| chip["key"] == "scope" && chip["value"] == "Ado"),
-        "{body}"
-    );
-
-    // A question that names nothing still uses the page.
-    let mut plays = first_show.clone();
-    plays.metric = Metric::Plays;
-    plays.entity = None;
-    state.ask = Ask::with_parser(std::sync::Arc::new(FixedParser(plays)), true, true, false);
-    let (_, body) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen?", "context": {"kind": "artist", "id": ado}}),
-    )
-    .await;
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["query"]["entity"]["kind"], "artist");
-    assert_eq!(body["result"]["scalar"], 4);
-
-    // Ranking position, share of plays and listening days.
-    let mut rank = scoped.clone();
-    rank.metric = Metric::Rank;
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": rank})).await;
-    assert_eq!(body["status"], "ok", "{body}");
-    assert_eq!(body["result"]["scalar"], 1, "three plays across editions");
-    assert_eq!(
-        body["result"]["total"], 3,
-        "Show (Ado), Odo, Show (Other Band)"
-    );
-
-    let mut share = scoped.clone();
-    share.metric = Metric::Share;
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": share})).await;
-    assert_eq!(body["result"]["scalar"], 3);
-    assert_eq!(body["result"]["total"], 5);
-
-    let mut days = scoped;
-    days.metric = Metric::ListeningDays;
-    let (_, body) = post(&state, &token, "/api/v1/ask/query", json!({"query": days})).await;
-    assert_eq!(body["result"]["scalar"], 3);
-}
-
-#[tokio::test]
-async fn stub_local_sql_mode_runs_through_sandbox_and_guided_stays_unchanged() {
+async fn stub_local_sql_runs_through_sandbox_and_supports_follow_ups() {
     let (_dir, state, token) = setup(true).await;
     save(&state.storage, &fixture_events()).await;
 
-    // 1. Capture guided answer when local mode is guided (default).
-    let (status, guided_before) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{guided_before}");
-    assert_eq!(guided_before["status"], "ok");
-    assert_eq!(guided_before["result"]["scalar"], 3);
-    assert!(guided_before.get("sql").is_none());
-
-    // 2. Switch local engine to SQL mode via settings API.
-    let (status, saved) = post(
-        &state,
-        &token,
-        "/api/v1/ai/settings",
-        json!({
-            "enabled": true,
-            "provider": "local",
-            "answer_mode": "sql",
-            "active_model": null,
-            "threads": 4,
-            "unload_minutes": 15,
-            "model_dir": null
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{saved}");
-    assert_eq!(saved["answer_mode"], "sql");
-
-    // 3. Free questions run end-to-end through the projection and sandbox.
+    // 1. Free SQL questions run end-to-end through the projection and sandbox.
     let (status, sql_bjork) = post(
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
+        json!({"question": "How many times did I listen to Björk?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{sql_bjork}");
     assert_eq!(sql_bjork["status"], "ok", "{sql_bjork}");
     assert_eq!(sql_bjork["sql"]["rows"], json!([[3]]));
-    assert!(sql_bjork["result"].is_null());
 
     let (status, sql_total) = post(
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "How many plays?", "context": null}),
+        json!({"question": "How many plays?"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{sql_total}");
     assert_eq!(sql_total["status"], "ok", "{sql_total}");
     assert_eq!(sql_total["sql"]["rows"], json!([[4]]));
 
-    // 4. Failed local free question suggests guided questions or a larger model.
+    // 2. Follow-up request carries previous question and SQL definition.
+    let (status, follow_up) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({
+            "question": "and in 2024?",
+            "previous": {
+                "question": "How many times did I listen to Björk?",
+                "sql": {
+                    "title": sql_bjork["sql"]["title"],
+                    "computed": sql_bjork["sql"]["computed"],
+                    "sql": sql_bjork["sql"]["sql"],
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{follow_up}");
+    assert_eq!(follow_up["status"], "ok", "{follow_up}");
+    assert_eq!(follow_up["sql"]["title"], "Follow-up (2024)");
+    assert_eq!(follow_up["sql"]["rows"], json!([[1]]));
+
+    // 3. Failed local SQL query reports explicit rule code and suggestions.
     let (status, failed_sql) = post(
         &state,
         &token,
         "/api/v1/ask",
-        json!({"question": "Show me settings", "context": null}),
+        json!({"question": "Show me settings"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{failed_sql}");
     assert_eq!(failed_sql["status"], "failed", "{failed_sql}");
     assert_eq!(failed_sql["sql"]["rule_code"], "unauthorized_table");
     let msg = failed_sql["message"].as_str().unwrap();
-    assert!(msg.contains("Guided questions"), "{msg}");
-    assert!(msg.contains("larger model"), "{msg}");
-
-    // 5. Switch back to guided: guided response is byte-for-byte unchanged.
-    let (status, _) = post(
-        &state,
-        &token,
-        "/api/v1/ai/settings",
-        json!({
-            "enabled": true,
-            "provider": "local",
-            "answer_mode": "guided",
-            "active_model": null,
-            "threads": 4,
-            "unload_minutes": 15,
-            "model_dir": null
-        }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let (status, guided_after) = post(
-        &state,
-        &token,
-        "/api/v1/ask",
-        json!({"question": "How many times did I listen to Björk?", "context": null}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(guided_after, guided_before);
+    assert!(msg.contains("unauthorized_table"), "{msg}");
 }
 
 #[tokio::test]
@@ -1032,7 +499,6 @@ async fn ask_mode_requires_owner_session_csrf_and_rejects_read_api_keys() {
 
     let payload = serde_json::to_vec(&json!({
         "question": "How many times did I listen to Björk?",
-        "mode": "guided",
     }))
     .unwrap();
 

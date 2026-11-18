@@ -51,14 +51,37 @@ pub(crate) fn encode_hex(bytes: &[u8]) -> String {
 pub fn digest(value: &str) -> String {
     encode_hex(&Sha256::digest(value.as_bytes()))
 }
-fn session_cookie(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .find_map(|part| part.trim().strip_prefix("scrobbl_session="))
+fn session_cookies(headers: &HeaderMap) -> Vec<&str> {
+    let mut tokens = Vec::new();
+    for header_value in headers.get_all(header::COOKIE) {
+        let Ok(raw) = header_value.to_str() else {
+            continue;
+        };
+        for part in raw.split(';') {
+            if let Some(token) = part.trim().strip_prefix("scrobbl_session=")
+                && token.len() == 64
+                && token.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                tokens.push(token);
+            }
+        }
+    }
+    tokens
 }
+
+fn constant_time_eq(left: &str, right: &str) -> bool {
+    let lb = left.as_bytes();
+    let rb = right.as_bytes();
+    if lb.len() != rb.len() {
+        return false;
+    }
+    let mut diff = 0_u8;
+    for (&a, &b) in lb.iter().zip(rb.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
 #[derive(Clone)]
 pub struct Session {
     pub digest: String,
@@ -69,25 +92,34 @@ pub async fn session(state: &AppState, headers: &HeaderMap) -> Result<Session> {
     if headers.contains_key(header::AUTHORIZATION) {
         return Err(AppError::Forbidden);
     }
-    let token = session_cookie(headers).ok_or(AppError::Unauthorized)?;
-    if token.len() != 64 {
+    let tokens = session_cookies(headers);
+    if tokens.is_empty() {
         return Err(AppError::Unauthorized);
     }
-    let digest = digest(token);
-    let row = sqlx::query("SELECT csrf FROM sessions WHERE digest = ? AND expires_at_ms > ?")
-        .bind(&digest)
-        .bind(now_ms())
-        .fetch_optional(&state.private_db)
-        .await?
-        .ok_or(AppError::Unauthorized)?;
-    Ok(Session {
-        digest,
-        csrf: row.get("csrf"),
-    })
+    let now = now_ms();
+    for token in tokens {
+        let digest = digest(token);
+        if let Some(row) =
+            sqlx::query("SELECT csrf FROM sessions WHERE digest = ? AND expires_at_ms > ?")
+                .bind(&digest)
+                .bind(now)
+                .fetch_optional(&state.private_db)
+                .await?
+        {
+            return Ok(Session {
+                digest,
+                csrf: row.get("csrf"),
+            });
+        }
+    }
+    Err(AppError::Unauthorized)
 }
 pub async fn require_write(state: &AppState, headers: &HeaderMap) -> Result<Session> {
     let session = session(state, headers).await?;
-    if headers.get("x-csrf-token").and_then(|h| h.to_str().ok()) != Some(session.csrf.as_str()) {
+    let Some(given) = headers.get("x-csrf-token").and_then(|h| h.to_str().ok()) else {
+        return Err(AppError::Forbidden);
+    };
+    if !constant_time_eq(given, &session.csrf) {
         return Err(AppError::Forbidden);
     }
     Ok(session)
@@ -106,6 +138,11 @@ async fn new_session(state: &AppState) -> Result<Response> {
         .bind(now_ms() + 7 * 86_400_000)
         .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "DELETE FROM sessions WHERE digest NOT IN (SELECT digest FROM sessions ORDER BY expires_at_ms DESC LIMIT 64)",
+    )
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let mut response = Json(json!({"authenticated":true,"csrf":csrf})).into_response();
     response.headers_mut().insert(
@@ -199,7 +236,7 @@ pub fn validate_password(password: &str, username: Option<&str>) -> Result<()> {
                 order
                     .as_bytes()
                     .windows(3)
-                    .any(|part| lower.contains(std::str::from_utf8(part).unwrap()))
+                    .any(|part| std::str::from_utf8(part).is_ok_and(|s| lower.contains(s)))
             })
     });
     let chars: Vec<_> = password.chars().collect();
@@ -258,8 +295,10 @@ fn login_attempt_allowance() -> usize {
             .unwrap_or(8)
     })
 }
-pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
-    let mut attempts = state.login_attempts.lock().await;
+async fn enforce_rate_limit(
+    bucket: &tokio::sync::Mutex<std::collections::VecDeque<Instant>>,
+) -> Result<()> {
+    let mut attempts = bucket.lock().await;
     let now = Instant::now();
     while attempts
         .front()
@@ -272,6 +311,14 @@ pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
     }
     attempts.push_back(now);
     Ok(())
+}
+
+pub(crate) async fn rate_limit(state: &AppState) -> Result<()> {
+    enforce_rate_limit(&state.login_attempts).await
+}
+
+pub(crate) async fn rate_limit_password(state: &AppState) -> Result<()> {
+    enforce_rate_limit(&state.password_attempts).await
 }
 pub async fn setup(
     State(state): State<AppState>,

@@ -1,11 +1,9 @@
 //! Dedicated inference worker for Ask.
 //!
-//! One OS thread owns the engine (llama backend, model and any transient
-//! context), a bounded queue and the model lifecycle. Inference never runs on a
-//! tokio worker: handlers only enqueue a request and await a oneshot channel.
-//!
-//! The engine abstraction keeps the queue, serialization, timeout,
-//! cancellation and idle-unload behaviour testable without a model.
+//! One OS thread owns the engine (`llama.cpp` backend, loaded GGUF model, and
+//! transient context), a bounded queue, and the model lifecycle. Inference
+//! never runs on a Tokio worker: handlers only enqueue a request and await a
+//! oneshot channel.
 use std::{
     path::PathBuf,
     sync::{
@@ -93,10 +91,8 @@ impl std::error::Error for RuntimeError {}
 
 /// One generation with wall-clock timings.
 ///
-/// The production worker only needs [`Generation::text`], but offline tools
-/// (the Ask eval harness) need latency and throughput without reimplementing
-/// the llama.cpp decode loop. [`Engine::generate_timed`] is the shared entry
-/// point; the default implementation keeps mock engines trivial.
+/// The production worker only needs [`Generation::text`], while `ask-eval`
+/// records latency and throughput without reimplementing the decode loop.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Generation {
     pub text: String,
@@ -158,32 +154,13 @@ impl CancelToken {
     }
 }
 
-/// Which GBNF grammar constrains the local model's JSON output.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum GrammarKind {
-    #[default]
-    Guided,
-    Sql,
-}
-
-/// The thing that owns a loaded model. Implementations must not panic on a
+/// Owns a loaded local GGUF model. Implementations must never panic on a
 /// missing or corrupt file; they return an explicit error instead.
 pub trait Engine: Send {
     fn load(&mut self, spec: &ModelSpec) -> Result<(), String>;
     fn unload(&mut self);
     fn generate(&mut self, prompt: &str, cancel: &CancelToken) -> Result<String, InferenceError>;
-    /// Generate with an explicit grammar mode. Simple engines that do not
-    /// distinguish grammars inherit the guided default.
-    fn generate_with_grammar(
-        &mut self,
-        prompt: &str,
-        _grammar: GrammarKind,
-        cancel: &CancelToken,
-    ) -> Result<String, InferenceError> {
-        self.generate(prompt, cancel)
-    }
-    /// One generation with timings. Adapters with real measurements override
-    /// this; the default keeps simple engines (and tests) working unchanged.
+    /// One generation with timings.
     fn generate_timed(
         &mut self,
         prompt: &str,
@@ -194,13 +171,11 @@ pub trait Engine: Send {
             ..Generation::default()
         })
     }
-    /// Called after a timeout, cancellation or failure. A fresh context is
-    /// created for every request, so this is a safety net for future engines.
+    /// Called after a timeout, cancellation or failure.
     fn reset(&mut self) {}
 }
 
-/// Installed when the build has no local inference runtime. It never loads a
-/// model; Ask answers only through a configured remote AI server.
+/// Installed when the build has no local inference runtime.
 #[cfg(not(feature = "llama"))]
 pub struct UnavailableEngine;
 
@@ -228,13 +203,13 @@ pub struct RuntimeState {
 struct Job {
     spec: ModelSpec,
     prompt: String,
-    grammar: GrammarKind,
     cancel: CancelToken,
     reply: oneshot::Sender<Result<String, InferenceError>>,
 }
 
 enum Message {
     Infer(Box<Job>),
+    Unload,
     Shutdown,
 }
 
@@ -261,8 +236,6 @@ impl Drop for RuntimeInner {
         {
             token.cancel();
         }
-        // Wake an idle worker. A full queue drains eventually and every
-        // in-flight generation sees the cancellation above between tokens.
         let _ = self.sender.try_send(Message::Shutdown);
     }
 }
@@ -311,6 +284,10 @@ impl Runtime {
             .clone()
     }
 
+    pub fn unload(&self) {
+        let _ = self.inner.sender.try_send(Message::Unload);
+    }
+
     pub fn shutdown(&self) {
         self.inner.shutdown.store(true, Ordering::SeqCst);
         if let Some(token) = self
@@ -331,30 +308,14 @@ impl Runtime {
         prompt: &str,
         timeout: Duration,
     ) -> Result<String, RuntimeError> {
-        self.infer_with_grammar_and_cancel(
-            spec,
-            prompt,
-            GrammarKind::Guided,
-            CancelToken::new(timeout),
-        )
-        .await
+        self.infer_with_cancel(spec, prompt, CancelToken::new(timeout))
+            .await
     }
 
     pub async fn infer_with_cancel(
         &self,
         spec: &ModelSpec,
         prompt: &str,
-        cancel: CancelToken,
-    ) -> Result<String, RuntimeError> {
-        self.infer_with_grammar_and_cancel(spec, prompt, GrammarKind::Guided, cancel)
-            .await
-    }
-
-    pub async fn infer_with_grammar_and_cancel(
-        &self,
-        spec: &ModelSpec,
-        prompt: &str,
-        grammar: GrammarKind,
         cancel: CancelToken,
     ) -> Result<String, RuntimeError> {
         if self.inner.shutdown.load(Ordering::SeqCst) {
@@ -377,7 +338,6 @@ impl Runtime {
         let job = Box::new(Job {
             spec: spec.clone(),
             prompt: prompt.to_string(),
-            grammar,
             cancel,
             reply,
         });
@@ -434,8 +394,7 @@ fn worker(
                         engine.unload();
                         loaded = None;
                         idle_deadline = None;
-                        let mut state = lock(&state);
-                        *state = RuntimeState::default();
+                        *lock(&state) = RuntimeState::default();
                         continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => break,
@@ -447,13 +406,21 @@ fn worker(
             },
         };
 
-        let Message::Infer(job) = message else {
-            break;
+        let job = match message {
+            Message::Shutdown => break,
+            Message::Unload => {
+                engine.unload();
+                loaded = None;
+                idle_deadline = None;
+                *lock(&state) = RuntimeState::default();
+                continue;
+            }
+            Message::Infer(job) => job,
         };
+
         let Job {
             spec,
             prompt,
-            grammar,
             cancel,
             reply,
         } = *job;
@@ -497,7 +464,7 @@ fn worker(
         }
 
         *lock(&active) = Some(cancel.clone());
-        let result = engine.generate_with_grammar(&prompt, grammar, &cancel);
+        let result = engine.generate(&prompt, &cancel);
         if result.is_err() {
             // A timeout, cancellation or engine failure must never leave a
             // partially decoded sequence available to the next question.
@@ -523,7 +490,7 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(feature = "llama")]
 mod llama {
     use super::*;
-    use crate::ask::{grammar, schema};
+    use crate::ask::grammar;
     use llama_cpp_2::{
         LogOptions,
         context::params::LlamaContextParams,
@@ -538,16 +505,11 @@ mod llama {
         sync::{LazyLock, Once},
     };
 
-    pub const CONTEXT_TOKENS: u32 = 3072;
     pub const SQL_CONTEXT_TOKENS: u32 = 4096;
-    pub const MAX_NEW_TOKENS: i32 = 256;
     pub const MAX_SQL_NEW_TOKENS: i32 = 512;
     const MAX_OUTPUT_BYTES: usize = 16 * 1024;
 
-    static GRAMMAR: LazyLock<Result<String, String>> =
-        LazyLock::new(|| grammar::to_gbnf(&schema::schema_json()));
-    static SQL_GRAMMAR: LazyLock<Result<String, String>> =
-        LazyLock::new(|| grammar::to_gbnf(&schema::sql_schema()));
+    static SQL_GRAMMAR: LazyLock<Result<String, String>> = LazyLock::new(grammar::from_sql_schema);
     static LOGS: Once = Once::new();
 
     /// CPU-only llama.cpp engine. The backend and model stay loaded between
@@ -571,10 +533,9 @@ mod llama {
             }
         }
 
-        pub fn generate_timed_with_grammar(
+        pub fn generate_timed_sql(
             &mut self,
             prompt: &str,
-            grammar_kind: GrammarKind,
             cancel: &CancelToken,
         ) -> Result<Generation, InferenceError> {
             let started = Instant::now();
@@ -588,29 +549,17 @@ mod llama {
             let backend = self.backend.as_ref().ok_or_else(|| {
                 InferenceError::Failed("The llama backend is not loaded.".to_string())
             })?;
-            let grammar = match grammar_kind {
-                GrammarKind::Guided => GRAMMAR.as_ref(),
-                GrammarKind::Sql => SQL_GRAMMAR.as_ref(),
-            }
-            .map_err(|error| InferenceError::Failed(error.clone()))?;
-            let context_tokens = match grammar_kind {
-                GrammarKind::Guided => CONTEXT_TOKENS,
-                GrammarKind::Sql => SQL_CONTEXT_TOKENS,
-            };
-            let max_new_tokens = match grammar_kind {
-                GrammarKind::Guided => MAX_NEW_TOKENS,
-                GrammarKind::Sql => MAX_SQL_NEW_TOKENS,
-            };
+            let grammar = SQL_GRAMMAR
+                .as_ref()
+                .map_err(|error| InferenceError::Failed(error.clone()))?;
 
             let mut params = LlamaContextParams::default()
                 .with_n_ctx(Some(
-                    NonZeroU32::new(context_tokens).expect("constant context size is non-zero"),
+                    NonZeroU32::new(SQL_CONTEXT_TOKENS).unwrap_or(NonZeroU32::MIN),
                 ))
                 .with_n_threads(i32::try_from(self.threads).unwrap_or(4))
                 .with_n_threads_batch(i32::try_from(self.threads).unwrap_or(4));
             if self.debug {
-                // Timing measurement is off by default; only turn it on when
-                // the operator asked for diagnostics.
                 params = params.with_no_perf(false);
             }
             let mut context = model.new_context(backend, params).map_err(|error| {
@@ -624,7 +573,7 @@ mod llama {
                     "The model tokenizer produced an empty prompt.".to_string(),
                 ));
             }
-            if tokens.len() as i32 + max_new_tokens > context.n_ctx() as i32 {
+            if tokens.len() as i32 + MAX_SQL_NEW_TOKENS > context.n_ctx() as i32 {
                 return Err(InferenceError::Failed(format!(
                     "The question is too long for the model context ({} prompt tokens, {} context tokens).",
                     tokens.len(),
@@ -663,10 +612,6 @@ mod llama {
                 if cancel.should_stop() {
                     return Err(cancel.error());
                 }
-                // `LlamaSampler::sample` already accepts the token internally
-                // in the llama.cpp bundled with llama-cpp-2 0.1.161. Calling
-                // `accept` again advances the grammar twice and panics
-                // (utilityai/llama-cpp-rs#1007).
                 let token = sampler.sample(&context, batch.n_tokens() - 1);
                 if first_token_at.is_none() {
                     first_token_at = Some(Instant::now());
@@ -682,7 +627,7 @@ mod llama {
                     ));
                 }
                 generated += 1;
-                if generated >= max_new_tokens {
+                if generated >= MAX_SQL_NEW_TOKENS {
                     break;
                 }
                 batch.clear();
@@ -768,32 +713,20 @@ mod llama {
                 .map(|generation| generation.text)
         }
 
-        fn generate_with_grammar(
-            &mut self,
-            prompt: &str,
-            grammar: GrammarKind,
-            cancel: &CancelToken,
-        ) -> Result<String, InferenceError> {
-            self.generate_timed_with_grammar(prompt, grammar, cancel)
-                .map(|generation| generation.text)
-        }
-
         fn generate_timed(
             &mut self,
             prompt: &str,
             cancel: &CancelToken,
         ) -> Result<Generation, InferenceError> {
-            self.generate_timed_with_grammar(prompt, GrammarKind::Guided, cancel)
+            self.generate_timed_sql(prompt, cancel)
         }
     }
 }
 
 #[cfg(feature = "llama")]
-pub use llama::{
-    CONTEXT_TOKENS, LlamaEngine, MAX_NEW_TOKENS, MAX_SQL_NEW_TOKENS, SQL_CONTEXT_TOKENS,
-};
+pub use llama::{LlamaEngine, MAX_SQL_NEW_TOKENS, SQL_CONTEXT_TOKENS};
 
-/// A loaded engine reused for many prompts. Offline tools (the eval harness)
+/// A loaded engine reused for many prompts. Offline tools (`ask-eval`)
 /// use it to measure one model across a corpus without reloading the weights;
 /// production keeps the dedicated worker and its queue.
 #[cfg(feature = "llama")]
@@ -819,7 +752,7 @@ impl Session {
         })
     }
 
-    /// Run one prompt against the loaded model with the production prompt,
+    /// Run one prompt against the loaded model with the production SQL prompt,
     /// grammar and greedy sampling.
     pub fn run(&mut self, prompt: &str) -> Result<Generation, RuntimeError> {
         if !self.loaded {

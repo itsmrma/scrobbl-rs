@@ -1,22 +1,22 @@
 # Ask projection and SQL sandbox
 
-Free questions (SQL) let the model write one read-only SQL query. The
-application never runs that SQL against the archive. It runs it against a
+Ask lets a local GGUF model translate a question into one read-only SQL query.
+The application never runs that SQL against the archive. It runs it against a
 separate SQLite file, the **Ask projection**, opened read-only inside the
 **SQL sandbox**: an allow-list authorizer, hard resource limits, a timeout and
 an output cap. Every piece of **model-written SQL** goes through
 `src/ask/sandbox.rs::execute`; there is no other path for it. The one other
 projection reader is the history-link resolver below: it runs its own fixed
 queries with bound parameters, never model text as SQL, and opens the same file
-read-only.
+through `crate::ask::projection::open_read_only`.
 
-The two answer modes and their trade-offs are compared in
-[Local AI settings](ai.md#answer-modes). The evaluation that scores SQL answers
+Model configuration and custom `.gguf` paths are described in
+[Local AI settings](ai.md). The evaluation that scores SQL answers
 by result is in the [Ask SQL evaluation report](reports/ask-eval-sql.md).
 
 ## What the model receives
 
-In free/SQL mode the model receives only:
+Every Ask question sends only:
 
 - the projection **schema** and the meaning of every table and column, generated
   from `src/ask/projection.rs::TABLES` by the same `schema_description()` the
@@ -41,8 +41,7 @@ from the projection.
   groups, local corrections, album/track grouping and the assigned calendar are
   applied exactly as in the rest of the app.
 - Content: only what the owner can already see in the GUI. No settings, no
-  Spotify client secret, no remote AI key, no sessions, no API keys, no raw
-  source payloads.
+  Spotify client secret, no sessions, no API keys, no raw source payloads.
 - Rebuild: a background worker notices archive revision changes (debounced) and
   rebuilds the whole file. A first build happens when AI is enabled; nothing is
   built while AI is off, and disabling AI deletes the file. A calendar change

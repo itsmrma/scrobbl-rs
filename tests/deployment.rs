@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
     Router,
     body::Body,
