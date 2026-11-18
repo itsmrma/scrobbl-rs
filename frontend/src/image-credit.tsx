@@ -11,17 +11,24 @@ const PROVIDERS: Record<string, string> = {
   itunes: "Apple iTunes / Deezer",
 };
 
+const HTML_ENTITIES: Record<string, string> = {
+  "&amp;": "&",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&nbsp;": " ",
+};
+
 // Commons attribution metadata contains untrusted HTML. Display its text, never its markup.
 export function plainCredit(value: string | null) {
   if (!value) return "";
-  const stripped = value.replace(/<[^>]*>/g, " ");
-  return stripped
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(
+      /&(?:amp|lt|gt|quot|#39|nbsp);/g,
+      (entity) => lookupRecord(HTML_ENTITIES, entity) ?? entity,
+    )
     .replace(/\s+/g, " ")
     .trim();
 }

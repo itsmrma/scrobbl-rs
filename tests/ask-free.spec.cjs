@@ -69,6 +69,8 @@ const test = base.extend({
     page.on("pageerror", (error) => errors.push(error.message));
 
     let askHandler = null;
+    let closed = false;
+    const cancelSleeps = new Set();
     try {
       await expect
         .poll(
@@ -157,52 +159,87 @@ const test = base.extend({
       let nextSpec = null;
       let delayMs = 0;
 
+      const sleep = (ms) =>
+        new Promise((resolveSleep) => {
+          const cancel = () => {
+            clearTimeout(timer);
+            cancelSleeps.delete(cancel);
+            resolveSleep();
+          };
+          const timer = setTimeout(cancel, ms);
+          cancelSleeps.add(cancel);
+        });
+
       askHandler = async (route) => {
         const reqBody = route.request().postDataJSON();
         seenRequests.push(reqBody);
         if (delayMs > 0) {
-          await new Promise((r) => setTimeout(r, delayMs));
+          await sleep(delayMs);
+        }
+        if (closed || page.isClosed()) {
+          await route.abort().catch(() => {});
+          return;
         }
         const spec =
           typeof nextSpec === "function" ? nextSpec(reqBody) : nextSpec;
         if (spec && spec.status === "unsupported") {
-          await route.fulfill({
-            json: {
-              status: "unsupported",
-              question: reqBody.question,
-              message: spec.message,
-              runtime_available: true,
-              sql: null,
-            },
-          });
+          await route
+            .fulfill({
+              json: {
+                status: "unsupported",
+                question: reqBody.question,
+                message: spec.message,
+                runtime_available: true,
+                sql: null,
+              },
+            })
+            .catch(() => {});
           return;
         }
         // Execute the SQL directly against the live backend SQL sandbox (/api/v1/ask/sql)
         // so tests exercise real projection creation, sandbox enforcement, entity links,
         // timeouts, and history links without requiring downloaded GGUF weights.
-        const currentSession = await (
-          await page.request.get("/api/session")
-        ).json();
-        const sqlRes = await page.request.post("/api/v1/ask/sql", {
-          headers: {
-            "x-csrf-token": currentSession.csrf,
-            origin: new URL(page.url()).origin,
-            "content-type": "application/json",
-          },
-          data: {
-            sql: spec.sql,
-            title: spec.title,
-            computed: spec.computed,
-            answer_kind: spec.answer_kind,
-            columns: spec.columns,
-          },
-        });
+        let currentSession;
+        let sqlRes;
+        try {
+          currentSession = await (
+            await page.request.get("/api/session")
+          ).json();
+          if (closed || page.isClosed()) {
+            await route.abort().catch(() => {});
+            return;
+          }
+          sqlRes = await page.request.post("/api/v1/ask/sql", {
+            headers: {
+              "x-csrf-token": currentSession.csrf,
+              origin: new URL(page.url()).origin,
+              "content-type": "application/json",
+            },
+            data: {
+              sql: spec.sql,
+              title: spec.title,
+              computed: spec.computed,
+              answer_kind: spec.answer_kind,
+              columns: spec.columns,
+            },
+          });
+        } catch (err) {
+          if (closed || page.isClosed()) {
+            await route.abort().catch(() => {});
+            return;
+          }
+          throw err;
+        }
         const body = await sqlRes.json();
         if (body.status === "ok" && body.sql && spec.computed) {
           body.sql.computed = spec.computed;
         }
         body.question = reqBody.question;
-        await route.fulfill({ json: body });
+        if (closed || page.isClosed()) {
+          await route.abort().catch(() => {});
+          return;
+        }
+        await route.fulfill({ json: body }).catch(() => {});
       };
       await page.route("**/api/v1/ask", askHandler);
 
@@ -218,8 +255,13 @@ const test = base.extend({
       });
       expect(errors).toEqual([]);
     } finally {
-      if (askHandler)
-        await page.unroute("**/api/v1/ask", askHandler).catch(() => {});
+      closed = true;
+      for (const cancel of Array.from(cancelSleeps)) {
+        cancel();
+      }
+      if (askHandler) {
+        await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+      }
       await context.close();
       child.kill();
       await rm(directory, { recursive: true, force: true }).catch(() => {});
@@ -266,8 +308,14 @@ test("AI settings expose local SQL Qwen3 catalog and custom local GGUF path with
   // Clearing custom path works cleanly.
   await page.getByRole("button", { name: "Clear custom path" }).click();
   await expect(customInput).toHaveValue("");
+  const clearSaved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/api/v1/ai/settings") &&
+      res.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Save AI settings" }).click();
-  await expect(page.getByText("AI settings saved.")).toBeVisible();
+  expect((await clearSaved).ok()).toBeTruthy();
+  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
   const clearedRes = await (
     await page.request.get("/api/v1/ask/status")
   ).json();

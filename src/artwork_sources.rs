@@ -479,6 +479,37 @@ fn commons_file(value: &str) -> Option<String> {
             .into_owned();
     decoded.starts_with("File:").then_some(decoded)
 }
+fn decode_html_entities(text: &str) -> String {
+    const ENTITIES: &[(&str, &str)] = &[
+        ("amp;", "&"),
+        ("lt;", "<"),
+        ("gt;", ">"),
+        ("quot;", "\""),
+        ("#39;", "'"),
+        ("#039;", "'"),
+        ("apos;", "'"),
+        ("nbsp;", " "),
+        ("copy;", "©"),
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('&') {
+        out.push_str(before);
+        if let Some((entity, replacement)) = ENTITIES
+            .iter()
+            .find(|(entity, _)| after.starts_with(entity))
+        {
+            out.push_str(replacement);
+            rest = after.strip_prefix(entity).unwrap_or(after);
+        } else {
+            out.push('&');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn strip_html_tags(raw: &str) -> String {
     let mut out = String::with_capacity(raw.len());
     let mut in_tag = false;
@@ -490,16 +521,7 @@ fn strip_html_tags(raw: &str) -> String {
             _ => {}
         }
     }
-    let decoded = out
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&#039;", "'")
-        .replace("&apos;", "'")
-        .replace("&nbsp;", " ")
-        .replace("&copy;", "©");
+    let decoded = decode_html_entities(&out);
     decoded.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -1165,5 +1187,19 @@ mod tests {
         );
         assert!(secure_url("http://example.com/a.jpg").is_none());
         assert!(secure_url("https://user:pw@example.com/a.jpg").is_none());
+    }
+
+    #[test]
+    fn strip_html_tags_decodes_entities_once_without_double_unescaping() {
+        assert_eq!(
+            strip_html_tags(
+                "<span>Photo &amp;lt;b&amp;gt; by &quot;Alex&quot; &amp;amp; Co</span>"
+            ),
+            "Photo &lt;b&gt; by \"Alex\" &amp; Co"
+        );
+        assert_eq!(
+            strip_html_tags("CC&#039;s &apos;test&apos;&nbsp;&copy;"),
+            "CC's 'test' ©"
+        );
     }
 }
