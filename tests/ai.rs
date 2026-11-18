@@ -284,7 +284,7 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
     assert!(models.len() >= 5);
     let default = models
         .iter()
-        .find(|model| model["id"] == "qwen3-1.7b-q4_k_m")
+        .find(|model| model["id"] == "qwen3.5-2b-q4_k_m")
         .unwrap();
     assert_eq!(default["tier"], "default");
     assert_eq!(default["status"], "available");
@@ -298,8 +298,8 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
             .starts_with("https://")
     );
     assert_eq!(default["download"]["sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(default["download"]["size_bytes"], 1_282_439_264_u64);
-    assert_eq!(default["requirements"]["context_tokens"], 4096);
+    assert_eq!(default["download"]["size_bytes"], 1_280_835_840_u64);
+    assert_eq!(default["requirements"]["context_tokens"], 8192);
     assert!(default["requirements"]["ram_min_bytes"].as_u64().unwrap() > 0);
     assert!(
         default["requirements"]["ram_recommended_bytes"]
@@ -307,17 +307,17 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
             .unwrap()
             >= default["requirements"]["ram_min_bytes"].as_u64().unwrap()
     );
-    assert_eq!(default["speed"]["p50_ms"], 4138);
+    assert!(default["speed"].is_null());
 
     let future = models
         .iter()
-        .find(|model| model["id"] == "qwen3-8b-q4_k_m")
+        .find(|model| model["id"] == "qwen3.5-9b-q4_k_m")
         .unwrap();
     assert_eq!(future["status"], "gpu_future");
     assert_eq!(future["selectable"], false);
     let large = models
         .iter()
-        .find(|model| model["id"] == "qwen3-32b-q4_k_m")
+        .find(|model| model["id"] == "qwen3.5-27b-q4_k_m")
         .unwrap();
     assert_eq!(large["status"], "gpu_future");
     assert_eq!(large["selectable"], false);
@@ -678,7 +678,7 @@ async fn installed_model_is_selectable_deletable_and_accounts_for_space() {
     let (status, value) = post(
         &state,
         &token,
-        "/api/v1/ai/models/qwen3-1.7b-q4_k_m/select",
+        "/api/v1/ai/models/qwen3.5-2b-q4_k_m/select",
         json!({}),
     )
     .await;
@@ -778,7 +778,7 @@ async fn settings_validate_threads_model_dir_and_unknown_model() {
         "/api/v1/ai/settings",
         json!({
             "enabled": true,
-            "active_model": "qwen3-1.7b-q4_k_m",
+            "active_model": "qwen3.5-2b-q4_k_m",
             "threads": 4,
             "unload_minutes": 15,
             "model_dir": null
@@ -976,4 +976,69 @@ async fn custom_model_path_validates_gguf_and_safe_directory_scanning_and_deleti
     .await;
     assert_eq!(status, StatusCode::OK, "{cleared}");
     assert!(cleared["custom_model_path"].is_null());
+}
+
+#[tokio::test]
+async fn previously_downloaded_legacy_catalog_model_remains_selectable_and_usable() {
+    let _guard = TEST_LOCK.lock().await;
+    catalog::clear_test_models();
+    let (_dir, state, token) = setup().await;
+    let root = models::root(&state).await.unwrap();
+
+    let legacy_id = "qwen3-1.7b-q4_k_m";
+    let legacy_dir = models::model_dir(&root, legacy_id).unwrap();
+    tokio::fs::create_dir_all(&legacy_dir).await.unwrap();
+    let mut gguf_bytes = b"GGUF".to_vec();
+    gguf_bytes.resize(128, 3);
+    tokio::fs::write(legacy_dir.join("Qwen3-1.7B-Q4_K_M.gguf"), &gguf_bytes)
+        .await
+        .unwrap();
+    tokio::fs::write(
+        legacy_dir.join(models::METADATA_FILE),
+        serde_json::to_vec(&models::ModelMetadata {
+            catalog_id: legacy_id.to_string(),
+            file: "Qwen3-1.7B-Q4_K_M.gguf".to_string(),
+            sha256: "a".repeat(64),
+            size_bytes: gguf_bytes.len() as u64,
+            installed_at_ms: 1,
+            license: "Apache-2.0".to_string(),
+            checksum_verified: true,
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    let (status, selected) = post(
+        &state,
+        &token,
+        &format!("/api/v1/ai/models/{legacy_id}/select"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{selected}");
+    assert_eq!(selected["active_model"], legacy_id);
+
+    let (status, saved) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "active_model": legacy_id,
+            "custom_model_path": null,
+            "threads": 4,
+            "unload_minutes": 15,
+            "model_dir": null
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["active_model"], legacy_id);
+    assert_eq!(saved["model_installed"], true);
+    assert_eq!(saved["model_ready"], true);
+
+    let ask_status = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_status["active_model"], legacy_id);
+    assert_eq!(ask_status["model_ready"], cfg!(feature = "llama"));
 }

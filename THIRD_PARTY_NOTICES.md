@@ -99,7 +99,7 @@ The official image compiles a CPU-only inference runtime behind the default
 The official image contains no model weights. Models are downloaded only when
 the owner enables AI and starts a download from the curated catalog. Every
 catalog entry pins its source repository, revision, file, byte size and
-SHA-256; the download is verified before use. The v1 catalog contains **Qwen3
+SHA-256; the download is verified before use. The curated catalog contains **Qwen3.5
 GGUF** models from the Qwen team (Alibaba Group), published under
 **Apache-2.0**. Their source repositories, revisions, checksums and attribution
 are recorded in [docs/ai.md](docs/ai.md), and the catalog API returns the

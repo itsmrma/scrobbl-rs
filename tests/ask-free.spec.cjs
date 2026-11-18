@@ -269,14 +269,14 @@ const test = base.extend({
   },
 });
 
-test("AI settings expose local SQL Qwen3 catalog and custom local GGUF path without legacy engines or modes", async ({
+test("AI settings expose local SQL Qwen3.5 catalog and custom local GGUF path without legacy engines or modes", async ({
   harness: { page },
 }) => {
   await page.goto("/settings/ai");
 
-  // Qwen3 catalog defaults and custom GGUF field load first.
+  // Qwen3.5 catalog defaults and custom GGUF field load first.
   await expect(
-    page.getByRole("heading", { name: "Qwen3 1.7B", exact: true }),
+    page.getByRole("heading", { name: "Qwen3.5 2B", exact: true }),
   ).toBeVisible();
   const customInput = page.getByLabel("Custom local model path (.gguf)");
   await expect(customInput).toBeVisible();

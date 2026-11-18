@@ -1,4 +1,4 @@
-//! Optional local AI: consent, curated Qwen3 catalog, custom local GGUF
+//! Optional local AI: consent, curated Qwen3.5 catalog, custom local GGUF
 //! paths, model management, and downloads.
 //!
 //! The model never sees archive rows. This module owns only the settings and
@@ -172,7 +172,6 @@ pub fn resolve_local_model_path(
 
     if let Some(entry) = scanned
         && entry.usable()
-        && entry.custom
         && let Some(file_name) = entry.file.as_deref()
     {
         let dir = models::model_dir(&root, model_id)?;
@@ -225,7 +224,7 @@ pub async fn selected_model_state(
             }),
             model.is_available(),
         ),
-        (None, Some(entry)) if entry.custom => (entry.usable(), entry.usable()),
+        (None, Some(entry)) => (entry.usable(), entry.usable()),
         _ => (false, false),
     };
     Ok((
@@ -426,7 +425,7 @@ fn settings_message(
     }
     match (&stored.active_model, installed) {
         (None, _) => Some(
-            "AI is enabled, but no model is selected. Download a Qwen3 model, select a local model, or enter a custom .gguf path before asking questions."
+            "AI is enabled, but no model is selected. Download a Qwen3.5 model, select a local model, or enter a custom .gguf path before asking questions."
                 .to_string(),
         ),
         (Some(_), false) => Some(
@@ -542,12 +541,12 @@ pub async fn settings_post(
             }
         } else {
             models::safe_id(id)?;
-            // Allow preserving an existing custom subfolder selection if it is
-            // present in scan; otherwise reject unknown arbitrary model ids.
-            let found_custom = models::scan(&effective_root)
+            // Allow preserving an existing local or custom model folder selection
+            // if it is present in scan; otherwise reject unknown arbitrary model ids.
+            let found_local = models::scan(&effective_root)
                 .into_iter()
-                .any(|entry| entry.id == id && entry.custom && entry.usable());
-            if !found_custom {
+                .any(|entry| entry.id == id && entry.usable());
+            if !found_local {
                 return Err(AppError::BadRequest("Unknown model.".into()));
             }
         }
@@ -915,9 +914,9 @@ pub async fn model_select(
         }
     } else if scanned_entry
         .as_ref()
-        .is_some_and(|entry| entry.usable() && entry.custom)
+        .is_some_and(models::ScannedModel::usable)
     {
-        // Usable custom .gguf directory under `ai_model_dir`.
+        // Usable local or custom .gguf directory under `ai_model_dir`.
     } else {
         return Err(AppError::NotFound);
     }

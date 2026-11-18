@@ -40,16 +40,16 @@ Rules:
 
 ## Running offline against any local GGUF model
 
-Evaluate either a curated Qwen3 file or any imported local `.gguf` file:
+Evaluate either a curated Qwen3.5 file or any imported local `.gguf` file:
 
 ```powershell
 $env:CARGO_TARGET_DIR='C:\Users\mbena\Documents\scrobbl-rs\target'
 
 cargo run --locked --release --bin ask-eval -- `
-  --model C:\models\Qwen3-1.7B-Q4_K_M.gguf `
-  --label qwen3-1.7b-q4_k_m `
+  --model C:\models\Qwen3.5-2B-Q4_K_M.gguf `
+  --label qwen3.5-2b-q4_k_m `
   --threads 8 `
-  --out C:\temp\qwen3-1.7b-sql.json
+  --out C:\temp\qwen3.5-2b-sql.json
 ```
 
 The harness loads the local GGUF file once via `src/ask/runtime.rs::Session`,

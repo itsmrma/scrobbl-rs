@@ -64,7 +64,30 @@ pub fn open_read_only(projection_path: &Path) -> Option<Connection> {
             std::ptr::null_mut::<std::ffi::c_int>(),
         );
     }
+    let _ = register_text_functions(&conn);
     Some(conn)
+}
+
+/// Registers Unicode-aware `lower`, `upper`, and accent-folding `fold` scalar
+/// functions on read-only Ask projection connections.
+pub fn register_text_functions(conn: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let flags = FunctionFlags::SQLITE_UTF8
+        | FunctionFlags::SQLITE_DETERMINISTIC
+        | FunctionFlags::SQLITE_INNOCUOUS;
+    conn.create_scalar_function("lower", 1, flags, |ctx| {
+        let value = ctx.get::<Option<String>>(0)?;
+        Ok(value.map(|s| s.to_lowercase()))
+    })?;
+    conn.create_scalar_function("upper", 1, flags, |ctx| {
+        let value = ctx.get::<Option<String>>(0)?;
+        Ok(value.map(|s| s.to_uppercase()))
+    })?;
+    conn.create_scalar_function("fold", 1, flags, |ctx| {
+        let value = ctx.get::<Option<String>>(0)?;
+        Ok(value.map(|s| crate::ask::names::fold(&s)))
+    })?;
+    Ok(())
 }
 
 pub fn read_built_at_ms(projection_path: &Path) -> Option<i64> {
