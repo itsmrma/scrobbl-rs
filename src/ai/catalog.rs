@@ -1,4 +1,4 @@
-//! Curated model catalog.
+//! Curated local SQL model catalog.
 //!
 //! Every downloadable entry is pinned to a repository revision, a file name,
 //! its exact byte size and its LFS SHA-256. The values below were read from the
@@ -6,8 +6,6 @@
 //! guessed checksum. URLs are derived from the pinned fields, never supplied by
 //! a client.
 use std::sync::{LazyLock, Mutex};
-
-use super::AnswerMode;
 
 const GIB: u64 = 1024 * 1024 * 1024;
 
@@ -51,21 +49,6 @@ pub struct Requirements {
 }
 
 #[derive(Clone, Debug)]
-pub struct LanguageScore {
-    pub language: String,
-    pub exact_match: Option<f64>,
-    pub cases: Option<u32>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ParserScores {
-    pub intent: Option<f64>,
-    pub slots: Option<f64>,
-    pub refusals: Option<f64>,
-    pub exact_match: Option<f64>,
-}
-
-#[derive(Clone, Debug)]
 pub struct MeasuredSpeed {
     pub p50_ms: u32,
     pub p95_ms: u32,
@@ -85,15 +68,9 @@ pub struct CatalogModel {
     pub download: DownloadSource,
     pub license: License,
     pub requirements: Requirements,
-    pub languages: Vec<LanguageScore>,
-    pub parser: ParserScores,
     pub speed: Option<MeasuredSpeed>,
     pub backend: String,
     pub selectable: bool,
-    /// The answer mode that fits this model. Every downloadable local model is
-    /// recommended for guided questions: it fills a fixed vocabulary instead of
-    /// writing SQL, and guided questions are answered by tested Rust executors.
-    pub recommendation: AnswerMode,
 }
 
 impl CatalogModel {
@@ -102,38 +79,10 @@ impl CatalogModel {
     }
 }
 
-fn language(language: &str, exact_match: Option<f64>, cases: Option<u32>) -> LanguageScore {
-    LanguageScore {
-        language: language.to_string(),
-        exact_match,
-        cases,
-    }
-}
-
 fn repo_license(repo: &str) -> License {
     License {
         name: "Apache-2.0".to_string(),
         url: format!("https://huggingface.co/{repo}"),
-    }
-}
-
-fn empty_parser() -> ParserScores {
-    ParserScores {
-        intent: None,
-        slots: None,
-        refusals: None,
-        exact_match: None,
-    }
-}
-
-/// Scores measured by `ask-eval` on `evals/ask/corpus.jsonl` (#181).
-/// `slots` is the slot F1 and `refusals` the refusal accuracy.
-fn measured_parser(intent: f64, slots: f64, refusals: f64, exact_match: f64) -> ParserScores {
-    ParserScores {
-        intent: Some(intent),
-        slots: Some(slots),
-        refusals: Some(refusals),
-        exact_match: Some(exact_match),
     }
 }
 
@@ -153,8 +102,6 @@ fn qwen(
     ram_recommended_bytes: u64,
     cpu_cores: u32,
     gpu_optional: bool,
-    languages: Vec<LanguageScore>,
-    parser: ParserScores,
     speed: Option<MeasuredSpeed>,
 ) -> CatalogModel {
     CatalogModel {
@@ -178,14 +125,11 @@ fn qwen(
             ram_recommended_bytes,
             cpu_cores,
             gpu_optional,
-            context_tokens: 3072,
+            context_tokens: 4096,
         },
-        languages,
-        parser,
         speed,
         backend: "llama.cpp (CPU)".to_string(),
         selectable: status == "available",
-        recommendation: AnswerMode::Guided,
     }
 }
 
@@ -213,10 +157,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 0.6B",
             "light",
             "available",
-            "Fastest option for short questions. Measured accuracy is well below the default, so treat the interpretation chips as part of the answer.",
-            // The official Qwen repository publishes only Q8_0 for this size.
-            // The spike measured this pinned Q4_K_M build; the checksum and
-            // size below are the real Hugging Face LFS values.
+            "Fastest local SQL option for simple archive lookups. Smallest footprint, though complex multi-join queries may need SQL repair or a larger model.",
             "unsloth/Qwen3-0.6B-GGUF",
             "50968a4468ef4233ed78cd7c3de230dd1d61a56b",
             "Qwen3-0.6B-Q4_K_M.gguf",
@@ -226,11 +167,6 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             2 * GIB,
             2,
             false,
-            vec![
-                language("en", Some(0.4458), Some(104)),
-                language("it", Some(0.3614), Some(104)),
-            ],
-            measured_parser(0.5577, 0.6111, 0.5817, 0.4036),
             desktop_speed(1904, 2416, 909, 48.9, 777.0),
         ),
         qwen(
@@ -238,9 +174,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 1.7B",
             "default",
             "available",
-            "Provisional default: measured accuracy is below the 1.7B eval target, so treat the interpretation chips as part of the answer. Use the 4B model when accuracy matters.",
-            // The official Qwen repository publishes only Q8_0 for this size.
-            // The spike measured this pinned Q4_K_M build.
+            "Default CPU model for local Ask SQL generation. Good balance between response speed and read-only SQLite query quality.",
             "ggml-org/Qwen3-1.7B-GGUF",
             "daeb8e2d528a760970442092f6bf1e55c3b659eb",
             "Qwen3-1.7B-Q4_K_M.gguf",
@@ -250,11 +184,6 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             4 * GIB,
             4,
             false,
-            vec![
-                language("en", Some(0.7108), Some(104)),
-                language("it", Some(0.6024), Some(104)),
-            ],
-            measured_parser(0.7885, 0.8376, 0.8846, 0.6566),
             desktop_speed(4138, 4611, 2352, 23.0, 296.0),
         ),
         qwen(
@@ -262,7 +191,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 4B",
             "quality",
             "available",
-            "Highest measured accuracy in the CPU tier and the closest to the eval targets, but it still misses the 4B intent and refusal targets and is roughly twice as slow as the 1.7B model.",
+            "Highest-accuracy Qwen3 CPU model for writing complex read-only SQL against the Ask projection; roughly twice as slow as 1.7B.",
             "Qwen/Qwen3-4B-GGUF",
             "bc640142c66e1fdd12af0bd68f40445458f3869b",
             "Qwen3-4B-Q4_K_M.gguf",
@@ -272,11 +201,6 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             8 * GIB,
             4,
             false,
-            vec![
-                language("en", Some(0.9036), Some(104)),
-                language("it", Some(0.8675), Some(104)),
-            ],
-            measured_parser(0.9279, 0.9654, 0.9423, 0.8855),
             desktop_speed(8883, 9825, 5809, 10.6, 120.0),
         ),
         qwen(
@@ -284,7 +208,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 8B",
             "gpu",
             "gpu_future",
-            "GPU tier reserved for a later release. It is listed for planning only and cannot be selected or downloaded in v1.",
+            "GPU tier reserved for a later catalog release. You can also load any compatible local GGUF file now via Custom model path.",
             "Qwen/Qwen3-8B-GGUF",
             "7c41481f57cb95916b40956ab2f0b139b296d974",
             "Qwen3-8B-Q4_K_M.gguf",
@@ -294,8 +218,6 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             16 * GIB,
             6,
             true,
-            vec![language("en", None, None), language("it", None, None)],
-            empty_parser(),
             None,
         ),
         qwen(
@@ -303,7 +225,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             "Qwen3 32B",
             "gpu",
             "gpu_future",
-            "27B-class GPU model reserved for a later release. It is listed for planning only and cannot be selected or downloaded in v1.",
+            "Larger GPU tier reserved for a later catalog release. Listed for planning only in the downloadable catalog.",
             "Qwen/Qwen3-32B-GGUF",
             "938a7432affaec9157f883a87164e2646ae17555",
             "Qwen3-32B-Q4_K_M.gguf",
@@ -313,8 +235,6 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
             32 * GIB,
             8,
             true,
-            vec![language("en", None, None), language("it", None, None)],
-            empty_parser(),
             None,
         ),
     ]

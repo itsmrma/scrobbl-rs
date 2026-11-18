@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use scrobbl_rs::{
     exports::{self, ExportSelection},
     imports::parse_extended,
@@ -813,4 +815,107 @@ async fn recovery_http_requires_owner_csrf_and_explicit_confirmation() {
     }
     assert!(!directory.path().join("recovery.pending").exists());
     store.close().await;
+}
+
+#[tokio::test]
+async fn restore_scrubs_ai_settings_and_unauthenticated_restore_fails_before_lock() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = storage::open(directory.path()).await.unwrap();
+    seed(&store).await;
+
+    // Seed deprecated and host-dependent AI settings before taking a backup.
+    sqlx::query(
+        "INSERT OR REPLACE INTO settings(key, value) VALUES
+         ('ai_enabled', '1'),
+         ('ai_model_dir', '/host/models'),
+         ('ai_custom_model_path', '/host/models/custom.gguf'),
+         ('ai_remote_key', 'sk-legacy-secret'),
+         ('ai_remote_url', 'https://legacy.example/v1'),
+         ('ai_provider', 'remote'),
+         ('ai_answer_mode_local', 'guided')",
+    )
+    .execute(&store.writer)
+    .await
+    .unwrap();
+
+    let work = tempfile::tempdir().unwrap();
+    let backup_zip = work.path().join("backup-with-ai.zip");
+    recovery::create_backup(&store, work.path(), &backup_zip)
+        .await
+        .unwrap();
+
+    let asset_id = recovery::enqueue_asset(&store, "backup", "zip", json!({}))
+        .await
+        .unwrap();
+    let asset = recovery::asset(&store, &asset_id).await.unwrap();
+    let dest = recovery::asset_path(&store, &asset).unwrap();
+    std::fs::copy(&backup_zip, &dest).unwrap();
+    sqlx::query("UPDATE recovery_assets SET state='ready' WHERE id=?")
+        .bind(&asset_id)
+        .execute(&store.writer)
+        .await
+        .unwrap();
+
+    let separated: String = asset_id.chars().flat_map(|c| ['-', c]).collect();
+    let restore_password = format!("Restored-Ai-9{separated}!");
+    recovery::prepare_restore(&store, &asset_id, restore_password)
+        .await
+        .unwrap();
+
+    // Verify unauthenticated POST /api/v1/recovery/restore is rejected with 401
+    // immediately without requiring lock acquisition or modifying pending state.
+    let config = scrobbl_rs::config::Config {
+        bind_ip: "127.0.0.1".parse().unwrap(),
+        external_origin: None,
+        port: 3210,
+        data_dir: directory.path().into(),
+        sync_seconds: 120,
+        now_playing_seconds: 30,
+        import_limits: Default::default(),
+        api_snapshot_limits: Default::default(),
+        env_client_id: None,
+        env_client_secret: None,
+    };
+    let state = scrobbl_rs::AppState::new(store.clone(), config);
+    let router = scrobbl_rs::web::router(state);
+    let res = tokio::time::timeout(
+        Duration::from_millis(500),
+        tower::ServiceExt::oneshot(
+            router,
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/api/v1/recovery/restore")
+                .header("host", "127.0.0.1:3210")
+                .header("origin", "http://127.0.0.1:3210")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"asset_id": asset_id, "password": "x", "confirm_replace": true})
+                        .to_string(),
+                ))
+                .unwrap(),
+        ),
+    )
+    .await
+    .expect("unauthenticated restore must respond promptly")
+    .unwrap();
+    assert_eq!(res.status(), axum::http::StatusCode::UNAUTHORIZED);
+    store.close().await;
+
+    // Activating the restore and opening storage must have scrubbed all AI consent/paths/legacy keys.
+    let reopened = scrobbl_rs::db::open(directory.path()).await.unwrap();
+    for key in [
+        "ai_enabled",
+        "ai_model_dir",
+        "ai_custom_model_path",
+        "ai_remote_key",
+        "ai_remote_url",
+        "ai_provider",
+        "ai_answer_mode_local",
+    ] {
+        let val = scrobbl_rs::db::setting(&reopened.readers, key)
+            .await
+            .unwrap();
+        assert!(val.is_none(), "restored DB must scrub {key}, found {val:?}");
+    }
+    reopened.close().await;
 }

@@ -60,3 +60,8 @@ incremental = true
 # no debugger; crash reports are still readable through the panic message.
 [profile.release]
 strip = "symbols"
+
+[lints.clippy]
+unwrap_used = "deny"
+disallowed_methods = "deny"
+fallible_impl_from = "deny"

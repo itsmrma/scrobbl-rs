@@ -1,14 +1,13 @@
-//! Parser seam between the Ask API and the question interpreter.
+//! Parser seam between the Ask API and the local SQL model interpreter.
 //!
-//! The real local model adapter arrives in #178. It must implement the same
-//! object-safe `QueryParser` trait and return only DSL, never SQL, rows or IDs.
-//! CI and the current app use `StubParser`, a deterministic phrase map.
+//! `ModelParser` loads a verified local GGUF model (from the curated catalog
+//! or a configured custom local path) and generates read-only SQLite queries
+//! constrained by the GBNF SQL grammar. `StubParser` is a deterministic phrase
+//! map used in automated tests without weights.
 use crate::{
-    ai::AnswerMode,
     ask::{
-        dsl::{Entity, EntityKind, Metric, Period, Query, SortBy, SortOrder},
-        runtime::{CancelToken, GrammarKind, ModelSpec, Runtime, RuntimeError},
-        schema::{ColumnFormat, ModelOutput, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
+        runtime::{CancelToken, ModelSpec, Runtime, RuntimeError},
+        schema::{ColumnFormat, SqlAnswerKind, SqlColumnSpec, SqlModelOutput},
     },
     error::{AppError, Result},
 };
@@ -18,35 +17,12 @@ pub type ParseFuture<'a> = Pin<Box<dyn Future<Output = Result<ParsedQuestion>> +
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ParsedQuestion {
-    Query(Query),
-    /// Several queries run in order; a later step may take its entity or its
-    /// dates from one row of an earlier step. Only the stronger "bring your
-    /// own AI" engine produces plans.
-    Plan(Vec<PlanStep>),
     Sql(SqlModelOutput),
-    Unsupported {
-        reason: String,
-    },
+    Unsupported { reason: String },
 }
 
-/// One step of a plan. The model never sees step results: `bind` only names
-/// which row of an earlier step Rust should read.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlanStep {
-    pub query: Query,
-    pub bind: Option<Binding>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Binding {
-    /// Zero-based index of an earlier step.
-    pub step: usize,
-    /// Zero-based row of that step's result.
-    pub row: usize,
-}
-
-/// What the previous SQL-mode answer computed, so a follow-up can build on it
-/// without ever sending results.
+/// What the previous SQL answer computed, so a follow-up ("and last year?") can
+/// build on it without ever sending archive results to the model.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SqlPrevious {
     pub title: String,
@@ -54,20 +30,15 @@ pub struct SqlPrevious {
     pub sql: String,
 }
 
-/// What the previous answer was, so a follow-up ("and last year?") can build
-/// on it. Only the question and its interpretation or SQL, never results.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Previous {
     pub question: String,
-    pub interpretation: Vec<(String, String)>,
     pub sql: Option<SqlPrevious>,
 }
 
 pub trait QueryParser: Send + Sync {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a>;
 
-    /// Parse with the previous answer in view. Parsers that cannot use it
-    /// (the small local model, the stub) ignore it.
     fn parse_follow_up<'a>(
         &'a self,
         question: &'a str,
@@ -76,26 +47,13 @@ pub trait QueryParser: Send + Sync {
         self.parse(question)
     }
 
-    /// Parse using the active answer mode. Parsers that only support one mode
-    /// inherit `parse_follow_up`.
-    fn parse_for_mode<'a>(
+    fn parse_with_cancel<'a>(
         &'a self,
         question: &'a str,
         previous: Option<&'a Previous>,
-        _mode: AnswerMode,
-    ) -> ParseFuture<'a> {
-        self.parse_follow_up(question, previous)
-    }
-
-    /// Parse using the active answer mode with cancellation support.
-    fn parse_for_mode_with_cancel<'a>(
-        &'a self,
-        question: &'a str,
-        previous: Option<&'a Previous>,
-        mode: AnswerMode,
         _cancel: Option<&'a CancelToken>,
     ) -> ParseFuture<'a> {
-        self.parse_for_mode(question, previous, mode)
+        self.parse_follow_up(question, previous)
     }
 
     /// Ask the model to repair a rejected or failing SQL query using only its
@@ -110,159 +68,71 @@ pub trait QueryParser: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Option<ParsedQuestion>>> + Send + 'a>> {
         Box::pin(async { Ok(None) })
     }
-    /// True while the real runtime is loading a model. Stub and unavailable
-    /// parsers never load anything.
+
+    /// True while the real runtime is loading a model.
     fn model_loading(&self) -> bool {
         false
     }
+
+    /// Ask the underlying worker to drop any loaded model from memory.
+    fn unload(&self) {}
 }
 
-/// Deterministic English/Italian phrase map used by CI and development.
+/// Deterministic English/Italian SQL phrase map used by CI and development.
 pub struct StubParser;
 
 impl QueryParser for StubParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { Ok(stub_parse(question)) })
+        Box::pin(async move { Ok(stub_parse_sql(question)) })
     }
 
-    fn parse_for_mode<'a>(
+    fn parse_follow_up<'a>(
         &'a self,
         question: &'a str,
-        _previous: Option<&'a Previous>,
-        mode: AnswerMode,
+        previous: Option<&'a Previous>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move {
-            Ok(match mode {
-                AnswerMode::Guided => stub_parse(question),
-                AnswerMode::Sql => stub_parse_sql(question),
-            })
-        })
+        Box::pin(async move { Ok(stub_parse_sql_follow_up(question, previous)) })
     }
 }
 
-/// Stand-in until the compiled runtime and a downloaded model are available.
-/// The handler also checks `runtime_available`, so this is only a safety net.
+/// Stand-in until the compiled runtime and a local model are available.
 pub struct UnavailableParser;
 
 impl QueryParser for UnavailableParser {
     fn parse<'a>(&'a self, _question: &'a str) -> ParseFuture<'a> {
         Box::pin(async move {
             Ok(ParsedQuestion::Unsupported {
-                reason: "The AI runtime is not available in this build.".into(),
+                reason: "The local AI runtime is not available in this build.".into(),
             })
         })
     }
 }
 
-pub fn unsupported_question_message() -> String {
-    "I can answer questions about play counts, listening time, distinct tracks, artists and albums, first plays, last plays, listening streaks, milestones, ranking positions, shares of plays, listening days and grouped top lists (metrics: plays, time_listened, distinct_tracks, distinct_artists, distinct_albums, first_play, last_play, streak, milestones, rank, share, listening_days). I cannot write SQL or answer questions outside the archive. Try “How many times did I listen to Björk?” or “How many hours did I listen?”".into()
-}
-
-pub fn stub_parse(question: &str) -> ParsedQuestion {
-    let question = normalise(question);
-    if question.is_empty() {
-        return ParsedQuestion::Unsupported {
-            reason: unsupported_question_message(),
-        };
+pub fn stub_parse_sql_follow_up(question: &str, previous: Option<&Previous>) -> ParsedQuestion {
+    let normalised = normalise(question);
+    if let Some(prev) = previous
+        && let Some(prev_sql) = prev.sql.as_ref()
+        && let Some(year_str) = normalised
+            .strip_prefix("and in ")
+            .or_else(|| normalised.strip_prefix("e nel "))
+            .or_else(|| normalised.strip_prefix("what about "))
+        && let Ok(year) = year_str.trim().parse::<i32>()
+    {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: format!(
+                "SELECT COUNT(*) AS plays FROM ({}) WHERE 1 = 1 AND {year} = {year}",
+                prev_sql.sql.trim().trim_end_matches(';')
+            ),
+            title: format!("Follow-up ({year})"),
+            computed: format!("Follow-up based on previous query for {year}."),
+            answer_kind: SqlAnswerKind::Value,
+            columns: vec![SqlColumnSpec {
+                name: "plays".into(),
+                format: ColumnFormat::Count,
+            }],
+        });
     }
-
-    if contains_any(
-        &question,
-        &["how many hours", "how long", "quante ore", "quanto tempo"],
-    ) {
-        return ParsedQuestion::Query(default_query(Metric::TimeListened));
-    }
-    if contains_any(
-        &question,
-        &[
-            "distinct artist",
-            "different artist",
-            "distinct album",
-            "distinct track",
-            "quanti artisti",
-            "quanti album",
-            "quanti brani diversi",
-        ],
-    ) {
-        let metric = if contains_any(&question, &["album"]) {
-            Metric::DistinctAlbums
-        } else if contains_any(&question, &["track", "brani"]) {
-            Metric::DistinctTracks
-        } else {
-            Metric::DistinctArtists
-        };
-        return ParsedQuestion::Query(default_query(metric));
-    }
-    if contains_any(&question, &["streak", "serie di giorni"]) {
-        return ParsedQuestion::Query(default_query(Metric::Streak));
-    }
-    if contains_any(&question, &["milestone", "traguardo"]) {
-        return ParsedQuestion::Query(default_query(Metric::Milestones));
-    }
-
-    // First/last listening. Entity literals stay untouched apart from the
-    // transport-level normalisation above; resolution happens in Rust.
-    for (prefix, metric) in [
-        ("when did i first listen to ", Metric::FirstPlay),
-        ("when did i first play ", Metric::FirstPlay),
-        ("when did i last listen to ", Metric::LastPlay),
-        ("when did i last play ", Metric::LastPlay),
-        ("when did i start listening to ", Metric::FirstPlay),
-    ] {
-        if let Some(literal) = question.strip_prefix(prefix) {
-            return entity_query(metric, literal);
-        }
-    }
-    for (prefix, suffix, metric) in [
-        (
-            "quando ho ascoltato ",
-            " per la prima volta",
-            Metric::FirstPlay,
-        ),
-        ("quando ho ascoltato ", " l'ultima volta", Metric::LastPlay),
-        ("quando ho iniziato ad ascoltare ", "", Metric::FirstPlay),
-    ] {
-        if let Some(rest) = question.strip_prefix(prefix) {
-            if !suffix.is_empty() && !rest.ends_with(suffix) {
-                continue;
-            }
-            let literal = rest.strip_suffix(suffix).unwrap_or(rest);
-            return entity_query(metric, literal);
-        }
-    }
-
-    for prefix in [
-        "how many times did i listen to ",
-        "how many times have i listened to ",
-        "how many times did i play ",
-        "how many plays for ",
-        "how many plays of ",
-        "how many listens for ",
-    ] {
-        if let Some(literal) = question.strip_prefix(prefix) {
-            return entity_query(Metric::Plays, literal);
-        }
-    }
-    for prefix in [
-        "quante volte ho ascoltato ",
-        "quante volte ho riprodotto ",
-        "quanti ascolti per ",
-        "quanti ascolti di ",
-    ] {
-        if let Some(literal) = question.strip_prefix(prefix) {
-            return entity_query(Metric::Plays, literal);
-        }
-    }
-
-    if let Some(period) = period_only_question(&question) {
-        return ParsedQuestion::Query(period);
-    }
-
-    // A question about a named entity with an unrecognised metric is still a
-    // refusal, not an empty answer.
-    ParsedQuestion::Unsupported {
-        reason: unsupported_question_message(),
-    }
+    stub_parse_sql(question)
 }
 
 /// Deterministic SQL-mode stub used when testing local SQL mode without a GGUF model.
@@ -301,10 +171,10 @@ pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
         &["top tracks", "brani più ascoltati", "canzoni più ascoltate"],
     ) {
         return ParsedQuestion::Sql(SqlModelOutput {
-            sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC".into(),
+            sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC LIMIT 10".into(),
             title: "Top tracks".into(),
             computed: "Counted plays per track across all time.".into(),
-            answer_kind: SqlAnswerKind::Table,
+            answer_kind: SqlAnswerKind::Ranking,
             columns: vec![
                 SqlColumnSpec {
                     name: "track".into(),
@@ -317,8 +187,44 @@ pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
             ],
         });
     }
+    if contains_any(&normalised, &["top artists", "artisti più ascoltati"]) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql: "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 GROUP BY a.id ORDER BY plays DESC, a.name ASC LIMIT 10".into(),
+            title: "Top artists".into(),
+            computed: "Counted plays per artist across all time.".into(),
+            answer_kind: SqlAnswerKind::Ranking,
+            columns: vec![
+                SqlColumnSpec {
+                    name: "artist".into(),
+                    format: ColumnFormat::Artist,
+                },
+                SqlColumnSpec {
+                    name: "plays".into(),
+                    format: ColumnFormat::Count,
+                },
+            ],
+        });
+    }
+    if contains_any(
+        &normalised,
+        &["how many hours", "how long", "quante ore", "quanto tempo"],
+    ) {
+        return ParsedQuestion::Sql(SqlModelOutput {
+            sql:
+                "SELECT COALESCE(SUM(listened_ms), 0) AS listened_ms FROM listens WHERE counted = 1"
+                    .into(),
+            title: "Total listening time".into(),
+            computed: "Total known listening time for counted plays across all time.".into(),
+            answer_kind: SqlAnswerKind::Value,
+            columns: vec![SqlColumnSpec {
+                name: "listened_ms".into(),
+                format: ColumnFormat::DurationMs,
+            }],
+        });
+    }
     for prefix in [
         "how many times did i listen to ",
+        "how many times have i listened to ",
         "how many times did i play ",
         "quante volte ho ascoltato ",
     ] {
@@ -354,118 +260,7 @@ pub fn stub_parse_sql(question: &str) -> ParsedQuestion {
         });
     }
     ParsedQuestion::Unsupported {
-        reason: "I couldn't translate that question in stub SQL mode. Try \"What are my top tracks?\" or \"How many plays?\".".into(),
-    }
-}
-
-fn entity_query(metric: Metric, literal: &str) -> ParsedQuestion {
-    match entity_from(literal) {
-        Some(entity) => {
-            let mut query = default_query(metric);
-            query.entity = Some(entity);
-            ParsedQuestion::Query(query)
-        }
-        None => ParsedQuestion::Unsupported {
-            reason: "Tell me which artist, album or track you mean.".into(),
-        },
-    }
-}
-
-fn entity_from(literal: &str) -> Option<Entity> {
-    let mut rest = literal.trim();
-    let mut kind = EntityKind::Artist;
-    for (prefix, candidate) in [
-        ("the artist ", EntityKind::Artist),
-        ("artist ", EntityKind::Artist),
-        ("the album ", EntityKind::Album),
-        ("album ", EntityKind::Album),
-        ("the track ", EntityKind::Track),
-        ("track ", EntityKind::Track),
-        ("the song ", EntityKind::Track),
-        ("song ", EntityKind::Track),
-        ("l'artista ", EntityKind::Artist),
-        ("l'album ", EntityKind::Album),
-        ("il brano ", EntityKind::Track),
-        ("la canzone ", EntityKind::Track),
-    ] {
-        if let Some(stripped) = rest.strip_prefix(prefix) {
-            kind = candidate;
-            rest = stripped;
-            break;
-        }
-    }
-    let name = rest.trim();
-    (!name.is_empty()).then(|| Entity {
-        kind,
-        name: name.to_owned(),
-        id: None,
-    })
-}
-
-fn period_only_question(question: &str) -> Option<Query> {
-    for prefix in [
-        "how many plays",
-        "how many listens",
-        "how many times",
-        "quanti ascolti",
-        "quante volte",
-    ] {
-        let Some(suffix) = question.strip_prefix(prefix) else {
-            continue;
-        };
-        let suffix = suffix.trim();
-        let mut query = default_query(Metric::Plays);
-        if suffix.is_empty() {
-            return Some(query);
-        }
-        if let Some(rest) = suffix.strip_prefix("in ")
-            && let Ok(year) = rest.parse::<i32>()
-        {
-            query.year = Some(year);
-            query.period = Period::AllTime;
-            return Some(query);
-        }
-        if let Some(rest) = suffix.strip_prefix("nel ")
-            && let Ok(year) = rest.parse::<i32>()
-        {
-            query.year = Some(year);
-            query.period = Period::AllTime;
-            return Some(query);
-        }
-        let period = match suffix {
-            "today" | "oggi" => Some(Period::Today),
-            "yesterday" | "ieri" => Some(Period::Yesterday),
-            "this week" | "questa settimana" => Some(Period::ThisWeek),
-            "last week" | "la settimana scorsa" | "settimana scorsa" => Some(Period::LastWeek),
-            "this month" | "questo mese" => Some(Period::ThisMonth),
-            "last month" | "il mese scorso" | "mese scorso" => Some(Period::LastMonth),
-            "this year" | "quest'anno" => Some(Period::ThisYear),
-            "last year" | "l'anno scorso" | "anno scorso" => Some(Period::LastYear),
-            _ => None,
-        }?;
-        query.period = period;
-        return Some(query);
-    }
-    None
-}
-
-fn default_query(metric: Metric) -> Query {
-    Query {
-        metric,
-        entity: None,
-        scope: None,
-        period: Period::AllTime,
-        year: None,
-        month: None,
-        weekday: None,
-        hour: None,
-        source: None,
-        from: None,
-        to: None,
-        group_by: None,
-        sort_by: SortBy::Metric,
-        order: SortOrder::Desc,
-        limit: None,
+        reason: "I couldn't translate that question in stub SQL mode. Try \"What are my top tracks?\", \"How many hours did I listen?\", or \"How many plays?\".".into(),
     }
 }
 
@@ -480,10 +275,9 @@ pub fn inference_timeout() -> Duration {
         .unwrap_or(Duration::from_millis(DEFAULT_TIMEOUT_MS))
 }
 
-/// The real local parser. It reads consent, model selection, threads and
-/// unload minutes from the archive settings on every question, resolves the
-/// installed file from the filesystem, asks the dedicated worker and maps the
-/// grammar-constrained JSON to the shared DSL.
+/// Local GGUF parser backed by `llama.cpp`. Reads consent, model selection
+/// (or custom GGUF path), threads, and unload timeout on every question and
+/// produces schema-constrained JSON containing a read-only SQL query.
 pub struct ModelParser {
     db: sqlx::SqlitePool,
     data_dir: PathBuf,
@@ -492,9 +286,6 @@ pub struct ModelParser {
 }
 
 impl ModelParser {
-    /// The parser installed at startup. Without the `llama` feature the local
-    /// engine only reports itself unavailable, while a configured remote AI
-    /// server still answers questions.
     pub fn local(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
         #[cfg(feature = "llama")]
         let engine: Box<dyn crate::ask::runtime::Engine> =
@@ -527,7 +318,6 @@ impl ModelParser {
         &self,
         question: &str,
         previous: Option<&Previous>,
-        mode: Option<AnswerMode>,
         cancel: Option<&CancelToken>,
     ) -> Result<ParsedQuestion> {
         if cancel.is_some_and(CancelToken::is_cancelled) {
@@ -539,30 +329,6 @@ impl ModelParser {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             });
         }
-        // A per-request mode never persists; without one the stored mode for the
-        // selected engine applies.
-        let answer_mode = mode.unwrap_or_else(|| stored.effective_answer_mode());
-        if stored.uses_remote() {
-            let Some(config) = stored.remote_config() else {
-                return Ok(ParsedQuestion::Unsupported {
-                    reason: "Enter the AI server address and the model name in Settings.".into(),
-                });
-            };
-            if answer_mode == crate::ai::AnswerMode::Sql {
-                let today = active_calendar_today(&self.db).await;
-                let raw = crate::ask::remote::infer_sql(
-                    &config,
-                    question,
-                    previous,
-                    &today,
-                    self.timeout,
-                )
-                .await?;
-                return interpret_remote_sql(&raw);
-            }
-            let raw = crate::ask::remote::infer(&config, question, previous, self.timeout).await?;
-            return interpret_remote(&raw, question);
-        }
         let spec = match self.local_spec(&stored)? {
             Ok(spec) => spec,
             Err(reason) => return Ok(ParsedQuestion::Unsupported { reason }),
@@ -570,72 +336,31 @@ impl ModelParser {
         let token = cancel
             .cloned()
             .unwrap_or_else(|| CancelToken::new(self.timeout));
-        if answer_mode == AnswerMode::Sql {
-            let today = active_calendar_today(&self.db).await;
-            let prompt = crate::ask::prompt::build_sql_prompt(question, &today);
-            let output = self
-                .runtime
-                .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
-                .await
-                .map_err(local_sql_runtime_error)?;
-            return interpret_local_sql(&output);
-        }
-        let prompt = crate::ask::prompt::build_prompt(question);
+        let today = active_calendar_today(&self.db).await;
+        let prompt = crate::ask::prompt::build_sql_prompt_with_previous(question, previous, &today);
         let output = self
             .runtime
-            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Guided, token)
+            .infer_with_cancel(&spec, &prompt, token)
             .await
             .map_err(runtime_error)?;
-
-        interpret(&output, question)
+        interpret_local_sql(&output)
     }
 
-    /// Resolve the selected catalog model into the worker's spec. The error is
-    /// the owner-facing refusal, so the caller can return it unchanged.
+    /// Resolve the active local model (curated catalog entry, local folder, or
+    /// custom GGUF path) into the worker's spec.
     fn local_spec(
         &self,
         stored: &crate::ai::StoredSettings,
     ) -> Result<std::result::Result<ModelSpec, String>> {
-        let Some(model_id) = stored.active_model.clone() else {
-            return Ok(Err(
-                "Download and select an AI model in Settings before asking questions.".into(),
-            ));
-        };
-        let Some(catalog_model) = crate::ai::catalog::find(&model_id) else {
-            return Ok(Err(
-                "The selected model is not in the curated catalog. Choose another model.".into(),
-            ));
-        };
-        if !catalog_model.is_available() {
-            return Ok(Err(
-                "The selected model is not available for questions in this release. Choose another model."
-                    .into(),
-            ));
+        match crate::ai::resolve_local_model_path(&self.data_dir, stored)? {
+            Ok((model_id, path)) => Ok(Ok(ModelSpec::new(
+                model_id,
+                path,
+                stored.threads.clamp(1, 64),
+                stored.unload_minutes.clamp(1, 1440),
+            ))),
+            Err(reason) => Ok(Err(reason)),
         }
-
-        let root = match stored.model_dir.as_deref() {
-            Some(dir) => PathBuf::from(dir),
-            None => self.data_dir.join("models"),
-        };
-        let dir = crate::ai::models::model_dir(&root, &model_id)?;
-        let installed = crate::ai::models::scan(&root)
-            .into_iter()
-            .find(|entry| entry.id == model_id);
-        if !installed.is_some_and(|entry| {
-            entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
-        }) {
-            return Ok(Err(
-                "The selected model is not installed or did not pass verification. Download it again or choose another model."
-                    .into(),
-            ));
-        }
-        let path = crate::ai::models::model_file(&dir, &catalog_model.download.file)?;
-        Ok(Ok(ModelSpec::new(
-            model_id,
-            path,
-            stored.threads.clamp(1, 64),
-            stored.unload_minutes.clamp(1, 1440),
-        )))
     }
 
     async fn repair_sql_model(
@@ -654,27 +379,6 @@ impl ModelParser {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             }));
         }
-        if stored.uses_remote() {
-            let Some(config) = stored.remote_config() else {
-                return Ok(Some(ParsedQuestion::Unsupported {
-                    reason: "Enter the AI server address and the model name in Settings.".into(),
-                }));
-            };
-            let today = active_calendar_today(&self.db).await;
-            let raw = crate::ask::remote::infer_sql_repair(
-                &config,
-                question,
-                previous,
-                attempts,
-                &today,
-                self.timeout,
-            )
-            .await?;
-            return interpret_remote_sql(&raw).map(Some);
-        }
-        // The local engine has a free-string `sql` field in its own JSON
-        // grammar, so it can repair too: same SQL grammar, same output contract,
-        // same timeouts and cancellation as local SQL mode.
         let spec = match self.local_spec(&stored)? {
             Ok(spec) => spec,
             Err(reason) => return Ok(Some(ParsedQuestion::Unsupported { reason })),
@@ -687,9 +391,9 @@ impl ModelParser {
             .unwrap_or_else(|| CancelToken::new(self.timeout));
         let raw = self
             .runtime
-            .infer_with_grammar_and_cancel(&spec, &prompt, GrammarKind::Sql, token)
+            .infer_with_cancel(&spec, &prompt, token)
             .await
-            .map_err(local_sql_runtime_error)?;
+            .map_err(runtime_error)?;
         interpret_local_sql(&raw).map(Some)
     }
 }
@@ -709,23 +413,13 @@ async fn active_calendar_today(db: &sqlx::SqlitePool) -> String {
     now.format("%Y-%m-%d").to_string()
 }
 
-pub fn interpret_remote_sql(raw: &str) -> Result<ParsedQuestion> {
-    interpret_sql_with_message(
-        raw,
-        "The AI model returned a SQL interpretation that does not match the expected format. Try rephrasing the question.",
-    )
-}
-
 pub fn interpret_local_sql(raw: &str) -> Result<ParsedQuestion> {
-    interpret_sql_with_message(
-        raw,
-        "The local model returned a SQL interpretation that does not match the expected format. Local catalog models can struggle with SQL — try Guided questions in Settings → AI or a larger model.",
-    )
-}
-
-fn interpret_sql_with_message(raw: &str, error_message: &str) -> Result<ParsedQuestion> {
-    let output: SqlModelOutput =
-        serde_json::from_str(raw.trim()).map_err(|_| AppError::BadRequest(error_message.into()))?;
+    let output: SqlModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
+        AppError::BadRequest(
+            "The local model returned a SQL interpretation that does not match the expected format. Try rephrasing the question, choosing a larger Qwen3 model, or configuring a custom local GGUF model."
+                .into(),
+        )
+    })?;
     if output.answer_kind == SqlAnswerKind::Unsupported {
         let reason = if output.computed.trim().is_empty() {
             "I can only answer questions about your listening archive.".to_owned()
@@ -737,69 +431,28 @@ fn interpret_sql_with_message(raw: &str, error_message: &str) -> Result<ParsedQu
     Ok(ParsedQuestion::Sql(output))
 }
 
-/// The remote engine answers with a list of steps; a flat single interpretation
-/// (what the local model emits) is accepted too.
-pub fn interpret_remote(raw: &str, question: &str) -> Result<ParsedQuestion> {
-    if raw.contains("\"steps\"") {
-        let output: crate::ask::schema::AdvancedOutput =
-            serde_json::from_str(raw.trim()).map_err(|_| {
-                AppError::BadRequest(
-                    "The AI model returned steps that do not match the question format. Try rephrasing the question."
-                        .into(),
-                )
-            })?;
-        return output.into_parsed();
-    }
-    interpret(raw, question)
-}
-
-/// Turn the model's JSON into the shared DSL. The model, local or remote, only
-/// ever picks vocabulary; Rust resolves names and computes every number.
-fn interpret(raw: &str, question: &str) -> Result<ParsedQuestion> {
-    let mut output: ModelOutput = serde_json::from_str(raw.trim()).map_err(|_| {
-        AppError::BadRequest(
-            "The AI model returned an interpretation that does not match the question format. Try rephrasing the question."
-                .into(),
-        )
-    })?;
-    output.apply_question_hints(question);
-    output.into_parsed()
-}
-
 fn runtime_error(error: RuntimeError) -> AppError {
     match error {
         RuntimeError::Busy => AppError::Conflict(
             "The local model is answering another question. Try again in a moment.".into(),
         ),
-        RuntimeError::Timeout => {
-            AppError::BadRequest("The local model did not answer in time. Try again.".into())
-        }
+        RuntimeError::Timeout => AppError::BadRequest(
+            "The local model did not answer in time. Try a smaller question or a different local model."
+                .into(),
+        ),
         RuntimeError::Cancelled => {
             AppError::BadRequest("The question was cancelled before the model answered.".into())
         }
         RuntimeError::Closed => AppError::Internal,
         RuntimeError::Failed(message) => AppError::BadRequest(format!(
-            "The local model could not answer: {message}. Check the selected model in Settings."
+            "The local model could not answer: {message}. Check the selected model or custom GGUF path in Settings → AI."
         )),
-    }
-}
-
-fn local_sql_runtime_error(error: RuntimeError) -> AppError {
-    match error {
-        RuntimeError::Timeout => AppError::BadRequest(
-            "The local model did not answer in time. Try Guided questions in Settings → AI or a larger model."
-                .into(),
-        ),
-        RuntimeError::Failed(message) => AppError::BadRequest(format!(
-            "The local model could not answer: {message}. Try Guided questions in Settings → AI or a larger model."
-        )),
-        other => runtime_error(other),
     }
 }
 
 impl QueryParser for ModelParser {
     fn parse<'a>(&'a self, question: &'a str) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, None, None, None).await })
+        Box::pin(async move { self.parse_model(question, None, None).await })
     }
 
     fn parse_follow_up<'a>(
@@ -807,29 +460,16 @@ impl QueryParser for ModelParser {
         question: &'a str,
         previous: Option<&'a Previous>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous, None, None).await })
+        Box::pin(async move { self.parse_model(question, previous, None).await })
     }
 
-    fn parse_for_mode<'a>(
+    fn parse_with_cancel<'a>(
         &'a self,
         question: &'a str,
         previous: Option<&'a Previous>,
-        mode: AnswerMode,
-    ) -> ParseFuture<'a> {
-        Box::pin(async move { self.parse_model(question, previous, Some(mode), None).await })
-    }
-
-    fn parse_for_mode_with_cancel<'a>(
-        &'a self,
-        question: &'a str,
-        previous: Option<&'a Previous>,
-        mode: AnswerMode,
         cancel: Option<&'a CancelToken>,
     ) -> ParseFuture<'a> {
-        Box::pin(async move {
-            self.parse_model(question, previous, Some(mode), cancel)
-                .await
-        })
+        Box::pin(async move { self.parse_model(question, previous, cancel).await })
     }
 
     fn repair_sql<'a>(
@@ -847,6 +487,10 @@ impl QueryParser for ModelParser {
 
     fn model_loading(&self) -> bool {
         self.runtime_state().loading
+    }
+
+    fn unload(&self) {
+        self.runtime.unload();
     }
 }
 
@@ -869,71 +513,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_english_and_italian_counts() {
-        let ParsedQuestion::Query(query) = stub_parse("How many times did I listen to Björk?")
+    fn stub_generates_sql_for_english_and_italian_questions() {
+        let ParsedQuestion::Sql(out) = stub_parse_sql("How many times did I listen to Björk?")
         else {
-            panic!("expected a query");
+            panic!("expected SQL output");
         };
-        assert_eq!(query.metric, Metric::Plays);
-        assert_eq!(
-            query.entity,
-            Some(Entity {
-                kind: EntityKind::Artist,
-                name: "björk".into(),
-                id: None,
-            })
-        );
+        assert_eq!(out.answer_kind, SqlAnswerKind::Value);
+        assert!(out.sql.contains("LOWER('björk')"));
 
-        let ParsedQuestion::Query(query) = stub_parse("Quante volte ho ascoltato Björk?") else {
-            panic!("expected a query");
+        let ParsedQuestion::Sql(out) = stub_parse_sql("Quante volte ho ascoltato Björk?") else {
+            panic!("expected SQL output");
         };
-        assert_eq!(query.metric, Metric::Plays);
+        assert_eq!(out.answer_kind, SqlAnswerKind::Value);
+
+        let ParsedQuestion::Sql(top) = stub_parse_sql("What are my top tracks?") else {
+            panic!("expected SQL output");
+        };
+        assert_eq!(top.answer_kind, SqlAnswerKind::Ranking);
+        assert!(top.sql.contains("GROUP BY t.id"));
     }
 
     #[test]
-    fn parses_first_last_and_periods() {
-        let ParsedQuestion::Query(query) = stub_parse("When did I first listen to Radiohead?")
-        else {
-            panic!("expected a query");
-        };
-        assert_eq!(query.metric, Metric::FirstPlay);
-
-        let ParsedQuestion::Query(query) = stub_parse("quando ho ascoltato Björk l'ultima volta")
-        else {
-            panic!("expected a query");
-        };
-        assert_eq!(query.metric, Metric::LastPlay);
-
-        let ParsedQuestion::Query(query) = stub_parse("How many plays in 2024?") else {
-            panic!("expected a query");
-        };
-        assert_eq!(query.year, Some(2024));
-        assert_eq!(query.period, Period::AllTime);
-
-        let ParsedQuestion::Query(query) = stub_parse("quanti ascolti quest'anno") else {
-            panic!("expected a query");
-        };
-        assert_eq!(query.period, Period::ThisYear);
-    }
-
-    #[test]
-    fn refuses_out_of_scope_questions_explicitly() {
-        let ParsedQuestion::Unsupported { reason } = stub_parse("What is the weather?") else {
+    fn stub_refuses_out_of_scope_questions_explicitly() {
+        let ParsedQuestion::Unsupported { reason } = stub_parse_sql("What is the weather?") else {
             panic!("expected a refusal");
         };
-        assert!(reason.contains("play counts"));
-        assert!(reason.contains("first plays"));
-        assert!(reason.contains("last plays"));
-    }
-
-    #[test]
-    fn the_stub_is_deterministic_and_has_no_free_form_numbers() {
-        let first = stub_parse("How many times did I listen to Björk?");
-        let second = stub_parse("  how many times did i listen to björk  ");
-        assert_eq!(first, second);
-        let ParsedQuestion::Query(query) = first else {
-            panic!("expected a query");
-        };
-        assert!(query.limit.is_none());
+        assert!(reason.contains("listening archive"));
     }
 }

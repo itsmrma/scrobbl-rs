@@ -1,17 +1,16 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
 use chrono::TimeZone;
 use chrono_tz::Europe::Rome;
+use http_body_util::BodyExt;
 use scrobbl_rs::{
     AppState,
     ask::{
-        dsl::{
-            Entity, EntityKind, GroupBy, Limit, Metric, Period, Query, SortBy, SortOrder, Weekday,
-        },
-        execute::{self, Outcome},
-        names, projection,
+        projection,
         sandbox::{self, SandboxLimits, SqlValue},
     },
     auth, browse,
@@ -85,26 +84,6 @@ fn make_event(
     }
 }
 
-fn base_query(metric: Metric) -> Query {
-    Query {
-        metric,
-        entity: None,
-        scope: None,
-        period: Period::AllTime,
-        year: None,
-        month: None,
-        weekday: None,
-        hour: None,
-        source: None,
-        from: None,
-        to: None,
-        group_by: None,
-        sort_by: SortBy::Metric,
-        order: SortOrder::Desc,
-        limit: None,
-    }
-}
-
 async fn post_json(state: &AppState, token: &str, uri: &str, body: serde_json::Value) {
     let response = web::router(state.clone())
         .oneshot(
@@ -124,8 +103,26 @@ async fn post_json(state: &AppState, token: &str, uri: &str, body: serde_json::V
     assert_eq!(response.status(), StatusCode::OK, "POST {uri} failed");
 }
 
+async fn get_json(state: &AppState, token: &str, uri: &str) -> serde_json::Value {
+    let response = web::router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .header("host", "127.0.0.1:3210")
+                .header("cookie", format!("scrobbl_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "GET {uri} failed");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&body).unwrap()
+}
+
 #[tokio::test]
-async fn projection_sql_matches_consultation_and_guided_executors_across_metrics() {
+async fn projection_sql_matches_consultation_across_metrics() {
     let dir = tempfile::tempdir().unwrap();
     let storage = db::open(dir.path()).await.unwrap();
     let token = auth::random_secret();
@@ -341,106 +338,21 @@ async fn projection_sql_matches_consultation_and_guided_executors_across_metrics
     let gate = projection::ProjectionGate::default();
     let proj = projection::ensure(&storage, &gate).await.unwrap();
 
+    let dashboard = get_json(&state, &token, "/api/dashboard?period=all").await;
+    let totals = &dashboard["totals"];
+
     let mut view = storage.read_view().await.unwrap();
     let conn = &mut *view.transaction;
 
-    // 1. Plays (all time, by year, by month, by weekday, by hour, by source, by artist, by track editions)
-    let Outcome::Result(res) = execute::execute(conn, &base_query(Metric::Plays), now_ms)
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
+    // 1. Plays and Time listened vs /api/dashboard totals
+    assert_eq!(
+        scalar(&proj, "SELECT COUNT(*) FROM listens"),
+        vec![SqlValue::Integer(totals["records"].as_i64().unwrap())]
+    );
     assert_eq!(
         scalar(&proj, "SELECT SUM(counted) FROM listens"),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
+        vec![SqlValue::Integer(totals["listens"].as_i64().unwrap())]
     );
-
-    let mut q_2024 = base_query(Metric::Plays);
-    q_2024.year = Some(2024);
-    let Outcome::Result(res) = execute::execute(conn, &q_2024, now_ms).await.unwrap() else {
-        panic!()
-    };
-    assert_eq!(
-        scalar(
-            &proj,
-            "SELECT COALESCE(SUM(counted), 0) FROM listens WHERE local_year = 2024"
-        ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    let mut q_hour0 = base_query(Metric::Plays);
-    q_hour0.hour = Some(0);
-    let Outcome::Result(res) = execute::execute(conn, &q_hour0, now_ms).await.unwrap() else {
-        panic!()
-    };
-    assert_eq!(
-        scalar(
-            &proj,
-            "SELECT COALESCE(SUM(counted), 0) FROM listens WHERE local_hour = 0"
-        ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    let mut q_mon = base_query(Metric::Plays);
-    q_mon.weekday = Some(Weekday::Monday);
-    let Outcome::Result(res) = execute::execute(conn, &q_mon, now_ms).await.unwrap() else {
-        panic!()
-    };
-    assert_eq!(
-        scalar(
-            &proj,
-            "SELECT COALESCE(SUM(counted), 0) FROM listens WHERE weekday = 1"
-        ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    let mut q_imp = base_query(Metric::Plays);
-    q_imp.source = Some("spotify_import".into());
-    let Outcome::Result(res) = execute::execute(conn, &q_imp, now_ms).await.unwrap() else {
-        panic!()
-    };
-    assert_eq!(
-        scalar(
-            &proj,
-            "SELECT COALESCE(SUM(counted), 0) FROM listens WHERE EXISTS (SELECT 1 FROM json_each(sources) WHERE value = 'spotify_import')"
-        ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    // Track editions ("Show" across Single and Zanmu)
-    let show_id = match names::resolve(conn, EntityKind::Track, "Show")
-        .await
-        .unwrap()
-    {
-        names::Resolution::Unique { id, .. } => id,
-        other => panic!("expected unique Show, got {other:?}"),
-    };
-    let mut q_show = base_query(Metric::Plays);
-    q_show.entity = Some(Entity {
-        kind: EntityKind::Track,
-        name: "Show".into(),
-        id: Some(show_id.clone()),
-    });
-    let Outcome::Result(res) = execute::execute(conn, &q_show, now_ms).await.unwrap() else {
-        panic!()
-    };
-    let show_sql = format!(
-        "SELECT COALESCE(SUM(l.counted), 0) FROM listens l JOIN tracks t ON t.id = l.track_id WHERE t.edition_key = (SELECT edition_key FROM tracks WHERE id = '{show_id}')"
-    );
-    assert_eq!(
-        scalar(&proj, &show_sql),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    // 2. Time listened (actual_ms, estimated_ms, unknown_listens, known_ms)
-    let Outcome::Result(res) = execute::execute(conn, &base_query(Metric::TimeListened), now_ms)
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
-    let expected_time = res.time.unwrap();
     assert_eq!(
         scalar(
             &proj,
@@ -452,45 +364,33 @@ async fn projection_sql_matches_consultation_and_guided_executors_across_metrics
              FROM listens"
         ),
         vec![
-            SqlValue::Integer(expected_time.actual_ms),
-            SqlValue::Integer(expected_time.estimated_ms),
-            SqlValue::Integer(expected_time.unknown_listens),
-            SqlValue::Integer(expected_time.known_ms),
+            SqlValue::Integer(totals["actual_ms"].as_i64().unwrap()),
+            SqlValue::Integer(totals["estimated_ms"].as_i64().unwrap()),
+            SqlValue::Integer(totals["unknown_durations"].as_i64().unwrap()),
+            SqlValue::Integer(
+                totals["actual_ms"].as_i64().unwrap() + totals["estimated_ms"].as_i64().unwrap()
+            ),
         ]
     );
+    assert_eq!(
+        scalar(
+            &proj,
+            "SELECT COUNT(DISTINCT l.track_id) FROM listens l WHERE l.counted = 1"
+        ),
+        vec![SqlValue::Integer(totals["tracks"].as_i64().unwrap())]
+    );
 
-    // 3. Distinct counts (artists, albums, tracks)
-    for (metric, col_sql) in [
-        (
-            Metric::DistinctArtists,
-            "SELECT COUNT(DISTINCT ta.artist_id) FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id WHERE l.counted = 1",
-        ),
-        (
-            Metric::DistinctAlbums,
-            "SELECT COUNT(DISTINCT t.album_id) FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 AND t.album_id IS NOT NULL",
-        ),
-        (
-            Metric::DistinctTracks,
-            "SELECT COUNT(DISTINCT l.track_id) FROM listens l WHERE l.counted = 1",
-        ),
-    ] {
-        let Outcome::Result(res) = execute::execute(conn, &base_query(metric), now_ms)
-            .await
-            .unwrap()
-        else {
-            panic!()
-        };
-        assert_eq!(
-            scalar(&proj, col_sql),
-            vec![SqlValue::Integer(res.scalar.unwrap())],
-            "distinct mismatch for {metric:?}"
-        );
-    }
-
-    // 4. Top-N rankings (consultation::ranking_page vs projection SQL)
+    // 2. Top-N rankings (consultation::ranking_page vs projection SQL)
     let artist_rank = browse::ranking_page(conn, "artists", &Filters::default(), now_ms)
         .await
         .unwrap();
+    assert_eq!(
+        scalar(
+            &proj,
+            "SELECT COUNT(DISTINCT ta.artist_id) FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id WHERE l.counted = 1"
+        ),
+        vec![SqlValue::Integer(artist_rank.items.len() as i64)]
+    );
     let sql_artist_rank = sandbox::execute(
         &proj,
         "SELECT a.id, a.name, COUNT(DISTINCT l.id) AS plays \
@@ -548,80 +448,44 @@ async fn projection_sql_matches_consultation_and_guided_executors_across_metrics
         .collect();
     assert_eq!(sql_album_rank.rows, expected_albums);
 
-    // Guided top-2 tracks
-    let mut q_top_tracks = base_query(Metric::Plays);
-    q_top_tracks.group_by = Some(GroupBy::Track);
-    q_top_tracks.limit = Some(Limit::Five);
-    let Outcome::Result(res) = execute::execute(conn, &q_top_tracks, now_ms).await.unwrap() else {
-        panic!()
-    };
+    let track_rank = browse::ranking_page(conn, "tracks", &Filters::default(), now_ms)
+        .await
+        .unwrap();
     let sql_top_tracks = sandbox::execute(
         &proj,
-        "SELECT t.id, t.title, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC, t.id ASC LIMIT 5",
+        "SELECT t.id, t.title, COUNT(*) AS plays \
+         FROM listens l \
+         JOIN tracks t ON t.id = l.track_id \
+         WHERE l.counted = 1 \
+         GROUP BY t.id \
+         ORDER BY plays DESC, \
+                  COALESCE(SUM(CASE WHEN l.duration_kind IN ('actual','estimated') THEN l.listened_ms END), 0) DESC, \
+                  t.title COLLATE NOCASE ASC, t.id ASC",
         SandboxLimits::default(),
     )
     .unwrap();
-    let expected_tracks: Vec<Vec<SqlValue>> = res
-        .rows
+    let expected_tracks: Vec<Vec<SqlValue>> = track_rank
+        .items
         .iter()
         .map(|r| {
             vec![
-                SqlValue::Text(r.key.clone()),
-                SqlValue::Text(r.label.clone()),
+                SqlValue::Text(r.id.clone()),
+                SqlValue::Text(r.name.clone()),
                 SqlValue::Integer(r.plays),
             ]
         })
         .collect();
     assert_eq!(sql_top_tracks.rows, expected_tracks);
 
-    // 5. First play & Last play (for corrected Björk)
-    let mut q_first = base_query(Metric::FirstPlay);
-    q_first.entity = Some(Entity {
-        kind: EntityKind::Artist,
-        name: "Björk".into(),
-        id: Some(bjork_group.clone()),
-    });
-    let Outcome::Result(res_first) = execute::execute(conn, &q_first, now_ms).await.unwrap() else {
-        panic!()
-    };
-    let first = res_first.first.unwrap();
-    assert_eq!(
+    // 3. Corrected artist & track names reflected in projection
+    assert!(
         scalar(
             &proj,
-            &format!(
-                "SELECT l.played_at_ms, t.title FROM listens l JOIN tracks t ON t.id = l.track_id JOIN track_artists ta ON ta.track_id = t.id WHERE l.counted = 1 AND ta.artist_id = '{bjork_group}' ORDER BY l.played_at_ms ASC, l.id ASC LIMIT 1"
-            )
-        ),
-        vec![
-            SqlValue::Integer(first.played_at_ms),
-            SqlValue::Text(first.title)
-        ]
+            &format!("SELECT COUNT(*) FROM artists WHERE id = '{bjork_group}' AND name = 'Björk'")
+        ) == vec![SqlValue::Integer(1)]
     );
 
-    let mut q_last = base_query(Metric::LastPlay);
-    q_last.entity = Some(Entity {
-        kind: EntityKind::Artist,
-        name: "Björk".into(),
-        id: Some(bjork_group.clone()),
-    });
-    let Outcome::Result(res_last) = execute::execute(conn, &q_last, now_ms).await.unwrap() else {
-        panic!()
-    };
-    let last = res_last.last.unwrap();
-    assert_eq!(
-        scalar(
-            &proj,
-            &format!(
-                "SELECT l.played_at_ms, t.title FROM listens l JOIN tracks t ON t.id = l.track_id JOIN track_artists ta ON ta.track_id = t.id WHERE l.counted = 1 AND ta.artist_id = '{bjork_group}' ORDER BY l.played_at_ms DESC, l.id DESC LIMIT 1"
-            )
-        ),
-        vec![
-            SqlValue::Integer(last.played_at_ms),
-            SqlValue::Text(last.title)
-        ]
-    );
-
-    // 6. Streaks (longest and current) via calendar + listens vs browse::listening_milestones & guided Streak
+    // 4. Streaks (longest and current) via calendar + listens vs browse::listening_milestones
     let milestones = browse::listening_milestones(conn, &Filters::default(), now_ms)
         .await
         .unwrap();
@@ -658,23 +522,12 @@ async fn projection_sql_matches_consultation_and_guided_executors_across_metrics
         ]
     );
 
-    // 7. Listening days
-    let Outcome::Result(res) = execute::execute(conn, &base_query(Metric::ListeningDays), now_ms)
-        .await
-        .unwrap()
-    else {
-        panic!()
-    };
-    assert_eq!(
-        scalar(
-            &proj,
-            "SELECT COUNT(DISTINCT local_date) FROM listens WHERE counted = 1"
-        ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
-    );
-
-    // 8. Name group separate -> rebuild -> parity still holds
+    // 5. Name group separate -> rebuild -> parity still holds
     drop(view);
+    let before_separate = scalar(
+        &proj,
+        "SELECT COUNT(DISTINCT ta.artist_id) FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id WHERE l.counted = 1",
+    );
     let ado_2: String =
         sqlx::query_scalar("SELECT id FROM artists WHERE name = 'Ado' ORDER BY id DESC LIMIT 1")
             .fetch_one(&storage.readers)
@@ -697,20 +550,22 @@ async fn projection_sql_matches_consultation_and_guided_executors_across_metrics
 
     let proj = projection::ensure(&storage, &gate).await.unwrap();
     let mut view = storage.read_view().await.unwrap();
-    let Outcome::Result(res) = execute::execute(
+    let distinct_after = browse::ranking_page(
         &mut view.transaction,
-        &base_query(Metric::DistinctArtists),
+        "artists",
+        &Filters::default(),
         now_ms,
     )
     .await
-    .unwrap() else {
-        panic!()
-    };
+    .unwrap()
+    .items
+    .len() as i64;
     assert_eq!(
         scalar(
             &proj,
             "SELECT COUNT(DISTINCT ta.artist_id) FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id WHERE l.counted = 1"
         ),
-        vec![SqlValue::Integer(res.scalar.unwrap())]
+        vec![SqlValue::Integer(distinct_after)]
     );
+    assert_ne!(before_separate, vec![SqlValue::Integer(distinct_after)]);
 }

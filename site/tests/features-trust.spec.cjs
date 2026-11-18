@@ -31,8 +31,8 @@ test("Ask panel states the privacy facts and its labels", async ({ page }) => {
   const text = (await ask.innerText()).toLowerCase();
   expect(text).toContain("optional");
   expect(text).toContain("never sees");
-  expect(text).toContain("rust");
-  expect(text).toContain("openai-compatible");
+  expect(text).toContain("sandbox");
+  expect(text).toContain("local gguf");
 });
 
 test("Curate shows a half-star rating with an accessible label", async ({ page }) => {

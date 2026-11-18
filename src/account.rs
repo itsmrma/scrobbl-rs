@@ -193,7 +193,7 @@ pub async fn password(
     Json(form): Json<PasswordEdit>,
 ) -> Result<Json<Value>> {
     let session = auth::require_write(&state, &headers).await?;
-    auth::rate_limit(&state).await?;
+    auth::rate_limit_password(&state).await?;
     let username: Option<String> =
         sqlx::query_scalar("SELECT value FROM settings WHERE key='owner_username'")
             .fetch_optional(&state.private_db)

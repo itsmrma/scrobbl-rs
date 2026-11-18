@@ -462,23 +462,41 @@ fn scan_static_safety(sql: &str) -> Result<(), SandboxRejection> {
                 i += 1;
             }
             _ => {
-                i += 1;
+                i += sql[i..].chars().next().map_or(1, char::len_utf8);
             }
         }
     }
     Ok(())
 }
 
-/// Extract CTE names declared in `WITH [RECURSIVE] ...` clauses so the
-/// authorizer can distinguish them from compiled-in eponymous virtual tables.
+#[derive(Debug)]
+enum WithPhase {
+    ExpectNameOrRecursive,
+    ExpectName,
+    AfterName,
+    InColList,
+    ExpectAs,
+    ExpectBodyOpen,
+    InBody(usize),
+    AfterBody,
+}
+
+#[derive(Debug)]
+struct WithFrame {
+    depth: usize,
+    phase: WithPhase,
+    pending_name: Option<String>,
+}
+
+/// Extract CTE names declared in `WITH [RECURSIVE] <name> [(cols)] AS (...)`
+/// clauses so the authorizer can distinguish CTE references from base tables.
 fn extract_cte_names(sql: &str) -> Vec<String> {
     let bytes = sql.as_bytes();
     let mut i = 0;
     let mut names = Vec::new();
-    let mut in_with = false;
-    let mut expect_cte_name = false;
-    let mut with_depth: usize = 0;
+    let mut stack: Vec<WithFrame> = Vec::new();
     let mut paren_depth: usize = 0;
+    let mut can_start_with = true;
 
     while i < bytes.len() {
         let rest = &sql[i..];
@@ -487,28 +505,40 @@ fn extract_cte_names(sql: &str) -> Vec<String> {
         if i >= bytes.len() {
             break;
         }
+        // An unclosed block comment stops scanning cleanly on char boundaries.
+        if bytes.get(i) == Some(&b'/') && bytes.get(i + 1) == Some(&b'*') {
+            break;
+        }
         match bytes[i] {
             b'\'' | b'"' | b'`' => {
                 let quote = bytes[i];
                 i += 1;
-                let mut unescaped = String::new();
+                let mut unescaped: Vec<u8> = Vec::new();
                 while i < bytes.len() {
                     if bytes[i] == quote {
                         if bytes.get(i + 1) == Some(&quote) {
-                            unescaped.push(quote as char);
+                            unescaped.push(quote);
                             i += 2;
                             continue;
                         }
                         i += 1;
                         break;
                     }
-                    unescaped.push(bytes[i] as char);
+                    unescaped.push(bytes[i]);
                     i += 1;
                 }
-                if in_with && paren_depth == with_depth && expect_cte_name && quote != b'\'' {
-                    names.push(unescaped);
-                    expect_cte_name = false;
+                if quote != b'\''
+                    && let Some(top) = stack.last_mut()
+                    && top.depth == paren_depth
+                    && matches!(
+                        top.phase,
+                        WithPhase::ExpectNameOrRecursive | WithPhase::ExpectName
+                    )
+                {
+                    top.pending_name = Some(String::from_utf8_lossy(&unescaped).into_owned());
+                    top.phase = WithPhase::AfterName;
                 }
+                can_start_with = false;
             }
             b'[' => {
                 let start = i + 1;
@@ -516,27 +546,84 @@ fn extract_cte_names(sql: &str) -> Vec<String> {
                 while i < bytes.len() && bytes[i] != b']' {
                     i += 1;
                 }
-                if in_with && paren_depth == with_depth && expect_cte_name {
-                    names.push(sql[start..i].to_owned());
-                    expect_cte_name = false;
+                let ident = String::from_utf8_lossy(&bytes[start..i]).into_owned();
+                if i < bytes.len() {
+                    i += 1;
                 }
-                i = (i + 1).min(bytes.len());
+                if let Some(top) = stack.last_mut()
+                    && top.depth == paren_depth
+                    && matches!(
+                        top.phase,
+                        WithPhase::ExpectNameOrRecursive | WithPhase::ExpectName
+                    )
+                {
+                    top.pending_name = Some(ident);
+                    top.phase = WithPhase::AfterName;
+                }
+                can_start_with = false;
             }
             b'(' => {
                 paren_depth += 1;
                 i += 1;
+                let parent_depth = paren_depth - 1;
+                let mut handled = false;
+                if let Some(top) = stack.last_mut()
+                    && top.depth == parent_depth
+                {
+                    match top.phase {
+                        WithPhase::AfterName => {
+                            top.phase = WithPhase::InColList;
+                            handled = true;
+                        }
+                        WithPhase::ExpectBodyOpen => {
+                            if let Some(name) = top.pending_name.take() {
+                                names.push(name);
+                            }
+                            top.phase = WithPhase::InBody(paren_depth);
+                            handled = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if !handled {
+                    can_start_with = true;
+                } else {
+                    can_start_with =
+                        matches!(stack.last().map(|f| &f.phase), Some(WithPhase::InBody(_)));
+                }
             }
             b')' => {
                 paren_depth = paren_depth.saturating_sub(1);
-                if in_with && paren_depth < with_depth {
-                    in_with = false;
-                    expect_cte_name = false;
+                i += 1;
+                while let Some(top) = stack.last() {
+                    if top.depth > paren_depth {
+                        stack.pop();
+                    } else {
+                        break;
+                    }
                 }
-                i += 1;
+                if let Some(top) = stack.last_mut()
+                    && top.depth == paren_depth
+                {
+                    match top.phase {
+                        WithPhase::InColList => top.phase = WithPhase::ExpectAs,
+                        WithPhase::InBody(body_depth) if paren_depth < body_depth => {
+                            top.phase = WithPhase::AfterBody;
+                        }
+                        _ => {}
+                    }
+                }
+                can_start_with = false;
             }
-            b',' if in_with && paren_depth == with_depth => {
-                expect_cte_name = true;
+            b',' => {
                 i += 1;
+                if let Some(top) = stack.last_mut()
+                    && top.depth == paren_depth
+                    && matches!(top.phase, WithPhase::AfterBody)
+                {
+                    top.phase = WithPhase::ExpectName;
+                }
+                can_start_with = false;
             }
             b if b.is_ascii_alphanumeric() || b == b'_' => {
                 let start = i;
@@ -544,37 +631,73 @@ fn extract_cte_names(sql: &str) -> Vec<String> {
                     i += 1;
                 }
                 let word = &sql[start..i];
-                if !in_with {
-                    if word.eq_ignore_ascii_case("WITH") {
-                        in_with = true;
-                        expect_cte_name = true;
-                        with_depth = paren_depth;
-                    }
-                } else if paren_depth == with_depth {
-                    if expect_cte_name {
-                        if word.eq_ignore_ascii_case("RECURSIVE") {
-                            continue;
+                let handled = if let Some(top) = stack.last_mut()
+                    && top.depth == paren_depth
+                {
+                    match top.phase {
+                        WithPhase::ExpectNameOrRecursive => {
+                            if word.eq_ignore_ascii_case("RECURSIVE") {
+                                top.phase = WithPhase::ExpectName;
+                            } else {
+                                top.pending_name = Some(word.to_owned());
+                                top.phase = WithPhase::AfterName;
+                            }
+                            true
                         }
-                        if matches!(
-                            word.to_ascii_uppercase().as_str(),
-                            "SELECT" | "VALUES" | "INSERT" | "UPDATE" | "DELETE"
-                        ) {
-                            in_with = false;
-                            expect_cte_name = false;
-                        } else {
-                            names.push(word.to_owned());
-                            expect_cte_name = false;
+                        WithPhase::ExpectName => {
+                            top.pending_name = Some(word.to_owned());
+                            top.phase = WithPhase::AfterName;
+                            true
                         }
-                    } else if matches!(
-                        word.to_ascii_uppercase().as_str(),
-                        "SELECT" | "VALUES" | "INSERT" | "UPDATE" | "DELETE"
-                    ) {
-                        in_with = false;
+                        WithPhase::AfterName | WithPhase::ExpectAs => {
+                            if word.eq_ignore_ascii_case("AS") {
+                                top.phase = WithPhase::ExpectBodyOpen;
+                            } else {
+                                stack.pop();
+                            }
+                            true
+                        }
+                        WithPhase::ExpectBodyOpen => {
+                            if word.eq_ignore_ascii_case("NOT")
+                                || word.eq_ignore_ascii_case("MATERIALIZED")
+                            {
+                                // Stay in ExpectBodyOpen for `AS [NOT] MATERIALIZED (...)`.
+                            } else {
+                                stack.pop();
+                            }
+                            true
+                        }
+                        WithPhase::AfterBody => {
+                            if matches!(
+                                word.to_ascii_uppercase().as_str(),
+                                "SELECT" | "VALUES" | "INSERT" | "UPDATE" | "DELETE"
+                            ) {
+                                stack.pop();
+                            }
+                            true
+                        }
+                        WithPhase::InColList | WithPhase::InBody(_) => false,
                     }
+                } else {
+                    false
+                };
+                if !handled && can_start_with && word.eq_ignore_ascii_case("WITH") {
+                    stack.push(WithFrame {
+                        depth: paren_depth,
+                        phase: WithPhase::ExpectNameOrRecursive,
+                        pending_name: None,
+                    });
+                    can_start_with = false;
+                    continue;
                 }
+                can_start_with = matches!(
+                    word.to_ascii_uppercase().as_str(),
+                    "UNION" | "ALL" | "INTERSECT" | "EXCEPT"
+                );
             }
             _ => {
-                i += 1;
+                i += sql[i..].chars().next().map_or(1, char::len_utf8);
+                can_start_with = false;
             }
         }
     }
@@ -663,9 +786,20 @@ fn configure_connection(conn: &Connection, limits: SandboxLimits) -> rusqlite::R
 
 type DeniedState = Arc<Mutex<Option<(SandboxRule, String)>>>;
 
+const FORBIDDEN_EPONYMOUS_VTABLES: &[&str] = &[
+    "dbstat",
+    "bytecode",
+    "tables_used",
+    "stmt",
+    "completion",
+    "fsdir",
+    "sqlite_dbpage",
+    "sqlite_memstat",
+];
+
 fn authorize(ctx: AuthContext<'_>, cte_names: &[String], denied: &DeniedState) -> Authorization {
     let record = |rule: SandboxRule, detail: String| {
-        let mut slot = denied.lock().unwrap();
+        let mut slot = denied.lock().unwrap_or_else(|poison| poison.into_inner());
         if slot.is_none() {
             *slot = Some((rule, detail));
         }
@@ -694,9 +828,16 @@ fn authorize(ctx: AuthContext<'_>, cte_names: &[String], denied: &DeniedState) -
             {
                 return Authorization::Allow;
             }
+            let lower = table_name.to_ascii_lowercase();
+            if FORBIDDEN_EPONYMOUS_VTABLES.contains(&lower.as_str()) {
+                return record(
+                    SandboxRule::UnauthorizedTable,
+                    format!("table {table_name} is not in the Ask projection"),
+                );
+            }
             if ctx.database_name.is_none()
-                && !table_name.to_ascii_lowercase().starts_with("sqlite_")
-                && !table_name.to_ascii_lowercase().starts_with("pragma_")
+                && !lower.starts_with("sqlite_")
+                && !lower.starts_with("pragma_")
                 && !table_name.eq_ignore_ascii_case("_projection_meta")
                 && cte_names
                     .iter()
@@ -987,7 +1128,11 @@ fn map_sqlite_error(
     interrupt_reason: &AtomicU8,
     cancel: Option<&SandboxCancel>,
 ) -> SandboxRejection {
-    if let Some((rule, detail)) = denied.lock().unwrap().take() {
+    if let Some((rule, detail)) = denied
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .take()
+    {
         let name = rule.rule_name();
         let message = format!("Query rejected by rule `{name}`: {detail}.");
         let model_error = format!("{name}: {detail}");
@@ -1090,6 +1235,10 @@ pub fn execute_with_cancel(
     result
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "canonical read-only Ask SQL sandbox boundary"
+)]
 fn execute_inner(
     projection_path: &Path,
     sql: &str,
@@ -1322,6 +1471,7 @@ fn execute_inner(
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     use super::*;
     use crate::ask::projection;
@@ -1563,6 +1713,9 @@ mod tests {
         for sql in [
             "SELECT * FROM dbstat",
             "SELECT COUNT(*) FROM dbstat",
+            "SELECT 1 AS with, name FROM dbstat",
+            "SELECT (WITH dbstat AS (SELECT 1) SELECT * FROM dbstat), * FROM dbstat",
+            "WITH x AS (SELECT * FROM dbstat) SELECT * FROM x",
             "SELECT * FROM bytecode('SELECT 1')",
             "SELECT * FROM tables_used('SELECT 1 FROM listens')",
             "SELECT * FROM completion('SEL')",
@@ -1570,6 +1723,30 @@ mod tests {
             let err = execute(proj.path(), sql, SandboxLimits::default())
                 .expect_err(&format!("eponymous vtable must be rejected: {sql}"));
             assert_eq!(err.rule, SandboxRule::UnauthorizedTable, "{sql}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn non_ascii_utf8_sql_tokens_and_comments_never_panic() {
+        let proj = fixture_projection();
+
+        // Multi-byte UTF-8 outside literals/comments (em-dash, accented aliases, CJK) must not panic.
+        for sql in [
+            "SELECT 1 AS café",
+            "SELECT COUNT(*) AS \"Björk — 音楽\" FROM listens",
+            "WITH \"café_counts\" AS (SELECT COUNT(*) AS c FROM listens) SELECT c FROM \"café_counts\"",
+        ] {
+            let out = execute(proj.path(), sql, SandboxLimits::default())
+                .unwrap_or_else(|e| panic!("valid UTF-8 query should not fail ({sql}): {e:?}"));
+            assert!(!out.columns.is_empty());
+        }
+
+        // Unclosed strings or invalid UTF-8 tokens after syntax characters must reject cleanly without panicking.
+        for sql in ["SELECT 1 — 2", "SELECT 'café", "SELECT 1 /* — */ FROM"] {
+            let err = execute(proj.path(), sql, SandboxLimits::default()).expect_err(&format!(
+                "invalid syntax with UTF-8 must reject cleanly: {sql}"
+            ));
+            assert_eq!(err.rule, SandboxRule::SqlError, "{sql}: {err:?}");
         }
     }
 

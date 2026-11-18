@@ -384,6 +384,26 @@ export function date(ms: number | null, preferences: Preferences) {
   return formatter.format(ms);
 }
 
+export function lookupRecord<V>(
+  map: Record<string, V>,
+  key: string | null | undefined,
+): V | undefined {
+  if (!key || !Object.hasOwn(map, key)) return undefined;
+  return map[key];
+}
+
+export function safeExternalUrl(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   spotify_api: "Spotify collection",
   spotify_import: "Spotify import",
@@ -392,7 +412,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export function formatSources(sources: string[]): string {
   return [...new Set(sources)]
-    .map((source) => SOURCE_LABELS[source] || source)
+    .map((source) => lookupRecord(SOURCE_LABELS, source) || source)
     .join(" + ");
 }
 

@@ -1,14 +1,18 @@
 //! Installed model files. The filesystem is the source of truth: every model
-//! directory carries its own metadata beside the GGUF file, and the database
-//! stores only consent and the selected id.
+//! directory carries its own metadata beside the GGUF file (or a valid GGUF
+//! file directly), and the database stores consent, selection, and optional
+//! custom local GGUF path.
 use crate::{
     AppState,
     error::{AppError, Result},
 };
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::{Component, Path, PathBuf};
 
 pub const METADATA_FILE: &str = "metadata.json";
+const GGUF_MAGIC: &[u8; 4] = b"GGUF";
+const MIN_GGUF_BYTES: u64 = 64;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ModelMetadata {
@@ -30,12 +34,13 @@ pub struct ScannedModel {
     pub sha256: Option<String>,
     pub license: Option<String>,
     pub checksum_verified: bool,
+    pub custom: bool,
     pub error: Option<String>,
 }
 
 impl ScannedModel {
     pub fn usable(&self) -> bool {
-        self.error.is_none() && self.checksum_verified
+        self.error.is_none() && (self.checksum_verified || self.custom)
     }
 }
 
@@ -64,6 +69,70 @@ pub fn model_file(dir: &Path, file: &str) -> Result<PathBuf> {
         return Err(AppError::BadRequest("Invalid model file name.".into()));
     }
     Ok(dir.join(file))
+}
+
+/// Verify that a path points to a readable, non-symlink regular `.gguf` file
+/// starting with the `GGUF` magic header.
+pub fn validate_gguf_file(path: &Path) -> std::result::Result<u64, String> {
+    if path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_none_or(|ext| !ext.eq_ignore_ascii_case("gguf"))
+    {
+        return Err("Custom model file must end with .gguf.".to_string());
+    }
+    let meta = std::fs::symlink_metadata(path)
+        .map_err(|_| "The specified model file was not found.".to_string())?;
+    if meta.file_type().is_symlink() {
+        return Err("Refusing to load a model through a symbolic link.".to_string());
+    }
+    if !meta.is_file() {
+        return Err("The specified model path is not a regular file.".to_string());
+    }
+    if meta.len() < MIN_GGUF_BYTES {
+        return Err("The specified .gguf file is too small to be a valid GGUF model.".to_string());
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|_| "Could not open the specified model file for reading.".to_string())?;
+    let mut magic = [0_u8; 4];
+    file.read_exact(&mut magic)
+        .map_err(|_| "The specified file is not a valid GGUF model.".to_string())?;
+    if &magic != GGUF_MAGIC {
+        return Err("The specified file does not start with a valid GGUF header.".to_string());
+    }
+    Ok(meta.len())
+}
+
+/// Validate and resolve a custom local `.gguf` path entered by the owner.
+/// Relative paths are resolved under `root` (`ai_model_dir`); `..` components,
+/// control characters, NUL bytes, and non-`.gguf` extensions are rejected.
+pub fn resolve_custom_model_path(root: &Path, raw: &str) -> std::result::Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("Custom model path cannot be empty.".to_string());
+    }
+    if trimmed.chars().count() > 1024 || trimmed.chars().any(|c| c == '\0' || c.is_control()) {
+        return Err("Use a valid local .gguf file path.".to_string());
+    }
+    let candidate = Path::new(trimmed);
+    if candidate
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("Custom model path cannot contain parent directory (..) segments.".to_string());
+    }
+    if candidate
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_none_or(|ext| !ext.eq_ignore_ascii_case("gguf"))
+    {
+        return Err("Custom model file must end with .gguf.".to_string());
+    }
+    Ok(if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        root.join(candidate)
+    })
 }
 
 fn read_metadata_sync(path: &Path) -> std::result::Result<ModelMetadata, String> {
@@ -106,20 +175,65 @@ fn is_partial_or_temporary(path: &Path) -> bool {
     name.ends_with(".part") || name.ends_with(".tmp")
 }
 
-fn has_only_partial_files(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return true;
-    };
-    for entry in entries.flatten() {
-        if !is_partial_or_temporary(&entry.path()) {
-            return false;
-        }
-    }
-    true
+fn is_gguf_filename(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
 }
 
-/// Scan every model directory. A corrupt or orphaned directory stays visible
-/// with an explicit error instead of disappearing or crashing startup.
+fn is_allowed_model_filename(name: &str) -> bool {
+    name == METADATA_FILE
+        || is_gguf_filename(name)
+        || name.ends_with(".part")
+        || name.ends_with(".tmp")
+}
+
+/// Inspect a subdirectory without `metadata.json`.
+/// Returns:
+/// - `None` when the directory contains no `.gguf` files (arbitrary host folder or partial download only),
+/// - `Some(Ok((file_name, bytes)))` when it holds a single valid `.gguf` model,
+/// - `Some(Err((size_bytes, msg)))` when `.gguf` files are present but invalid/corrupt.
+fn scan_unmanaged_gguf_dir(
+    dir: &Path,
+) -> Option<std::result::Result<(String, u64), (u64, String)>> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut gguf_files = Vec::new();
+    let mut has_other_files = false;
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if is_partial_or_temporary(&entry_path) {
+            continue;
+        }
+        if is_gguf_filename(name) {
+            gguf_files.push((name.to_string(), entry_path));
+        } else {
+            has_other_files = true;
+        }
+    }
+    if gguf_files.is_empty() {
+        // Neither metadata.json nor any .gguf file: ignore unrelated host directories.
+        return None;
+    }
+    if gguf_files.len() > 1 || has_other_files {
+        return Some(Err((
+            directory_size(dir),
+            "Model directory has missing metadata or unexpected files.".to_string(),
+        )));
+    }
+    let (file_name, gguf_path) = gguf_files.into_iter().next()?;
+    match validate_gguf_file(&gguf_path) {
+        Ok(bytes) => Some(Ok((file_name, bytes))),
+        Err(reason) => Some(Err((directory_size(dir), reason))),
+    }
+}
+
+/// Scan every model directory. Directories containing neither `metadata.json`
+/// nor a `.gguf` file are skipped so unrelated host directories under
+/// `ai_model_dir` are never enumerated or exposed.
 pub fn scan(root: &Path) -> Vec<ScannedModel> {
     let mut models = Vec::new();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -140,15 +254,42 @@ pub fn scan(root: &Path) -> Vec<ScannedModel> {
         if safe_id(id).is_err() {
             continue;
         }
-        let metadata = match read_metadata_sync(&path.join(METADATA_FILE)) {
+        let meta_path = path.join(METADATA_FILE);
+        if !meta_path.exists() {
+            match scan_unmanaged_gguf_dir(&path) {
+                None => continue,
+                Some(Ok((file, size_bytes))) => {
+                    models.push(ScannedModel {
+                        id: id.to_string(),
+                        file: Some(file),
+                        size_bytes,
+                        installed_at_ms: None,
+                        sha256: None,
+                        license: None,
+                        checksum_verified: false,
+                        custom: true,
+                        error: None,
+                    });
+                }
+                Some(Err((size_bytes, reason))) => {
+                    models.push(ScannedModel {
+                        id: id.to_string(),
+                        file: None,
+                        size_bytes,
+                        installed_at_ms: None,
+                        sha256: None,
+                        license: None,
+                        checksum_verified: false,
+                        custom: false,
+                        error: Some(reason),
+                    });
+                }
+            }
+            continue;
+        }
+        let metadata = match read_metadata_sync(&meta_path) {
             Ok(metadata) => metadata,
             Err(error) => {
-                // A download in progress or interrupted, or an empty directory,
-                // contains no completed model or metadata; it is not an
-                // installed model.
-                if !path.join(METADATA_FILE).exists() && has_only_partial_files(&path) {
-                    continue;
-                }
                 let size_bytes = directory_size(&path);
                 models.push(ScannedModel {
                     id: id.to_string(),
@@ -158,6 +299,7 @@ pub fn scan(root: &Path) -> Vec<ScannedModel> {
                     sha256: None,
                     license: None,
                     checksum_verified: false,
+                    custom: false,
                     error: Some(error),
                 });
                 continue;
@@ -195,6 +337,7 @@ pub fn scan(root: &Path) -> Vec<ScannedModel> {
             sha256: Some(metadata.sha256),
             license: Some(metadata.license),
             checksum_verified,
+            custom: false,
             error,
         });
     }
@@ -229,8 +372,9 @@ pub async fn write_metadata(dir: &Path, metadata: &ModelMetadata) -> Result<()> 
     Ok(())
 }
 
-/// Remove a model directory and report the bytes reclaimed. Callers must have
-/// validated selection/confirmation.
+/// Remove a model directory and report the bytes reclaimed. Refuses to delete
+/// symlinks, nested subdirectories, or any file not belonging to a model
+/// (`metadata.json`, `*.gguf`, `*.part`, `*.tmp`).
 pub async fn remove(root: &Path, id: &str) -> Result<u64> {
     let path = model_dir(root, id)?;
     let metadata = tokio::fs::symlink_metadata(&path)
@@ -239,8 +383,40 @@ pub async fn remove(root: &Path, id: &str) -> Result<u64> {
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(AppError::BadRequest("Unknown model.".into()));
     }
-    let freed = directory_size(&path);
-    tokio::fs::remove_dir_all(&path)
+    let mut entries = tokio::fs::read_dir(&path)
+        .await
+        .map_err(|_| AppError::Internal)?;
+    let mut files_to_remove = Vec::new();
+    let mut freed = 0_u64;
+    while let Some(entry) = entries.next_entry().await.map_err(|_| AppError::Internal)? {
+        let entry_path = entry.path();
+        let entry_meta = tokio::fs::symlink_metadata(&entry_path)
+            .await
+            .map_err(|_| AppError::Internal)?;
+        if entry_meta.file_type().is_symlink() || entry_meta.is_dir() {
+            return Err(AppError::Conflict(
+                "Refusing to delete a model directory containing subdirectories or links.".into(),
+            ));
+        }
+        let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) else {
+            return Err(AppError::Conflict(
+                "Refusing to delete directory containing non-model files.".into(),
+            ));
+        };
+        if !is_allowed_model_filename(name) {
+            return Err(AppError::Conflict(
+                "Refusing to delete directory containing non-model files.".into(),
+            ));
+        }
+        freed = freed.saturating_add(entry_meta.len());
+        files_to_remove.push(entry_path);
+    }
+    for file_path in files_to_remove {
+        tokio::fs::remove_file(&file_path)
+            .await
+            .map_err(|_| AppError::Internal)?;
+    }
+    tokio::fs::remove_dir(&path)
         .await
         .map_err(|_| AppError::Internal)?;
     crate::storage::sync_directory(root).map_err(|_| AppError::Internal)?;

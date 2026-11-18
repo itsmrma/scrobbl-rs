@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use scrobbl_rs::{imports::parse_extended, jobs::SourceRow, recovery, storage};
 use serde_json::json;
 use sqlx::{Connection, Executor};

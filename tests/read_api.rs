@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+
 use axum::{
     body::Body,
     http::{HeaderMap, Request, StatusCode},

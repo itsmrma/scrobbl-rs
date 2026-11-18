@@ -2,9 +2,10 @@
 FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS frontend
 WORKDIR /work
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
 COPY frontend ./frontend
 COPY vite.config.mts ./
+COPY scripts/lint-frontend.cjs ./scripts/lint-frontend.cjs
 COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
@@ -38,7 +39,7 @@ FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d
 # absent because the runtime is built without OpenMP; no GPU libraries either.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /var/log/* \
-    && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home scrobbl \
+    && groupadd --gid 10001 scrobbl && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin scrobbl \
     && install -d -o 10001 -g 10001 -m 0700 /data
 WORKDIR /app
 COPY --from=build /artifacts/scrobbl-rs /usr/local/bin/scrobbl-rs

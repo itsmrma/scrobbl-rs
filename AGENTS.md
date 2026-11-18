@@ -29,3 +29,9 @@ Before triaging, read `docs/agents/triage-labels.md`.
 
 Use a single-context layout: root `GLOSSARY.md` and `docs/adr/`.
 Before exploring the codebase, read `docs/agents/domain.md`.
+
+### Security & anti-slop guardrails
+
+Before adding or modifying backend routes, SQLite access, AI/Ask behavior,
+outbound HTTP requests, recovery logic, or frontend code, read
+`docs/agents/security.md` and follow its deterministic lint rules.

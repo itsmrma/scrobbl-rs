@@ -1,52 +1,32 @@
 const { test: base, expect } = require("@playwright/test");
-const { chooseOption } = require("./controls.cjs");
 const { spawn } = require("node:child_process");
 const { once } = require("node:events");
-const http = require("node:http");
-const { mkdtemp, rm } = require("node:fs/promises");
+const { mkdir, mkdtemp, rm, writeFile } = require("node:fs/promises");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const net = require("node:net");
 
 const password = "ask free browser password 7!";
 
+async function writeValidGguf(filePath) {
+  const bytes = Buffer.alloc(128, 1);
+  bytes.write("GGUF", 0, "ascii");
+  await writeFile(filePath, bytes);
+}
+
 const test = base.extend({
   sqlTimeoutMs: [0, { option: true }],
   harness: async ({ browser, sqlTimeoutMs }, use) => {
     const directory = await mkdtemp(join(tmpdir(), "scrobbl-ask-free-"));
 
-    // Start an in-process mock OpenAI-compatible server on loopback.
-    const seen = [];
-    let nextReply = "";
-    let replyQueue = [];
-    let delayMs = 0;
-    const mockServer = http.createServer((req, res) => {
-      let raw = "";
-      req.on("data", (chunk) => (raw += chunk));
-      req.on("end", () => {
-        seen.push(JSON.parse(raw));
-        const send = () => {
-          if (res.destroyed || res.writableEnded) return;
-          const content =
-            replyQueue.length > 0 ? replyQueue.shift() : nextReply;
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(
-            JSON.stringify({
-              choices: [{ message: { role: "assistant", content } }],
-            }),
-          );
-        };
-        if (delayMs > 0) {
-          const timer = setTimeout(send, delayMs);
-          req.on("close", () => clearTimeout(timer));
-        } else {
-          send();
-        }
-      });
-    });
-    mockServer.listen(0, "127.0.0.1");
-    await once(mockServer, "listening");
-    const mockPort = mockServer.address().port;
+    // Write one valid custom GGUF and one invalid non-GGUF file inside models dir.
+    const modelsDir = join(directory, "models", "custom-test");
+    await mkdir(modelsDir, { recursive: true });
+    await writeValidGguf(join(modelsDir, "custom-qwen3.gguf"));
+    await writeFile(
+      join(directory, "models", "not-gguf.bin"),
+      Buffer.alloc(128, 0),
+    );
 
     const socket = net.createServer();
     socket.listen(0, "127.0.0.1");
@@ -88,6 +68,9 @@ const test = base.extend({
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
 
+    let askHandler = null;
+    let closed = false;
+    const cancelSleeps = new Set();
     try {
       await expect
         .poll(
@@ -172,16 +155,99 @@ const test = base.extend({
         )
         .toBe("completed");
 
+      const seenRequests = [];
+      let nextSpec = null;
+      let delayMs = 0;
+
+      const sleep = (ms) =>
+        new Promise((resolveSleep) => {
+          const cancel = () => {
+            clearTimeout(timer);
+            cancelSleeps.delete(cancel);
+            resolveSleep();
+          };
+          const timer = setTimeout(cancel, ms);
+          cancelSleeps.add(cancel);
+        });
+
+      askHandler = async (route) => {
+        const reqBody = route.request().postDataJSON();
+        seenRequests.push(reqBody);
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
+        if (closed || page.isClosed()) {
+          await route.abort().catch(() => {});
+          return;
+        }
+        const spec =
+          typeof nextSpec === "function" ? nextSpec(reqBody) : nextSpec;
+        if (spec && spec.status === "unsupported") {
+          await route
+            .fulfill({
+              json: {
+                status: "unsupported",
+                question: reqBody.question,
+                message: spec.message,
+                runtime_available: true,
+                sql: null,
+              },
+            })
+            .catch(() => {});
+          return;
+        }
+        // Execute the SQL directly against the live backend SQL sandbox (/api/v1/ask/sql)
+        // so tests exercise real projection creation, sandbox enforcement, entity links,
+        // timeouts, and history links without requiring downloaded GGUF weights.
+        let currentSession;
+        let sqlRes;
+        try {
+          currentSession = await (
+            await page.request.get("/api/session")
+          ).json();
+          if (closed || page.isClosed()) {
+            await route.abort().catch(() => {});
+            return;
+          }
+          sqlRes = await page.request.post("/api/v1/ask/sql", {
+            headers: {
+              "x-csrf-token": currentSession.csrf,
+              origin: new URL(page.url()).origin,
+              "content-type": "application/json",
+            },
+            data: {
+              sql: spec.sql,
+              title: spec.title,
+              computed: spec.computed,
+              answer_kind: spec.answer_kind,
+              columns: spec.columns,
+            },
+          });
+        } catch (err) {
+          if (closed || page.isClosed()) {
+            await route.abort().catch(() => {});
+            return;
+          }
+          throw err;
+        }
+        const body = await sqlRes.json();
+        if (body.status === "ok" && body.sql && spec.computed) {
+          body.sql.computed = spec.computed;
+        }
+        body.question = reqBody.question;
+        if (closed || page.isClosed()) {
+          await route.abort().catch(() => {});
+          return;
+        }
+        await route.fulfill({ json: body }).catch(() => {});
+      };
+      await page.route("**/api/v1/ask", askHandler);
+
       await use({
         page,
-        mockUrl: `http://127.0.0.1:${mockPort}/v1`,
-        seen,
-        setReply: (value) => {
-          replyQueue = [];
-          nextReply = JSON.stringify(value);
-        },
-        setReplies: (values) => {
-          replyQueue = values.map((v) => JSON.stringify(v));
+        seenRequests,
+        setSpec: (spec) => {
+          nextSpec = spec;
         },
         setDelay: (ms) => {
           delayMs = ms;
@@ -189,32 +255,87 @@ const test = base.extend({
       });
       expect(errors).toEqual([]);
     } finally {
+      closed = true;
+      for (const cancel of Array.from(cancelSleeps)) {
+        cancel();
+      }
+      if (askHandler) {
+        await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
+      }
       await context.close();
       child.kill();
-      mockServer.close();
       await rm(directory, { recursive: true, force: true }).catch(() => {});
     }
   },
 });
 
-test("a free question with remote AI shows the computed sentence, a table and the SQL", async ({
-  harness: { page, mockUrl, seen, setReply },
+test("AI settings expose local SQL Qwen3 catalog and custom local GGUF path without legacy engines or modes", async ({
+  harness: { page },
+}) => {
+  await page.goto("/settings/ai");
+
+  // Qwen3 catalog defaults and custom GGUF field load first.
+  await expect(
+    page.getByRole("heading", { name: "Qwen3 1.7B", exact: true }),
+  ).toBeVisible();
+  const customInput = page.getByLabel("Custom local model path (.gguf)");
+  await expect(customInput).toBeVisible();
+
+  // Removed legacy controls must not appear anywhere.
+  await expect(page.getByLabel("AI engine")).toHaveCount(0);
+  await expect(page.getByLabel("Answer mode")).toHaveCount(0);
+  await expect(page.getByText(/My own AI server/i)).toHaveCount(0);
+  await expect(page.getByText(/Guided questions/i)).toHaveCount(0);
+
+  // Rejects non-GGUF files.
+  await page.getByLabel("Enable AI").check();
+  await customInput.fill("not-gguf.bin");
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(
+    page.locator("[role='alert'], .form-error").first(),
+  ).toBeVisible();
+
+  // Accepts a valid GGUF file path and becomes model_ready.
+  await customInput.fill("custom-test/custom-qwen3.gguf");
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  const statusRes = await (await page.request.get("/api/v1/ask/status")).json();
+  expect(statusRes.enabled).toBe(true);
+  expect(statusRes.custom_model_path).toBe("custom-test/custom-qwen3.gguf");
+  expect(statusRes.model_ready).toBe(true);
+
+  // Clearing custom path works cleanly.
+  await page.getByRole("button", { name: "Clear custom path" }).click();
+  await expect(customInput).toHaveValue("");
+  const clearSaved = page.waitForResponse(
+    (res) =>
+      res.url().endsWith("/api/v1/ai/settings") &&
+      res.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  expect((await clearSaved).ok()).toBeTruthy();
+  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
+  const clearedRes = await (
+    await page.request.get("/api/v1/ask/status")
+  ).json();
+  expect(clearedRes.custom_model_path).toBeNull();
+});
+
+test("local SQL Ask executes query via sandbox, rejects unsafe SQL, and cleans up projection when AI is turned off", async ({
+  harness: { page, setSpec },
 }) => {
   await page.goto("/settings/ai");
   await page.getByLabel("Enable AI").check();
-  await chooseOption(page.getByLabel("AI engine"), "remote");
-  await expect(page.getByLabel("Answer mode")).toHaveAttribute(
-    "data-value",
-    "sql",
-  );
-  await page.getByLabel("Server address").fill(mockUrl);
-  await page.getByLabel("Model name").fill("test-sql-model");
+  await page
+    .getByLabel("Custom local model path (.gguf)")
+    .fill("custom-test/custom-qwen3.gguf");
   await page.getByRole("button", { name: "Save AI settings" }).click();
   await expect(page.getByText("AI settings saved.")).toBeVisible();
 
   const validSql =
     "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC";
-  setReply({
+  setSpec({
     sql: validSql,
     title: "Top tracks",
     computed: "Counted plays per track across all time.",
@@ -226,6 +347,7 @@ test("a free question with remote AI shows the computed sentence, a table and th
   });
 
   await page.goto("/ask");
+  await expect(page.locator(".ask-mode-bar")).toHaveCount(0);
   await page
     .getByLabel("Your question", { exact: true })
     .fill("What are my top tracks?");
@@ -254,6 +376,7 @@ test("a free question with remote AI shows the computed sentence, a table and th
     "Creep",
     "1",
   ]);
+  expect(await page.evaluate(() => window.__askXss)).toBeUndefined();
 
   // SQL disclosure starts collapsed and reveals the editable SQL when opened.
   await expect(card.locator(".ask-sql-code")).toBeHidden();
@@ -261,15 +384,8 @@ test("a free question with remote AI shows the computed sentence, a table and th
   await expect(card.locator(".ask-sql-code")).toBeVisible();
   await expect(card.locator(".ask-sql-code")).toHaveValue(validSql);
 
-  // Confirm no archive values were sent to the mock server.
-  expect(seen.length).toBe(1);
-  const sentText = JSON.stringify(seen[0]);
-  expect(sentText).not.toContain("SecretArchiveArtist");
-  expect(sentText).not.toContain("Jóga");
-  expect(sentText).not.toContain("Creep");
-
   // Unsafe SQL returned by the model is rejected with a rule code and no data.
-  setReply({
+  setSpec({
     sql: "SELECT value FROM settings",
     title: "Unsafe",
     computed: "Attempted to read settings.",
@@ -306,21 +422,21 @@ test("a free question with remote AI shows the computed sentence, a table and th
   ).toContainText("0 KB");
 });
 
-test("free results render value, table, series, ranking, entity/history links, pagination and editable SQL across themes and mobile", async ({
-  harness: { page, mockUrl, setReply },
+test("SQL results render value, series, ranking, entity/history links, pagination and editable SQL across themes and mobile", async ({
+  harness: { page, setSpec },
 }) => {
   await page.goto("/settings/ai");
   await page.getByLabel("Enable AI").check();
-  await chooseOption(page.getByLabel("AI engine"), "remote");
-  await page.getByLabel("Server address").fill(mockUrl);
-  await page.getByLabel("Model name").fill("test-sql-model");
+  await page
+    .getByLabel("Custom local model path (.gguf)")
+    .fill("custom-test/custom-qwen3.gguf");
   await page.getByRole("button", { name: "Save AI settings" }).click();
   await expect(page.getByText("AI settings saved.")).toBeVisible();
 
   await page.goto("/ask");
 
   // 1. Value answer with exact history filter and projection as-of time.
-  setReply({
+  setSpec({
     sql: "SELECT SUM(listened_ms) AS total_ms FROM listens WHERE counted = 1",
     title: "Total listening time",
     computed: "Known listening time for all counted plays.",
@@ -339,7 +455,7 @@ test("free results render value, table, series, ranking, entity/history links, p
   ).toHaveAttribute("href", "/history?period=all&status=counted");
 
   // 2. Series answer (bar chart) with unmappable filter (local_hour) omits history link.
-  setReply({
+  setSpec({
     sql: "SELECT local_date AS day, COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_hour >= 0 GROUP BY local_date ORDER BY local_date ASC",
     title: "Plays by day",
     computed: "Counted plays by day for hours >= 0.",
@@ -360,7 +476,7 @@ test("free results render value, table, series, ranking, entity/history links, p
   ).toHaveCount(0);
 
   // 3. Ranking answer with entity links and literal HTML+SQL track title (no XSS).
-  setReply({
+  setSpec({
     sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC",
     title: "Top tracks",
     computed: "Top tracks by counted plays.",
@@ -379,7 +495,6 @@ test("free results render value, table, series, ranking, entity/history links, p
   );
   expect(await page.evaluate(() => window.__askXss)).toBeUndefined();
 
-  // Clicking the entity link opens the right track music page.
   await segments.nth(0).click();
   await expect(page).toHaveURL(/\/music\/tracks\//);
   await expect(page.getByRole("heading", { name: "Jóga." })).toBeVisible();
@@ -387,7 +502,7 @@ test("free results render value, table, series, ranking, entity/history links, p
   await expect(card).toBeVisible();
 
   // 4. Table answer with entity links, datetime, duration_ms, percent, then editable SQL -> pagination + truncation + mobile/themes + rejection.
-  setReply({
+  setSpec({
     sql: "SELECT ar.name AS artist, al.name AS album, t.title AS track, l.played_at_ms AS when_ms, l.listened_ms AS dur_ms, ROUND(100.0 * l.counted, 1) AS pct FROM listens l JOIN tracks t ON t.id = l.track_id LEFT JOIN albums al ON al.id = t.album_id JOIN track_artists ta ON ta.track_id = t.id JOIN artists ar ON ar.id = ta.artist_id WHERE l.counted = 1 ORDER BY l.played_at_ms ASC",
     title: "All counted listens",
     computed:
@@ -426,8 +541,6 @@ test("free results render value, table, series, ranking, entity/history links, p
   );
   await card.getByRole("button", { name: "Run" }).click();
   await expect(card).toContainText("result truncated");
-  // The model's description of its original query stays visible, attributed,
-  // even though this answer came from owner-edited SQL.
   await expect(card).toContainText("You ran edited SQL.");
   await expect(card).toContainText(
     "Counted listens with artist, album, track, timestamp and duration.",
@@ -462,163 +575,31 @@ test("free results render value, table, series, ranking, entity/history links, p
   await expect(page.locator(".notice")).toContainText("unauthorized_table");
 });
 
-test("answer mode defaults, per-engine persistence, local warning, and active mode on Ask", async ({
-  harness: { page },
+test("SQL follow-ups without results, unsupported notice and cancellation work in the browser", async ({
+  harness: { page, seenRequests, setSpec, setDelay },
 }) => {
   await page.goto("/settings/ai");
-
-  // Local defaults to guided, with explanatory lines and no warning.
-  const modeGroup = page.getByLabel("Answer mode");
-  await expect(modeGroup).toHaveAttribute("data-value", "guided");
-  await expect(page.getByText(/Guided questions:/)).toBeVisible();
-  await expect(page.getByText(/Free questions \(SQL\):/)).toBeVisible();
-  await expect(
-    page.getByText(/answers can be wrong but plausible/i),
-  ).toHaveCount(0);
-
-  // Choosing Free questions (SQL) with local engine shows the warning.
-  await page.getByRole("button", { name: "Free questions (SQL)" }).click();
-  await expect(modeGroup).toHaveAttribute("data-value", "sql");
-  await expect(
-    page.getByText(/answers can be wrong but plausible/i),
-  ).toBeVisible();
-
-  // Switching to remote defaults remote to sql and hides the local-only warning.
-  await chooseOption(page.getByLabel("AI engine"), "remote");
-  await expect(modeGroup).toHaveAttribute("data-value", "sql");
-  await expect(
-    page.getByText(/answers can be wrong but plausible/i),
-  ).toHaveCount(0);
-
-  // Switch remote to guided, then switch back to local -> local's sql choice is restored with warning.
-  await page.getByRole("button", { name: "Guided questions" }).click();
-  await expect(modeGroup).toHaveAttribute("data-value", "guided");
-  await chooseOption(page.getByLabel("AI engine"), "local");
-  await expect(modeGroup).toHaveAttribute("data-value", "sql");
-  await expect(
-    page.getByText(/answers can be wrong but plausible/i),
-  ).toBeVisible();
-
-  // Save local in sql mode and check the active mode on Ask.
   await page.getByLabel("Enable AI").check();
-  await page.getByRole("button", { name: "Save AI settings" }).click();
-  await expect(page.getByText("AI settings saved.")).toBeVisible();
-
-  await page.goto("/ask");
-  const modeBar = page.locator(".ask-mode-bar");
-  await expect(modeBar).toContainText("Free questions (SQL)");
-  const changeLink = modeBar.getByRole("link", { name: "Change mode" });
-  await expect(changeLink).toHaveAttribute("href", "/settings/ai");
-
-  // Follow the link back, switch to Guided questions, save, and verify on Ask.
-  await changeLink.click();
-  await expect(page).toHaveURL(/\/settings\/ai$/);
-  await expect(page.getByLabel("Answer mode")).toHaveAttribute(
-    "data-value",
-    "sql",
-  );
-  await page.getByRole("button", { name: "Guided questions" }).click();
-  await expect(
-    page.getByText(/answers can be wrong but plausible/i),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "Save AI settings" }).click();
-  await expect(page.getByText("AI settings saved.")).toBeVisible();
-
-  await page.goto("/ask");
-  await expect(page.locator(".ask-mode-bar")).toContainText("Guided questions");
-
-  // A failed free question with a local catalog model suggests guided questions or a larger model.
-  await page.route("**/api/v1/ask/status", (route) =>
-    route.fulfill({
-      json: {
-        provider: "local",
-        answer_mode: "sql",
-        remote_model: null,
-        enabled: true,
-        runtime_available: true,
-        model_ready: true,
-        model_loading: false,
-      },
-    }),
-  );
-  await page.route("**/api/v1/ask", (route) =>
-    route.fulfill({
-      json: {
-        status: "failed",
-        question: "Complex question",
-        query: null,
-        chips: [],
-        result: null,
-        message: "SQL syntax error near FROM.",
-        candidates: [],
-        runtime_available: true,
-        earlier: [],
-        sql: {
-          title: "Broken",
-          computed: "Attempted query.",
-          answer_kind: "table",
-          sql: "SELECT FROM",
-          columns: [],
-          rows: [],
-          truncated: false,
-          rule_code: "sql_error",
-        },
-      },
-    }),
-  );
-  await page.reload();
-  await expect(page.locator(".ask-mode-bar")).toContainText(
-    "Free questions (SQL)",
-  );
   await page
-    .getByLabel("Your question", { exact: true })
-    .fill("Complex question");
-  await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByText("I couldn't answer that")).toBeVisible();
-  await expect(page.locator(".notice")).toContainText(/Guided questions/i);
-  await expect(page.locator(".notice")).toContainText(/larger model/i);
-  await page.unroute("**/api/v1/ask");
-  await page.unroute("**/api/v1/ask/status");
-});
-
-test("repair rounds, SQL follow-ups without results, unsupported notice and cancellation work in the browser", async ({
-  harness: { page, mockUrl, seen, setReply, setReplies, setDelay },
-}) => {
-  await page.goto("/settings/ai");
-  await page.getByLabel("Enable AI").check();
-  await chooseOption(page.getByLabel("AI engine"), "remote");
-  await page.getByLabel("Server address").fill(mockUrl);
-  await page.getByLabel("Model name").fill("test-sql-model");
+    .getByLabel("Custom local model path (.gguf)")
+    .fill("custom-test/custom-qwen3.gguf");
   await page.getByRole("button", { name: "Save AI settings" }).click();
   await expect(page.getByText("AI settings saved.")).toBeVisible();
 
   await page.goto("/ask");
 
-  // 1. A broken SQL query is repaired automatically and renders the valid result.
   const firstValidSql =
     "SELECT a.name AS artist, COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 GROUP BY a.id ORDER BY plays DESC, a.name ASC";
-  setReplies([
-    {
-      sql: "SELECT nonexistent_col FROM listens",
-      title: "Plays by artist",
-      computed: "Counted plays per artist.",
-      answer_kind: "table",
-      columns: [
-        { name: "artist", format: "artist" },
-        { name: "plays", format: "count" },
-      ],
-    },
-    {
-      sql: firstValidSql,
-      title: "Plays by artist",
-      computed: "Counted plays per artist across all time.",
-      answer_kind: "table",
-      columns: [
-        { name: "artist", format: "artist" },
-        { name: "plays", format: "count" },
-      ],
-    },
-  ]);
+  setSpec({
+    sql: firstValidSql,
+    title: "Plays by artist",
+    computed: "Counted plays per artist across all time.",
+    answer_kind: "table",
+    columns: [
+      { name: "artist", format: "artist" },
+      { name: "plays", format: "count" },
+    ],
+  });
   await page
     .getByLabel("Your question", { exact: true })
     .fill("Plays by artist?");
@@ -626,14 +607,12 @@ test("repair rounds, SQL follow-ups without results, unsupported notice and canc
   const card = page.locator(".ask-result");
   await expect(card).toBeVisible();
   await expect(card.locator(".ask-table tbody tr")).toHaveCount(3);
-  expect(seen.length).toBe(2);
-  expect(JSON.stringify(seen[1])).toContain("nonexistent_col");
 
-  // 2. Follow-up checkbox is visible and checked in SQL mode and sends previous SQL without results.
+  // Follow-up checkbox is visible and checked, sending previous question + SQL without archive values.
   const followUp = page.getByLabel("Continue from the previous answer");
   await expect(followUp).toBeVisible();
   await expect(followUp).toBeChecked();
-  setReply({
+  setSpec({
     sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2024",
     title: "Plays in 2024",
     computed: "Counted plays in 2024.",
@@ -645,41 +624,19 @@ test("repair rounds, SQL follow-ups without results, unsupported notice and canc
     .fill("and total plays in 2024?");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   await expect(card.locator(".ask-result-value")).toHaveText("4");
-  expect(seen.length).toBe(3);
-  const followUpUser = seen[2].messages[1].content;
-  expect(followUpUser).toContain("Previous question: Plays by artist?");
-  expect(followUpUser).toContain("Previous title: Plays by artist");
-  expect(followUpUser).toContain(
-    "Previous computed: Counted plays per artist across all time.",
+  const followUpPayload = seenRequests[1];
+  expect(followUpPayload.previous.question).toBe("Plays by artist?");
+  expect(followUpPayload.previous.sql.title).toBe("Plays by artist");
+  expect(followUpPayload.previous.sql.computed).toBe(
+    "Counted plays per artist across all time.",
   );
-  expect(followUpUser).toContain(`Previous SQL: ${firstValidSql}`);
-  expect(followUpUser).not.toContain("SecretArchiveArtist");
-  expect(followUpUser).not.toContain("LiteralArtist");
+  expect(followUpPayload.previous.sql.sql).toBe(firstValidSql);
+  expect(JSON.stringify(followUpPayload)).not.toContain("SecretArchiveArtist");
 
-  // 3. Safety rejection after exhausting repair rounds names the rule and mentions repair attempts.
-  setReply({
-    sql: "SELECT value FROM settings",
-    title: "Unsafe",
-    computed: "Read settings.",
-    answer_kind: "table",
-    columns: [],
-  });
-  await page
-    .getByLabel("Your question", { exact: true })
-    .fill("Show me settings");
-  await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByText("I couldn't answer that")).toBeVisible();
-  await expect(page.locator(".notice")).toContainText("2 repair attempts");
-  await expect(page.locator(".notice")).toContainText("unauthorized_table");
-  expect(seen.length).toBe(6);
-
-  // 4. Unsupported question renders an explicit refusal notice.
-  setReply({
-    sql: "",
-    title: "",
-    computed: "I can only answer questions about your listening archive.",
-    answer_kind: "unsupported",
-    columns: [],
+  // Unsupported question renders an explicit refusal notice.
+  setSpec({
+    status: "unsupported",
+    message: "I can only answer questions about your listening archive.",
   });
   await page
     .getByLabel("Your question", { exact: true })
@@ -692,7 +649,7 @@ test("repair rounds, SQL follow-ups without results, unsupported notice and canc
     "I can only answer questions about your listening archive.",
   );
 
-  // 5. Cancelling a slow request interrupts it immediately and keeps Ask usable.
+  // Cancelling a slow request interrupts it immediately and keeps Ask usable.
   setDelay(5000);
   await page.getByLabel("Your question", { exact: true }).fill("Slow question");
   await page.getByRole("button", { name: "Ask", exact: true }).click();
@@ -702,7 +659,7 @@ test("repair rounds, SQL follow-ups without results, unsupported notice and canc
   await expect(page.getByText("The question was cancelled.")).toBeVisible();
 
   setDelay(0);
-  setReply({
+  setSpec({
     sql: "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
     title: "Total plays",
     computed: "All counted plays.",
@@ -720,17 +677,17 @@ test.describe("SQL query timeout", () => {
   test.use({ sqlTimeoutMs: 10 });
 
   test("a slow SQL query reports a timeout message honestly", async ({
-    harness: { page, mockUrl, setReply },
+    harness: { page, setSpec },
   }) => {
     await page.goto("/settings/ai");
     await page.getByLabel("Enable AI").check();
-    await chooseOption(page.getByLabel("AI engine"), "remote");
-    await page.getByLabel("Server address").fill(mockUrl);
-    await page.getByLabel("Model name").fill("test-sql-model");
+    await page
+      .getByLabel("Custom local model path (.gguf)")
+      .fill("custom-test/custom-qwen3.gguf");
     await page.getByRole("button", { name: "Save AI settings" }).click();
     await expect(page.getByText("AI settings saved.")).toBeVisible();
 
-    setReply({
+    setSpec({
       sql: "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM cnt) SELECT COUNT(*) FROM cnt",
       title: "Endless",
       computed: "Count forever.",

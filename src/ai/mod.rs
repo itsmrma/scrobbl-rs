@@ -1,4 +1,5 @@
-//! Optional local AI: consent, curated catalog, model management and downloads.
+//! Optional local AI: consent, curated Qwen3 catalog, custom local GGUF
+//! paths, model management, and downloads.
 //!
 //! The model never sees archive rows. This module owns only the settings and
 //! model lifecycle surface consumed by the Ask page and inference worker.
@@ -16,7 +17,7 @@ use axum::{
     http::HeaderMap,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path as StdPath, PathBuf};
 use ts_rs::TS;
 
 pub const DEFAULT_THREADS: u32 = 4;
@@ -29,68 +30,11 @@ pub fn runtime_available() -> bool {
     cfg!(feature = "llama")
 }
 
-/// Where questions are interpreted: the downloaded local model, or an
-/// OpenAI-compatible server the owner already runs or pays for.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Provider {
-    #[default]
-    Local,
-    Remote,
-}
-
-impl Provider {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::Remote => "remote",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "local" => Some(Self::Local),
-            "remote" => Some(Self::Remote),
-            _ => None,
-        }
-    }
-}
-
-/// How Ask answers questions: fixed guided vocabulary or free-form SQL.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[serde(rename_all = "snake_case")]
-pub enum AnswerMode {
-    Guided,
-    Sql,
-}
-
-impl AnswerMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Guided => "guided",
-            Self::Sql => "sql",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "guided" => Some(Self::Guided),
-            "sql" => Some(Self::Sql),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
-    pub provider: Provider,
-    pub local_answer_mode: AnswerMode,
-    pub remote_answer_mode: AnswerMode,
-    pub remote_url: Option<String>,
-    pub remote_model: Option<String>,
-    /// Never sent to the browser; only whether one is set.
-    pub remote_key: Option<String>,
     pub enabled: bool,
     pub active_model: Option<String>,
+    pub custom_model_path: Option<String>,
     pub threads: u32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
@@ -99,14 +43,9 @@ pub struct StoredSettings {
 impl Default for StoredSettings {
     fn default() -> Self {
         Self {
-            provider: Provider::Local,
-            local_answer_mode: AnswerMode::Guided,
-            remote_answer_mode: AnswerMode::Sql,
-            remote_url: None,
-            remote_model: None,
-            remote_key: None,
             enabled: false,
             active_model: None,
+            custom_model_path: None,
             threads: DEFAULT_THREADS,
             unload_minutes: DEFAULT_UNLOAD_MINUTES,
             model_dir: None,
@@ -124,6 +63,11 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .is_some_and(|value| value == "1");
     let active_model = setting("ai_active_model")
         .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let custom_model_path = setting("ai_custom_model_path")
+        .await?
+        .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
     let threads = setting("ai_threads")
         .await?
@@ -135,95 +79,155 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .unwrap_or(DEFAULT_UNLOAD_MINUTES);
     let model_dir = setting("ai_model_dir")
         .await?
-        .filter(|value| !value.trim().is_empty());
-    let provider = setting("ai_provider")
-        .await?
-        .and_then(|value| Provider::parse(&value))
-        .unwrap_or_default();
-    let remote_url = setting("ai_remote_url")
-        .await?
-        .filter(|value| !value.trim().is_empty());
-    let remote_model = setting("ai_remote_model")
-        .await?
-        .filter(|value| !value.trim().is_empty());
-    let remote_key = setting("ai_remote_key")
-        .await?
+        .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-    let local_answer_mode = setting("ai_answer_mode_local")
-        .await?
-        .and_then(|value| AnswerMode::parse(&value))
-        .unwrap_or(AnswerMode::Guided);
-    let remote_answer_mode = setting("ai_answer_mode_remote")
-        .await?
-        .and_then(|value| AnswerMode::parse(&value))
-        .unwrap_or(AnswerMode::Sql);
     Ok(StoredSettings {
-        provider,
-        local_answer_mode,
-        remote_answer_mode,
-        remote_url,
-        remote_model,
-        remote_key,
         enabled,
         active_model,
+        custom_model_path,
         threads,
         unload_minutes,
         model_dir,
     })
 }
 
-impl StoredSettings {
-    pub fn uses_remote(&self) -> bool {
-        self.provider == Provider::Remote
-    }
-
-    pub fn effective_answer_mode(&self) -> AnswerMode {
-        match self.provider {
-            Provider::Local => self.local_answer_mode,
-            Provider::Remote => self.remote_answer_mode,
-        }
-    }
-
-    /// The remote server address and model name are both set.
-    pub fn remote_configured(&self) -> bool {
-        self.remote_url.is_some() && self.remote_model.is_some()
-    }
-
-    pub fn remote_config(&self) -> Option<crate::ask::remote::RemoteConfig> {
-        Some(crate::ask::remote::RemoteConfig {
-            base_url: self.remote_url.clone()?,
-            model: self.remote_model.clone()?,
-            api_key: self.remote_key.clone(),
-        })
-    }
-}
-
 pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
     read_settings_from(&state.db).await
 }
 
-/// Filesystem truth for the selected model, shared by the settings surface and
-/// the Ask gate so both apply exactly the same rule.
+/// Filesystem truth for the selected local model (catalog entry, local folder,
+/// or custom GGUF file path), shared by settings and the Ask gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ModelReadiness {
     pub installed: bool,
     pub selected_available: bool,
 }
 
+fn effective_models_root(data_dir: &StdPath, stored: &StoredSettings) -> PathBuf {
+    match stored.model_dir.as_deref().map(str::trim) {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir),
+        _ => data_dir.join("models"),
+    }
+}
+
+/// Resolve the active local GGUF model `(id, gguf_path)` from `stored` settings
+/// and the filesystem. Returns `Ok(Err(owner_facing_reason))` when no valid
+/// local model is currently usable.
+pub fn resolve_local_model_path(
+    data_dir: &StdPath,
+    stored: &StoredSettings,
+) -> Result<std::result::Result<(String, PathBuf), String>> {
+    let root = effective_models_root(data_dir, stored);
+    if let Some(raw_custom) = stored
+        .custom_model_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let resolved = match models::resolve_custom_model_path(&root, raw_custom) {
+            Ok(path) => path,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        if let Err(reason) = models::validate_gguf_file(&resolved) {
+            return Ok(Err(reason));
+        }
+        let label = resolved
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| format!("custom:{name}"))
+            .unwrap_or_else(|| "custom".to_string());
+        return Ok(Ok((label, resolved)));
+    }
+
+    let Some(model_id) = stored.active_model.as_deref() else {
+        return Ok(Err(
+            "Download and select an AI model in Settings, or set a custom local .gguf path, before asking questions."
+                .into(),
+        ));
+    };
+
+    let scanned = models::scan(&root)
+        .into_iter()
+        .find(|entry| entry.id == model_id);
+
+    if let Some(catalog_model) = catalog::find(model_id) {
+        if !catalog_model.is_available() {
+            return Ok(Err(
+                "The selected model is not available for questions in this release. Choose another model."
+                    .into(),
+            ));
+        }
+        if !scanned.as_ref().is_some_and(|entry| {
+            entry.usable() && entry.file.as_deref() == Some(catalog_model.download.file.as_str())
+        }) {
+            return Ok(Err(
+                "The selected model is not installed or did not pass verification. Download it again, point to a local .gguf file, or choose another model."
+                    .into(),
+            ));
+        }
+        let dir = models::model_dir(&root, model_id)?;
+        let path = models::model_file(&dir, &catalog_model.download.file)?;
+        return Ok(Ok((model_id.to_string(), path)));
+    }
+
+    if let Some(entry) = scanned
+        && entry.usable()
+        && entry.custom
+        && let Some(file_name) = entry.file.as_deref()
+    {
+        let dir = models::model_dir(&root, model_id)?;
+        let path = models::model_file(&dir, file_name)?;
+        if let Err(reason) = models::validate_gguf_file(&path) {
+            return Ok(Err(reason));
+        }
+        return Ok(Ok((model_id.to_string(), path)));
+    }
+
+    Ok(Err(
+        "The selected model is missing or failed verification. Download a model, point to a local .gguf file, or choose another model."
+            .into(),
+    ))
+}
+
 pub async fn selected_model_state(
     state: &AppState,
     stored: &StoredSettings,
 ) -> Result<(PathBuf, ModelReadiness)> {
-    let (root, scanned) = active_scan(state, stored.active_model.as_deref()).await?;
+    let root = models::root(state).await?;
+    if let Some(raw_custom) = stored
+        .custom_model_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let valid = models::resolve_custom_model_path(&root, raw_custom)
+            .and_then(|path| models::validate_gguf_file(&path))
+            .is_ok();
+        return Ok((
+            root,
+            ModelReadiness {
+                installed: valid,
+                selected_available: valid,
+            },
+        ));
+    }
+
+    let scanned = stored
+        .active_model
+        .as_deref()
+        .and_then(|id| models::scan(&root).into_iter().find(|model| model.id == id));
     let catalog_model = stored.active_model.as_deref().and_then(catalog::find);
-    let installed = scanned.as_ref().is_some_and(models::ScannedModel::usable)
-        && catalog_model.as_ref().is_some_and(|model| {
-            scanned.as_ref().and_then(|entry| entry.file.as_deref())
-                == Some(model.download.file.as_str())
-        });
-    let selected_available = catalog_model
-        .as_ref()
-        .is_some_and(catalog::CatalogModel::is_available);
+
+    let (installed, selected_available) = match (catalog_model, scanned) {
+        (Some(model), scanned_entry) => (
+            scanned_entry.as_ref().is_some_and(|entry| {
+                entry.usable() && entry.file.as_deref() == Some(model.download.file.as_str())
+            }),
+            model.is_available(),
+        ),
+        (None, Some(entry)) if entry.custom => (entry.usable(), entry.usable()),
+        _ => (false, false),
+    };
     Ok((
         root,
         ModelReadiness {
@@ -242,16 +246,9 @@ pub async fn selected_model_readiness(
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiSettings {
-    /// `local` or `remote`.
-    pub provider: String,
-    pub answer_mode: AnswerMode,
-    pub local_answer_mode: AnswerMode,
-    pub remote_answer_mode: AnswerMode,
-    pub remote_url: Option<String>,
-    pub remote_model: Option<String>,
-    pub remote_key_set: bool,
     pub enabled: bool,
     pub active_model: Option<String>,
+    pub custom_model_path: Option<String>,
     pub threads: u32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
@@ -264,25 +261,10 @@ pub struct AiSettings {
 
 #[derive(Clone, Debug, Deserialize, TS)]
 pub struct SaveAiSettings {
-    #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub answer_mode: Option<AnswerMode>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub local_answer_mode: Option<AnswerMode>,
-    #[serde(default)]
-    #[ts(optional)]
-    pub remote_answer_mode: Option<AnswerMode>,
-    #[serde(default)]
-    pub remote_url: Option<String>,
-    #[serde(default)]
-    pub remote_model: Option<String>,
-    /// `None` keeps the stored key, an empty string clears it.
-    #[serde(default)]
-    pub remote_key: Option<String>,
     pub enabled: bool,
     pub active_model: Option<String>,
+    #[serde(default)]
+    pub custom_model_path: Option<String>,
     pub threads: u32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
@@ -290,11 +272,9 @@ pub struct SaveAiSettings {
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiAskStatus {
-    /// `local` or `remote`.
-    pub provider: String,
-    pub answer_mode: AnswerMode,
-    pub remote_model: Option<String>,
     pub enabled: bool,
+    pub active_model: Option<String>,
+    pub custom_model_path: Option<String>,
     pub runtime_available: bool,
     pub model_ready: bool,
     pub model_loading: bool,
@@ -323,21 +303,6 @@ pub struct AiRequirements {
     pub cpu_cores: u32,
     pub gpu_optional: bool,
     pub context_tokens: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
-pub struct AiLanguageScore {
-    pub language: String,
-    pub exact_match: Option<f64>,
-    pub cases: Option<u32>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
-pub struct AiParserScores {
-    pub intent: Option<f64>,
-    pub slots: Option<f64>,
-    pub refusals: Option<f64>,
-    pub exact_match: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -372,14 +337,9 @@ pub struct AiCatalogModel {
     pub license: AiLicense,
     pub download: AiDownload,
     pub requirements: AiRequirements,
-    pub languages: Vec<AiLanguageScore>,
-    pub parser: AiParserScores,
     pub speed: Option<AiSpeed>,
     pub backend: String,
     pub selectable: bool,
-    /// Fixed recommendation: guided questions for every local catalog model.
-    /// No measured SQL accuracy is stored or shown.
-    pub recommendation: AnswerMode,
     pub installed: bool,
     pub installed_size_bytes: Option<u64>,
     pub checksum_verified: bool,
@@ -395,6 +355,7 @@ pub struct AiInstalledModel {
     pub size_bytes: u64,
     pub installed_at_ms: Option<i64>,
     pub checksum_verified: bool,
+    pub custom: bool,
     pub error: Option<String>,
 }
 
@@ -406,10 +367,6 @@ pub struct AiCatalog {
     pub installed: Vec<AiInstalledModel>,
     pub total_installed_bytes: u64,
     pub disk_used_bytes: u64,
-    /// Fixed recommendation for the "bring your own AI" option: free questions
-    /// (SQL), because a larger remote model can write SQL and the archive never
-    /// leaves the instance.
-    pub remote_recommendation: AnswerMode,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -443,17 +400,8 @@ pub struct AiTestResult {
     pub message: String,
 }
 
-async fn active_scan(
-    state: &AppState,
-    active: Option<&str>,
-) -> Result<(PathBuf, Option<models::ScannedModel>)> {
-    let root = models::root(state).await?;
-    let scanned =
-        active.and_then(|id| models::scan(&root).into_iter().find(|model| model.id == id));
-    Ok((root, scanned))
-}
-
 fn settings_message(
+    data_dir: &StdPath,
     stored: &StoredSettings,
     installed: bool,
     selected_available: bool,
@@ -461,18 +409,28 @@ fn settings_message(
     if !stored.enabled {
         return None;
     }
-    if stored.uses_remote() {
-        return (!stored.remote_configured()).then(|| {
-            "AI is enabled, but the AI server address or model name is missing.".to_string()
-        });
+    if let Some(raw_custom) = stored.custom_model_path.as_deref() {
+        let root = effective_models_root(data_dir, stored);
+        if let Err(reason) = models::resolve_custom_model_path(&root, raw_custom)
+            .and_then(|path| models::validate_gguf_file(&path))
+        {
+            return Some(reason);
+        }
+        if !runtime_available() {
+            return Some(
+                "This build does not include the local AI runtime. Settings and downloads stay available, but questions remain disabled."
+                    .to_string(),
+            );
+        }
+        return None;
     }
     match (&stored.active_model, installed) {
         (None, _) => Some(
-            "AI is enabled, but no model is selected. Download a model and select it before asking questions."
+            "AI is enabled, but no model is selected. Download a Qwen3 model, select a local model, or enter a custom .gguf path before asking questions."
                 .to_string(),
         ),
         (Some(_), false) => Some(
-            "The selected model is not installed or did not pass verification. Download it again or choose another model."
+            "The selected model is not installed or did not pass verification. Download it again, provide a custom .gguf path, or choose another model."
                 .to_string(),
         ),
         (Some(_), true) if !selected_available => Some(
@@ -491,22 +449,11 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
     let (root, readiness) = selected_model_state(state, &stored).await?;
     let installed = readiness.installed;
     let selected_available = readiness.selected_available;
-    let ready = stored.enabled
-        && if stored.uses_remote() {
-            stored.remote_configured()
-        } else {
-            installed && selected_available
-        };
+    let ready = stored.enabled && installed && selected_available;
     Ok(AiSettings {
-        provider: stored.provider.as_str().to_owned(),
-        answer_mode: stored.effective_answer_mode(),
-        local_answer_mode: stored.local_answer_mode,
-        remote_answer_mode: stored.remote_answer_mode,
-        remote_url: stored.remote_url.clone(),
-        remote_model: stored.remote_model.clone(),
-        remote_key_set: stored.remote_key.is_some(),
         enabled: stored.enabled,
         active_model: stored.active_model.clone(),
+        custom_model_path: stored.custom_model_path.clone(),
         threads: stored.threads,
         unload_minutes: stored.unload_minutes,
         model_dir: stored.model_dir.clone(),
@@ -514,7 +461,12 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
         runtime_available: runtime_available(),
         model_installed: installed,
         model_ready: ready,
-        message: settings_message(&stored, installed, selected_available),
+        message: settings_message(
+            &state.storage.directory,
+            &stored,
+            installed,
+            selected_available,
+        ),
     })
 }
 
@@ -557,50 +509,24 @@ pub async fn settings_post(
     }
     let model_dir = validate_model_dir(form.model_dir.as_deref())?;
     let previous = read_settings(&state).await?;
-    let provider = match form.provider.as_deref().map(str::trim) {
-        None | Some("") => previous.provider,
-        Some(value) => Provider::parse(value)
-            .ok_or_else(|| AppError::BadRequest("Unknown AI provider.".into()))?,
+
+    let effective_root = match model_dir.as_deref() {
+        Some(dir) => PathBuf::from(dir),
+        None => state.storage.directory.join("models"),
     };
-    let remote_url = form
-        .remote_url
+
+    let custom_model_path = form
+        .custom_model_path
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    if let Some(url) = remote_url.as_deref() {
-        crate::ask::remote::endpoint(url)?;
+    if let Some(raw_path) = custom_model_path.as_deref() {
+        let resolved = models::resolve_custom_model_path(&effective_root, raw_path)
+            .map_err(AppError::BadRequest)?;
+        models::validate_gguf_file(&resolved).map_err(AppError::BadRequest)?;
     }
-    let remote_model = form
-        .remote_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned);
-    if remote_model
-        .as_deref()
-        .is_some_and(|model| model.chars().count() > 200 || model.chars().any(char::is_control))
-    {
-        return Err(AppError::BadRequest("Use a valid model name.".into()));
-    }
-    let remote_key = match form.remote_key.as_deref() {
-        None => previous.remote_key.clone(),
-        Some(key) => {
-            let key = key.trim();
-            if key.chars().count() > 500 || key.chars().any(char::is_control) {
-                return Err(AppError::BadRequest("Use a valid API key.".into()));
-            }
-            (!key.is_empty()).then(|| key.to_owned())
-        }
-    };
-    if provider == Provider::Remote
-        && form.enabled
-        && (remote_url.is_none() || remote_model.is_none())
-    {
-        return Err(AppError::BadRequest(
-            "Enter the AI server address and the model name to use your own AI.".into(),
-        ));
-    }
+
     let active_model = form
         .active_model
         .as_deref()
@@ -608,28 +534,24 @@ pub async fn settings_post(
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
     if let Some(id) = active_model.as_deref() {
-        let Some(model) = catalog::find(id) else {
-            return Err(AppError::BadRequest("Unknown model.".into()));
-        };
-        if !model.is_available() {
-            return Err(AppError::BadRequest(
-                "This model is not selectable in this release.".into(),
-            ));
+        if let Some(model) = catalog::find(id) {
+            if !model.is_available() {
+                return Err(AppError::BadRequest(
+                    "This model is not selectable in this release.".into(),
+                ));
+            }
+        } else {
+            models::safe_id(id)?;
+            // Allow preserving an existing custom subfolder selection if it is
+            // present in scan; otherwise reject unknown arbitrary model ids.
+            let found_custom = models::scan(&effective_root)
+                .into_iter()
+                .any(|entry| entry.id == id && entry.custom && entry.usable());
+            if !found_custom {
+                return Err(AppError::BadRequest("Unknown model.".into()));
+            }
         }
-        // A known model id may stay selected even if its files were removed or
-        // failed verification; the settings response then reports the missing
-        // model explicitly. Selecting a model for use still requires an
-        // installed file through the select endpoint.
     }
-
-    let local_answer_mode = form.local_answer_mode.unwrap_or(match provider {
-        Provider::Local => form.answer_mode.unwrap_or(previous.local_answer_mode),
-        Provider::Remote => previous.local_answer_mode,
-    });
-    let remote_answer_mode = form.remote_answer_mode.unwrap_or(match provider {
-        Provider::Remote => form.answer_mode.unwrap_or(previous.remote_answer_mode),
-        Provider::Local => previous.remote_answer_mode,
-    });
 
     let mut tx = state.db.begin().await?;
     crate::db::set_setting(&mut tx, "ai_enabled", if form.enabled { "1" } else { "0" }).await?;
@@ -637,6 +559,12 @@ pub async fn settings_post(
         &mut tx,
         "ai_active_model",
         active_model.as_deref().unwrap_or(""),
+    )
+    .await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_custom_model_path",
+        custom_model_path.as_deref().unwrap_or(""),
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_threads", &form.threads.to_string()).await?;
@@ -647,33 +575,20 @@ pub async fn settings_post(
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
-    crate::db::set_setting(&mut tx, "ai_provider", provider.as_str()).await?;
-    crate::db::set_setting(&mut tx, "ai_answer_mode_local", local_answer_mode.as_str()).await?;
-    crate::db::set_setting(
-        &mut tx,
-        "ai_answer_mode_remote",
-        remote_answer_mode.as_str(),
+    sqlx::query(
+        "DELETE FROM settings WHERE key IN ('ai_provider','ai_remote_url','ai_remote_model','ai_remote_key','ai_answer_mode_local','ai_answer_mode_remote')",
     )
-    .await?;
-    crate::db::set_setting(
-        &mut tx,
-        "ai_remote_url",
-        remote_url.as_deref().unwrap_or(""),
-    )
-    .await?;
-    crate::db::set_setting(
-        &mut tx,
-        "ai_remote_model",
-        remote_model.as_deref().unwrap_or(""),
-    )
-    .await?;
-    crate::db::set_setting(
-        &mut tx,
-        "ai_remote_key",
-        remote_key.as_deref().unwrap_or(""),
-    )
+    .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+
+    if !form.enabled
+        || previous.active_model != active_model
+        || previous.custom_model_path != custom_model_path
+        || previous.model_dir != model_dir
+    {
+        state.ask.unload();
+    }
 
     if form.enabled {
         state.ask.projection.notify();
@@ -683,14 +598,9 @@ pub async fn settings_post(
     }
 
     let stored = StoredSettings {
-        provider,
-        local_answer_mode,
-        remote_answer_mode,
-        remote_url,
-        remote_model,
-        remote_key,
         enabled: form.enabled,
         active_model,
+        custom_model_path,
         threads: form.threads,
         unload_minutes: form.unload_minutes,
         model_dir,
@@ -704,24 +614,11 @@ pub async fn ask_status(
 ) -> Result<Json<AiAskStatus>> {
     auth::session(&state, &headers).await?;
     let stored = read_settings(&state).await?;
-    if stored.uses_remote() {
-        // Your own AI needs no local runtime and loads nothing here.
-        return Ok(Json(AiAskStatus {
-            provider: stored.provider.as_str().to_owned(),
-            answer_mode: stored.effective_answer_mode(),
-            remote_model: stored.remote_model.clone(),
-            enabled: stored.enabled,
-            runtime_available: true,
-            model_ready: stored.enabled && stored.remote_configured(),
-            model_loading: false,
-        }));
-    }
     let readiness = selected_model_readiness(&state, &stored).await?;
     Ok(Json(AiAskStatus {
-        provider: stored.provider.as_str().to_owned(),
-        answer_mode: stored.effective_answer_mode(),
-        remote_model: None,
         enabled: stored.enabled,
+        active_model: stored.active_model,
+        custom_model_path: stored.custom_model_path,
         // The build feature and the installed parser must both be present: a
         // test or a future fallback may install a stub/unavailable parser.
         runtime_available: runtime_available() && state.ask.runtime_available,
@@ -823,21 +720,6 @@ pub async fn catalog_get(
                     gpu_optional: model.requirements.gpu_optional,
                     context_tokens: model.requirements.context_tokens,
                 },
-                languages: model
-                    .languages
-                    .iter()
-                    .map(|language| AiLanguageScore {
-                        language: language.language.clone(),
-                        exact_match: language.exact_match,
-                        cases: language.cases,
-                    })
-                    .collect(),
-                parser: AiParserScores {
-                    intent: model.parser.intent,
-                    slots: model.parser.slots,
-                    refusals: model.parser.refusals,
-                    exact_match: model.parser.exact_match,
-                },
                 speed: model.speed.as_ref().map(|speed| AiSpeed {
                     p50_ms: speed.p50_ms,
                     p95_ms: speed.p95_ms,
@@ -848,7 +730,6 @@ pub async fn catalog_get(
                 }),
                 backend: model.backend.clone(),
                 selectable: model.selectable,
-                recommendation: model.recommendation,
                 installed,
                 installed_size_bytes: installed_entry.map(|entry| entry.size_bytes),
                 checksum_verified: installed_entry.is_some_and(|entry| entry.checksum_verified),
@@ -878,6 +759,7 @@ pub async fn catalog_get(
             size_bytes: entry.size_bytes,
             installed_at_ms: entry.installed_at_ms,
             checksum_verified: entry.checksum_verified,
+            custom: entry.custom,
             error: entry.error.clone(),
         })
         .collect();
@@ -893,7 +775,6 @@ pub async fn catalog_get(
         installed,
         total_installed_bytes,
         disk_used_bytes: models::total_size(&root),
-        remote_recommendation: AnswerMode::Sql,
     }))
 }
 
@@ -1002,6 +883,7 @@ pub async fn model_delete(
             ));
         }
         crate::db::set_setting(&mut *state.db.acquire().await?, "ai_active_model", "").await?;
+        state.ask.unload();
     }
     let freed_bytes = models::remove(&root, &id).await?;
     Ok(Json(AiDeleteResult { id, freed_bytes }))
@@ -1014,26 +896,37 @@ pub async fn model_select(
 ) -> Result<Json<AiSelection>> {
     auth::require_write(&state, &headers).await?;
     let id = model_id_from_path(id)?;
-    let Some(model) = catalog::find(&id) else {
-        return Err(AppError::NotFound);
-    };
-    if !model.is_available() {
-        return Err(AppError::BadRequest(
-            "This model is not selectable in this release.".into(),
-        ));
-    }
     let root = models::root(&state).await?;
-    let installed = models::scan(&root).into_iter().any(|entry| {
-        entry.id == id
-            && entry.usable()
-            && entry.file.as_deref() == Some(model.download.file.as_str())
-    });
-    if !installed {
-        return Err(AppError::BadRequest(
-            "Install and verify this model before selecting it.".into(),
-        ));
+    let scanned_entry = models::scan(&root).into_iter().find(|entry| entry.id == id);
+
+    if let Some(model) = catalog::find(&id) {
+        if !model.is_available() {
+            return Err(AppError::BadRequest(
+                "This model is not selectable in this release.".into(),
+            ));
+        }
+        let installed = scanned_entry.as_ref().is_some_and(|entry| {
+            entry.usable() && entry.file.as_deref() == Some(model.download.file.as_str())
+        });
+        if !installed {
+            return Err(AppError::BadRequest(
+                "Install and verify this model before selecting it.".into(),
+            ));
+        }
+    } else if scanned_entry
+        .as_ref()
+        .is_some_and(|entry| entry.usable() && entry.custom)
+    {
+        // Usable custom .gguf directory under `ai_model_dir`.
+    } else {
+        return Err(AppError::NotFound);
     }
-    crate::db::set_setting(&mut *state.db.acquire().await?, "ai_active_model", &id).await?;
+
+    let mut tx = state.db.begin().await?;
+    crate::db::set_setting(&mut tx, "ai_active_model", &id).await?;
+    crate::db::set_setting(&mut tx, "ai_custom_model_path", "").await?;
+    tx.commit().await?;
+    state.ask.unload();
     Ok(Json(AiSelection { active_model: id }))
 }
 
@@ -1043,9 +936,6 @@ pub async fn model_test(
 ) -> Result<Json<AiTestResult>> {
     auth::require_write(&state, &headers).await?;
     let stored = read_settings(&state).await?;
-    if stored.uses_remote() {
-        return Ok(Json(remote_test(&stored).await));
-    }
     let runtime = runtime_available();
     if !runtime {
         return Ok(Json(AiTestResult {
@@ -1057,84 +947,25 @@ pub async fn model_test(
                     .to_string(),
         }));
     }
-    let (_, scanned) = active_scan(&state, stored.active_model.as_deref()).await?;
-    let usable = scanned.as_ref().is_some_and(models::ScannedModel::usable);
-    let message = if stored.active_model.is_none() {
-        "Select an installed model first."
-    } else if usable {
-        "The model file is ready and verified. It will load when you ask the first question."
-    } else {
-        "The selected model is missing or failed verification. Download it again or choose another model."
-    };
-    Ok(Json(AiTestResult {
-        runtime_available: true,
-        model_loaded: false,
-        model_ready: usable,
-        message: message.to_string(),
-    }))
-}
-
-/// Send one real question to the configured server, so a wrong address, model
-/// name or key shows up here rather than on the first question.
-async fn remote_test(stored: &StoredSettings) -> AiTestResult {
-    let result = |ok: bool, message: String| AiTestResult {
-        runtime_available: true,
-        model_loaded: false,
-        model_ready: ok,
-        message,
-    };
-    let Some(config) = stored.remote_config() else {
-        return result(
-            false,
-            "Enter the AI server address and the model name first.".into(),
-        );
-    };
-    let question = "How many times did I listen to Björk?";
-    if stored.effective_answer_mode() == AnswerMode::Sql {
-        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let raw = crate::ask::remote::infer_sql(
-            &config,
-            question,
-            None,
-            &today,
-            crate::ask::parser::inference_timeout(),
-        )
-        .await;
-        return match raw {
-            Err(error) => result(false, error.to_string()),
-            Ok(text) => match crate::ask::parser::interpret_remote_sql(&text) {
-                Ok(_) => result(
-                    true,
-                    format!("Connected. {} understood a test question.", config.model),
-                ),
-                Err(_) => result(
-                    false,
-                    "The server answered, but not in the SQL format Ask needs. Try a more capable model."
-                        .into(),
-                ),
+    match resolve_local_model_path(&state.storage.directory, &stored)? {
+        Ok((_id, _path)) => Ok(Json(AiTestResult {
+            runtime_available: true,
+            model_loaded: false,
+            model_ready: true,
+            message: if stored.custom_model_path.is_some() {
+                "The custom GGUF file is readable and verified. It will load when you ask the first question."
+                    .to_string()
+            } else {
+                "The model file is ready and verified. It will load when you ask the first question."
+                    .to_string()
             },
-        };
-    }
-    let raw = crate::ask::remote::infer(
-        &config,
-        question,
-        None,
-        crate::ask::parser::inference_timeout(),
-    )
-    .await;
-    match raw {
-        Err(error) => result(false, error.to_string()),
-        Ok(text) => match crate::ask::parser::interpret_remote(&text, "") {
-            Ok(_) => result(
-                true,
-                format!("Connected. {} understood a test question.", config.model),
-            ),
-            Err(_) => result(
-                false,
-                "The server answered, but not in the format Ask needs. Try a more capable model."
-                    .into(),
-            ),
-        },
+        })),
+        Err(message) => Ok(Json(AiTestResult {
+            runtime_available: true,
+            model_loaded: false,
+            model_ready: false,
+            message,
+        })),
     }
 }
 

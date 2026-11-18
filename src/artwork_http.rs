@@ -62,6 +62,29 @@ pub(crate) fn public_ip(ip: IpAddr) -> bool {
     }
 }
 
+#[derive(Debug)]
+struct NonPublicAddress;
+
+impl std::fmt::Display for NonPublicAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("image hosts must resolve to public addresses only")
+    }
+}
+
+impl std::error::Error for NonPublicAddress {}
+
+fn has_non_public_source(mut err: &(dyn std::error::Error + 'static)) -> bool {
+    loop {
+        if err.is::<NonPublicAddress>() {
+            return true;
+        }
+        let Some(next) = err.source() else {
+            return false;
+        };
+        err = next;
+    }
+}
+
 struct PublicResolver;
 
 impl Resolve for PublicResolver {
@@ -72,7 +95,8 @@ impl Resolve for PublicResolver {
                 .await?
                 .collect();
             if addresses.is_empty() || addresses.iter().any(|a| !public_ip(a.ip())) {
-                return Err("image hosts must resolve to public addresses only".into());
+                let err: Box<dyn std::error::Error + Send + Sync> = Box::new(NonPublicAddress);
+                return Err(err);
             }
             let addresses: Addrs = Box::new(addresses.into_iter());
             Ok(addresses)
@@ -243,22 +267,32 @@ pub(crate) async fn get(target: &str, limit: usize) -> Result<Fetched> {
                 "Use a public HTTPS image URL on port 443, without credentials.".into(),
             ));
         }
-        let host = host_of(&url)?;
-        // Say clearly why a local or private link is refused; the resolver
-        // below enforces the same rule again on every connection and redirect.
-        if let Ok(addresses) = tokio::net::lookup_host((host.as_str(), 443)).await {
-            let addresses: Vec<SocketAddr> = addresses.collect();
-            if addresses.iter().any(|a| !public_ip(a.ip())) {
+        match url.host() {
+            Some(url::Host::Ipv4(ip)) if !public_ip(IpAddr::V4(ip)) => {
                 return Err(AppError::BadRequest(
                     "Image links must point to the public internet, not a local or private address."
                         .into(),
                 ));
             }
+            Some(url::Host::Ipv6(ip)) if !public_ip(IpAddr::V6(ip)) => {
+                return Err(AppError::BadRequest(
+                    "Image links must point to the public internet, not a local or private address."
+                        .into(),
+                ));
+            }
+            _ => {}
         }
+        let host = host_of(&url)?;
         slot(&host).await?;
         let response = match CLIENT.get(url.clone()).send().await {
             Ok(response) => response,
             Err(error) => {
+                if has_non_public_source(&error) {
+                    return Err(AppError::BadRequest(
+                        "Image links must point to the public internet, not a local or private address."
+                            .into(),
+                    ));
+                }
                 if let Some(upgrade) = std::error::Error::source(&error)
                     .and_then(|source| source.downcast_ref::<UpgradeTo>())
                 {

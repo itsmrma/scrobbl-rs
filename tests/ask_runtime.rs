@@ -1,4 +1,5 @@
-//! CI-safe tests for the local Ask parser plus an ignored real-model run.
+#![allow(clippy::unwrap_used, clippy::disallowed_methods)]
+//! CI-safe tests for the local Ask SQL parser plus an ignored real-model run.
 //!
 //! The queue, serialization, timeout, cancellation and idle-unload tests use a
 //! mock engine and never load weights. The real GGUF test is `#[ignore]` and
@@ -6,12 +7,11 @@
 #[cfg(feature = "llama")]
 use scrobbl_rs::ask::parser::{ModelParser, QueryParser};
 use scrobbl_rs::ask::{
-    dsl::{EntityKind, GroupBy, Limit, Metric, Period, SortBy, SortOrder, Weekday},
     grammar,
     parser::ParsedQuestion,
     prompt, runtime,
     runtime::Runtime,
-    schema::{self, ModelOutput},
+    schema::{SqlAnswerKind, SqlModelOutput},
 };
 use std::{
     sync::{
@@ -22,288 +22,68 @@ use std::{
 };
 
 #[test]
-fn checked_in_schema_matches_the_generated_schema() {
-    let checked_in = include_str!("../src/ask/schema/ask.schema.json");
-    assert_eq!(
-        checked_in,
-        schema::schema_text(),
-        "the checked-in Ask schema is stale"
-    );
-    let parsed: serde_json::Value = serde_json::from_str(checked_in).unwrap();
-    assert_eq!(parsed, schema::schema_json());
-}
-
-#[test]
-fn grammar_contains_the_root_rule_enums_and_unicode_string_rule() {
-    let grammar = grammar::to_gbnf(&schema::schema_json()).unwrap();
+fn sql_grammar_contains_expected_root_and_unicode_string_rule() {
+    let grammar = grammar::from_sql_schema().unwrap();
     assert!(grammar.starts_with("root ::= "), "{grammar}");
-    for value in schema::ModelMetric::VALUES
-        .iter()
-        .chain(schema::ModelTarget::VALUES)
-        .chain(schema::ModelLimit::VALUES)
-    {
-        let literal = format!("\"\\\"{value}\\\"\"");
-        assert!(grammar.contains(&literal), "grammar lost {literal}");
+    for key in [
+        "\"\\\"sql\\\"\"",
+        "\"\\\"title\\\"\"",
+        "\"\\\"computed\\\"\"",
+        "\"\\\"answer_kind\\\"\"",
+        "\"\\\"columns\\\"\"",
+    ] {
+        assert!(grammar.contains(key), "grammar missing {key}");
     }
-    assert!(
-        grammar.contains("\"\\\"group_by\\\"\""),
-        "JSON keys must include their quotes in GBNF: {grammar}"
-    );
     assert!(grammar.contains("string ::= "), "{grammar}");
     assert!(
         grammar.contains("[^\"\\\\]"),
-        "the string rule must accept Unicode names: {grammar}"
+        "the string rule must accept Unicode strings: {grammar}"
     );
 }
 
 #[test]
-fn valid_model_output_maps_to_the_shared_dsl() {
-    let output: ModelOutput = serde_json::from_str(
+fn valid_sql_model_output_parses_into_sql_answer_kind_and_rejects_invalid() {
+    let output: SqlModelOutput = serde_json::from_str(
         r#"{
-            "group_by": "artist",
-            "limit": "one",
-            "metric": "plays",
-            "name": "Björk",
-            "order": "desc",
-            "period": "this_year",
-            "target": "artist",
-            "weekday": "friday"
+            "sql": "SELECT COUNT(DISTINCT l.id) AS plays FROM listens l JOIN track_artists ta ON ta.track_id = l.track_id JOIN artists a ON a.id = ta.artist_id WHERE l.counted = 1 AND a.name = 'Björk'",
+            "title": "Plays of Björk",
+            "computed": "Counted distinct plays where artist name is Björk.",
+            "answer_kind": "value",
+            "columns": [{"name": "plays", "format": "count"}]
         }"#,
     )
     .unwrap();
-    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
-        panic!("expected a query");
-    };
-    assert_eq!(query.metric, Metric::Plays);
-    assert_eq!(query.period, Period::ThisYear);
-    assert_eq!(query.weekday, Some(Weekday::Friday));
-    assert_eq!(query.group_by, Some(GroupBy::Artist));
-    assert_eq!(query.limit, Some(Limit::One));
-    assert_eq!(query.sort_by, SortBy::Metric);
-    assert_eq!(query.order, SortOrder::Desc);
-    let entity = query.entity.unwrap();
-    assert_eq!(entity.kind, EntityKind::Artist);
-    assert_eq!(entity.name, "Björk");
-    assert!(entity.id.is_none(), "the model never emits ids");
-}
+    assert_eq!(output.answer_kind, SqlAnswerKind::Value);
+    assert!(output.sql.contains("Björk"));
 
-#[test]
-fn time_grouping_is_read_chronologically() {
-    let output: ModelOutput = serde_json::from_str(
+    let unsupported: SqlModelOutput = serde_json::from_str(
         r#"{
-            "group_by": "day",
-            "limit": "none",
-            "metric": "plays",
-            "name": "",
-            "order": "asc",
-            "period": "last_month",
-            "target": "none",
-            "weekday": "any"
+            "sql": "",
+            "title": "Unsupported",
+            "computed": "Outside the listening archive schema.",
+            "answer_kind": "unsupported",
+            "columns": []
         }"#,
     )
     .unwrap();
-    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
-        panic!("expected a query");
-    };
-    assert_eq!(query.group_by, Some(GroupBy::Day));
-    assert_eq!(query.sort_by, SortBy::Date);
-    assert_eq!(query.order, SortOrder::Asc);
-    assert_eq!(query.period, Period::LastMonth);
-    assert!(query.entity.is_none());
-}
+    assert_eq!(unsupported.answer_kind, SqlAnswerKind::Unsupported);
 
-#[test]
-fn time_grouping_with_a_limit_is_ranked_by_the_metric() {
-    let output: ModelOutput = serde_json::from_str(
-        r#"{
-            "group_by": "hour",
-            "limit": "one",
-            "metric": "plays",
-            "name": "",
-            "order": "desc",
-            "period": "all_time",
-            "target": "none",
-            "weekday": "any"
-        }"#,
-    )
-    .unwrap();
-    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
-        panic!("expected a query");
-    };
-    assert_eq!(query.group_by, Some(GroupBy::Hour));
-    assert_eq!(query.sort_by, SortBy::Metric);
-    assert_eq!(query.order, SortOrder::Desc);
-}
-
-#[test]
-fn unsupported_metric_is_an_explicit_refusal() {
-    let output: ModelOutput = serde_json::from_str(
-        r#"{
-            "group_by": "none",
-            "limit": "none",
-            "metric": "unsupported",
-            "name": "",
-            "order": "desc",
-            "period": "all_time",
-            "target": "none",
-            "weekday": "any"
-        }"#,
-    )
-    .unwrap();
-    let ParsedQuestion::Unsupported { reason } = output.into_parsed().unwrap() else {
-        panic!("expected a refusal");
-    };
-    assert!(reason.contains("play counts"), "{reason}");
-    assert!(reason.contains("first plays"), "{reason}");
-    assert!(reason.contains("last plays"), "{reason}");
-    assert!(reason.contains("SQL"), "{reason}");
-}
-
-#[test]
-fn malformed_extra_and_missing_fields_are_rejected() {
-    let base = r#"{
-        "group_by": "none",
-        "limit": "none",
-        "metric": "plays",
-        "name": "",
-        "order": "desc",
-        "period": "all_time",
-        "target": "none",
-        "weekday": "any"
-    }"#;
-    assert!(serde_json::from_str::<ModelOutput>(base).is_ok());
-
-    let missing = base.replace("\"name\": \"\",", "");
-    assert!(serde_json::from_str::<ModelOutput>(&missing).is_err());
-
-    let extra = base.replace("}", ",\n        \"sql\": \"SELECT 1\"\n    }");
-    assert!(serde_json::from_str::<ModelOutput>(&extra).is_err());
-
-    let unknown_metric = base.replace("\"plays\"", "\"top\"");
-    assert!(serde_json::from_str::<ModelOutput>(&unknown_metric).is_err());
-
-    let free_number = base.replace("\"limit\": \"none\"", "\"limit\": 7");
-    assert!(serde_json::from_str::<ModelOutput>(&free_number).is_err());
-}
-
-#[test]
-fn inconsistent_output_is_not_guessed_into_a_query() {
-    let output: ModelOutput = serde_json::from_str(
-        r#"{
-            "group_by": "none",
-            "limit": "none",
-            "metric": "plays",
-            "name": "Björk",
-            "order": "desc",
-            "period": "all_time",
-            "target": "none",
-            "weekday": "any"
-        }"#,
-    )
-    .unwrap();
-    assert!(matches!(
-        output.into_parsed().unwrap(),
-        ParsedQuestion::Unsupported { .. }
-    ));
-}
-
-#[test]
-fn eval_1_7b_over_refusals_produce_explicit_user_facing_refusal() {
-    // 15 cases from the 1.7B eval where the model emitted "unsupported".
-    // Verify every recorded output safely produces an explicit refusal with
-    // suggestions of supported metrics, never panics and never guesses a query.
-    let recorded_refusal = r#"{
-        "group_by": "none",
-        "limit": "none",
-        "metric": "unsupported",
-        "name": "",
-        "order": "desc",
-        "period": "all_time",
-        "target": "none",
-        "weekday": "any"
-    }"#;
-    let output: ModelOutput = serde_json::from_str(recorded_refusal).unwrap();
-    let parsed = output.into_parsed().unwrap();
-    let ParsedQuestion::Unsupported { reason } = parsed else {
-        panic!("expected ParsedQuestion::Unsupported");
-    };
-    assert!(reason.contains("play counts"), "{reason}");
-    assert!(reason.contains("time_listened"), "{reason}");
-    assert!(reason.contains("streak"), "{reason}");
-}
-
-#[test]
-fn eval_4b_missed_refusals_and_injections_are_contained_and_safe() {
-    // 1. In the 4B eval, out-of-scope recommendations/comparisons emitted standard DSL queries.
-    // Verify that the resulting query is strictly constrained to standard metrics and cannot
-    // emit SQL, arbitrary URLs, or unbounded limits.
-    let recorded_out_of_scope = r#"{
-        "group_by": "none",
-        "limit": "one",
-        "metric": "plays",
-        "name": "Homogenic",
-        "order": "desc",
-        "period": "all_time",
-        "target": "album",
-        "weekday": "any"
-    }"#;
-    let output: ModelOutput = serde_json::from_str(recorded_out_of_scope).unwrap();
-    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
-        panic!("expected ParsedQuestion::Query");
-    };
-    assert_eq!(query.metric, Metric::Plays);
-    assert_eq!(query.entity.as_ref().unwrap().name, "Homogenic");
-    assert_eq!(query.limit, Some(Limit::One));
-
-    // 2. Prompt injection attempts cannot bypass the GBNF schema:
-    // Any extra keys like "sql", "command", "raw" fail deserialization.
-    let injection_with_sql = r#"{
-        "group_by": "none",
-        "limit": "none",
-        "metric": "plays",
-        "name": "Radiohead",
-        "order": "desc",
-        "period": "all_time",
-        "target": "artist",
-        "weekday": "any",
-        "sql": "DROP TABLE listens"
-    }"#;
     assert!(
-        serde_json::from_str::<ModelOutput>(injection_with_sql).is_err(),
-        "schema must reject injection attempting to emit SQL"
-    );
-
-    // 3. Invalid metric injection is rejected by schema enum:
-    let injection_metric = r#"{
-        "group_by": "none",
-        "limit": "none",
-        "metric": "execute_query",
-        "name": "",
-        "order": "desc",
-        "period": "all_time",
-        "target": "none",
-        "weekday": "any"
-    }"#;
-    assert!(
-        serde_json::from_str::<ModelOutput>(injection_metric).is_err(),
-        "schema must reject non-whitelisted metrics"
+        serde_json::from_str::<SqlModelOutput>(
+            r#"{"sql":"SELECT 1","title":"t","computed":"c","answer_kind":"invalid_kind","columns":[]}"#
+        )
+        .is_err()
     );
 }
 
 #[test]
-fn prompt_has_the_no_sql_literal_name_and_thinking_rules() {
-    let system = prompt::system_prompt();
-    assert!(system.contains("Never output SQL"), "{system}");
-    assert!(
-        system.contains("Copy artist, album and track names literally"),
-        "{system}"
-    );
-    assert!(system.contains("Time words are never names"), "{system}");
+fn local_sql_prompt_has_schema_counting_rules_and_thinking_prefix() {
+    let system = prompt::local_sql_system_prompt("2026-11-16");
+    assert!(system.contains("listens("), "{system}");
+    assert!(system.contains("counted = 1"), "{system}");
     assert!(system.contains("unsupported"), "{system}");
-    assert!(system.contains("Björk"), "{system}");
-    assert!(system.contains("Qual è il mio artista"), "{system}");
 
-    let built = prompt::build_prompt("Quante volte ho ascoltato Björk?");
+    let built = prompt::build_sql_prompt("Quante volte ho ascoltato Björk?", "2026-11-16");
     assert!(built.ends_with(prompt::THINKING_PREFIX), "{built}");
     assert!(built.contains("Björk"), "{built}");
 }
@@ -599,100 +379,18 @@ async fn real_model_answers_three_supported_questions() {
     }
 
     let parser = ModelParser::local(storage.writer.clone(), data_dir);
-    let cases = [
-        (
-            "How many times did I listen to Björk?",
-            Metric::Plays,
-            Some(("artist", "Björk")),
-            None,
-        ),
-        (
-            "When did I first listen to Radiohead?",
-            Metric::FirstPlay,
-            Some(("artist", "Radiohead")),
-            None,
-        ),
-        (
-            "How many plays did I have last month?",
-            Metric::Plays,
-            None,
-            Some(Period::LastMonth),
-        ),
-    ];
-    for (question, metric, entity, period) in cases {
+    for question in [
+        "How many times did I listen to Björk?",
+        "When did I first listen to Radiohead?",
+        "How many plays did I have last month?",
+    ] {
         let parsed = parser.parse(question).await.unwrap();
-        let ParsedQuestion::Query(query) = parsed else {
-            panic!("{question}: expected a query, got {parsed:?}");
+        let ParsedQuestion::Sql(sql) = parsed else {
+            panic!("{question}: expected SQL, got {parsed:?}");
         };
-        assert_eq!(query.metric, metric, "{question}: {query:?}");
-        if let Some((kind, name)) = entity {
-            let got = query.entity.as_ref().expect("expected an entity");
-            assert_eq!(got.kind.label().to_lowercase(), kind, "{question}");
-            assert_eq!(got.name, name, "{question}");
-        }
-        if let Some(period) = period {
-            assert_eq!(query.period, period, "{question}: {query:?}");
-        }
-        println!("{question} => {query:?}");
+        assert!(!sql.sql.trim().is_empty(), "{question}: empty SQL");
+        println!("{question} => {}", sql.sql);
     }
-}
-
-#[test]
-fn v2_output_maps_artist_scope_year_and_month() {
-    let output: ModelOutput = serde_json::from_str(
-        r#"{"artist":"Ado","group_by":"none","limit":"none","metric":"first_play","month":"march","name":"Show","order":"desc","period":"this_year","target":"track","weekday":"any","year":2023}"#,
-    )
-    .unwrap();
-    let ParsedQuestion::Query(query) = output.into_parsed().unwrap() else {
-        panic!("expected a query");
-    };
-    let entity = query.entity.unwrap();
-    assert_eq!(
-        (entity.kind, entity.name.as_str()),
-        (EntityKind::Track, "Show")
-    );
-    let scope = query.scope.unwrap();
-    assert_eq!(
-        (scope.kind, scope.name.as_str()),
-        (EntityKind::Artist, "Ado")
-    );
-    assert_eq!(query.year, Some(2023));
-    assert_eq!(query.month, Some(3));
-    assert_eq!(
-        query.period,
-        Period::AllTime,
-        "a named year replaces the period"
-    );
-
-    let top_by_artist: ModelOutput = serde_json::from_str(
-        r#"{"artist":"Ado","group_by":"track","limit":"five","metric":"plays","month":"none","name":"","order":"desc","period":"all_time","target":"none","weekday":"any","year":0}"#,
-    )
-    .unwrap();
-    let ParsedQuestion::Query(query) = top_by_artist.into_parsed().unwrap() else {
-        panic!("expected a query");
-    };
-    assert_eq!(query.entity.unwrap().kind, EntityKind::Artist);
-    assert!(query.scope.is_none());
-
-    let absurd_year: ModelOutput = serde_json::from_str(
-        r#"{"artist":"","group_by":"none","limit":"none","metric":"plays","month":"none","name":"","order":"desc","period":"all_time","target":"none","weekday":"any","year":99999}"#,
-    )
-    .unwrap();
-    assert!(matches!(
-        absurd_year.into_parsed().unwrap(),
-        ParsedQuestion::Unsupported { .. }
-    ));
-}
-
-#[test]
-fn prompt_fits_the_context_window() {
-    // Conservative: ~3 characters per token for this JSON-heavy prompt.
-    let prompt = prompt::build_prompt("Quando ho ascoltato per la prima volta Show di Ado?");
-    let estimated_tokens = prompt.chars().count() / 3;
-    assert!(
-        estimated_tokens as i32 + runtime::MAX_NEW_TOKENS <= runtime::CONTEXT_TOKENS as i32,
-        "prompt is about {estimated_tokens} tokens"
-    );
 }
 
 #[test]
@@ -705,7 +403,7 @@ fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
     );
 
     // A repair round adds the failed statements and the sanitized errors, and
-    // must still fit: the local engine uses the same SQL grammar and budget.
+    // must still fit within the SQL context budget.
     let repair = prompt::build_sql_repair_prompt(
         "What are my top tracks in 2024?",
         None,
@@ -732,17 +430,21 @@ fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
     );
     assert!(repair.contains("no_such_column"), "{repair}");
 
-    let grammar = grammar::to_gbnf(&schema::sql_schema()).unwrap();
+    let grammar = grammar::from_sql_schema().unwrap();
     assert!(grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"));
 }
 
-struct RecordingGrammarEngine {
-    seen: Arc<Mutex<Vec<(String, runtime::GrammarKind)>>>,
+struct RecordingEngine {
+    seen: Arc<Mutex<Vec<(String, String)>>>,
     reply: String,
 }
 
-impl runtime::Engine for RecordingGrammarEngine {
-    fn load(&mut self, _spec: &runtime::ModelSpec) -> Result<(), String> {
+impl runtime::Engine for RecordingEngine {
+    fn load(&mut self, spec: &runtime::ModelSpec) -> Result<(), String> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push(("LOAD".into(), spec.path.display().to_string()));
         Ok(())
     }
 
@@ -756,27 +458,14 @@ impl runtime::Engine for RecordingGrammarEngine {
         self.seen
             .lock()
             .unwrap()
-            .push((prompt.to_string(), runtime::GrammarKind::Guided));
-        Ok(self.reply.clone())
-    }
-
-    fn generate_with_grammar(
-        &mut self,
-        prompt: &str,
-        grammar: runtime::GrammarKind,
-        _cancel: &runtime::CancelToken,
-    ) -> Result<String, runtime::InferenceError> {
-        self.seen
-            .lock()
-            .unwrap()
-            .push((prompt.to_string(), grammar));
+            .push(("PROMPT".into(), prompt.to_string()));
         Ok(self.reply.clone())
     }
 }
 
 #[cfg(feature = "llama")]
 #[tokio::test]
-async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failure() {
+async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_output() {
     let dir = tempfile::tempdir().unwrap();
     let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
     let id = "qwen3-1.7b-q4_k_m";
@@ -799,12 +488,7 @@ async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failur
         serde_json::to_vec(&metadata).unwrap(),
     )
     .unwrap();
-    for (key, value) in [
-        ("ai_enabled", "1"),
-        ("ai_provider", "local"),
-        ("ai_answer_mode_local", "sql"),
-        ("ai_active_model", id),
-    ] {
+    for (key, value) in [("ai_enabled", "1"), ("ai_active_model", id)] {
         sqlx::query("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)")
             .bind(key)
             .bind(value)
@@ -814,7 +498,7 @@ async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failur
     }
 
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let engine = RecordingGrammarEngine {
+    let engine = RecordingEngine {
         seen: seen.clone(),
         reply: serde_json::json!({
             "sql": "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1",
@@ -836,14 +520,37 @@ async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failur
     assert!(matches!(parsed, ParsedQuestion::Sql(_)), "{parsed:?}");
     {
         let recorded = seen.lock().unwrap();
-        assert_eq!(recorded.len(), 1);
-        assert_eq!(recorded[0].1, runtime::GrammarKind::Sql);
-        assert!(recorded[0].0.contains("listens("));
+        assert_eq!(recorded.len(), 2);
+        assert_eq!(recorded[0].0, "LOAD");
+        assert!(recorded[1].1.contains("listens("));
     }
 
-    // Malformed output from the local model in SQL mode suggests guided questions or a larger model.
+    // Setting ai_custom_model_path points the runtime directly to a valid custom .gguf file.
+    let custom_dir = tempfile::tempdir().unwrap();
+    let custom_gguf = custom_dir.path().join("custom-sql.gguf");
+    let mut gguf_bytes = b"GGUF".to_vec();
+    gguf_bytes.resize(128, 7);
+    std::fs::write(&custom_gguf, &gguf_bytes).unwrap();
+    sqlx::query("INSERT OR REPLACE INTO settings(key,value) VALUES('ai_custom_model_path', ?)")
+        .bind(custom_gguf.display().to_string())
+        .execute(&storage.writer)
+        .await
+        .unwrap();
+    let parsed_custom = parser.parse("How many plays?").await.unwrap();
+    assert!(matches!(parsed_custom, ParsedQuestion::Sql(_)));
+    {
+        let recorded = seen.lock().unwrap();
+        assert!(
+            recorded
+                .iter()
+                .any(|(kind, val)| kind == "LOAD" && val.contains("custom-sql.gguf")),
+            "{recorded:?}"
+        );
+    }
+
+    // Malformed output from the local model returns a clear parse error.
     let bad_seen = Arc::new(Mutex::new(Vec::new()));
-    let bad_engine = RecordingGrammarEngine {
+    let bad_engine = RecordingEngine {
         seen: bad_seen,
         reply: "not json".to_string(),
     };
@@ -856,6 +563,5 @@ async fn local_model_parser_dispatches_sql_grammar_and_suggests_guided_on_failur
     );
     let err = bad_parser.parse("How many plays?").await.unwrap_err();
     let msg = err.to_string();
-    assert!(msg.contains("Guided questions"), "{msg}");
-    assert!(msg.contains("larger model"), "{msg}");
+    assert!(msg.contains("SQL interpretation"), "{msg}");
 }

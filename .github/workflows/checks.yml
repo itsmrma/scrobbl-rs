@@ -56,7 +56,9 @@ jobs:
           run_site=false
           while IFS= read -r file; do
             [[ -z "$file" ]] && continue
-            if [[ "$file" == docs/* || "$file" == *.md ]]; then
+            if [[ "$file" == THIRD_PARTY_NOTICES.md || "$file" == docs/licenses/* ]]; then
+              run_checks=true
+            elif [[ "$file" == docs/* || "$file" == *.md ]]; then
               continue
             elif [[ "$file" == site/* ]]; then
               run_site=true
@@ -154,6 +156,7 @@ jobs:
           toolchain: 1.99.1
       - run: mkdir -p ci-logs
       - run: npm ci 2>&1 | tee ci-logs/install.log
+      - run: npm run lint:web 2>&1 | tee ci-logs/lint.log
       - run: npm run build 2>&1 | tee ci-logs/build.log
       - name: Check embedded assets match the sources
         run: |
@@ -166,9 +169,10 @@ jobs:
           apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update
           apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install --no-install-recommends -y build-essential cmake clang libclang-dev
       - run: cargo build --locked --bin scrobbl-rs 2>&1 | tee ci-logs/server-build.log
-      - run: HOME=/root npm run test:e2e -- --browser=${{ matrix.browser }} 2>&1 | tee ci-logs/browser.log
+      - run: HOME=/root npm run test:e2e -- --browser="$BROWSER" 2>&1 | tee ci-logs/browser.log
         env:
           HOME: /root
+          BROWSER: ${{ matrix.browser }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: failure()
         with:

@@ -34,7 +34,7 @@ jobs:
           mkdir -p ci-logs
           python3 scripts/measure-image-size.py \
             --image "scrobbl-ci:$GITHUB_SHA" \
-            --baseline "debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8" \
+            --baseline "debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc" \
             --json-out ci-logs/image-size.json 2>&1 | tee ci-logs/image-size.log
       - name: Check generic Compose, linked SQLite and image persistence
         run: |

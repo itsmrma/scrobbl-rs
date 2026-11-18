@@ -56,6 +56,7 @@ pub struct AppState {
         Arc<Mutex<std::collections::HashMap<String, std::sync::Weak<Mutex<()>>>>>,
     pub(crate) artwork_fetches: Arc<tokio::sync::Semaphore>,
     pub login_attempts: Arc<Mutex<VecDeque<Instant>>>,
+    pub password_attempts: Arc<Mutex<VecDeque<Instant>>>,
     pub(crate) dashboard_cache: Arc<Mutex<VecDeque<(String, serde_json::Value)>>>,
 }
 impl AppState {
@@ -71,6 +72,7 @@ impl AppState {
             spotify: spotify::Spotify::new(),
             ask,
             login_attempts: Default::default(),
+            password_attempts: Default::default(),
             artwork_gate: Default::default(),
             // Concurrent provider lookups; each host keeps its own pace.
             artwork_fetches: Arc::new(tokio::sync::Semaphore::new(8)),

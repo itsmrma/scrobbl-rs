@@ -16,23 +16,22 @@ function watchConsole(page) {
 }
 
 // Resolves any CSS colour (including color-mix) to [r, g, b, a] through a canvas.
-const RESOLVE = `(value) => {
-  const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
-  ctx.canvas.width = ctx.canvas.height = 1;
-  ctx.clearRect(0, 0, 1, 1);
-  ctx.fillStyle = value;
-  ctx.fillRect(0, 0, 1, 1);
-  return Array.from(ctx.getImageData(0, 0, 1, 1).data);
-}`;
 async function colors(page, selectors) {
-  return page.evaluate(([resolveSrc, sels]) => {
-    const resolve = eval(resolveSrc);
+  return page.evaluate((sels) => {
+    const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    ctx.canvas.width = ctx.canvas.height = 1;
+    const resolve = (value) => {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = value;
+      ctx.fillRect(0, 0, 1, 1);
+      return Array.from(ctx.getImageData(0, 0, 1, 1).data);
+    };
     const out = {};
     for (const [k, [sel, prop]] of Object.entries(sels)) {
       out[k] = resolve(getComputedStyle(document.querySelector(sel))[prop]);
     }
     return out;
-  }, [RESOLVE, selectors]);
+  }, selectors);
 }
 
 const PRESETS = ["Lime", "Sky", "Lavender", "Peach", "Rose", "Mint"];

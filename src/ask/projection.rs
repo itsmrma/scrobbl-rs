@@ -10,7 +10,7 @@ use crate::{
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Timelike, Utc};
 use chrono_tz::Tz;
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, config::DbConfig, params};
 use serde_json::Value;
 use sqlx::{FromRow, QueryBuilder};
 use std::{
@@ -37,7 +37,13 @@ pub fn size_bytes(data_dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-pub fn read_built_at_ms(projection_path: &Path) -> Option<i64> {
+/// Canonical read-only opener for `ask_projection.db` used by metadata probes
+/// and app-controlled fixed lookup queries (never LLM-generated SQL).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "canonical read-only Ask projection opener"
+)]
+pub fn open_read_only(projection_path: &Path) -> Option<Connection> {
     if !projection_path.is_file() {
         return None;
     }
@@ -46,6 +52,23 @@ pub fn read_built_at_ms(projection_path: &Path) -> Option<i64> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .ok()?;
+    let _ = conn.busy_timeout(StdDuration::from_millis(200));
+    let _ = conn.execute_batch("PRAGMA query_only = ON; PRAGMA trusted_schema = OFF;");
+    let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DEFENSIVE, true);
+    let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_TRUSTED_SCHEMA, false);
+    unsafe {
+        let _ = libsqlite3_sys::sqlite3_db_config(
+            conn.handle(),
+            libsqlite3_sys::SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION,
+            0 as std::ffi::c_int,
+            std::ptr::null_mut::<std::ffi::c_int>(),
+        );
+    }
+    Some(conn)
+}
+
+pub fn read_built_at_ms(projection_path: &Path) -> Option<i64> {
+    let conn = open_read_only(projection_path)?;
     conn.query_row("SELECT built_at_ms FROM meta LIMIT 1", [], |row| {
         row.get::<_, i64>(0)
     })
@@ -263,13 +286,7 @@ fn extract_spotify_context(contexts: &[Value]) -> SpotifyContext {
 }
 
 fn is_current(projection_path: &Path, generation: &str, revision: i64, calendar_id: &str) -> bool {
-    if !projection_path.is_file() {
-        return false;
-    }
-    let Ok(conn) = Connection::open_with_flags(
-        projection_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) else {
+    let Some(conn) = open_read_only(projection_path) else {
         return false;
     };
     conn.query_row(
@@ -288,6 +305,10 @@ fn is_current(projection_path: &Path, generation: &str, revision: i64, calendar_
     })
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "canonical Ask projection builder writing a fresh temp database"
+)]
 fn write_projection(tmp_path: &Path, snapshot: &ProjectionSnapshot) -> Result<()> {
     let mut conn = Connection::open(tmp_path)?;
     conn.execute_batch("PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL;")?;
@@ -1423,7 +1444,7 @@ mod tests {
             .execute(&mut *tx)
             .await
             .unwrap();
-        db::set_setting(&mut tx, "ai_remote_key", "sk-secret-do-not-leak")
+        db::set_setting(&mut tx, "spotify_client_secret", "sk-secret-do-not-leak")
             .await
             .unwrap();
         let artist_group: String = sqlx::query_scalar(
@@ -1537,7 +1558,7 @@ mod tests {
         }
         assert!(is_allowed_column("tracks", "edition_key"));
 
-        let prompt = crate::ask::prompt::remote_sql_system_prompt("2025-01-01");
+        let prompt = crate::ask::prompt::local_sql_system_prompt("2025-01-01");
         let desc = schema_description();
         assert!(prompt.contains(&desc));
         for table in TABLES {

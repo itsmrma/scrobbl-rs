@@ -20,7 +20,6 @@ import type {
   MusicPage as MusicPageData,
 } from "./generated";
 import { api } from "./api";
-import { AskContextPanel } from "./ask-context";
 import { useLoad } from "./load";
 import { ListenList } from "./listens";
 import { Collage } from "./collage";
@@ -3939,18 +3938,6 @@ export function MusicPage({
       ) : (
         !result.error && <MusicPageSkeleton stats={kind === "tracks" ? 2 : 3} />
       )}
-
-      {!isPreview &&
-        (kind === "artists" || kind === "albums") &&
-        result.data && (
-          <AskContextPanel
-            key={`${kind}:${result.data.id}`}
-            preferences={preferences}
-            kind={kind}
-            id={result.data.id}
-            name={result.data.name}
-          />
-        )}
 
       {pickerOpen && result.data && !isPreview && (
         <ImagePickerModal

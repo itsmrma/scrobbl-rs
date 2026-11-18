@@ -13,6 +13,7 @@ import {
   formatSources,
   Heading,
   Icon,
+  lookupRecord,
   number,
   SegmentedControl,
 } from "./ui";
@@ -33,7 +34,7 @@ const DEVICES: Record<string, string> = {
  * SM-A520F)" becomes "Android · samsung SM-A520F". */
 export function deviceLabel(platform: string): string {
   const raw = platform.trim();
-  const known = DEVICES[raw.toLowerCase()];
+  const known = lookupRecord(DEVICES, raw.toLowerCase());
   if (known) return known;
   const android = /^android os[^(]*\(([^)]*)\)/i.exec(raw);
   if (android) return `Android · ${android[1].replace(/,\s*/g, " ")}`;
@@ -68,7 +69,9 @@ function preciseDuration(ms: number | null): string {
 }
 
 function endLabel(reason: string): string {
-  return ENDINGS[reason] || `Ended: ${reason.replace(/[_-]/g, " ")}`;
+  return (
+    lookupRecord(ENDINGS, reason) || `Ended: ${reason.replace(/[_-]/g, " ")}`
+  );
 }
 
 function Trash({

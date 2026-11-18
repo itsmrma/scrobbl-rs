@@ -33,9 +33,13 @@ function rememberSelection() {
     );
 }
 function destination(path: string) {
-  return !path.includes("?") && isConsultation(path)
-    ? selections.get(path) || path
-    : path;
+  if (!path.includes("?") && isConsultation(path)) {
+    const selected = selections.get(path);
+    if (selected && selected.startsWith("/") && !selected.startsWith("//")) {
+      return selected;
+    }
+  }
+  return path;
 }
 rememberSelection();
 window.addEventListener("popstate", rememberSelection);
