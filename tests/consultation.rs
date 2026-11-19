@@ -634,6 +634,16 @@ async fn assigned_calendars_rolling_dst_current_periods_and_recalculation_stay_c
         .unwrap();
     assert!(current.partial);
     assert!(current.buckets[0].partial);
+    let yesterday = Filters {
+        period: Some("yesterday".into()),
+        ..Default::default()
+    };
+    let previous = browse::activity_chart(&mut conn.transaction, &yesterday, now)
+        .await
+        .unwrap();
+    assert!(!previous.partial);
+    assert_eq!(previous.buckets.len(), 1);
+    assert_ne!(previous.buckets[0].start, current.buckets[0].start);
     drop(conn);
     // A weekly bar drills into the stored week_date, never a blanket current-calendar UTC range.
     for bucket in chart.buckets {
