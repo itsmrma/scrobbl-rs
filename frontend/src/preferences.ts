@@ -12,6 +12,7 @@ export const WEEKDAYS = [
 export const periods = [
   ["all", "All time"],
   ["today", "Today"],
+  ["yesterday", "Yesterday"],
   ["week", "This week"],
   ["month", "This month"],
   ["year", "This year"],

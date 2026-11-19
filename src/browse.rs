@@ -455,6 +455,12 @@ pub async fn listening_calendar(
                 (min_d, max_d)
             }
             "today" => (Some(today), Some(today)),
+            "yesterday" => {
+                let day = today.pred_opt().ok_or_else(|| {
+                    AppError::BadRequest("Activity date outside supported range.".into())
+                })?;
+                (Some(day), Some(day))
+            }
             "week" => (
                 Some(bucket_bounds(today, "week", calendar.week_start)?.0),
                 Some(today),
@@ -764,6 +770,12 @@ pub async fn activity_chart(
             match period {
                 "all" => (min, max),
                 "today" => (Some(today), Some(today)),
+                "yesterday" => {
+                    let day = today.pred_opt().ok_or_else(|| {
+                        AppError::BadRequest("Activity date outside supported range.".into())
+                    })?;
+                    (Some(day), Some(day))
+                }
                 "week" => (
                     Some(bucket_bounds(today, "week", calendar.week_start)?.0),
                     Some(today),

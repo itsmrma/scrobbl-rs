@@ -7,7 +7,17 @@ use axum::{Json, extract::State, http::HeaderMap};
 use sqlx::SqliteConnection;
 
 pub const PERIODS: &[&str] = &[
-    "all", "today", "week", "month", "year", "7d", "30d", "90d", "180d", "365d",
+    "all",
+    "today",
+    "yesterday",
+    "week",
+    "month",
+    "year",
+    "7d",
+    "30d",
+    "90d",
+    "180d",
+    "365d",
 ];
 pub async fn read(conn: &mut SqliteConnection) -> Result<Preferences> {
     let calendar = calendar::current(conn).await?;
