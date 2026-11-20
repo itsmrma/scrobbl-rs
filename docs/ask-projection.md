@@ -180,13 +180,15 @@ non-trashed listens (trashed listens are already excluded)
 | `counted` | INTEGER | NOT NULL | `1` for counted plays, `0` for short actual plays (<30s) |
 | `needs_review` | INTEGER | NOT NULL | `1` if awaiting duplicate review, `0` otherwise |
 | `sources` | TEXT | NOT NULL | JSON array of observation sources (e.g. `["spotify_api","spotify_import"]`); query with `json_each(sources)` |
-| `device` | TEXT | — | Spotify export device/platform when known without conflict, else `NULL` |
+| `device` | TEXT | — | raw Spotify export platform string when known without conflict, else `NULL`; prefer `platform`/`device_type` for questions |
+| `platform` | TEXT | — | platform family from the Spotify export: `'android'`, `'ios'`, `'windows'`, `'macos'`, `'linux'`, `'web'`, `'xbox'`, `'playstation'`, `'alexa'`, `'sonos'`, `'google_cast'`, `'tv'`, `'car'` or `'other'`; `NULL` when unknown |
+| `device_type` | TEXT | — | kind of device from the Spotify export: `'phone'`, `'tablet'`, `'computer'`, `'web'`, `'console'`, `'speaker'`, `'tv'`, `'car'` or `'other'`; `NULL` when unknown |
 | `country` | TEXT | — | Spotify export connection country code when known without conflict, else `NULL` |
 | `shuffle` | INTEGER | — | Spotify export shuffle (`0`/`1`) when known without conflict, else `NULL` |
 | `skipped` | INTEGER | — | Spotify export skipped (`0`/`1`) when known without conflict, else `NULL` |
 | `offline` | INTEGER | — | Spotify export offline (`0`/`1`) when known without conflict, else `NULL` |
-| `reason_start` | TEXT | — | Spotify export reason playback started when known without conflict, else `NULL` |
-| `reason_end` | TEXT | — | Spotify export reason playback ended when known without conflict, else `NULL` |
+| `reason_start` | TEXT | — | why playback started (Spotify export), else `NULL`: `'trackdone'` previous track ended, `'clickrow'` chosen from a list, `'playbtn'` play button, `'fwdbtn'`/`'backbtn'` next/previous button, `'remote'` another device, `'appload'` app opened, `'trackerror'`, `'unknown'` |
+| `reason_end` | TEXT | — | why playback ended (Spotify export), else `NULL`: `'trackdone'` played to the end, `'endplay'` stopped, `'fwdbtn'` skipped to next, `'backbtn'` went back, `'remote'` another device, `'logout'`, `'unexpected-exit'`, `'unexpected-exit-while-paused'`, `'trackerror'`, `'unknown'` |
 
 ### `calendar`
 
@@ -273,6 +275,8 @@ CREATE TABLE listens (
     needs_review INTEGER NOT NULL,
     sources TEXT NOT NULL,
     device TEXT,
+    platform TEXT,
+    device_type TEXT,
     country TEXT,
     shuffle INTEGER,
     skipped INTEGER,

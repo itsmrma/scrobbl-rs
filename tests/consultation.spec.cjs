@@ -211,9 +211,9 @@ test.describe("consultation", () => {
       "data-value",
       "10",
     );
-    await page.getByLabel("Show listens below threshold too").check();
+    await page.getByRole("switch", { name: /Include short listens/ }).check();
     await expect(page.locator("#history-total")).toHaveText("136 records");
-    await page.getByLabel("Show listens below threshold too").uncheck();
+    await page.getByRole("switch", { name: /Include short listens/ }).uncheck();
     await page.getByLabel("Find artist").fill("Consultation artist");
     await page
       .getByRole("button", {
@@ -1119,7 +1119,7 @@ test.describe("consultation", () => {
 
     // The header reports the position the artist has in the same ranking, and
     // the artist page keeps its three statistics.
-    await expect(page.locator(".music-title-main .rank-badge")).toContainText(
+    await expect(page.locator(".music-title-main .music-rank")).toContainText(
       "#1",
     );
     await expect(
@@ -1697,7 +1697,7 @@ test.describe("consultation", () => {
 
     // The header reports the track's position, and the page drops the track
     // count that would always read one.
-    await expect(page.locator(".music-title-main .rank-badge")).toContainText(
+    await expect(page.locator(".music-title-main .music-rank")).toContainText(
       "#1",
     );
     const trackStats = page.locator(

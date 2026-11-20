@@ -221,6 +221,8 @@ struct ProjectionListenRow {
     needs_review: i64,
     sources: String,
     device: Option<String>,
+    platform: Option<&'static str>,
+    device_type: Option<&'static str>,
     country: Option<String>,
     shuffle: Option<i64>,
     skipped: Option<i64>,
@@ -296,6 +298,59 @@ fn agreed_bool(contexts: &[Value], key: &str) -> Option<i64> {
     values.into_iter().next()
 }
 
+/// Group a raw Spotify export `platform` string into a stable platform family
+/// and device type, so a question about "my phone" or "the Xbox" does not need
+/// to know every historical spelling (`"ios"`, `"iOS 14.4 (iPhone12,1)"`,
+/// `"Partner windows_tv microsoft;xbox_one_s;..."`). Unknown or placeholder
+/// values (`not_applicable`, `unknown`) stay `NULL`; anything unrecognised is
+/// kept as `other` rather than guessed.
+pub fn classify_platform(raw: &str) -> Option<(&'static str, &'static str)> {
+    let p = raw.trim().to_lowercase();
+    if p.is_empty() || p == "not_applicable" || p == "unknown" {
+        return None;
+    }
+    let has = |needle: &str| p.contains(needle);
+    let class = if has("xbox") {
+        ("xbox", "console")
+    } else if has("playstation") || has("ps4") || has("ps5") {
+        ("playstation", "console")
+    } else if has("android_auto") || has("carplay") || has("car_thing") || has(";car") {
+        ("car", "car")
+    } else if has("echo") || has("alexa") || has("amazon_salmon") {
+        ("alexa", "speaker")
+    } else if has("sonos") {
+        ("sonos", "speaker")
+    } else if has("google_cast") || has("chromecast") || has("google_home") || has("nest") {
+        ("google_cast", "speaker")
+    } else if has("tizen")
+        || has("webos")
+        || has("_tv")
+        || has("android_tv")
+        || has("fire_tv")
+        || has("roku")
+        || has("smart_tv")
+    {
+        ("tv", "tv")
+    } else if has("web_player") || p == "web" || p.starts_with("web ") {
+        ("web", "web")
+    } else if has("android") {
+        ("android", if has("tablet") { "tablet" } else { "phone" })
+    } else if p == "ios" || p.starts_with("ios ") || has("iphone") || has("ipad") {
+        ("ios", if has("ipad") { "tablet" } else { "phone" })
+    } else if has("windows") {
+        ("windows", "computer")
+    } else if p == "osx" || has("os x") || has("macos") || has("mac os") {
+        ("macos", "computer")
+    } else if has("linux") {
+        ("linux", "computer")
+    } else if has("partner") || has("speaker") {
+        ("other", "speaker")
+    } else {
+        ("other", "other")
+    };
+    Some(class)
+}
+
 fn extract_spotify_context(contexts: &[Value]) -> SpotifyContext {
     SpotifyContext {
         device: agreed_text(contexts, "platform"),
@@ -325,6 +380,21 @@ fn is_current(projection_path: &Path, generation: &str, revision: i64, calendar_
     )
     .is_ok_and(|(gen_id, rev, cal_id)| {
         gen_id == generation && rev == revision && cal_id == calendar_id
+    }) && has_current_schema(&conn)
+}
+
+/// A projection written by an older release can lack columns that [`TABLES`]
+/// now documents (for example `platform`/`device_type`); such a file is
+/// rebuilt instead of failing every query that names the new columns.
+fn has_current_schema(conn: &Connection) -> bool {
+    TABLES.iter().all(|table| {
+        let columns: Vec<&str> = table.columns.iter().map(|col| col.name).collect();
+        conn.prepare(&format!(
+            "SELECT {} FROM {} LIMIT 0",
+            columns.join(", "),
+            table.name
+        ))
+        .is_ok()
     })
 }
 
@@ -381,8 +451,8 @@ fn write_projection(tmp_path: &Path, snapshot: &ProjectionSnapshot) -> Result<()
     }
     {
         let mut stmt = tx.prepare(
-            "INSERT INTO listens(id, track_id, played_at_ms, played_at_local, local_date, week_date, local_year, local_month, weekday, week_start, local_hour, listened_ms, duration_kind, counted, needs_review, sources, device, country, shuffle, skipped, offline, reason_start, reason_end) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            "INSERT INTO listens(id, track_id, played_at_ms, played_at_local, local_date, week_date, local_year, local_month, weekday, week_start, local_hour, listened_ms, duration_kind, counted, needs_review, sources, device, platform, device_type, country, shuffle, skipped, offline, reason_start, reason_end) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
         )?;
         for row in &snapshot.listens {
             stmt.execute(params![
@@ -403,6 +473,8 @@ fn write_projection(tmp_path: &Path, snapshot: &ProjectionSnapshot) -> Result<()
                 row.needs_review,
                 row.sources,
                 row.device,
+                row.platform,
+                row.device_type,
                 row.country,
                 row.shuffle,
                 row.skipped,
@@ -647,6 +719,16 @@ async fn rebuild_under_lock(
             counted: row.counted,
             needs_review: row.needs_review,
             sources: row.sources,
+            platform: ctx
+                .device
+                .as_deref()
+                .and_then(classify_platform)
+                .map(|c| c.0),
+            device_type: ctx
+                .device
+                .as_deref()
+                .and_then(classify_platform)
+                .map(|c| c.1),
             device: ctx.device,
             country: ctx.country,
             shuffle: ctx.shuffle,
@@ -1131,7 +1213,19 @@ pub const TABLES: &[TableSpec] = &[
                 name: "device",
                 sql_type: "TEXT",
                 constraints: "",
-                description: "Spotify export device/platform when known without conflict, else `NULL`",
+                description: "raw Spotify export platform string when known without conflict, else `NULL`; prefer `platform`/`device_type` for questions",
+            },
+            ColumnSpec {
+                name: "platform",
+                sql_type: "TEXT",
+                constraints: "",
+                description: "platform family from the Spotify export: `'android'`, `'ios'`, `'windows'`, `'macos'`, `'linux'`, `'web'`, `'xbox'`, `'playstation'`, `'alexa'`, `'sonos'`, `'google_cast'`, `'tv'`, `'car'` or `'other'`; `NULL` when unknown",
+            },
+            ColumnSpec {
+                name: "device_type",
+                sql_type: "TEXT",
+                constraints: "",
+                description: "kind of device from the Spotify export: `'phone'`, `'tablet'`, `'computer'`, `'web'`, `'console'`, `'speaker'`, `'tv'`, `'car'` or `'other'`; `NULL` when unknown",
             },
             ColumnSpec {
                 name: "country",
@@ -1161,13 +1255,13 @@ pub const TABLES: &[TableSpec] = &[
                 name: "reason_start",
                 sql_type: "TEXT",
                 constraints: "",
-                description: "Spotify export reason playback started when known without conflict, else `NULL`",
+                description: "why playback started (Spotify export), else `NULL`: `'trackdone'` previous track ended, `'clickrow'` chosen from a list, `'playbtn'` play button, `'fwdbtn'`/`'backbtn'` next/previous button, `'remote'` another device, `'appload'` app opened, `'trackerror'`, `'unknown'`",
             },
             ColumnSpec {
                 name: "reason_end",
                 sql_type: "TEXT",
                 constraints: "",
-                description: "Spotify export reason playback ended when known without conflict, else `NULL`",
+                description: "why playback ended (Spotify export), else `NULL`: `'trackdone'` played to the end, `'endplay'` stopped, `'fwdbtn'` skipped to next, `'backbtn'` went back, `'remote'` another device, `'logout'`, `'unexpected-exit'`, `'unexpected-exit-while-paused'`, `'trackerror'`, `'unknown'`",
             },
         ],
         table_constraint: "",
@@ -1385,6 +1479,55 @@ pub fn schema_markdown() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spotify_platform_strings_group_into_families_and_device_types() {
+        for (raw, expected) in [
+            ("ios", Some(("ios", "phone"))),
+            ("iOS 14.4 (iPhone12,1)", Some(("ios", "phone"))),
+            ("iOS 12.1 (iPad7,5)", Some(("ios", "tablet"))),
+            ("android", Some(("android", "phone"))),
+            (
+                "Android OS 9 API 28 (samsung, SM-G960F)",
+                Some(("android", "phone")),
+            ),
+            (
+                "Android-tablet OS 11 API 30 (Lenovo, TB-X606F)",
+                Some(("android", "tablet")),
+            ),
+            ("windows", Some(("windows", "computer"))),
+            (
+                "Windows 10 (10.0.19041; x64)",
+                Some(("windows", "computer")),
+            ),
+            ("osx", Some(("macos", "computer"))),
+            ("OS X 10.15.7 [arm 2]", Some(("macos", "computer"))),
+            ("linux", Some(("linux", "computer"))),
+            ("Linux EndeavourOS [x86-64 0]", Some(("linux", "computer"))),
+            (
+                "web_player windows 10;chrome 87.0.4280.88;desktop",
+                Some(("web", "web")),
+            ),
+            ("xbox", Some(("xbox", "console"))),
+            (
+                "Partner windows_tv microsoft;xbox_one_s;1234;;tpapi",
+                Some(("xbox", "console")),
+            ),
+            (
+                "Partner amazon_salmon Amazon;Echo_Dot;1234;;tpapi",
+                Some(("alexa", "speaker")),
+            ),
+            ("Partner webos_tv lg;oled55b9pla;;", Some(("tv", "tv"))),
+            ("tizen", Some(("tv", "tv"))),
+            ("Partner sonos sonos;one;;", Some(("sonos", "speaker"))),
+            ("not_applicable", None),
+            ("unknown", None),
+            ("  ", None),
+            ("something new", Some(("other", "other"))),
+        ] {
+            assert_eq!(classify_platform(raw), expected, "{raw}");
+        }
+    }
 
     /// Generous deadline for the background worker: CI machines run the whole
     /// lib test binary in parallel, so a projection build can take seconds even

@@ -353,6 +353,68 @@ async fn rankings_keep_primary_ties_across_pages_secondary_order_precision_and_f
     )
     .await;
     assert!(empty["rank"].is_null(), "{empty}");
+
+    // Ascending order lists the least played first but keeps each item's
+    // position from the descending ranking; history can list oldest first.
+    let ascending = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?sort=time&order=asc&page_size=100",
+    )
+    .await;
+    let descending = json_get(
+        &state,
+        &token,
+        "/api/v1/consultation/rankings/tracks?sort=time&page_size=100",
+    )
+    .await;
+    let asc_items = ascending["items"].as_array().unwrap();
+    let desc_items = descending["items"].as_array().unwrap();
+    assert_eq!(ascending["total"], descending["total"]);
+    assert!(asc_items[0]["position"].as_i64() >= desc_items.last().unwrap()["position"].as_i64());
+    let last_page = (ascending["total"].as_i64().unwrap() + 99) / 100;
+    let tail = json_get(
+        &state,
+        &token,
+        &format!(
+            "/api/v1/consultation/rankings/tracks?sort=time&order=asc&page_size=100&page={last_page}"
+        ),
+    )
+    .await;
+    let top = tail["items"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(top["name"], "Track 008");
+    assert_eq!(top["position"], 1);
+    assert!(
+        asc_items
+            .windows(2)
+            .all(|w| w[0]["listened_ms"].as_i64() <= w[1]["listened_ms"].as_i64())
+    );
+    let newest = json_get(&state, &token, "/api/history?page_size=100").await;
+    let pages = (newest["total"].as_i64().unwrap() + 99) / 100;
+    let oldest = json_get(&state, &token, "/api/history?page_size=100&order=asc").await;
+    let oldest_tail = json_get(
+        &state,
+        &token,
+        &format!("/api/history?page_size=100&order=asc&page={pages}"),
+    )
+    .await;
+    let newest = newest["items"].as_array().unwrap();
+    let oldest = oldest["items"].as_array().unwrap();
+    assert_eq!(
+        newest.first().unwrap()["id"],
+        oldest_tail["items"].as_array().unwrap().last().unwrap()["id"]
+    );
+    assert!(
+        oldest
+            .windows(2)
+            .all(|w| w[0]["played_at_ms"].as_i64() <= w[1]["played_at_ms"].as_i64())
+    );
+    for path in [
+        "/api/v1/consultation/rankings/tracks?order=sideways",
+        "/api/history?order=random",
+    ] {
+        assert_eq!(get(&state, &token, path).await.0, 400, "{path}");
+    }
     state.storage.close().await;
 }
 #[tokio::test]

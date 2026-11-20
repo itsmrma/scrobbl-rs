@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ReactNode } from "react";
 import type {
   Dashboard,
   DashboardLayout,
@@ -71,14 +72,14 @@ import {
 import type { Kind } from "./selection";
 type Selection = ReturnType<typeof useSelection>;
 
-function TimeHelp({
-  totals,
+function InfoTip({
+  label,
+  className = "",
+  children,
 }: {
-  totals?: {
-    actual_ms: number;
-    estimated_ms: number;
-    unknown_durations: number;
-  };
+  label: string;
+  className?: string;
+  children: ReactNode;
 }) {
   const id = useId();
   const root = useRef<HTMLSpanElement>(null);
@@ -159,7 +160,7 @@ function TimeHelp({
   return (
     <span
       ref={root}
-      className="time-help"
+      className={`time-help ${className}`.trim()}
       onPointerOver={(event) => setHover(event.pointerType === "mouse")}
       onPointerLeave={() => setHover(false)}
       onKeyDown={(e) => {
@@ -174,7 +175,7 @@ function TimeHelp({
         ref={button}
         type="button"
         className="info-button"
-        aria-label="How we calculate listening time"
+        aria-label={label}
         aria-expanded={open}
         aria-controls={id}
         onFocus={() => setFocus(true)}
@@ -191,55 +192,71 @@ function TimeHelp({
         <span
           id={id}
           role="region"
-          aria-label="How we calculate listening time"
+          aria-label={label}
           className="time-explanation"
           style={position}
         >
-          <strong>How we calculate listening time</strong>
-          {totals && (
-            <dl className="time-explanation-breakdown tabular-nums">
-              <div>
-                <dt>Actual</dt>
-                <dd>{duration(totals.actual_ms, true)}</dd>
-              </div>
-              <div>
-                <dt>Estimated</dt>
-                <dd>{duration(totals.estimated_ms, true)}</dd>
-              </div>
-              {totals.unknown_durations > 0 && (
-                <div>
-                  <dt>Unknown duration</dt>
-                  <dd>{number.format(totals.unknown_durations)} listens</dd>
-                </div>
-              )}
-            </dl>
-          )}
-          <span>
-            Actual time is playback time reported by the source, rather than the
-            full track length.
-          </span>
-          <span>
-            Spotify recent history supplies track length as an estimate. A
-            four-minute track can add four estimated minutes without proving a
-            complete listen. Skips and partial playback can make this estimate
-            too high.
-          </span>
-          <span>
-            Now-playing progress is a current position, not an accumulated
-            measurement of listening time.
-          </span>
-          <span>
-            A valid reconciliation with an extended export can replace the
-            estimate with actual time. Source matching still needs verification.
-          </span>
-          <span>
-            ListenBrainz playback time is actual when provided; full track
-            length is only an estimate. Missing information remains unknown,
-            with no invented duration.
-          </span>
+          <strong>{label}</strong>
+          {children}
         </span>
       )}
     </span>
+  );
+}
+
+function TimeHelp({
+  totals,
+}: {
+  totals?: {
+    actual_ms: number;
+    estimated_ms: number;
+    unknown_durations: number;
+  };
+}) {
+  return (
+    <InfoTip label="How we calculate listening time">
+      {totals && (
+        <dl className="time-explanation-breakdown tabular-nums">
+          <div>
+            <dt>Actual</dt>
+            <dd>{duration(totals.actual_ms, true)}</dd>
+          </div>
+          <div>
+            <dt>Estimated</dt>
+            <dd>{duration(totals.estimated_ms, true)}</dd>
+          </div>
+          {totals.unknown_durations > 0 && (
+            <div>
+              <dt>Unknown duration</dt>
+              <dd>{number.format(totals.unknown_durations)} listens</dd>
+            </div>
+          )}
+        </dl>
+      )}
+      <span>
+        Actual time is playback time reported by the source, rather than the
+        full track length.
+      </span>
+      <span>
+        Spotify recent history supplies track length as an estimate. A
+        four-minute track can add four estimated minutes without proving a
+        complete listen. Skips and partial playback can make this estimate too
+        high.
+      </span>
+      <span>
+        Now-playing progress is a current position, not an accumulated
+        measurement of listening time.
+      </span>
+      <span>
+        A valid reconciliation with an extended export can replace the estimate
+        with actual time. Source matching still needs verification.
+      </span>
+      <span>
+        ListenBrainz playback time is actual when provided; full track length is
+        only an estimate. Missing information remains unknown, with no invented
+        duration.
+      </span>
+    </InfoTip>
   );
 }
 function timeValue(value: {
@@ -351,10 +368,23 @@ function PeriodFilters({
   sort?: boolean;
 }) {
   const { params, update } = selection;
+  const running = ["today", "week", "month", "year"].includes(
+    params.get("period") || "",
+  );
   return (
     <div className="filters">
-      <label>
-        Period
+      <div className="filter-field">
+        <span className="filter-field-label">
+          Period
+          {running && (
+            <InfoTip label="Current period, still running">
+              <span>
+                This period has not ended yet: totals, rankings and charts
+                include listens up to now and will keep growing until it closes.
+              </span>
+            </InfoTip>
+          )}
+        </span>
         <Select
           aria-label="Period"
           value={params.get("period") || "all"}
@@ -375,7 +405,7 @@ function PeriodFilters({
           ))}
           <option value="custom">Custom dates</option>
         </Select>
-      </label>
+      </div>
       {params.get("period") === "custom" && (
         <>
           <label>
@@ -413,12 +443,20 @@ function PeriodFilters({
           </Select>
         </label>
       )}
-      {["today", "week", "month", "year"].includes(
-        params.get("period") || "",
-      ) && (
-        <span className="period-notice">
-          Current period · incomplete, through now
-        </span>
+      {sort && (
+        <label className="period-order-filter">
+          Order
+          <Select
+            aria-label="Ranking order"
+            value={params.get("order") === "asc" ? "asc" : "desc"}
+            onChange={(value) =>
+              update({ order: value === "asc" ? value : "" })
+            }
+          >
+            <option value="desc">Most first</option>
+            <option value="asc">Least first</option>
+          </Select>
+        </label>
       )}
     </div>
   );
@@ -620,6 +658,8 @@ function RankingsPanel({
   useEffect(() => setDraft(params.get("q") || ""), [search]);
   const pageKey = `${kind}_page`;
   const query = new URLSearchParams(params);
+  // A collage always shows the most listened items, whatever the list order.
+  if (collage) query.delete("order");
   query.set(
     "page",
     scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
@@ -693,10 +733,15 @@ function RankingsPanel({
             }}
           >
             <input
+              type="search"
               aria-label="Search rankings"
               placeholder="Search rankings"
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                if (!event.target.value && params.get("q"))
+                  update({ q: "", page: "1", [pageKey]: "1" });
+              }}
               maxLength={500}
             />
             <button className="secondary icon-button" aria-label="Search">
@@ -2969,7 +3014,7 @@ export function RankingsPage({
   preferences: Preferences;
   status: SpotifyStatus | null;
 }) {
-  const selection = useSelection(true);
+  const selection = useSelection(true, preferences.initial_period);
   return (
     <>
       <Heading title="Rankings">
@@ -3215,7 +3260,7 @@ export function HistoryPage({
   embedded?: boolean;
   musicKind?: Kind;
 }) {
-  const selection = useSelection(visible),
+  const selection = useSelection(visible, preferences.initial_period),
     list = useListPreferences();
   const params = new URLSearchParams(override || selection.params);
   const [filtersOpen, setFiltersOpen] = useBrowserPreference(
@@ -3365,10 +3410,15 @@ export function HistoryPage({
               Search
               <input
                 id="history-q"
+                type="search"
                 value={draft}
                 placeholder="Artist, album or track"
                 maxLength={500}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  // Clearing the field (or its ✕) drops the search at once.
+                  if (!e.target.value && params.get("q")) change({ q: "" });
+                }}
               />
             </label>
             {!embedded && (
@@ -3420,15 +3470,35 @@ export function HistoryPage({
                 ))}
               </Select>
             </label>
-            <label className="checkbox-label">
+            <label>
+              Order
+              <Select
+                aria-label="History order"
+                value={params.get("order") === "asc" ? "asc" : "desc"}
+                onChange={(value) =>
+                  change({ order: value === "asc" ? value : "" })
+                }
+              >
+                <option value="desc">Newest first</option>
+                <option value="asc">Oldest first</option>
+              </Select>
+            </label>
+            <label className="switch-field">
               <input
                 type="checkbox"
+                role="switch"
+                className="switch"
                 checked={params.get("status") === "all"}
                 onChange={(e) =>
                   change({ status: e.target.checked ? "all" : "counted" })
                 }
               />
-              Show listens below threshold too
+              <span>
+                Include short listens
+                <small>
+                  Plays under 30 seconds stay hidden unless enabled.
+                </small>
+              </span>
             </label>
           </div>
           <div className="history-filter-actions">
@@ -3536,7 +3606,7 @@ export function MusicPage({
   const isInitialEdit =
     searchParams.get("edit") === "template" || searchParams.get("edit") === "1";
 
-  const selection = useSelection(true),
+  const selection = useSelection(true, preferences.initial_period),
     params = scoped(selection.params, kind, id);
 
   const isMusicTemplate =
@@ -3639,8 +3709,10 @@ export function MusicPage({
       // On phones the content box is `display: contents` and the cover size is
       // fixed in CSS, so there is nothing to measure.
       if (getComputedStyle(content).display === "contents") return;
+      // The artwork leads the page: a little taller than the introduction
+      // beside it, never below 260px, and never more than 42% of the width.
       const size = Math.min(
-        content.getBoundingClientRect().height,
+        Math.max(content.getBoundingClientRect().height * 1.15, 260),
         header.clientWidth * 0.42,
       );
       const value = Math.round(size) + "px";
@@ -3875,16 +3947,20 @@ export function MusicPage({
                   )}
                 </Heading>
                 {result.data.rank !== null && (
-                  <span
-                    className="rank-badge"
+                  <p
+                    className="music-rank"
                     title={`Position ${result.data.rank} by plays in this period`}
                   >
-                    #{result.data.rank}
+                    <span className="visually-hidden">Position </span>
+                    <span className="music-rank-hash" aria-hidden="true">
+                      #
+                    </span>
+                    {number.format(result.data.rank)}
                     <span className="visually-hidden">
                       {" "}
                       in the ranking by plays for this period
                     </span>
-                  </span>
+                  </p>
                 )}
               </div>
               <BackButton
