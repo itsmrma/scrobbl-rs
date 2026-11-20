@@ -3208,7 +3208,7 @@ dialog.artwork-lightbox {
   gap: 10px 12px;
 }
 
-.filters > label {
+.filters > :is(label, .filter-field) {
   min-width: 150px;
 }
 
@@ -3216,7 +3216,6 @@ dialog.artwork-lightbox {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-width: 150px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text);
@@ -3335,7 +3334,7 @@ dialog.artwork-lightbox {
 .music-heading {
   --music-h1-size: clamp(28px, 3vw, 40px);
   display: grid;
-  grid-template-columns: var(--music-artwork-size, 260px) minmax(0, 1fr);
+  grid-template-columns: var(--music-artwork-size, 220px) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
   min-width: 0;
@@ -3350,7 +3349,7 @@ dialog.artwork-lightbox {
 
 .music-header-content {
   display: grid;
-  gap: 12px;
+  gap: 18px;
   align-content: space-between;
   justify-items: start;
   min-width: 0;

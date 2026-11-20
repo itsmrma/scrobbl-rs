@@ -3709,10 +3709,11 @@ export function MusicPage({
       // On phones the content box is `display: contents` and the cover size is
       // fixed in CSS, so there is nothing to measure.
       if (getComputedStyle(content).display === "contents") return;
-      // The artwork leads the page: a little taller than the introduction
-      // beside it, never below 260px, and never more than 42% of the width.
+      // The artwork is as tall as the introduction beside it (title, rank,
+      // rating and toolbar), so the toolbar closes the header at the cover's
+      // bottom edge; it never takes more than 42% of the width.
       const size = Math.min(
-        Math.max(content.getBoundingClientRect().height * 1.15, 260),
+        content.getBoundingClientRect().height,
         header.clientWidth * 0.42,
       );
       const value = Math.round(size) + "px";
