@@ -2,7 +2,7 @@
 
 AI is optional and **off by default**. Ask operates exclusively with **local GGUF models** running inside scrobbl.rs that translate natural-language questions into read-only SQL queries over the [Ask projection](ask-projection.md). Remote AI servers ("bring your own AI"), external MCP integrations, Guided DSL execution, and UI-control actions are not supported.
 
-You can use curated **Qwen3.5** models from the built-in catalog by default, or import your own local `.gguf` model on the server.
+You can use the curated **Qwen3.5 2B** model from the built-in catalog, or import your own local `.gguf` model on the server.
 
 ## Activation and privacy
 
@@ -32,21 +32,17 @@ Enabling AI does not download anything. Saving a custom path or switching the ac
 
 `GET /api/v1/ask/status` reports `enabled`, `active_model`, `custom_model_path`, `runtime_available`, `model_ready` and `model_loading`. `model_ready` reflects verified filesystem readiness for the selected model; `model_loading` comes from the live inference worker and is true only while a load is in progress.
 
-## Curated catalog (Qwen3.5 defaults)
+## Curated catalog (Qwen3.5 2B)
 
-The curated catalog is compiled into the binary (`src/ai/catalog.rs`). A download URL is derived from the pinned repository, revision and file; clients never supply a URL for catalog downloads. Weights are verified by exact byte size and SHA-256 against the Hugging Face LFS object ids.
+The curated catalog is compiled into the binary (`src/ai/catalog.rs`) and holds a single model: every Ask prompt, grammar and evaluation is tuned for Qwen3.5 2B. A download URL is derived from the pinned repository, revision and file; clients never supply a URL for catalog downloads. Weights are verified by exact byte size and SHA-256 against the Hugging Face LFS object ids.
 
 | id | repo | revision | file | bytes | SHA-256 |
 | --- | --- | --- | --- | ---: | --- |
-| `qwen3.5-0.8b-q4_k_m` | `unsloth/Qwen3.5-0.8B-GGUF` | `6ab461498e2023f6e3c1baea90a8f0fe38ab64d0` | `Qwen3.5-0.8B-Q4_K_M.gguf` | 532,517,120 | `bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517` |
 | `qwen3.5-2b-q4_k_m` | `unsloth/Qwen3.5-2B-GGUF` | `f6d5376be1edb4d416d56da11e5397a961aca8ae` | `Qwen3.5-2B-Q4_K_M.gguf` | 1,280,835,840 | `aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223` |
-| `qwen3.5-4b-q4_k_m` | `unsloth/Qwen3.5-4B-GGUF` | `e87f176479d0855a907a41277aca2f8ee7a09523` | `Qwen3.5-4B-Q4_K_M.gguf` | 2,740,937,888 | `00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4` |
-| `qwen3.5-9b-q4_k_m` | `unsloth/Qwen3.5-9B-GGUF` | `3885219b6810b007914f3a7950a8d1b469d598a5` | `Qwen3.5-9B-Q4_K_M.gguf` | 5,680,522,464 | `03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8` |
-| `qwen3.5-27b-q4_k_m` | `unsloth/Qwen3.5-27B-GGUF` | `3221f178a6b842d04f1fb42f1c413534adcc0a6a` | `Qwen3.5-27B-Q4_K_M.gguf` | 16,740,812,704 | `84b5f7f112156d63836a01a69dc3f11a6ba63b10a23b8ca7a7efaf52d5a2d806` |
 
-`9B` and `27B` entries are present with `status: "gpu_future"` and `selectable: false`; they are listed for planning only and cannot be downloaded or selected in this CPU-only release.
+Earlier releases also listed 0.8B, 4B, 9B and 27B. Files of those models already downloaded stay listed under installed models, where they can be deleted. [Training the Ask SQL model](ask-training.md) describes how the 2B entry will be replaced by a version fine-tuned on scrobbl.rs SQL.
 
-All selectable models run SQL generation with an **8192-token** context window and up to **1024** generated tokens (`src/ask/runtime.rs`).
+The model runs SQL generation with an **8192-token** context window and up to **1024** generated tokens (`src/ask/runtime.rs`).
 
 ## Using custom local `.gguf` models
 

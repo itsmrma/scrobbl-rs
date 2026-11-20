@@ -143,7 +143,7 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
   await page.getByRole("button", { name: "Filters", exact: true }).click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
   await page
-    .getByRole("textbox", { name: "Search", exact: true })
+    .getByRole("searchbox", { name: "Search", exact: true })
     .fill("Earth");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page).toHaveURL(/(?:\?|&)q=Earth(?:&|$)/);
@@ -152,7 +152,7 @@ test("general preferences, explicit calendar scope, failed saves, browser isolat
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
   await expect(
-    page.getByRole("textbox", { name: "Search", exact: true }),
+    page.getByRole("searchbox", { name: "Search", exact: true }),
   ).toHaveValue("Earth");
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.getByLabel("Period", { exact: true })).toHaveAttribute(

@@ -89,6 +89,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # llama.cpp's CMake build directory records the absolute paths of the
+      # CMake that configured it; a runner image with a newer CMake cannot
+      # reuse it, so the CMake version is part of the cache key.
+      - id: cmake
+        shell: bash
+        run: echo "version=$(cmake --version | head -n 1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -97,9 +103,9 @@ jobs:
             ~/.rustup/toolchains
             ~/.rustup/update-hashes
             target
-          key: rust-${{ runner.os }}-1.99.1-${{ hashFiles('Cargo.lock') }}
+          key: rust-${{ runner.os }}-1.99.1-cmake-${{ steps.cmake.outputs.version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            rust-${{ runner.os }}-1.99.1-
+            rust-${{ runner.os }}-1.99.1-cmake-${{ steps.cmake.outputs.version }}-
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: 1.99.1

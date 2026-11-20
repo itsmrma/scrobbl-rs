@@ -528,6 +528,7 @@ pub async fn history(
     }
     let now = auth::now_ms();
     let (page, size) = crate::browse::paging(&filters)?;
+    let direction = crate::browse::order_direction(&filters)?;
     let has_search = filters.q.as_deref().is_some_and(|q| !q.trim().is_empty());
     let mut count = selection_at(&mut view.transaction, &filters, has_search, now).await?;
     count.push("SELECT COUNT(*) FROM selected");
@@ -538,7 +539,9 @@ pub async fn history(
     let mut query = selection_at(&mut view.transaction, &filters, true, now).await?;
     query
         .push(LISTEN_COLUMNS)
-        .push("ORDER BY s.played_at_ms DESC, s.id DESC LIMIT ")
+        .push(format!(
+            "ORDER BY s.played_at_ms {direction}, s.id {direction} LIMIT "
+        ))
         .push_bind(size)
         .push(" OFFSET ")
         .push_bind((page - 1) * size);

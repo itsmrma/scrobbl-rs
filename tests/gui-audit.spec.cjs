@@ -469,7 +469,7 @@ test("mobile ranking controls use the available width and keep search on one row
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page, "/rankings/artists?period=all");
   const search = page.locator(".ranking-toolbar .search-inline");
-  const input = await search.getByRole("textbox").boundingBox();
+  const input = await search.getByRole("searchbox").boundingBox();
   const button = await search.getByRole("button").boundingBox();
   expect(Math.abs(input.y - button.y)).toBeLessThan(1);
   const toggle = page.getByRole("group", { name: "Ranking view", exact: true });
@@ -1281,7 +1281,7 @@ test("custom dropdowns support keyboard and mobile categories while grid control
   await page.getByRole("button", { name: "Grid", exact: true }).first().click();
   const after = await toolbar.boundingBox();
   expect(Math.abs(before.height - after.height)).toBeLessThan(1);
-  const search = toolbar.getByRole("textbox", { name: "Search rankings" });
+  const search = toolbar.getByRole("searchbox", { name: "Search rankings" });
   await expect(search).toBeVisible();
   const arrow = page.getByRole("button", { name: /Collapse sidebar/ });
   if (await arrow.count()) {
@@ -5139,6 +5139,7 @@ test("mobile baseline: overview header uses a two-column filter grid, icon-only 
     const comboCount = await filterComboboxes.count();
     expect(comboCount).toBeGreaterThanOrEqual(1);
 
+    const filtersBox = await periodFilters.boundingBox();
     for (let i = 0; i < comboCount; i++) {
       const combo = filterComboboxes.nth(i);
       const box = await combo.boundingBox();
@@ -5146,13 +5147,15 @@ test("mobile baseline: overview header uses a two-column filter grid, icon-only 
       expect(Math.round(box.width)).toBeGreaterThanOrEqual(44);
       expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
 
-      // Each combobox fills its half of the two-column filter grid
-      const filtersBox = await periodFilters.boundingBox();
-      expect(Math.abs(box.width - (filtersBox.width - 12) / 2)).toBeLessThan(4);
+      // Period and Rank by fill one half each of the two-column filter grid;
+      // Order takes the whole next row.
+      const expected =
+        i < 2 ? (filtersBox.width - 12) / 2 : filtersBox.width;
+      expect(Math.abs(box.width - expected)).toBeLessThan(4);
     }
 
     // Period and Rank by share one row
-    for (let i = 0; i < comboCount - 1; i++) {
+    for (let i = 0; i < Math.min(comboCount, 2) - 1; i++) {
       const boxA = await filterComboboxes.nth(i).boundingBox();
       const boxB = await filterComboboxes.nth(i + 1).boundingBox();
       expect(boxB.x).toBeGreaterThanOrEqual(boxA.x + boxA.width - 1);

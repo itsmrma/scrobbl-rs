@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { navigate, useSearch } from "./navigation";
 import { stored } from "./preferences";
+import {
+  applySharedPeriod,
+  rememberPeriod,
+  sharedPeriod,
+} from "./shared-period";
 export type Kind = "artists" | "albums" | "tracks";
 export const kinds: Kind[] = ["artists", "albums", "tracks"];
 const isSize = (v: unknown): v is number =>
@@ -53,8 +58,15 @@ export function useSelection(visible: boolean, initialPeriod = "all") {
   useEffect(() => {
     if (visible) setSaved(search);
   }, [search, visible]);
+  useEffect(() => {
+    if (visible) rememberPeriod(new URLSearchParams(search));
+  }, [search, visible]);
   const params = new URLSearchParams(visible ? search : saved);
-  if (!params.has("period")) params.set("period", initialPeriod);
+  // A screen opened without a period shows the one chosen elsewhere in the app.
+  if (!params.has("period")) {
+    if (sharedPeriod()) applySharedPeriod(params);
+    else params.set("period", initialPeriod);
+  }
   const update = (patch: Record<string, string>, resetPage = true) => {
     const next = new URLSearchParams(params);
     if (resetPage)

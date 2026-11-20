@@ -29,6 +29,17 @@ pub fn paging(filters: &Filters) -> Result<(i64, i64)> {
         size,
     ))
 }
+/// SQL direction for the display order of rankings and history. Positions are
+/// always computed from the descending ranking, whatever the display order.
+pub fn order_direction(filters: &Filters) -> Result<&'static str> {
+    match filters.order.as_deref().unwrap_or("desc") {
+        "desc" => Ok("DESC"),
+        "asc" => Ok("ASC"),
+        _ => Err(AppError::BadRequest(
+            "Choose ascending or descending order.".into(),
+        )),
+    }
+}
 fn kind_table(kind: &str) -> Result<&'static str> {
     match kind {
         "artists" => Ok("artist_ranks"),
@@ -160,10 +171,11 @@ pub async fn ranking_page(
         "time" => ("listened_ms", "plays"),
         _ => return Err(AppError::BadRequest("Unknown ranking order.".into())),
     };
+    let direction = order_direction(filters)?;
     let mut query = consultation::selection_at(conn, filters, false, now).await?;
     query.push(include_str!("ranking-aggregates.sql"));
     // Rank over the entire selection before applying the page boundary.
-    query.push(format!(", ranked AS (SELECT *, RANK() OVER(ORDER BY {primary} DESC) AS position FROM {table}) SELECT json_object('total',(SELECT COUNT(*) FROM ranked),'items',(SELECT json_group_array(json_object('id',id,'name',name,'subtitle',subtitle,'cover_url',cover_url,'plays',plays,'listened_ms',listened_ms,'position',position,'actual_ms',actual_ms,'estimated_ms',estimated_ms,'unknown_durations',unknown_durations)) FROM (SELECT * FROM ranked ORDER BY {primary} DESC,{secondary} DESC,name COLLATE NOCASE,id LIMIT "));
+    query.push(format!(", ranked AS (SELECT *, RANK() OVER(ORDER BY {primary} DESC) AS position FROM {table}) SELECT json_object('total',(SELECT COUNT(*) FROM ranked),'items',(SELECT json_group_array(json_object('id',id,'name',name,'subtitle',subtitle,'cover_url',cover_url,'plays',plays,'listened_ms',listened_ms,'position',position,'actual_ms',actual_ms,'estimated_ms',estimated_ms,'unknown_durations',unknown_durations)) FROM (SELECT * FROM ranked ORDER BY {primary} {direction},{secondary} {direction},name COLLATE NOCASE,id LIMIT "));
     query
         .push_bind(size)
         .push(" OFFSET ")

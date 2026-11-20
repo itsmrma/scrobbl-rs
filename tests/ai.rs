@@ -274,14 +274,14 @@ fn download_reset() {
 }
 
 #[tokio::test]
-async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
+async fn catalog_exposes_only_qwen_2b_with_requirements_license_and_size() {
     let _guard = TEST_LOCK.lock().await;
     catalog::clear_test_models();
     let (_dir, state, token) = setup().await;
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
     assert_eq!(catalog["runtime_available"], cfg!(feature = "llama"));
     let models = catalog["models"].as_array().unwrap();
-    assert!(models.len() >= 5);
+    assert_eq!(models.len(), 1, "the catalog offers Qwen3.5 2B only");
     let default = models
         .iter()
         .find(|model| model["id"] == "qwen3.5-2b-q4_k_m")
@@ -308,19 +308,6 @@ async fn catalog_exposes_requirements_license_size_and_gpu_future_entries() {
             >= default["requirements"]["ram_min_bytes"].as_u64().unwrap()
     );
     assert!(default["speed"].is_null());
-
-    let future = models
-        .iter()
-        .find(|model| model["id"] == "qwen3.5-9b-q4_k_m")
-        .unwrap();
-    assert_eq!(future["status"], "gpu_future");
-    assert_eq!(future["selectable"], false);
-    let large = models
-        .iter()
-        .find(|model| model["id"] == "qwen3.5-27b-q4_k_m")
-        .unwrap();
-    assert_eq!(large["status"], "gpu_future");
-    assert_eq!(large["selectable"], false);
 }
 
 #[tokio::test]

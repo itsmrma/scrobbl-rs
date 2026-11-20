@@ -10,6 +10,7 @@ pub mod prompt;
 pub mod runtime;
 pub mod sandbox;
 pub mod schema;
+pub mod training;
 
 use crate::{
     AppState, ai,
