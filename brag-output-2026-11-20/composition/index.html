@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>scrobbl.rs — your listening history, kept on your server</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #14171c;
+        --surface: #1c1f27;
+        --raised: #292d38;
+        --border: #454a58;
+        --text: #f2f3f7;
+        --muted: #bac0cc;
+        --accent: #c9ee8b;
+        --ink: #192912;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); color: var(--text); }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: radial-gradient(ellipse at 76% 44%, #28302a 0%, var(--bg) 47%); }
+      .clip { position: absolute; inset: 0; overflow: hidden; visibility: hidden; }
+      .eyebrow { color: var(--accent); text-transform: uppercase; font-size: 22px; font-weight: 700; letter-spacing: .16em; }
+      .demo { position: absolute; right: 64px; top: 48px; color: #d8e8bd; border: 1px solid #607151; background: #273126; border-radius: 999px; padding: 10px 16px; font-size: 18px; font-weight: 700; letter-spacing: .12em; }
+      .wordmark { display: inline-flex; align-items: center; gap: 15px; font-size: 29px; font-weight: 700; letter-spacing: -.04em; }
+      .logo-mark { display: inline-block; width: 46px; height: 46px; flex: 0 0 auto; background: url("assets/scrobbl-logo.svg") center / contain no-repeat; }
+      .copy { position: absolute; left: 124px; top: 294px; width: 520px; }
+      h1 { margin: 21px 0 15px; font-size: 74px; line-height: 1.04; letter-spacing: -.055em; font-weight: 650; }
+      h1 .dot, h2 .dot { color: var(--accent); }
+      .subtitle { color: var(--muted); font-size: 25px; line-height: 1.5; }
+      .app { position: absolute; right: 104px; top: 161px; width: 1045px; height: 720px; border: 1px solid #444956; border-radius: 22px; background: var(--surface); box-shadow: 0 36px 120px #0008; overflow: hidden; }
+      .app-bar { height: 61px; display: flex; align-items: center; gap: 8px; padding: 0 24px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 18px; }
+      .dot-b { width: 9px; height: 9px; border-radius: 50%; background: #727985; }
+      .app-name { margin-left: auto; color: var(--text); font-weight: 650; }
+      .app-body { display: flex; height: calc(100% - 61px); }
+      .nav { width: 206px; padding: 28px 19px; border-right: 1px solid var(--border); background: #191c24; color: var(--muted); font-size: 19px; flex: 0 0 auto; }
+      .nav-logo { display: flex; align-items: center; gap: 10px; margin: 0 0 34px 6px; color: var(--text); font-size: 18px; font-weight: 700; }
+      .nav-logo .logo-mark { width: 31px; height: 31px; }
+      .nav-item { margin: 5px 0; padding: 12px 13px; border-radius: 8px; }
+      .nav-item.active { color: var(--ink); background: var(--accent); font-weight: 700; }
+      .main { flex: 1; min-width: 0; padding: 35px 39px; position: relative; }
+      .main h2 { margin: 0 0 6px; font-size: 32px; letter-spacing: -.035em; }
+      .muted { color: var(--muted); }
+      .small { font-size: 18px; }
+      .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 26px; }
+      .stat { background: var(--raised); border: 1px solid #3c414d; border-radius: 11px; padding: 17px 18px; }
+      .stat label { display: block; color: var(--muted); font-size: 18px; }
+      .stat strong { display: block; margin-top: 8px; font-size: 31px; }
+      .panel { padding: 20px; border-radius: 11px; border: 1px solid #3c414d; background: #22252d; }
+      .panel-title { font-size: 20px; font-weight: 700; }
+      .chart { height: 141px; margin-top: 13px; display: flex; align-items: end; gap: 11px; border-bottom: 1px solid #5c626d; padding: 0 7px; }
+      .bar { flex: 1; min-width: 16px; border-radius: 5px 5px 0 0; background: linear-gradient(180deg, #c9ee8b, #83a95a); }
+      .cover { width: 39px; height: 39px; border-radius: 6px; display: grid; place-items: center; color: #152319; font-weight: 800; background: linear-gradient(145deg,#c9ee8b,#6e9475); }
+      .feature-line { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center; color: var(--muted); font-size: 22px; }
+      /* Import */
+      .import-card { position: absolute; left: 475px; top: 205px; width: 970px; border: 1px solid #424752; border-radius: 22px; background: var(--surface); padding: 44px 52px; box-shadow: 0 36px 120px #0008; }
+      .import-head { display: flex; align-items: flex-start; gap: 24px; }
+      .import-icon { width: 78px; height: 78px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 18px; background: var(--raised); color: var(--accent); font-size: 38px; }
+      .import-head h2 { margin: 3px 0 7px; font-size: 35px; letter-spacing: -.04em; }
+      .file { display: flex; align-items: center; gap: 17px; margin-top: 30px; padding: 19px 20px; border: 1px solid var(--border); background: #171a20; border-radius: 12px; }
+      .file-icon { color: var(--accent); font-size: 28px; }
+      .file-name { font-size: 18px; font-weight: 650; }
+      .file-sub { color: var(--muted); margin-top: 4px; font-size: 17px; }
+      .complete { margin-left: auto; color: var(--accent); font-size: 16px; font-weight: 700; }
+      .progress { height: 10px; margin-top: 25px; border-radius: 99px; background: #414651; overflow: hidden; }
+      .progress-fill { width: 100%; height: 100%; background: var(--accent); border-radius: inherit; transform-origin: left; }
+      .report { display: flex; gap: 26px; margin-top: 18px; color: var(--muted); font-size: 18px; }
+      .report b { color: var(--text); }
+      /* Period */
+      .toolbar { display: flex; gap: 14px; align-items: flex-end; margin-top: 22px; }
+      .field { display: grid; gap: 7px; font-size: 16px; font-weight: 650; }
+      .field-label { display: inline-flex; align-items: center; gap: 7px; }
+      .info { width: 21px; height: 21px; border-radius: 50%; border: 1px solid #66705a; color: var(--accent); display: inline-grid; place-items: center; font: 600 13px ui-monospace, monospace; }
+      .select { min-width: 190px; padding: 13px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); font-size: 18px; display: flex; justify-content: space-between; gap: 16px; }
+      .select::after { content: "⌄"; color: var(--muted); }
+      .menu { position: absolute; left: 39px; top: 196px; width: 240px; padding: 8px; border-radius: 12px; border: 1px solid var(--border); background: #262a33; box-shadow: 0 20px 60px #0009; font-size: 18px; }
+      .menu div { padding: 10px 12px; border-radius: 8px; color: var(--muted); }
+      .menu .on { background: #33402b; color: var(--accent); font-weight: 700; }
+      .tooltip { position: absolute; left: 140px; top: 120px; width: 380px; padding: 16px 18px; border-radius: 12px; background: #2a2f39; border: 1px solid var(--border); box-shadow: 0 20px 60px #0009; font-size: 16px; line-height: 1.45; color: var(--muted); }
+      .tooltip b { display: block; color: var(--text); margin-bottom: 6px; font-size: 17px; }
+      .screens { position: absolute; left: 124px; top: 610px; display: flex; gap: 18px; }
+      .chip { padding: 14px 20px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); font-size: 20px; display: flex; gap: 12px; align-items: center; }
+      .chip span { color: var(--accent); font-weight: 700; }
+      /* Artist page */
+      .music-head { display: grid; grid-template-columns: 300px 1fr; gap: 34px; align-items: start; }
+      .art { width: 300px; height: 300px; border-radius: 18px; display: grid; place-items: center; background: linear-gradient(135deg,#d9f69c,#56715a); color: #17221a; font-size: 110px; font-weight: 780; }
+      .music-title { font-size: 58px; font-weight: 650; letter-spacing: -.045em; line-height: 1.05; margin: 6px 0 4px; }
+      .rank { font-size: 58px; font-weight: 650; letter-spacing: -.045em; line-height: 1; margin-top: 16px; }
+      .rank i { font-style: normal; color: var(--accent); }
+      .stars { display: flex; gap: 10px; margin-top: 22px; font-size: 38px; color: var(--accent); }
+      .stars .off { color: #59604f; }
+      .buttons { display: flex; gap: 12px; margin-top: 26px; }
+      .btn { padding: 12px 18px; border-radius: 10px; border: 1px solid var(--border); background: var(--raised); font-size: 17px; font-weight: 600; }
+      /* Patterns */
+      .pattern-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 22px; }
+      .hbar { display: grid; grid-template-columns: 150px 1fr 70px; gap: 14px; align-items: center; margin: 13px 0; font-size: 18px; }
+      .hbar .track { height: 18px; border-radius: 6px; background: #343944; overflow: hidden; }
+      .hbar .fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #83a95a, #c9ee8b); transform-origin: left; }
+      .hbar b { text-align: right; font-variant-numeric: tabular-nums; }
+      /* Ask */
+      .ask-input { margin-top: 22px; padding: 18px 20px; border-radius: 12px; border: 1px solid #66705a; background: #171a20; font-size: 22px; min-height: 64px; }
+      .caret { display: inline-block; width: 2px; height: 26px; background: var(--accent); vertical-align: -5px; margin-left: 2px; }
+      .sql { margin-top: 18px; padding: 16px 18px; border-radius: 12px; background: #11141a; border: 1px solid #383d48; font: 16px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; color: #cfd6e3; white-space: pre-wrap; }
+      .sql .k { color: var(--accent); }
+      .answer { margin-top: 18px; border: 1px solid #3c414d; border-radius: 12px; overflow: hidden; }
+      .answer-row { display: grid; grid-template-columns: 50px 1fr 140px; gap: 14px; align-items: center; padding: 12px 18px; font-size: 19px; border-top: 1px solid #383d48; }
+      .answer-row:first-child { border-top: 0; }
+      .answer-row b { text-align: right; font-variant-numeric: tabular-nums; }
+      .badges { display: flex; gap: 10px; margin-top: 14px; }
+      .badge { padding: 7px 12px; border-radius: 999px; background: #33402b; color: var(--accent); font-size: 15px; font-weight: 700; }
+      /* Outro */
+      .final { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+      .final-inner { display: grid; justify-items: center; gap: 27px; }
+      .final-logo { display: block; width: 110px; height: 110px; background: url("assets/scrobbl-logo.svg") center / contain no-repeat; filter: drop-shadow(0 0 36px #c9ee8b44); }
+      .final-name { font-size: 75px; font-weight: 750; letter-spacing: -.065em; }
+      .final-tag { color: var(--muted); font-size: 29px; }
+      .server { position: absolute; left: 0; right: 0; bottom: 115px; text-align: center; color: #849078; font-size: 18px; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="scrobbl-brag" data-start="0" data-width="1920" data-height="1080" data-duration="30.57">
+      <audio id="music" data-start="0" data-duration="30.57" data-track-index="6" data-automation="{&quot;version&quot;:1,&quot;lanes&quot;:[{&quot;target&quot;:&quot;volume&quot;,&quot;points&quot;:[{&quot;t&quot;:0,&quot;v&quot;:0},{&quot;t&quot;:0.8,&quot;v&quot;:0.22},{&quot;t&quot;:29.2,&quot;v&quot;:0.22},{&quot;t&quot;:30.57,&quot;v&quot;:0}]}]}" src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3"></audio>
+
+      <!-- 1. Hook -->
+      <section id="scene-hook" class="clip" data-start="0" data-duration="3.55">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="copy" id="hook-copy">
+          <div class="wordmark"><i class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div>
+          <div class="eyebrow" style="margin-top: 50px">A personal listening archive</div>
+          <h1>Your listening<br />history<span class="dot">.</span></h1>
+          <div class="subtitle">Collected, curated and kept in one place.</div>
+        </div>
+        <div class="app" id="hook-app">
+          <div class="app-bar"><span class="dot-b"></span><span class="dot-b"></span><span class="dot-b"></span><span class="app-name">scrobbl.rs</span></div>
+          <div class="app-body">
+            <aside class="nav"><div class="nav-logo"><i class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div><div class="nav-item active">Overview</div><div class="nav-item">Search</div><div class="nav-item">Ask</div><div class="nav-item">Listening history</div><div class="nav-item">Rankings</div></aside>
+            <main class="main"><h2>Your listening, at a glance<span class="dot">.</span></h2><div class="muted small">This year</div>
+              <div class="stats"><div class="stat"><label>Total listens</label><strong>12,480</strong></div><div class="stat"><label>Listening time</label><strong>812h</strong></div><div class="stat"><label>Different tracks</label><strong>3,904</strong></div></div>
+              <div class="panel" style="margin-top:17px"><div class="panel-title">Listening activity</div><div class="chart" style="height:250px"><i class="bar" style="height:36%"></i><i class="bar" style="height:62%"></i><i class="bar" style="height:49%"></i><i class="bar" style="height:83%"></i><i class="bar" style="height:56%"></i><i class="bar" style="height:72%"></i><i class="bar" style="height:95%"></i><i class="bar" style="height:64%"></i><i class="bar" style="height:78%"></i></div></div>
+            </main>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Import -->
+      <section id="scene-import" class="clip" data-start="3.55" data-duration="3.8">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="eyebrow" id="import-eyebrow" style="position:absolute;left:0;right:0;top:132px;text-align:center">Bring the archive in</div>
+        <div class="import-card" id="import-card">
+          <div class="import-head"><div class="import-icon">↓</div><div><h2>Import listening history</h2><div class="muted">Spotify Extended Streaming History · ListenBrainz</div></div></div>
+          <div class="file"><span class="file-icon">▣</span><div><div class="file-name">my_spotify_data_demo.zip</div><div class="file-sub">Devices, countries, shuffle, skips and start/end reasons kept</div></div><span class="complete">✓ Complete</span></div>
+          <div class="progress"><div class="progress-fill" id="progress-fill"></div></div>
+          <div class="report"><span><b>12,480</b> listens</span><span><b>684</b> artists</span><span>Repeated imports never duplicate</span></div>
+        </div>
+        <div class="feature-line" id="import-foot">Import your extended listening history, then keep collecting.</div>
+      </section>
+
+      <!-- 3. One period everywhere -->
+      <section id="scene-period" class="clip" data-start="7.35" data-duration="4.12">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="copy" id="period-copy" style="top:250px;width:560px"><div class="eyebrow">New</div><h1 style="font-size:66px">One period,<br />everywhere<span class="dot">.</span></h1><div class="subtitle">Pick “Today” once. Overview, history, rankings and music pages follow.</div></div>
+        <div class="screens" id="period-screens"><div class="chip">Overview <span>Today</span></div><div class="chip">History <span>Today</span></div><div class="chip">Rankings <span>Today</span></div></div>
+        <div class="app" id="period-app" style="width:1000px;height:640px;top:220px">
+          <div class="app-bar"><span class="dot-b"></span><span class="dot-b"></span><span class="dot-b"></span><span class="app-name">scrobbl.rs</span></div>
+          <div class="app-body">
+            <main class="main"><h2>Listening history<span class="dot">.</span></h2><div class="muted small">Search and combine filters</div>
+              <div class="toolbar"><div class="field"><span class="field-label">Period <span class="info">i</span></span><div class="select" id="period-value">Today</div></div><div class="field">Order<div class="select">Newest first</div></div><div class="field">Rank by<div class="select">Listens</div></div></div>
+              <div class="menu" id="period-menu"><div>All time</div><div class="on">Today</div><div>Yesterday</div><div>This week</div><div>This month</div><div>Last 30 days</div></div>
+              <div class="tooltip" id="period-tip" style="left:120px;top:205px"><b>Current period, still running</b>Totals, rankings and charts include listens up to now.</div>
+            </main>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4. Artist page -->
+      <section id="scene-artist" class="clip">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="eyebrow" id="artist-eyebrow" style="position:absolute;left:155px;top:118px">Music pages</div>
+        <div class="app" id="artist-app" style="left:330px;top:175px;width:1260px;height:690px">
+          <div class="app-bar"><span class="dot-b"></span><span class="dot-b"></span><span class="dot-b"></span><span class="app-name">scrobbl.rs</span></div>
+          <div class="app-body"><aside class="nav"><div class="nav-logo"><i class="logo-mark" aria-hidden="true"></i> scrobbl.rs</div><div class="nav-item">Overview</div><div class="nav-item">Search</div><div class="nav-item">Ask</div><div class="nav-item">Listening history</div><div class="nav-item active">Rankings</div></aside>
+            <main class="main">
+              <div class="music-head"><div class="art" id="artist-art">D</div><div><div class="music-title">Demo Artist<span class="dot" style="color:var(--accent)">.</span></div><div class="muted small">284 listens this year · 18 albums</div><div class="rank" id="artist-rank"><i>#</i>1</div><div class="stars" id="artist-stars"><span>★</span><span>★</span><span>★</span><span>★</span><span class="off">★</span></div><div class="buttons"><div class="btn">Edit details &amp; image</div><div class="btn">Change artwork</div><div class="btn">Customize</div></div></div></div>
+              <div class="stats" style="margin-top:28px"><div class="stat"><label>Total listens</label><strong>284</strong></div><div class="stat"><label>Listening time</label><strong>17h 52m</strong></div><div class="stat"><label>Different tracks</label><strong>61</strong></div></div>
+            </main>
+          </div>
+        </div>
+        <div class="feature-line" id="artist-foot">Large artwork, its rank in the period, your rating.</div>
+      </section>
+
+      <!-- 5. Listening patterns -->
+      <section id="scene-patterns" class="clip">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="copy" id="patterns-copy" style="top:260px;width:520px"><div class="eyebrow">Listening patterns</div><h1 style="font-size:64px">How, where,<br />and when<span class="dot">.</span></h1><div class="subtitle">Device, platform, country, shuffle, skips and why each song started or stopped.</div></div>
+        <div class="app" id="patterns-app" style="width:1060px;height:660px;top:210px">
+          <div class="app-bar"><span class="dot-b"></span><span class="dot-b"></span><span class="dot-b"></span><span class="app-name">scrobbl.rs</span></div>
+          <div class="app-body"><main class="main"><h2>Listening patterns<span class="dot">.</span></h2><div class="muted small">This year · counted listens</div>
+            <div class="pattern-grid">
+              <div class="panel"><div class="panel-title">Device</div>
+                <div class="hbar"><span>Phone</span><div class="track"><div class="fill" style="width:78%"></div></div><b>46%</b></div>
+                <div class="hbar"><span>Computer</span><div class="track"><div class="fill" style="width:58%"></div></div><b>34%</b></div>
+                <div class="hbar"><span>Console</span><div class="track"><div class="fill" style="width:20%"></div></div><b>12%</b></div>
+                <div class="hbar"><span>Speaker</span><div class="track"><div class="fill" style="width:13%"></div></div><b>8%</b></div>
+              </div>
+              <div class="panel"><div class="panel-title">Why songs ended</div>
+                <div class="hbar"><span>Played out</span><div class="track"><div class="fill" style="width:84%"></div></div><b>67%</b></div>
+                <div class="hbar"><span>Skipped</span><div class="track"><div class="fill" style="width:27%"></div></div><b>15%</b></div>
+                <div class="hbar"><span>Stopped</span><div class="track"><div class="fill" style="width:22%"></div></div><b>12%</b></div>
+                <div class="hbar"><span>Other device</span><div class="track"><div class="fill" style="width:9%"></div></div><b>6%</b></div>
+              </div>
+            </div>
+            <div class="panel" style="margin-top:16px"><div class="panel-title">Hour of day</div><div class="chart" style="height:120px"><i class="bar" style="height:12%"></i><i class="bar" style="height:8%"></i><i class="bar" style="height:5%"></i><i class="bar" style="height:20%"></i><i class="bar" style="height:42%"></i><i class="bar" style="height:58%"></i><i class="bar" style="height:47%"></i><i class="bar" style="height:63%"></i><i class="bar" style="height:71%"></i><i class="bar" style="height:88%"></i><i class="bar" style="height:96%"></i><i class="bar" style="height:54%"></i></div></div>
+          </main></div>
+        </div>
+      </section>
+
+      <!-- 6. Ask -->
+      <section id="scene-ask" class="clip">
+        <div class="demo">DEMO ARCHIVE</div>
+        <div class="copy" id="ask-copy" style="top:250px;width:540px"><div class="eyebrow">Ask, locally</div><h1 style="font-size:64px">Ask your<br />archive<span class="dot">.</span></h1><div class="subtitle">A local Qwen3.5 2B writes read-only SQL. A sandbox runs it. Nothing leaves your server.</div></div>
+        <div class="app" id="ask-app" style="width:1060px;height:730px;top:175px">
+          <div class="app-bar"><span class="dot-b"></span><span class="dot-b"></span><span class="dot-b"></span><span class="app-name">scrobbl.rs</span></div>
+          <div class="app-body"><main class="main"><h2>Ask<span class="dot">.</span></h2>
+            <div class="ask-input"><span id="ask-text"></span><span class="caret" id="ask-caret"></span></div>
+            <div class="sql" id="ask-sql"><span class="k">SELECT</span> a.name AS artist, <span class="k">COUNT</span>(DISTINCT l.id) AS plays
+<span class="k">FROM</span> listens l <span class="k">JOIN</span> track_artists ta ON ta.track_id = l.track_id
+<span class="k">JOIN</span> artists a ON a.id = ta.artist_id
+<span class="k">WHERE</span> l.counted = 1 <span class="k">AND</span> l.device_type = 'phone'
+  <span class="k">AND</span> l.local_date &gt;= '2026-10-01' <span class="k">AND</span> l.local_date &lt;= '2026-10-31'
+<span class="k">GROUP BY</span> a.id <span class="k">ORDER BY</span> plays DESC, a.name <span class="k">LIMIT</span> 3</div>
+            <div class="answer" id="ask-answer"><div class="answer-row"><span class="cover">D</span><span>Demo Artist</span><b>96</b></div><div class="answer-row"><span class="cover">N</span><span>Night Window Club</span><b>71</b></div><div class="answer-row"><span class="cover">S</span><span>Soft Signals</span><b>58</b></div></div>
+            <div class="badges" id="ask-badges"><span class="badge">Read-only sandbox</span><span class="badge">Editable SQL</span><span class="badge">No cloud AI</span></div>
+          </main></div>
+        </div>
+      </section>
+
+      <!-- 7. Outro -->
+      <section id="scene-outro" class="clip">
+        <div class="final"><div class="final-inner" id="final-inner"><i class="final-logo" aria-hidden="true"></i><div class="final-name">scrobbl.rs</div><div class="final-tag">A listening archive, on your server.</div></div></div>
+        <div class="server" id="server-mark">Rust · SQLite · React · local AI</div>
+      </section>
+    </div>
+    <script>
+      // Scene windows (seconds). Kept here so the renderer and HyperFrames agree.
+      const SCENES = {
+        "scene-hook": [0, 3.55],
+        "scene-import": [3.55, 7.35],
+        "scene-period": [7.35, 11.47],
+        "scene-artist": [11.47, 15.82],
+        "scene-patterns": [15.82, 20.19],
+        "scene-ask": [20.19, 26.2],
+        "scene-outro": [26.2, 30.57],
+      };
+      for (const [id, [start, end]] of Object.entries(SCENES)) {
+        const el = document.getElementById(id);
+        el.dataset.start = String(start);
+        el.dataset.duration = (end - start).toFixed(2);
+      }
+      const question = "Who did I listen to most on my phone last month?";
+      const typed = { n: 0 };
+      const tl = gsap.timeline({ paused: true, onUpdate: showScenes });
+      function showScenes() {
+        const t = tl.time();
+        for (const [id, [start, end]] of Object.entries(SCENES))
+          document.getElementById(id).style.visibility = t >= start && t < end ? "visible" : "hidden";
+      }
+      tl.set({}, {}, 30.57);
+      // 1. Hook
+      tl.fromTo("#hook-copy", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.7, ease: "power3.out" }, 0.22);
+      tl.fromTo("#hook-app", { x: 40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.75, ease: "power3.out" }, 0.48);
+      tl.fromTo("#hook-app .bar", { scaleY: 0.4 }, { scaleY: 1, duration: 0.5, stagger: 0.08, transformOrigin: "bottom", ease: "power2.out" }, 1.0);
+      // 2. Import
+      tl.fromTo("#import-eyebrow", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 3.7);
+      tl.fromTo("#import-card", { y: 32, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 3.82);
+      tl.fromTo("#progress-fill", { scaleX: 0 }, { scaleX: 1, duration: 1.15, ease: "power2.inOut" }, 4.64);
+      tl.fromTo("#import-foot", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 5.74);
+      // 3. Period
+      tl.fromTo("#period-copy", { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 7.45);
+      tl.fromTo("#period-app", { x: 35, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 7.55);
+      tl.fromTo("#period-menu", { y: -8, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3 }, 8.22);
+      tl.to("#period-menu", { opacity: 0, duration: 0.25 }, 9.1);
+      tl.fromTo("#period-tip", { y: 8, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35 }, 9.4);
+      tl.fromTo("#period-screens .chip", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.35, stagger: 0.18 }, 9.83);
+      // 4. Artist
+      tl.fromTo("#artist-eyebrow", { y: 16, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 11.6);
+      tl.fromTo("#artist-app", { y: 28, opacity: 0 }, { y: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 11.65);
+      tl.fromTo("#artist-art", { scale: 0.86 }, { scale: 1, duration: 0.7, ease: "power3.out" }, 11.9);
+      tl.fromTo("#artist-rank", { y: 18, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "back.out(2)" }, 12.56);
+      tl.fromTo("#artist-stars span", { scale: 0.4, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.25, stagger: 0.09 }, 13.11);
+      tl.fromTo("#artist-foot", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 13.64);
+      // 5. Patterns
+      tl.fromTo("#patterns-copy", { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 15.92);
+      tl.fromTo("#patterns-app", { x: 35, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 16.0);
+      tl.fromTo("#patterns-app .fill", { scaleX: 0 }, { scaleX: 1, duration: 0.6, stagger: 0.07, ease: "power2.out" }, 16.6);
+      tl.fromTo("#patterns-app .bar", { scaleY: 0 }, { scaleY: 1, duration: 0.4, stagger: 0.05, transformOrigin: "bottom" }, 17.47);
+      // 6. Ask
+      tl.fromTo("#ask-copy", { x: -24, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 20.25);
+      tl.fromTo("#ask-app", { x: 35, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6, ease: "power3.out" }, 20.3);
+      tl.fromTo(typed, { n: 0 }, { n: question.length, duration: 1.6, ease: "none", onUpdate: () => { document.getElementById("ask-text").textContent = question.slice(0, Math.round(typed.n)); } }, 20.8);
+      tl.fromTo("#ask-sql", { y: 14, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45 }, 22.92);
+      tl.fromTo("#ask-answer .answer-row", { x: 18, opacity: 0 }, { x: 0, opacity: 1, duration: 0.3, stagger: 0.14 }, 23.46);
+      tl.fromTo("#ask-badges .badge", { y: 10, opacity: 0 }, { y: 0, opacity: 1, duration: 0.3, stagger: 0.12 }, 24.56);
+      // 7. Outro
+      tl.fromTo("#final-inner", { scale: 0.95, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.8, ease: "power3.out" }, 26.4);
+      tl.fromTo("#server-mark", { y: 12, opacity: 0 }, { y: 0, opacity: 0.7, duration: 0.45 }, 27.3);
+      window.__timelines = window.__timelines || {};
+      window.__timelines["scrobbl-brag"] = tl;
+      tl.seek(0);
+      showScenes();
+    </script>
+  </body>
+</html>

@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 /// Version of the synthetic archive and of the expected values that depend on it.
-pub const FIXTURE_VERSION: u32 = 1;
+pub const FIXTURE_VERSION: u32 = 2;
 
 /// The date shown to the model as "today" while evaluating the fixed corpus.
 /// Every corpus question names a fixed year or date, so this value never
@@ -208,7 +208,7 @@ pub async fn build(data_dir: &Path) -> anyhow::Result<Fixture> {
             DurationKind::Actual,
             true,
             weird_fishes.clone(),
-            spotify_import("desktop", false, true, true, None, Some("fwdbtn")),
+            spotify_import("windows", false, true, true, None, Some("fwdbtn")),
         ),
         // After midnight in the assigned calendar (00:50 local).
         listen(

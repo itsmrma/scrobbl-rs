@@ -15,6 +15,8 @@ pub struct Filters {
     pub page: Option<u32>,
     pub status: Option<String>,
     pub sort: Option<String>,
+    /// Display order for rankings and history: `desc` (default) or `asc`.
+    pub order: Option<String>,
     pub page_size: Option<i64>,
     pub artist: Option<String>,
     pub album: Option<String>,

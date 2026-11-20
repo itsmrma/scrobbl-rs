@@ -180,8 +180,10 @@ export function SearchPage() {
     const next = new URLSearchParams();
     if (q) next.set("q", q);
     if (type) next.set("kind", type);
-    const target = `/search${next.size ? `?${next}` : ""}`;
-    if (target !== `${location.pathname}${location.search}`) {
+    // Always pass the query string, even empty: a bare `/search` would restore
+    // the previously remembered search and bring the cleared results back.
+    const target = `/search?${next}`;
+    if (new URLSearchParams(location.search).toString() !== next.toString()) {
       navigate(target);
     }
   }

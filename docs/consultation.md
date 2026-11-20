@@ -24,8 +24,14 @@ original ranking selection. Changing filters, order or page size resets page off
 
 ## Periods and assigned calendars
 
+The selected period is shared by every consultation screen in the browser tab:
+choosing Today on the Overview keeps Today in Listening history, Rankings and music
+pages until another period is chosen. A new visit starts from the initial period in
+Settings. Yesterday covers the previous assigned local date.
+
 Today, this week, this month and this year use each listen's **assigned calendar**.
-They stop at the present instant and are labelled incomplete. Defaults are Europe/Rome
+They stop at the present instant; an **i** next to *Period* explains that the period
+is still running. Defaults are Europe/Rome
 and Monday. Changing calendar preferences in Settings can preserve prior assignments
 or recalculate all history; consultation uses the published assignments without
 rewriting original timestamps. History shows the timezone used for each date/time.
@@ -43,8 +49,10 @@ History combines metadata search, period, artist, album and source filters. Sear
 for an artist or album, then select a matching identity, including identities with
 only below-threshold listens. The typeahead shows up to 50 matches; narrow the search
 when more match. History initially hides
-actual playback below 30 seconds. **Show listens below threshold too** exposes those
-archived rows without making them count in statistics. Estimated or unknown duration
+actual playback below 30 seconds. The **Include short listens** switch exposes those
+archived rows without making them count in statistics. **Order** shows the newest or
+the oldest listens first; rankings offer the same choice (most or least first), while
+each item keeps its real position in the descending ranking. Estimated or unknown duration
 alone does not prove a below-threshold play. Further selections expose actual,
 estimated/unknown and possible-duplicate rows. Deleted listens are excluded.
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, MouseEvent, ReactNode } from "react";
 import { Icon } from "./ui";
+import { applySharedPeriod } from "./shared-period";
 
 type NavigationState = {
   index: number;
@@ -36,6 +37,10 @@ function destination(path: string) {
   if (!path.includes("?") && isConsultation(path)) {
     const selected = selections.get(path);
     if (selected && selected.startsWith("/") && !selected.startsWith("//")) {
+      // Restore the screen's own filters, but with the period chosen since.
+      const url = new URL(selected, location.origin);
+      if (url.searchParams.has("period") && applySharedPeriod(url.searchParams))
+        return `${url.pathname}?${url.searchParams}`;
       return selected;
     }
   }

@@ -25,7 +25,7 @@ One JSON object per line:
 
 Rules:
 
-- Values are fixed and synthetic. They come from `src/ask/fixture.rs`, version 1;
+- Values are fixed and synthetic. They come from `src/ask/fixture.rs`, version 2;
   never copy a personal value or a result from a real archive.
 - Do not use relative wording ("today", "last year", "ultimi 3 mesi"). Each
   question names a fixed year or date so the expected value does not depend on

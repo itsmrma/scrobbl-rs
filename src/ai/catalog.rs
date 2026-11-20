@@ -133,94 +133,28 @@ fn qwen(
     }
 }
 
+/// The single curated Ask model. Every Ask prompt, grammar and evaluation is
+/// tuned for Qwen3.5 2B, so the catalog no longer offers lighter or larger
+/// tiers; a different `.gguf` (for example the SQL fine-tune described in
+/// `docs/ask-training.md`) can still be loaded as a custom local model.
 static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
-    vec![
-        qwen(
-            "qwen3.5-0.8b-q4_k_m",
-            "Qwen3.5 0.8B",
-            "light",
-            "available",
-            "Fastest local SQL option for simple archive lookups. Smallest footprint, though complex multi-join queries may need SQL repair or a larger model.",
-            "unsloth/Qwen3.5-0.8B-GGUF",
-            "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
-            "Qwen3.5-0.8B-Q4_K_M.gguf",
-            "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517",
-            532_517_120,
-            GIB,
-            2 * GIB,
-            2,
-            false,
-            None,
-        ),
-        qwen(
-            "qwen3.5-2b-q4_k_m",
-            "Qwen3.5 2B",
-            "default",
-            "available",
-            "Default CPU model for local Ask SQL generation. Good balance between response speed and read-only SQLite query quality.",
-            "unsloth/Qwen3.5-2B-GGUF",
-            "f6d5376be1edb4d416d56da11e5397a961aca8ae",
-            "Qwen3.5-2B-Q4_K_M.gguf",
-            "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
-            1_280_835_840,
-            3 * GIB,
-            4 * GIB,
-            4,
-            false,
-            None,
-        ),
-        qwen(
-            "qwen3.5-4b-q4_k_m",
-            "Qwen3.5 4B",
-            "quality",
-            "available",
-            "Highest-accuracy Qwen3.5 CPU model for writing complex read-only SQL against the Ask projection; roughly twice as slow as 2B.",
-            "unsloth/Qwen3.5-4B-GGUF",
-            "e87f176479d0855a907a41277aca2f8ee7a09523",
-            "Qwen3.5-4B-Q4_K_M.gguf",
-            "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
-            2_740_937_888,
-            5 * GIB,
-            8 * GIB,
-            4,
-            false,
-            None,
-        ),
-        qwen(
-            "qwen3.5-9b-q4_k_m",
-            "Qwen3.5 9B",
-            "gpu",
-            "gpu_future",
-            "GPU tier reserved for a later catalog release. You can also load any compatible local GGUF file now via Custom model path.",
-            "unsloth/Qwen3.5-9B-GGUF",
-            "3885219b6810b007914f3a7950a8d1b469d598a5",
-            "Qwen3.5-9B-Q4_K_M.gguf",
-            "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8",
-            5_680_522_464,
-            9 * GIB,
-            16 * GIB,
-            6,
-            true,
-            None,
-        ),
-        qwen(
-            "qwen3.5-27b-q4_k_m",
-            "Qwen3.5 27B",
-            "gpu",
-            "gpu_future",
-            "Larger GPU tier reserved for a later catalog release. Listed for planning only in the downloadable catalog.",
-            "unsloth/Qwen3.5-27B-GGUF",
-            "3221f178a6b842d04f1fb42f1c413534adcc0a6a",
-            "Qwen3.5-27B-Q4_K_M.gguf",
-            "84b5f7f112156d63836a01a69dc3f11a6ba63b10a23b8ca7a7efaf52d5a2d806",
-            16_740_812_704,
-            24 * GIB,
-            32 * GIB,
-            8,
-            true,
-            None,
-        ),
-    ]
+    vec![qwen(
+        "qwen3.5-2b-q4_k_m",
+        "Qwen3.5 2B",
+        "default",
+        "available",
+        "Local CPU model for Ask SQL generation: a good balance between response speed and read-only SQLite query quality.",
+        "unsloth/Qwen3.5-2B-GGUF",
+        "f6d5376be1edb4d416d56da11e5397a961aca8ae",
+        "Qwen3.5-2B-Q4_K_M.gguf",
+        "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+        1_280_835_840,
+        3 * GIB,
+        4 * GIB,
+        4,
+        false,
+        None,
+    )]
 });
 
 static TEST_MODELS: LazyLock<Mutex<Vec<CatalogModel>>> = LazyLock::new(|| Mutex::new(Vec::new()));
@@ -281,18 +215,13 @@ mod tests {
     }
 
     #[test]
-    fn only_the_three_cpu_tiers_are_selectable() {
-        let selectable: Vec<String> = all()
+    fn the_catalog_offers_only_qwen_2b() {
+        let ids: Vec<String> = all()
             .into_iter()
             .filter(|model| model.is_available())
-            .map(|model| model.tier)
+            .map(|model| model.id)
             .collect();
-        assert_eq!(selectable, ["light", "default", "quality"]);
-        let future: Vec<_> = all()
-            .into_iter()
-            .filter(|model| model.status == "gpu_future")
-            .collect();
-        assert_eq!(future.len(), 2);
-        assert!(future.iter().all(|model| !model.selectable));
+        assert_eq!(ids, ["qwen3.5-2b-q4_k_m"]);
+        assert!(all().iter().all(|model| model.status == "available"));
     }
 }

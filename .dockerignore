@@ -34,6 +34,8 @@
 !scripts/**
 !docs/
 !docs/**
+!evals/
+!evals/**
 !.github/
 !.github/**
 **/.DS_Store

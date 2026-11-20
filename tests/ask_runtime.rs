@@ -341,7 +341,7 @@ async fn real_model_answers_three_supported_questions() {
     let dir = tempfile::tempdir().unwrap();
     let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
     let data_dir = dir.path().to_path_buf();
-    let id = "qwen3.5-0.8b-q4_k_m";
+    let id = "qwen3.5-2b-q4_k_m";
     let catalog = scrobbl_rs::ai::catalog::find(id).unwrap();
     let model_dir = data_dir.join("models").join(id);
     std::fs::create_dir_all(&model_dir).unwrap();

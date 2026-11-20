@@ -1468,7 +1468,7 @@
     width: 100%;
   }
 
-  .overview-heading-actions .filters > label {
+  .overview-heading-actions .filters > :is(label, .filter-field) {
     width: 100%;
     min-width: 0;
   }
@@ -1572,4 +1572,12 @@
 .widget-period-override-control button.select-trigger > span:first-child {
   line-height: 1.5;
   padding-block: 2px;
+}
+
+/* Phones: Period and Rank by share the first row; Order takes the next one. */
+@media (max-width: 600px) {
+  .overview-heading-actions .filters > .period-order-filter,
+  .music-period .filters > .period-order-filter {
+    grid-column: 1 / -1;
+  }
 }
