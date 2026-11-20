@@ -20,7 +20,7 @@ SOURCE_ROOTS = (
     "Dockerfile", ".dockerignore", "compose.yaml", ".env.example", ".gitignore",
     "vite.config.mts", "playwright.config.cjs", "frontend", "static", "src",
     "migrations", "release-migrations", "private-migrations", "tests", "scripts",
-    "docs", ".github", ".cargo", "vendor", "node_modules",
+    "docs", "evals", ".github", ".cargo", "vendor", "node_modules",
 )
 NOTICE_NAMES = ("license", "licence", "copying", "notice", "copyright", "authors")
 # These crates publish no top-level license file even though their manifest
