@@ -358,7 +358,8 @@ impl ModelParser {
                 path,
                 stored.threads.clamp(1, 64),
                 stored.unload_minutes.clamp(1, 1440),
-            ))),
+            )
+            .with_gpu_layers(crate::ai::effective_gpu_layers(stored.gpu_layers)))),
             Err(reason) => Ok(Err(reason)),
         }
     }

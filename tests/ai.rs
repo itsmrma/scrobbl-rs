@@ -1029,3 +1029,79 @@ async fn previously_downloaded_legacy_catalog_model_remains_selectable_and_usabl
     assert_eq!(ask_status["active_model"], legacy_id);
     assert_eq!(ask_status["model_ready"], cfg!(feature = "llama"));
 }
+
+#[tokio::test]
+async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
+    let _guard = TEST_LOCK.lock().await;
+    catalog::clear_test_models();
+    let (_dir, state, token) = setup().await;
+
+    let expected_backend = if cfg!(feature = "llama") {
+        "cpu"
+    } else {
+        "unavailable"
+    };
+
+    let settings = get_json(&state, &token, "/api/v1/ai/settings").await;
+    assert_eq!(settings["backend"], expected_backend);
+    assert_eq!(settings["gpu_layers"], -1);
+
+    let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
+    assert_eq!(catalog["backend"], expected_backend);
+    assert_eq!(catalog["gpu_layers"], -1);
+    let qwen = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "qwen3.5-2b-q4_k_m")
+        .unwrap();
+    assert_eq!(qwen["requirements"]["gpu_optional"], true);
+    if cfg!(feature = "llama") {
+        assert_eq!(qwen["backend"], "llama.cpp (CPU)");
+    } else {
+        assert_eq!(qwen["backend"], "llama.cpp (unavailable)");
+    }
+
+    for invalid in [-2, 257] {
+        let (status, value) = post(
+            &state,
+            &token,
+            "/api/v1/ai/settings",
+            json!({
+                "enabled": false,
+                "active_model": null,
+                "threads": 4,
+                "unload_minutes": 15,
+                "gpu_layers": invalid,
+                "model_dir": null
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}: {value}");
+    }
+
+    for valid in [0, 16, -1] {
+        let (status, saved) = post(
+            &state,
+            &token,
+            "/api/v1/ai/settings",
+            json!({
+                "enabled": false,
+                "active_model": null,
+                "threads": 4,
+                "unload_minutes": 15,
+                "gpu_layers": valid,
+                "model_dir": null
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{valid}: {saved}");
+        assert_eq!(saved["gpu_layers"], valid);
+        assert_eq!(saved["backend"], expected_backend);
+
+        let reloaded = get_json(&state, &token, "/api/v1/ai/settings").await;
+        assert_eq!(reloaded["gpu_layers"], valid);
+        let reloaded_catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
+        assert_eq!(reloaded_catalog["gpu_layers"], valid);
+    }
+}

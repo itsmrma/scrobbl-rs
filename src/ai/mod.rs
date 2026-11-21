@@ -22,6 +22,13 @@ use ts_rs::TS;
 
 pub const DEFAULT_THREADS: u32 = 4;
 pub const DEFAULT_UNLOAD_MINUTES: u32 = 15;
+pub const DEFAULT_GPU_LAYERS: i32 = -1;
+pub const MIN_GPU_LAYERS: i32 = -1;
+pub const MAX_GPU_LAYERS: i32 = 256;
+
+fn default_gpu_layers() -> i32 {
+    DEFAULT_GPU_LAYERS
+}
 
 /// Whether this build contains the inference runtime. The runtime is part of
 /// the official build (`llama` is a default feature); a `--no-default-features`
@@ -30,12 +37,39 @@ pub fn runtime_available() -> bool {
     cfg!(feature = "llama")
 }
 
+/// The compiled inference backend for this build (`cpu`, `metal`, `vulkan`, or
+/// `unavailable` when built without `llama`).
+pub fn compiled_backend() -> &'static str {
+    if !runtime_available() {
+        "unavailable"
+    } else {
+        // Tickets #253 / #254 will add `metal` and `vulkan` feature checks here.
+        "cpu"
+    }
+}
+
+/// Whether this build is compiled with GPU offload support (`metal` or `vulkan`).
+pub fn gpu_offload_supported() -> bool {
+    matches!(compiled_backend(), "metal" | "vulkan")
+}
+
+/// Effective GPU layers for the current build: forces `0` on CPU-only builds
+/// and passes the configured `-1..=256` value through on GPU-enabled builds.
+pub fn effective_gpu_layers(configured: i32) -> i32 {
+    if gpu_offload_supported() {
+        configured.clamp(MIN_GPU_LAYERS, MAX_GPU_LAYERS)
+    } else {
+        0
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
     pub enabled: bool,
     pub active_model: Option<String>,
     pub custom_model_path: Option<String>,
     pub threads: u32,
+    pub gpu_layers: i32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
 }
@@ -47,6 +81,7 @@ impl Default for StoredSettings {
             active_model: None,
             custom_model_path: None,
             threads: DEFAULT_THREADS,
+            gpu_layers: DEFAULT_GPU_LAYERS,
             unload_minutes: DEFAULT_UNLOAD_MINUTES,
             model_dir: None,
         }
@@ -73,6 +108,11 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .await?
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(DEFAULT_THREADS);
+    let gpu_layers = setting("ai_gpu_layers")
+        .await?
+        .and_then(|value| value.parse::<i32>().ok())
+        .filter(|value| (MIN_GPU_LAYERS..=MAX_GPU_LAYERS).contains(value))
+        .unwrap_or(DEFAULT_GPU_LAYERS);
     let unload_minutes = setting("ai_unload_minutes")
         .await?
         .and_then(|value| value.parse::<u32>().ok())
@@ -86,6 +126,7 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         active_model,
         custom_model_path,
         threads,
+        gpu_layers,
         unload_minutes,
         model_dir,
     })
@@ -249,6 +290,8 @@ pub struct AiSettings {
     pub active_model: Option<String>,
     pub custom_model_path: Option<String>,
     pub threads: u32,
+    pub gpu_layers: i32,
+    pub backend: String,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
     pub effective_model_dir: String,
@@ -265,6 +308,8 @@ pub struct SaveAiSettings {
     #[serde(default)]
     pub custom_model_path: Option<String>,
     pub threads: u32,
+    #[serde(default = "default_gpu_layers")]
+    pub gpu_layers: i32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
 }
@@ -361,6 +406,8 @@ pub struct AiInstalledModel {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiCatalog {
     pub runtime_available: bool,
+    pub backend: String,
+    pub gpu_layers: i32,
     pub model_dir: String,
     pub models: Vec<AiCatalogModel>,
     pub installed: Vec<AiInstalledModel>,
@@ -454,6 +501,8 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
         active_model: stored.active_model.clone(),
         custom_model_path: stored.custom_model_path.clone(),
         threads: stored.threads,
+        gpu_layers: stored.gpu_layers,
+        backend: compiled_backend().to_string(),
         unload_minutes: stored.unload_minutes,
         model_dir: stored.model_dir.clone(),
         effective_model_dir: root.display().to_string(),
@@ -499,6 +548,11 @@ pub async fn settings_post(
     if !(1..=64).contains(&form.threads) {
         return Err(AppError::BadRequest(
             "Threads must be between 1 and 64.".into(),
+        ));
+    }
+    if !(MIN_GPU_LAYERS..=MAX_GPU_LAYERS).contains(&form.gpu_layers) {
+        return Err(AppError::BadRequest(
+            "GPU layers must be between -1 and 256.".into(),
         ));
     }
     if !(1..=1440).contains(&form.unload_minutes) {
@@ -567,6 +621,7 @@ pub async fn settings_post(
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_threads", &form.threads.to_string()).await?;
+    crate::db::set_setting(&mut tx, "ai_gpu_layers", &form.gpu_layers.to_string()).await?;
     crate::db::set_setting(
         &mut tx,
         "ai_unload_minutes",
@@ -585,6 +640,7 @@ pub async fn settings_post(
         || previous.active_model != active_model
         || previous.custom_model_path != custom_model_path
         || previous.model_dir != model_dir
+        || previous.gpu_layers != form.gpu_layers
     {
         state.ask.unload();
     }
@@ -601,6 +657,7 @@ pub async fn settings_post(
         active_model,
         custom_model_path,
         threads: form.threads,
+        gpu_layers: form.gpu_layers,
         unload_minutes: form.unload_minutes,
         model_dir,
     };
@@ -641,6 +698,7 @@ pub async fn catalog_get(
     headers: HeaderMap,
 ) -> Result<Json<AiCatalog>> {
     auth::session(&state, &headers).await?;
+    let stored = read_settings(&state).await?;
     let root = models::root(&state).await?;
     let scanned = models::scan(&root);
     let rows: Vec<DownloadRow> = sqlx::query_as(
@@ -769,6 +827,8 @@ pub async fn catalog_get(
         .fold(0_u64, u64::saturating_add);
     Ok(Json(AiCatalog {
         runtime_available: runtime_available(),
+        backend: compiled_backend().to_string(),
+        gpu_layers: stored.gpu_layers,
         model_dir: root.display().to_string(),
         models,
         installed,

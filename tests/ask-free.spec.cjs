@@ -320,6 +320,40 @@ test("AI settings expose local SQL Qwen3.5 catalog and custom local GGUF path wi
     await page.request.get("/api/v1/ask/status")
   ).json();
   expect(clearedRes.custom_model_path).toBeNull();
+
+  // Compiled backend badge and GPU offload control persist across save and reload.
+  await expect(page.getByText("Backend: CPU", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Vulkan container image or the native macOS Metal build/i),
+  ).toBeVisible();
+
+  const gpuOffload = page.getByRole("combobox", { name: "GPU offload" });
+  await expect(gpuOffload).toContainText("Automatic (all layers on GPU)");
+
+  await gpuOffload.click();
+  await page
+    .getByRole("option", { name: "CPU only (disable GPU offload)" })
+    .click();
+  await page.getByRole("button", { name: "Save options" }).click();
+  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "GPU offload" }),
+  ).toContainText("CPU only (disable GPU offload)");
+
+  await page.getByRole("combobox", { name: "GPU offload" }).click();
+  await page
+    .getByRole("option", { name: "Custom layer count (1–256)" })
+    .click();
+  const customLayers = page.getByLabel("Custom GPU layers");
+  await customLayers.fill("16");
+  await page.getByRole("button", { name: "Save options" }).click();
+  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("combobox", { name: "GPU offload" }),
+  ).toContainText("Custom layer count (1–256)");
+  await expect(page.getByLabel("Custom GPU layers")).toHaveValue("16");
 });
 
 test("local SQL Ask executes query via sandbox, rejects unsafe SQL, and cleans up projection when AI is turned off", async ({

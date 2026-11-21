@@ -128,8 +128,17 @@ fn qwen(
             context_tokens: 8192,
         },
         speed,
-        backend: "llama.cpp (CPU)".to_string(),
+        backend: catalog_backend_label().to_string(),
         selectable: status == "available",
+    }
+}
+
+pub fn catalog_backend_label() -> &'static str {
+    match super::compiled_backend() {
+        "metal" => "llama.cpp (Metal)",
+        "vulkan" => "llama.cpp (Vulkan)",
+        "cpu" => "llama.cpp (CPU)",
+        _ => "llama.cpp (unavailable)",
     }
 }
 
@@ -142,7 +151,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
         "Qwen3.5 2B (Ask SQL)",
         "default",
         "available",
-        "Local CPU model fine-tuned on scrobbl.rs Ask SQL generation: translates English and Italian questions into read-only SQLite queries.",
+        "Local model fine-tuned on scrobbl.rs Ask SQL generation: translates English and Italian questions into read-only SQLite queries.",
         "itsmrma/scrobbl-ask-qwen3.5-2b-sql-GGUF",
         "aa1c44ceda918948cb6f376cf0d05df7a2a3037e",
         "scrobbl-ask-qwen3.5-2b-sql-Q4_K_M.gguf",
@@ -151,7 +160,7 @@ static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
         3 * GIB,
         4 * GIB,
         4,
-        false,
+        true,
         None,
     )]
 });

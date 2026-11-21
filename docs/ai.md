@@ -25,6 +25,7 @@ Settings live in the archive `settings` table and are written through the archiv
 | `ai_active_model` | `""` | catalog id (or custom model folder id) selected for questions |
 | `ai_custom_model_path` | `""` | optional path to a local `.gguf` file (absolute path or relative to `ai_model_dir`); overrides `ai_active_model` when set |
 | `ai_threads` | `"4"` | inference thread count (`1–64`) |
+| `ai_gpu_layers` | `"-1"` | GPU offload layers (`-1` = automatic/all layers, `0` = CPU-only, `1–256` = custom layer count; forced to `0` on CPU-only builds, with automatic CPU fallback if GPU load fails at runtime) |
 | `ai_unload_minutes` | `"15"` | idle unload delay (`1–1440` minutes) |
 | `ai_model_dir` | `""` | optional absolute model folder; empty means `<data_dir>/models` |
 
@@ -102,9 +103,9 @@ Remove-Item Env:SCROBBL_TEST_MODEL
 
 ## API summary
 
-- `GET /api/v1/ai/settings` — owner session; current local settings (`enabled`, `active_model`, `custom_model_path`, `threads`, `unload_minutes`, `model_dir`).
-- `POST /api/v1/ai/settings` — owner + CSRF; validates `threads`, `unload_minutes`, `model_dir`, `active_model`, and `custom_model_path` (`.gguf` regular file), deletes any legacy deprecated keys, and unloads any loaded session if selection changes.
-- `GET /api/v1/ai/catalog` — curated Qwen3.5 catalog merged with local installed/custom GGUF entries and download job progress.
+- `GET /api/v1/ai/settings` — owner session; current local settings (`enabled`, `active_model`, `custom_model_path`, `threads`, `gpu_layers`, `backend`, `unload_minutes`, `model_dir`).
+- `POST /api/v1/ai/settings` — owner + CSRF; validates `threads`, `gpu_layers` (`-1..=256`), `unload_minutes`, `model_dir`, `active_model`, and `custom_model_path` (`.gguf` regular file), deletes any legacy deprecated keys, and unloads any loaded session if selection or `gpu_layers` changes.
+- `GET /api/v1/ai/catalog` — curated Qwen3.5 2B SQL catalog (`gpu_optional: true`, dynamic compiled `backend`) merged with local installed/custom GGUF entries, `gpu_layers`, and download job progress.
 - `POST /api/v1/ai/models/{id}/download` — requires AI enabled; catalog models only.
 - `POST /api/v1/ai/models/{id}/cancel` — cancels active download job.
 - `DELETE /api/v1/ai/models/{id}` — body `{ "confirm": true, "force": bool }`.
