@@ -124,6 +124,73 @@ jobs:
           path: ci-logs/
           retention-days: 7
 
+  macos-metal:
+    name: Metal (macOS arm64)
+    needs: changes
+    if: needs.changes.outputs.run_checks == 'true'
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+      - id: cmake
+        run: echo "version=$(cmake --version | head -n 1 | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.rustup/toolchains
+            ~/.rustup/update-hashes
+            target
+          key: rust-macos-metal-1.99.1-cmake-${{ steps.cmake.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            rust-macos-metal-1.99.1-cmake-${{ steps.cmake.outputs.version }}-
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.99.1
+          components: rustfmt, clippy, rust-docs
+      - run: mkdir -p ci-logs
+      - run: npm ci 2>&1 | tee ci-logs/npm-install.log
+      - run: npm run lint:web 2>&1 | tee ci-logs/lint-web.log
+      - run: npm run build 2>&1 | tee ci-logs/build-web.log
+      - name: Check embedded assets match the sources
+        run: |
+          git diff --exit-code -- static/dist
+          test -z "$(git ls-files --others --exclude-standard static/dist)"
+      - run: cargo fmt --check 2>&1 | tee ci-logs/fmt.log
+      - run: cargo clippy --locked --all-targets --features metal -- -D warnings 2>&1 | tee ci-logs/clippy.log
+      - run: cargo test --locked --all-targets --features metal -- --nocapture 2>&1 | tee ci-logs/test.log
+      - run: cargo build --locked --release --features metal 2>&1 | tee ci-logs/release.log
+      - name: Package scrobbl-rs-macos-arm64-metal.tar.gz
+        run: |
+          mkdir -p .cargo
+          cargo vendor --locked vendor > .cargo/config.toml
+          python3 scripts/package-distribution.py --target aarch64-apple-darwin --revision "${{ github.sha }}" --output dist-meta
+          mkdir -p stage/scrobbl-rs-macos-arm64-metal
+          cp target/release/scrobbl-rs stage/scrobbl-rs-macos-arm64-metal/scrobbl-rs
+          cp dist-meta/LICENSE dist-meta/THIRD_PARTY_NOTICES.md dist-meta/distribution.json stage/scrobbl-rs-macos-arm64-metal/
+          cp -R dist-meta/THIRD_PARTY_LICENSES stage/scrobbl-rs-macos-arm64-metal/THIRD_PARTY_LICENSES
+          mkdir -p release-assets
+          tar -C stage -czf release-assets/scrobbl-rs-macos-arm64-metal.tar.gz scrobbl-rs-macos-arm64-metal
+          (cd release-assets && shasum -a 256 scrobbl-rs-macos-arm64-metal.tar.gz > scrobbl-rs-macos-arm64-metal.tar.gz.sha256)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: scrobbl-macos-arm64-metal-${{ github.sha }}
+          path: release-assets/
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: macos-metal-${{ github.run_attempt }}
+          path: ci-logs/
+          retention-days: 7
+
   frontend:
     name: Browser (${{ matrix.browser }})
     needs: changes
@@ -271,20 +338,21 @@ jobs:
   required:
     name: PR checks
     if: always()
-    needs: [changes, backend, frontend, docker, site]
+    needs: [changes, backend, macos-metal, frontend, docker, site]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every verification to have run and succeeded
         env:
           BACKEND: ${{ needs.backend.result }}
+          MACOS_METAL: ${{ needs.macos-metal.result }}
           FRONTEND: ${{ needs.frontend.result }}
           DOCKER: ${{ needs.docker.result }}
           SITE: ${{ needs.site.result }}
           RUN_CHECKS: ${{ needs.changes.outputs.run_checks }}
           RUN_SITE: ${{ needs.changes.outputs.run_site }}
         run: |
-          printf 'run_checks=%s run_site=%s backend=%s frontend=%s docker=%s site=%s\n' "$RUN_CHECKS" "$RUN_SITE" "$BACKEND" "$FRONTEND" "$DOCKER" "$SITE"
+          printf 'run_checks=%s run_site=%s backend=%s macos_metal=%s frontend=%s docker=%s site=%s\n' "$RUN_CHECKS" "$RUN_SITE" "$BACKEND" "$MACOS_METAL" "$FRONTEND" "$DOCKER" "$SITE"
           if [[ "$RUN_SITE" == true ]]; then
             test "$SITE" = success
           else
@@ -293,11 +361,13 @@ jobs:
           fi
           if [[ "$RUN_CHECKS" == true ]]; then
             test "$BACKEND" = success
+            test "$MACOS_METAL" = success
             test "$FRONTEND" = success
             test "$DOCKER" = success
           else
             test "$RUN_CHECKS" = false
             test "$BACKEND" = skipped
+            test "$MACOS_METAL" = skipped
             test "$FRONTEND" = skipped
             test "$DOCKER" = skipped
           fi
@@ -348,8 +418,8 @@ jobs:
           fi
 
   release-sources:
-    name: Attach release sources
-    needs: publish
+    name: Attach release sources and macOS Metal package
+    needs: [publish, macos-metal]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -360,7 +430,11 @@ jobs:
         with:
           name: scrobbl-distribution-${{ github.sha }}
           path: distribution
-      - name: Attach matching sources to a draft version release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: scrobbl-macos-arm64-metal-${{ github.sha }}
+          path: macos-metal
+      - name: Attach matching sources and macOS Metal archive to a draft version release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -368,4 +442,9 @@ jobs:
           if ! gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes 'Release verification pending.'
           fi
-          gh release upload "$GITHUB_REF_NAME" distribution/source.tar.gz distribution/source.tar.gz.sha256 --clobber
+          gh release upload "$GITHUB_REF_NAME" \
+            distribution/source.tar.gz \
+            distribution/source.tar.gz.sha256 \
+            macos-metal/scrobbl-rs-macos-arm64-metal.tar.gz \
+            macos-metal/scrobbl-rs-macos-arm64-metal.tar.gz.sha256 \
+            --clobber

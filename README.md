@@ -83,6 +83,8 @@ Install a stable [Rust toolchain](https://rustup.rs/) (1.94 or later) and your s
 ./scripts/run-local.sh      # or: cargo run --locked
 ```
 
+On **macOS Apple Silicon**, Docker Desktop runs containers inside a Linux VM without access to Apple Metal. For native Metal GPU acceleration in Ask, either build from source with `--features metal` (`cargo run --locked --features metal`) or download the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` archive from GitHub Releases.
+
 Open **http://127.0.0.1:3210**, create the owner account, and connect Spotify or import your history from **Import history**. The service binds only to `127.0.0.1`; use that exact address instead of `localhost`. An [Italian local setup guide](docs/local-setup.it.md) is also available.
 
 The process must keep running to collect listens. Closing the browser does not stop collection. Restart with the same data directory to resume.
