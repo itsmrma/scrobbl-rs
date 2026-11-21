@@ -55,7 +55,7 @@ Inspired by [Maloja](https://github.com/krateng/maloja). This is a personal pass
 
 Ask answers questions such as *"Who did I listen to most on my phone last month?"* or *"Quanto ho saltato Ado nel 2025?"*. A **local Qwen3.5 2B** model translates the question into one read-only SQL query. scrobbl.rs runs that query in a strict [SQL sandbox](docs/ask-projection.md) over a separate projection of your archive. Nothing leaves the server. The model never sees your listens, only the schema. Every answer shows its SQL, which you can edit and run again.
 
-AI is off by default. Enable it in **Settings → AI**, download the pinned model (verified by SHA-256), or point to any local `.gguf`. The project includes a sandbox-validated fine-tuning dataset and recipe that specialize the 2B model on scrobbl.rs SQL: see [Training the Ask SQL model](docs/ask-training.md).
+AI is off by default. Enable it in **Settings → AI**, download the pinned Qwen3.5 2B SQL model (verified by SHA-256), or point to any local `.gguf`, with optional GPU layer offload (`gpu_layers`) and automatic CPU fallback. The project includes a sandbox-validated fine-tuning dataset and recipe that specialize the 2B model on scrobbl.rs SQL: see [Training the Ask SQL model](docs/ask-training.md).
 
 ### Own your data
 

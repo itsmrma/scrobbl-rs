@@ -95,7 +95,7 @@ Una successione di giorni consecutivi, secondo il calendario assegnato, con alme
 _Avoid_: Streak senza indicazione dell'entità ascoltata.
 
 **Ask (SQL locale)**:
-La funzionalità di interrogazione in linguaggio naturale basata esclusivamente su modelli GGUF locali (Qwen3.5 di default dal catalogo curato, oppure un altro file `.gguf` locale indicato dall'amministratore sul server). Il modello traduce la domanda in SQL di sola lettura sulla proiezione per Ask, eseguito dentro la sandbox SQL; la correttezza dipende dal modello, e la query resta visibile e modificabile.
+La funzionalità di interrogazione in linguaggio naturale basata esclusivamente su modelli GGUF locali (il singolo modello curato Qwen3.5 2B fine-tunato su SQL dal catalogo, oppure un altro file `.gguf` locale indicato dall'amministratore sul server, con offload GPU opzionale e fallback automatico a CPU). Il modello traduce la domanda in SQL di sola lettura sulla proiezione per Ask, eseguito dentro la sandbox SQL; la correttezza dipende dal modello, e la query resta visibile e modificabile.
 _Avoid_: Server MCP, Bring Your Own AI, server AI remoti, domande guidate DSL, azioni sull'interfaccia.
 
 **Proiezione per Ask**:

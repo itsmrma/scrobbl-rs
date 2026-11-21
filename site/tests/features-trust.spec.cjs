@@ -33,6 +33,8 @@ test("Ask panel states the privacy facts and its labels", async ({ page }) => {
   expect(text).toContain("never sees");
   expect(text).toContain("sandbox");
   expect(text).toContain("local gguf");
+  expect(text).toContain("qwen3.5 2b");
+  expect(text).toContain("gpu offload");
 });
 
 test("Curate shows a half-star rating with an accessible label", async ({ page }) => {
