@@ -1058,6 +1058,11 @@ mod tests {
             assert_eq!(backend, "unavailable");
             assert!(!gpu_offload_supported());
             assert_eq!(effective_gpu_layers(-1), 0);
+        } else if cfg!(feature = "metal") {
+            assert_eq!(backend, "metal");
+            assert!(gpu_offload_supported());
+            assert_eq!(effective_gpu_layers(-1), -1);
+            assert_eq!(effective_gpu_layers(16), 16);
         } else if cfg!(feature = "vulkan") {
             assert_eq!(backend, "vulkan");
             assert!(gpu_offload_supported());
