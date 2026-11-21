@@ -77,7 +77,10 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 
 ## Runtime feature
 
-`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`). Building with `--no-default-features` keeps settings and model management functional while reporting `runtime_available: false` on Ask endpoints.
+`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` in CPU-only mode (`default-features = false`, `GGML_OPENMP=OFF`). Building with `--no-default-features` keeps settings and model management functional while reporting `runtime_available: false` on Ask endpoints.
+
+- **macOS Apple Silicon (`metal` feature)**: Build with `--features metal` (or use the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` release archive, since Docker containers on macOS run inside a Linux VM without Metal passthrough). `compiled_backend()` reports `"metal"`, the catalog reports `llama.cpp (Metal)`, `gpu_layers = -1` (default) offloads all layers to Metal, `1..=256` offloads that layer count, and `0` (or any build without `--features metal`) forces `0` layers on GPU.
+- **Offline evaluation (`ask-eval`)**: Run `cargo run --locked --features metal --bin ask-eval -- --model <path.gguf> --gpu-layers -1` on macOS Apple Silicon to benchmark the curated Qwen3.5 2B SQL model or any custom `.gguf` on Metal.
 
 ## Licenses and attribution
 

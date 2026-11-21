@@ -797,6 +797,16 @@ mod llama {
         }
     }
 
+    pub(crate) fn model_params_for_gpu_layers(configured_gpu_layers: i32) -> LlamaModelParams {
+        let effective = crate::ai::effective_gpu_layers(configured_gpu_layers);
+        let params = LlamaModelParams::default();
+        if effective < 0 {
+            params
+        } else {
+            params.with_n_gpu_layers(u32::try_from(effective).unwrap_or(0))
+        }
+    }
+
     impl Engine for LlamaEngine {
         fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
             if !spec.path.is_file() {
@@ -809,32 +819,28 @@ mod llama {
             }
             let backend = LlamaBackend::init()
                 .map_err(|error| format!("Could not start the llama backend: {error}"))?;
-            let model_params = |gpu_layers: i32| {
-                let params = LlamaModelParams::default();
-                if gpu_layers < 0 {
-                    params
-                } else {
-                    params.with_n_gpu_layers(u32::try_from(gpu_layers).unwrap_or(0))
-                }
-            };
+            let effective_layers = crate::ai::effective_gpu_layers(spec.gpu_layers);
             let model = match LlamaModel::load_from_file(
                 &backend,
                 &spec.path,
-                &model_params(spec.gpu_layers),
+                &model_params_for_gpu_layers(effective_layers),
             ) {
                 Ok(model) => model,
-                Err(gpu_error) if spec.gpu_layers != 0 => {
+                Err(gpu_error) if effective_layers != 0 => {
                     eprintln!(
                         "ask runtime: GPU model load failed for '{}' (gpu_layers={}): {}; falling back to CPU-only (0 GPU layers)",
-                        spec.id, spec.gpu_layers, gpu_error
+                        spec.id, effective_layers, gpu_error
                     );
-                    LlamaModel::load_from_file(&backend, &spec.path, &model_params(0)).map_err(
-                        |cpu_error| {
-                            format!(
-                                "Could not load the model file: {gpu_error} (CPU fallback also failed: {cpu_error})"
-                            )
-                        },
-                    )?
+                    LlamaModel::load_from_file(
+                        &backend,
+                        &spec.path,
+                        &model_params_for_gpu_layers(0),
+                    )
+                    .map_err(|cpu_error| {
+                        format!(
+                            "Could not load the model file: {gpu_error} (CPU fallback also failed: {cpu_error})"
+                        )
+                    })?
                 }
                 Err(error) => return Err(format!("Could not load the model file: {error}")),
             };
@@ -1214,5 +1220,21 @@ mod tests {
             .unwrap();
         assert_eq!(third, "{}");
         assert_eq!(*seen.lock().unwrap(), vec![-1, 0, 16, 0]);
+    }
+
+    #[cfg(feature = "llama")]
+    #[test]
+    fn model_params_respect_compiled_gpu_feature_and_zero_override() {
+        let auto = super::llama::model_params_for_gpu_layers(-1);
+        let partial = super::llama::model_params_for_gpu_layers(16);
+        let cpu = super::llama::model_params_for_gpu_layers(0);
+        assert_eq!(cpu.n_gpu_layers(), 0);
+        if crate::ai::gpu_offload_supported() {
+            assert_ne!(auto.n_gpu_layers(), 0);
+            assert_eq!(partial.n_gpu_layers(), 16);
+        } else {
+            assert_eq!(auto.n_gpu_layers(), 0);
+            assert_eq!(partial.n_gpu_layers(), 0);
+        }
     }
 }

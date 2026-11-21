@@ -162,7 +162,7 @@
           </article>
           <article class="panel">
             <h3>Ask</h3>
-            <p>Optional and off by default. Ask questions in plain words: a local GGUF model writes read-only SQL against a sandboxed projection and never sees your archive rows. Use the curated SQL-tuned Qwen3.5 2B model or your own local <code>.gguf</code> model file, with optional GPU offload.</p>
+            <p>Optional and off by default. Ask questions in plain words: a local GGUF model writes read-only SQL against a sandboxed projection and never sees your archive rows. Use the curated SQL-tuned Qwen3.5 2B model or your own local <code>.gguf</code> model file, with optional GPU offload (Metal on macOS Apple Silicon or CPU fallback).</p>
             <div class="demo">
               <div class="q">Which album did I play most last winter?</div>
               <div class="answer"><strong>Northbound</strong><span class="muted">Ostrava &middot; 214 listens &middot; Dec&ndash;Feb</span></div>
@@ -245,7 +245,7 @@
           <div role="tabpanel" id="panel-source" aria-labelledby="tab-source" class="tabpanel" hidden>
             <pre class="code" data-code tabindex="0"><code><span class="line note"># Needs a stable Rust toolchain</span>
 <span class="line">./scripts/run-local.sh</span></code></pre>
-            <p class="muted">Then open <strong>http://127.0.0.1:3210</strong> and create the owner account. Keep the process running to collect listens.</p>
+            <p class="muted">Then open <strong>http://127.0.0.1:3210</strong> and create the owner account. On macOS Apple Silicon, build with <code>--features metal</code> or download <code>scrobbl-rs-macos-arm64-metal.tar.gz</code> from Releases for native Metal acceleration. Keep the process running to collect listens.</p>
           </div>
         </div>
       </div>

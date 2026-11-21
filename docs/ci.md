@@ -22,6 +22,7 @@ and requires a PR with **zero** additional approving reviews:
 | --- | --- |
 | `Backend (Linux)` | Locked build/tests, rustfmt, Clippy with warnings denied |
 | `Backend (Windows)` | The same suite, including process lock/crash recovery, temporary spool and linked SQLite |
+| `Metal (macOS arm64)` | Native Apple Silicon build with `--features metal`: frontend lint/build check, rustfmt, Clippy, tests, and `scrobbl-rs-macos-arm64-metal.tar.gz` (+ `.sha256`) release artifact |
 | `Browser (chromium)` | Locked npm install, TypeScript, Vite, committed assets, browser tests |
 | `Browser (firefox)` | The same frontend checks in Firefox |
 | `Browser (webkit)` | The same frontend checks in WebKit |

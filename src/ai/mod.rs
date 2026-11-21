@@ -42,8 +42,10 @@ pub fn runtime_available() -> bool {
 pub fn compiled_backend() -> &'static str {
     if !runtime_available() {
         "unavailable"
+    } else if cfg!(feature = "metal") {
+        "metal"
     } else {
-        // Tickets #253 / #254 will add `metal` and `vulkan` feature checks here.
+        // Ticket #254 will add the `vulkan` feature check here.
         "cpu"
     }
 }
