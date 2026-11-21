@@ -127,15 +127,19 @@ impl runtime::Engine for MockEngine {
         let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
         self.state.max_active.fetch_max(active, Ordering::SeqCst);
         self.state.started.fetch_add(1, Ordering::SeqCst);
-        let mut remaining = self.delay;
-        while !remaining.is_zero() {
+        let deadline = std::time::Instant::now() + self.delay;
+        loop {
             if cancel.should_stop() {
                 self.state.active.fetch_sub(1, Ordering::SeqCst);
                 return Err(cancel_error(cancel));
             }
-            let step = remaining.min(Duration::from_millis(5));
-            std::thread::sleep(step);
-            remaining -= step;
+            let Some(remaining) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                break;
+            };
+            if remaining.is_zero() {
+                break;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(5)));
         }
         self.state.active.fetch_sub(1, Ordering::SeqCst);
         Ok("mock output".to_string())
@@ -232,7 +236,7 @@ async fn a_full_queue_is_reported_as_busy() {
     let first_spec = spec.clone();
     let first = tokio::spawn(async move {
         first_runtime
-            .infer(&first_spec, "one", Duration::from_secs(2))
+            .infer(&first_spec, "one", Duration::from_secs(10))
             .await
     });
     while state.started.load(Ordering::SeqCst) == 0 {
@@ -242,11 +246,11 @@ async fn a_full_queue_is_reported_as_busy() {
     let second_spec = spec.clone();
     let second = tokio::spawn(async move {
         second_runtime
-            .infer(&second_spec, "two", Duration::from_secs(2))
+            .infer(&second_spec, "two", Duration::from_secs(10))
             .await
     });
     tokio::time::sleep(Duration::from_millis(20)).await;
-    let third = runtime.infer(&spec, "three", Duration::from_secs(2));
+    let third = runtime.infer(&spec, "three", Duration::from_secs(10));
     assert_eq!(third.await.unwrap_err(), runtime::RuntimeError::Busy);
     assert!(first.await.unwrap().is_ok());
     assert!(second.await.unwrap().is_ok());

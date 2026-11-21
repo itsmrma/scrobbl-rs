@@ -9,7 +9,7 @@ COPY scripts/lint-frontend.cjs ./scripts/lint-frontend.cjs
 COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
-FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
+FROM rust:1.99.1-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS build
 # cmake, clang, libclang-dev, python3, libvulkan-dev, glslc and spirv-headers
 # build the Vulkan-enabled llama.cpp runtime behind the `vulkan` Cargo feature.
 # `llama-cpp-2` still uses default-features = false, so OpenMP stays off.
@@ -33,7 +33,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     mkdir -p .cargo && cargo vendor --locked vendor > .cargo/config.toml
 RUN python3 scripts/package-distribution.py --revision "$VCS_REF" --features vulkan --output /distribution
 
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3376b179bc AS runtime
 # libstdc++6 is the C++ runtime linked by llama.cpp; libvulkan1 and
 # mesa-vulkan-drivers provide the Vulkan ICD loader and user-space drivers
 # (including software fallback when no physical GPU is attached).
