@@ -71,6 +71,52 @@ Measured locally on an 8-core desktop CPU (`--threads 8`, 2 warmup turns before 
 | `qwen3.5-9b-q4_k_m` (`gpu_future`) | 26 | not measured | not measured | not measured | — | — | — | — | — | — |
 | `qwen3.5-27b-q4_k_m` (`gpu_future`) | 26 | not measured | not measured | not measured | — | — | — | — | — | — |
 
+## Other ~2B model families (2026-11-19)
+
+Same corpus, prompt, grammar, 8 threads and machine (Ryzen 7 5700X, 8 cores),
+all `Q4_K_M` GGUF files with hashes verified against Hugging Face. Qwen3.5-2B was
+re-run in the same session as a control and reproduced the row above.
+
+| model | cases | correct | honest failure | wrong but plausible | EN | IT | p50 | p95 | TTFT p50 | TTFT p95 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `qwen3.5-2b-q4_k_m` (control) | 26 | 16 | 4 | 6 | 10/13 | 6/13 | 16724 ms | 68746 ms | 230 ms | 305 ms |
+| `gemma4-e2b-q4_k_m` | 26 | 15 | 1 | 10 | 7/13 | 8/13 | 17854 ms | 45769 ms | 418 ms | 499 ms |
+| `lfm3-1.7b-q4_k_m` | 26 | 12 | 4 | 10 | 7/13 | 5/13 | 9549 ms | 75803 ms | 213 ms | 289 ms |
+
+- No Qwen3.6 model near 2B exists (only 27B and 35B-A3B), so it was not measured.
+- Gemma 4 E2B has 4.65 B effective parameters (2.88 GiB), not 2 B.
+- Neither alternative beats Qwen3.5-2B, and both return more wrong but plausible
+  answers (10 vs 6). None closes the gap to Qwen3.5-4B (26/26).
+- `llama-cpp-2 0.1.161` (the pinned, latest crates.io release) cannot load LFM3
+  (`null result from llama cpp`). The LFM3 row was measured with a throwaway
+  build against `llama-cpp-rs` `main` (`0.1.162`, unreleased); the repository
+  was not changed.
+- LFM3 is published under the `lfm1.0` license, not Apache-2.0. Check it before
+  adding it to the curated catalog.
+
+## Engine speed: llama.cpp vs mistral.rs (2026-11-19)
+
+Raw engine throughput on the same GGUF files, CPU only, 8 threads, 512-token
+prompt, 128 generated tokens, 3 iterations. llama.cpp is `llama-bench` build
+`b12549`; mistral.rs is a CPU build of `master` (`fb4cdc3`) with default
+features. This measures the engine only: no GBNF grammar, no system-prefix
+cache, not the production `Session` path.
+
+| model | llama.cpp prefill | llama.cpp decode | mistral.rs prefill | mistral.rs decode |
+| --- | ---: | ---: | ---: | ---: |
+| Qwen3.5-2B | 338 t/s | 19.8 t/s | 201 t/s | 17.4 t/s |
+| Gemma 4 E2B | 626 t/s | 15.8 t/s | 566 t/s | 12.1 t/s |
+| LFM3-1.7B | 331 t/s | 26.2 t/s | 304 t/s | 21.6 t/s |
+
+- llama.cpp is faster on every model: about 1.7x on Qwen3.5 prefill, 9% to 14%
+  on the others, and 14% to 30% on decode. The published "up to 1.8x faster on
+  CPU" claim for mistral.rs did not reproduce on this hardware.
+- mistral.rs `v0.9.5` (release) cannot load the Gemma 4 text-only GGUF (it needs
+  the multimodal projector) nor LFM3. LFM3 only works on `master`.
+- Limiting mistral.rs to 8 threads (`RAYON_NUM_THREADS=8`) changed nothing;
+  llama.cpp with 16 threads reached 370 t/s prefill and 18.5 t/s decode on
+  Qwen3.5-2B.
+
 ## Reproducibility checks (model-free, run in CI)
 
 ```powershell
