@@ -43,7 +43,6 @@ import {
   Icon,
   number,
   SegmentedControl,
-  useMediaQuery,
   useTopbarCustomize,
 } from "./ui";
 import type { Style } from "./ui";
@@ -443,21 +442,6 @@ function PeriodFilters({
           </Select>
         </label>
       )}
-      {sort && (
-        <label className="period-order-filter">
-          Order
-          <Select
-            aria-label="Ranking order"
-            value={params.get("order") === "asc" ? "asc" : "desc"}
-            onChange={(value) =>
-              update({ order: value === "asc" ? value : "" })
-            }
-          >
-            <option value="desc">Most first</option>
-            <option value="asc">Least first</option>
-          </Select>
-        </label>
-      )}
     </div>
   );
 }
@@ -657,9 +641,13 @@ function RankingsPanel({
   const [draft, setDraft] = useState(params.get("q") || "");
   useEffect(() => setDraft(params.get("q") || ""), [search]);
   const pageKey = `${kind}_page`;
+  // Each panel keeps its own order, so albums and tracks on one page can differ.
+  const orderKey = `${kind}_order`;
+  const ascending = params.get(orderKey) === "asc";
   const query = new URLSearchParams(params);
   // A collage always shows the most listened items, whatever the list order.
-  if (collage) query.delete("order");
+  if (ascending && !collage) query.set("order", "asc");
+  else query.delete("order");
   query.set(
     "page",
     scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
@@ -775,6 +763,20 @@ function RankingsPanel({
                 : []),
             ]}
           />
+          {!collage && (
+            <div className="ranking-order">
+              <Select
+                aria-label={`Order ${kind}`}
+                value={ascending ? "asc" : "desc"}
+                onChange={(value) =>
+                  update({ [orderKey]: value === "asc" ? value : "" })
+                }
+              >
+                <option value="desc">Most first</option>
+                <option value="asc">Least first</option>
+              </Select>
+            </div>
+          )}
           {!collage && list.view === "grid" && (
             <div
               className="card-size-control"
@@ -2672,22 +2674,12 @@ export function Overview({
 }) {
   const selection = useSelection(visible, preferences.initial_period),
     { params } = selection;
-  const editButtonRef = useRef<HTMLButtonElement>(null);
   const topbarEditButtonRef = useRef<HTMLButtonElement>(null);
-  const compact = useMediaQuery("(max-width: 600px)");
   const setTopbarCustomize = useTopbarCustomize();
 
   const focusEditButton = () => {
-    const target = compact
-      ? topbarEditButtonRef.current
-      : editButtonRef.current;
-    target?.focus();
-    requestAnimationFrame(() => {
-      const currentTarget = compact
-        ? topbarEditButtonRef.current
-        : editButtonRef.current;
-      currentTarget?.focus();
-    });
+    topbarEditButtonRef.current?.focus();
+    requestAnimationFrame(() => topbarEditButtonRef.current?.focus());
   };
 
   const layoutEditor = useLayoutEditor({
@@ -2702,10 +2694,7 @@ export function Overview({
   startOverviewEdit.current = layoutEditor.handleStartEditing;
 
   useEffect(() => {
-    if (!compact || !visible) {
-      if (visible) setTopbarCustomize(null);
-      return;
-    }
+    if (!visible) return;
     setTopbarCustomize({
       ariaLabel: "Customize",
       controls: "dashboard-grid",
@@ -2714,13 +2703,7 @@ export function Overview({
       buttonRef: topbarEditButtonRef,
       onClick: () => startOverviewEdit.current(),
     });
-  }, [
-    compact,
-    visible,
-    layoutEditor.editing,
-    layoutEditor.saving,
-    setTopbarCustomize,
-  ]);
+  }, [visible, layoutEditor.editing, layoutEditor.saving, setTopbarCustomize]);
 
   useEffect(
     () => () => setTopbarCustomize(null),
@@ -2898,19 +2881,6 @@ export function Overview({
         </Heading>
         <div className="overview-heading-actions">
           <PeriodFilters selection={selection} />
-          {!compact && (
-            <button
-              ref={editButtonRef}
-              aria-pressed={layoutEditor.editing}
-              aria-controls="dashboard-grid"
-              type="button"
-              className="button secondary"
-              disabled={layoutEditor.saving}
-              onClick={layoutEditor.handleStartEditing}
-            >
-              <Icon>tune</Icon> Customize
-            </button>
-          )}
         </div>
       </div>
 
@@ -3864,9 +3834,7 @@ export function MusicPage({
     }
   };
 
-  const compact = useMediaQuery("(max-width: 600px)");
   const setTopbarCustomize = useTopbarCustomize();
-  const musicCustomizeRef = useRef<HTMLButtonElement>(null);
   const topbarMusicCustomizeRef = useRef<HTMLButtonElement>(null);
 
   const customizeAriaLabel =
@@ -3880,7 +3848,7 @@ export function MusicPage({
   startMusicEdit.current = layoutEditor.handleStartEditing;
 
   useEffect(() => {
-    if (!compact || !result.data || layoutEditor.editing) {
+    if (!result.data || layoutEditor.editing) {
       setTopbarCustomize(null);
       return;
     }
@@ -3890,7 +3858,6 @@ export function MusicPage({
       onClick: () => startMusicEdit.current(),
     });
   }, [
-    compact,
     result.data,
     layoutEditor.editing,
     customizeAriaLabel,
@@ -3898,18 +3865,6 @@ export function MusicPage({
   ]);
 
   useEffect(() => () => setTopbarCustomize(null), [setTopbarCustomize]);
-
-  const customizeButton = !compact && !layoutEditor.editing && (
-    <button
-      ref={musicCustomizeRef}
-      type="button"
-      className="btn btn-secondary button secondary customize-template-button"
-      aria-label={customizeAriaLabel}
-      onClick={() => layoutEditor.handleStartEditing()}
-    >
-      <Icon>tune</Icon> Customize
-    </button>
-  );
 
   return (
     <>
@@ -3970,7 +3925,6 @@ export function MusicPage({
             </div>
             {isPreview ? (
               <div className="music-toolbar">
-                <div className="music-actions">{customizeButton}</div>
                 <div className="music-period">
                   <PeriodFilters selection={selection} />
                 </div>
@@ -3986,27 +3940,24 @@ export function MusicPage({
                 }
               >
                 {!layoutEditor.editing && (
-                  <>
-                    <button
-                      type="button"
-                      className="btn btn-secondary button secondary change-artwork-button"
-                      onClick={() => setPickerOpen(true)}
-                      aria-label={
-                        kind === "tracks"
-                          ? "Change release artwork"
-                          : "Change artwork"
-                      }
-                    >
-                      <Icon>photo_library</Icon>
-                      <span className="label-long">
-                        {kind === "tracks"
-                          ? "Change release artwork"
-                          : "Change artwork"}
-                      </span>
-                      <span className="label-short">Artwork</span>
-                    </button>
-                    {customizeButton}
-                  </>
+                  <button
+                    type="button"
+                    className="btn btn-secondary button secondary change-artwork-button"
+                    onClick={() => setPickerOpen(true)}
+                    aria-label={
+                      kind === "tracks"
+                        ? "Change release artwork"
+                        : "Change artwork"
+                    }
+                  >
+                    <Icon>photo_library</Icon>
+                    <span className="label-long">
+                      {kind === "tracks"
+                        ? "Change release artwork"
+                        : "Change artwork"}
+                    </span>
+                    <span className="label-short">Artwork</span>
+                  </button>
                 )}
               </MusicActions>
             )}

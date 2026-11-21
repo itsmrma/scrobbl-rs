@@ -34,7 +34,6 @@ import {
   number,
   Toasts,
   TopbarCustomizeContext,
-  useMediaQuery,
   Wordmark,
 } from "./ui";
 import type { Style, TopbarCustomizeAction } from "./ui";
@@ -80,7 +79,6 @@ function Shell({
   const [mobile, setMobile] = useState(
     () => matchMedia("(max-width: 900px)").matches,
   );
-  const compact = useMediaQuery("(max-width: 600px)");
   const [topbarCustomize, setTopbarCustomize] =
     useState<TopbarCustomizeAction | null>(null);
   const sidebar = useRef<HTMLElement>(null);
@@ -500,12 +498,13 @@ function Shell({
                   error={jobsError}
                   loading={jobsLoading}
                 />
-                {compact && topbarCustomize && (
+                {topbarCustomize && (
                   <button
                     ref={topbarCustomize.buttonRef}
                     type="button"
                     className="btn btn-icon icon-button topbar-customize-button"
                     aria-label={topbarCustomize.ariaLabel}
+                    title={topbarCustomize.ariaLabel}
                     aria-controls={topbarCustomize.controls}
                     aria-pressed={topbarCustomize.pressed}
                     disabled={topbarCustomize.disabled}
