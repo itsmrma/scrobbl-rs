@@ -133,22 +133,21 @@ fn qwen(
     }
 }
 
-/// The single curated Ask model. Every Ask prompt, grammar and evaluation is
-/// tuned for Qwen3.5 2B, so the catalog no longer offers lighter or larger
-/// tiers; a different `.gguf` (for example the SQL fine-tune described in
-/// `docs/ask-training.md`) can still be loaded as a custom local model.
+/// The single curated Ask model: Qwen3.5 2B fine-tuned on scrobbl.rs SQL
+/// (`docs/ask-training.md`). Every Ask prompt, grammar and evaluation is tuned
+/// for Qwen3.5 2B; another `.gguf` can still be loaded as a custom local model.
 static BASE: LazyLock<Vec<CatalogModel>> = LazyLock::new(|| {
     vec![qwen(
         "qwen3.5-2b-q4_k_m",
-        "Qwen3.5 2B",
+        "Qwen3.5 2B (Ask SQL)",
         "default",
         "available",
-        "Local CPU model for Ask SQL generation: a good balance between response speed and read-only SQLite query quality.",
-        "unsloth/Qwen3.5-2B-GGUF",
-        "f6d5376be1edb4d416d56da11e5397a961aca8ae",
-        "Qwen3.5-2B-Q4_K_M.gguf",
-        "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
-        1_280_835_840,
+        "Local CPU model fine-tuned on scrobbl.rs Ask SQL generation: translates English and Italian questions into read-only SQLite queries.",
+        "itsmrma/scrobbl-ask-qwen3.5-2b-sql-GGUF",
+        "aa1c44ceda918948cb6f376cf0d05df7a2a3037e",
+        "scrobbl-ask-qwen3.5-2b-sql-Q4_K_M.gguf",
+        "a62c87f95a0b721bf1ddc6f7bdb5ada18fbe4fe5e33698ed8720b106cfefe50f",
+        1_274_396_512,
         3 * GIB,
         4 * GIB,
         4,

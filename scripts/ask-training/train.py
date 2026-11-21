@@ -87,13 +87,17 @@ def main() -> None:
         max_seq_length=args.max_seq_length,
     )
 
-    longest = max(len(tokenizer(r["prompt"] + r["completion"])["input_ids"]) for r in train_rows[:200])
+    # Qwen3.5 is multimodal: Unsloth returns a processor whose first positional
+    # argument is an image. Text-only work goes through its inner tokenizer.
+    text_tokenizer = getattr(tokenizer, "tokenizer", tokenizer)
+
+    longest = max(len(text_tokenizer(text=r["prompt"] + r["completion"])["input_ids"]) for r in train_rows[:200])
     if longest > args.max_seq_length:
         raise SystemExit(f"examples reach {longest} tokens; raise --max-seq-length")
 
     trainer = SFTTrainer(
         model=model,
-        processing_class=tokenizer,
+        processing_class=text_tokenizer,
         train_dataset=Dataset.from_list(train_rows),
         eval_dataset=Dataset.from_list(eval_rows),
         args=SFTConfig(
@@ -105,7 +109,7 @@ def main() -> None:
             num_train_epochs=args.epochs,
             learning_rate=args.lr,
             lr_scheduler_type="cosine",
-            warmup_ratio=0.03,
+            warmup_steps=0.03,  # transformers>=5: a float below 1 is a ratio of total steps
             weight_decay=0.01,
             optim="adamw_8bit",
             logging_steps=10,

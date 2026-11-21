@@ -276,7 +276,7 @@ test("AI settings expose local SQL Qwen3.5 catalog and custom local GGUF path wi
 
   // Qwen3.5 catalog defaults and custom GGUF field load first.
   await expect(
-    page.getByRole("heading", { name: "Qwen3.5 2B", exact: true }),
+    page.getByRole("heading", { name: "Qwen3.5 2B (Ask SQL)", exact: true }),
   ).toBeVisible();
   const customInput = page.getByLabel("Custom local model path (.gguf)");
   await expect(customInput).toBeVisible();

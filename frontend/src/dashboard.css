@@ -554,9 +554,35 @@
 }
 
 /* Long ranking lists scroll inside their card so a short neighbour never
-   stretches into a tall empty panel. Pagination stays visible below. */
+   stretches into a tall empty panel. The cap sits on the whole card, not on
+   the list: side-by-side cards with toolbars of different heights still end
+   on the same line, and the list fills whatever the toolbar leaves, which
+   keeps pagination on the bottom edge. */
+.dashboard-widget > .ranking-panel {
+  max-height: 720px;
+}
+
+.dashboard-widget > .ranking-panel:has(.collage) {
+  max-height: none;
+}
+
+/* A collage card is taller than the cap. Beside it, a ranking list stops
+   adding its own content height (basis 0) and fills the stretched card, so
+   both cards still end on the same line. */
+.dashboard-grid:has(.collage) .ranking-panel:not(:has(.collage)) {
+  max-height: none;
+}
+
+.dashboard-grid:has(.collage)
+  .ranking-panel:not(:has(.collage))
+  .ranking-results {
+  flex: 1 1 0;
+  min-height: 420px;
+}
+
 .dashboard-widget .ranking-results {
-  max-height: 420px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -1572,12 +1598,4 @@
 .widget-period-override-control button.select-trigger > span:first-child {
   line-height: 1.5;
   padding-block: 2px;
-}
-
-/* Phones: Period and Rank by share the first row; Order takes the next one. */
-@media (max-width: 600px) {
-  .overview-heading-actions .filters > .period-order-filter,
-  .music-period .filters > .period-order-filter {
-    grid-column: 1 / -1;
-  }
 }
