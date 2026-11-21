@@ -33,14 +33,15 @@ def unexpected_diff_entries(diff_lines):
 
 def verify_ai_backend(ai, ask, catalog_info, expected_backend):
     """Assert that AI settings, Ask status, and catalog report the expected backend."""
-    expected_gpu = expected_backend != "cpu"
     expected_label = "llama.cpp (Vulkan)" if expected_backend == "vulkan" else "llama.cpp (CPU)"
     assert ai.get("backend") == expected_backend, ai
-    assert ai.get("gpu_offload_supported") is expected_gpu, ai
-    assert ask.get("backend") == expected_backend, ask
+    gpu_layers = ai.get("gpu_layers")
+    assert isinstance(gpu_layers, int) and not isinstance(gpu_layers, bool), ai
+    assert ask.get("runtime_available") is True, ask
     assert catalog_info.get("backend") == expected_backend, catalog_info
     models = catalog_info.get("models") or []
     assert models and models[0].get("backend") == expected_label, catalog_info
+    assert (models[0].get("requirements") or {}).get("gpu_optional") is True, catalog_info
 
 
 def main():

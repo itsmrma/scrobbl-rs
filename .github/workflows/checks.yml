@@ -171,7 +171,7 @@ jobs:
         run: |
           mkdir -p .cargo
           cargo vendor --locked vendor > .cargo/config.toml
-          python3 scripts/package-distribution.py --target aarch64-apple-darwin --revision "${{ github.sha }}" --output dist-meta
+          python3 scripts/package-distribution.py --target aarch64-apple-darwin --revision "${{ github.sha }}" --features metal --output dist-meta
           mkdir -p stage/scrobbl-rs-macos-arm64-metal
           cp target/release/scrobbl-rs stage/scrobbl-rs-macos-arm64-metal/scrobbl-rs
           cp dist-meta/LICENSE dist-meta/THIRD_PARTY_NOTICES.md dist-meta/distribution.json stage/scrobbl-rs-macos-arm64-metal/

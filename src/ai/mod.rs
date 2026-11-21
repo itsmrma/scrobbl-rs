@@ -444,6 +444,8 @@ pub struct AiSelection {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiTestResult {
     pub runtime_available: bool,
+    pub backend: String,
+    pub gpu_layers: i32,
     pub model_loaded: bool,
     pub model_ready: bool,
     pub message: String,
@@ -999,9 +1001,13 @@ pub async fn model_test(
     auth::require_write(&state, &headers).await?;
     let stored = read_settings(&state).await?;
     let runtime = runtime_available();
+    let backend = compiled_backend().to_string();
+    let gpu_layers = stored.gpu_layers;
     if !runtime {
         return Ok(Json(AiTestResult {
             runtime_available: false,
+            backend,
+            gpu_layers,
             model_loaded: false,
             model_ready: false,
             message:
@@ -1012,6 +1018,8 @@ pub async fn model_test(
     match resolve_local_model_path(&state.storage.directory, &stored)? {
         Ok((_id, _path)) => Ok(Json(AiTestResult {
             runtime_available: true,
+            backend,
+            gpu_layers,
             model_loaded: false,
             model_ready: true,
             message: if stored.custom_model_path.is_some() {
@@ -1024,6 +1032,8 @@ pub async fn model_test(
         })),
         Err(message) => Ok(Json(AiTestResult {
             runtime_available: true,
+            backend,
+            gpu_layers,
             model_loaded: false,
             model_ready: false,
             message,

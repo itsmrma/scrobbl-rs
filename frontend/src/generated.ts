@@ -100,4 +100,4 @@ export type AiDownloadStarted = { job_id: string, };
 export type AiDeleteRequest = { confirm: boolean, force: boolean, };
 export type AiDeleteResult = { id: string, freed_bytes: number, };
 export type AiSelection = { active_model: string, };
-export type AiTestResult = { runtime_available: boolean, model_loaded: boolean, model_ready: boolean, message: string, };
+export type AiTestResult = { runtime_available: boolean, backend: string, gpu_layers: number, model_loaded: boolean, model_ready: boolean, message: string, };
