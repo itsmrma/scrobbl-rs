@@ -74,6 +74,7 @@ test("Docker panel follows the Docker guide and links to it", async ({ page }) =
     await expect(panel).toContainText(v);
   }
   await expect(panel).toContainText(/sha-FULL_COMMIT/);
+  await expect(panel).toContainText(/:vulkan/);
   await expect(panel).toContainText(/pin/i);
   await expect(panel).not.toContainText(":main");
   await expect(install.getByRole("link", { name: /full (Docker )?guide/i })).toHaveAttribute(

@@ -61,3 +61,24 @@ class VerifyDockerDiffTests(unittest.TestCase):
                 "A /root/.cache",
             ],
         )
+
+
+class VerifyAiBackendTests(unittest.TestCase):
+    def test_vulkan_backend_payload_passes(self):
+        ai = {"backend": "vulkan", "gpu_offload_supported": True}
+        ask = {"backend": "vulkan"}
+        catalog = {
+            "backend": "vulkan",
+            "models": [{"id": "qwen3.5-2b-q4_k_m", "backend": "llama.cpp (Vulkan)"}],
+        }
+        verify_docker.verify_ai_backend(ai, ask, catalog, "vulkan")
+
+    def test_mismatched_backend_payload_raises(self):
+        ai = {"backend": "cpu", "gpu_offload_supported": False}
+        ask = {"backend": "cpu"}
+        catalog = {
+            "backend": "cpu",
+            "models": [{"id": "qwen3.5-2b-q4_k_m", "backend": "llama.cpp (CPU)"}],
+        }
+        with self.assertRaises(AssertionError):
+            verify_docker.verify_ai_backend(ai, ask, catalog, "vulkan")

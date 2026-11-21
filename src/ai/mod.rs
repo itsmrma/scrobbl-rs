@@ -42,8 +42,9 @@ pub fn runtime_available() -> bool {
 pub fn compiled_backend() -> &'static str {
     if !runtime_available() {
         "unavailable"
+    } else if cfg!(feature = "vulkan") {
+        "vulkan"
     } else {
-        // Tickets #253 / #254 will add `metal` and `vulkan` feature checks here.
         "cpu"
     }
 }
@@ -1042,4 +1043,28 @@ pub async fn worker(state: AppState) {
         download::worker(state.clone()),
         crate::ask::projection::worker(state),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compiled_backend_and_gpu_offload_match_enabled_features() {
+        let backend = compiled_backend();
+        if !cfg!(feature = "llama") {
+            assert_eq!(backend, "unavailable");
+            assert!(!gpu_offload_supported());
+            assert_eq!(effective_gpu_layers(-1), 0);
+        } else if cfg!(feature = "vulkan") {
+            assert_eq!(backend, "vulkan");
+            assert!(gpu_offload_supported());
+            assert_eq!(effective_gpu_layers(-1), -1);
+            assert_eq!(effective_gpu_layers(16), 16);
+        } else {
+            assert_eq!(backend, "cpu");
+            assert!(!gpu_offload_supported());
+            assert_eq!(effective_gpu_layers(-1), 0);
+        }
+    }
 }

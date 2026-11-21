@@ -75,9 +75,13 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 
 `POST /api/v1/ai/models/{id}/download` enqueues the durable job `kind = "model_download"`, visible in Activities. The job refuses to start without enough free disk space (`model_disk_full`), supports `Range` resume into `<file>.part`, verifies byte size and SHA-256 (`model_checksum_mismatch` on failure), and promotes `<file>` + `metadata.json` atomically.
 
-## Runtime feature
+## Runtime features (CPU, Vulkan, Metal)
 
-`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`). Building with `--no-default-features` keeps settings and model management functional while reporting `runtime_available: false` on Ask endpoints.
+`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`).
+
+- **Vulkan (Linux / Windows)**: compile with `cargo build --release --features vulkan` (or use the `:vulkan` Docker image built from `Dockerfile.vulkan`). On Linux, install `libvulkan-dev` and `glslc` (plus `libvulkan1` / `mesa-vulkan-drivers` at runtime); on Windows, install the LunarG Vulkan SDK (`glslc` on `PATH`). `compiled_backend()` reports `"vulkan"` and the curated Qwen3.5 2B SQL model or any custom `.gguf` offloads layers to GPU according to `gpu_layers` (with automatic CPU fallback if no Vulkan device is available).
+- **Metal (macOS Apple Silicon)**: native macOS builds enable Metal acceleration.
+- **No runtime (`--no-default-features`)**: keeps settings and model management functional while reporting `runtime_available: false` (`compiled_backend() == "unavailable"`) on Ask endpoints.
 
 ## Licenses and attribution
 
