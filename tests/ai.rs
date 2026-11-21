@@ -1111,5 +1111,10 @@ async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
         assert_eq!(reloaded["gpu_layers"], valid);
         let reloaded_catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
         assert_eq!(reloaded_catalog["gpu_layers"], valid);
+
+        let (test_status, test_result) = post(&state, &token, "/api/v1/ai/test", json!({})).await;
+        assert_eq!(test_status, StatusCode::OK, "{valid}: {test_result}");
+        assert_eq!(test_result["backend"], expected_backend);
+        assert_eq!(test_result["gpu_layers"], valid);
     }
 }
