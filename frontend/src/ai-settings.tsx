@@ -33,6 +33,13 @@ const STATUS_LABELS: Record<string, string> = {
   unverified: "Unverified",
 };
 
+const BACKEND_LABELS: Record<string, string> = {
+  cpu: "Backend: CPU",
+  metal: "Backend: Metal",
+  vulkan: "Backend: Vulkan",
+  unavailable: "Backend: unavailable",
+};
+
 const DOWNLOAD_ERRORS: Record<string, string> = {
   model_disk_full:
     "Not enough free disk space. Free space on the server and retry the download.",
@@ -236,6 +243,18 @@ function ModelCard({
           </dd>
         </div>
         <div>
+          <dt>Backend</dt>
+          <dd>{model.backend}</dd>
+        </div>
+        <div>
+          <dt>GPU offload</dt>
+          <dd>
+            {model.requirements.gpu_optional
+              ? "Supported when available"
+              : "CPU only"}
+          </dd>
+        </div>
+        <div>
           <dt>License</dt>
           <dd>
             {(() => {
@@ -311,6 +330,8 @@ export function AiSettingsSection() {
   const [active, setActive] = useState("");
   const [customModelPath, setCustomModelPath] = useState("");
   const [threads, setThreads] = useState("4");
+  const [gpuMode, setGpuMode] = useState<"auto" | "cpu" | "custom">("auto");
+  const [customGpuLayers, setCustomGpuLayers] = useState("16");
   const [unload, setUnload] = useState("15");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -326,6 +347,14 @@ export function AiSettingsSection() {
     setActive(next.active_model ?? "");
     setCustomModelPath(next.custom_model_path ?? "");
     setThreads(String(next.threads));
+    if (next.gpu_layers === -1) {
+      setGpuMode("auto");
+    } else if (next.gpu_layers === 0) {
+      setGpuMode("cpu");
+    } else {
+      setGpuMode("custom");
+      setCustomGpuLayers(String(next.gpu_layers));
+    }
     setUnload(String(next.unload_minutes));
   }
 
@@ -378,11 +407,18 @@ export function AiSettingsSection() {
     setError("");
     setNotice("");
     try {
+      const gpuLayers =
+        gpuMode === "auto"
+          ? -1
+          : gpuMode === "cpu"
+            ? 0
+            : Number(customGpuLayers);
       const next = await api.saveAiSettings({
         enabled,
         active_model: active || null,
         custom_model_path: customModelPath.trim() || null,
         threads: Number(threads),
+        gpu_layers: gpuLayers,
         unload_minutes: Number(unload),
         model_dir: settings?.model_dir ?? null,
       });
@@ -456,11 +492,17 @@ export function AiSettingsSection() {
       <article className="panel padded">
         <div className="panel-title">
           <h2>AI</h2>
-          <span className="ai-badge">
-            {settings.runtime_available
-              ? "Runtime available"
-              : "Runtime not in this build"}
-          </span>
+          <div className="ai-badges">
+            <span className="ai-badge">
+              {lookupRecord(BACKEND_LABELS, settings.backend) ??
+                settings.backend}
+            </span>
+            <span className="ai-badge">
+              {settings.runtime_available
+                ? "Runtime available"
+                : "Runtime not in this build"}
+            </span>
+          </div>
         </div>
         <p>
           Ask questions in natural language about your listening archive. A
@@ -734,6 +776,51 @@ export function AiSettingsSection() {
               inputMode="numeric"
             />
           </label>
+          <label>
+            GPU offload
+            <Select
+              aria-label="GPU offload"
+              value={gpuMode}
+              onChange={(value) => {
+                if (value === "auto" || value === "cpu" || value === "custom") {
+                  setGpuMode(value);
+                }
+              }}
+            >
+              <option value="auto">Automatic (all layers on GPU)</option>
+              <option value="cpu">CPU only (disable GPU offload)</option>
+              <option value="custom">Custom layer count (1–256)</option>
+            </Select>
+          </label>
+          {gpuMode === "custom" && (
+            <label>
+              Custom GPU layers
+              <input
+                type="number"
+                min={1}
+                max={256}
+                value={customGpuLayers}
+                onChange={(event) => setCustomGpuLayers(event.target.value)}
+                inputMode="numeric"
+              />
+            </label>
+          )}
+          {settings.backend === "cpu" ? (
+            <p className="field-hint">
+              This instance was built for CPU-only execution. GPU offload
+              settings are saved, but inference currently runs on CPU; GPU
+              offload requires the Vulkan container image or the native macOS
+              Metal build.
+            </p>
+          ) : (
+            (settings.backend === "metal" || settings.backend === "vulkan") && (
+              <p className="field-hint">
+                If GPU loading fails at runtime (e.g. insufficient VRAM or
+                missing driver), Ask automatically falls back to CPU-only
+                execution.
+              </p>
+            )
+          )}
           <label>
             Unload after inactivity (minutes)
             <input

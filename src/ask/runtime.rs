@@ -27,6 +27,7 @@ pub struct ModelSpec {
     pub id: String,
     pub path: PathBuf,
     pub threads: u32,
+    pub gpu_layers: i32,
     pub unload_minutes: u32,
     /// Idle delay before the model is dropped. Adapters use
     /// `unload_minutes * 60`; tests use a short duration.
@@ -44,9 +45,15 @@ impl ModelSpec {
             id: id.into(),
             path: path.into(),
             threads,
+            gpu_layers: crate::ai::DEFAULT_GPU_LAYERS,
             unload_minutes,
             idle: Duration::from_secs(u64::from(unload_minutes.max(1)) * 60),
         }
+    }
+
+    pub fn with_gpu_layers(mut self, gpu_layers: i32) -> Self {
+        self.gpu_layers = gpu_layers;
+        self
     }
 
     pub fn with_idle(mut self, idle: Duration) -> Self {
@@ -55,7 +62,10 @@ impl ModelSpec {
     }
 
     fn same_model(&self, other: &Self) -> bool {
-        self.id == other.id && self.path == other.path && self.threads == other.threads
+        self.id == other.id
+            && self.path == other.path
+            && self.threads == other.threads
+            && self.gpu_layers == other.gpu_layers
     }
 }
 
@@ -444,7 +454,26 @@ fn worker(
                 state.loaded_model = None;
                 state.last_error = None;
             }
-            match engine.load(&spec) {
+            let load_result = match engine.load(&spec) {
+                Ok(()) => Ok(()),
+                Err(gpu_error) if spec.gpu_layers != 0 => {
+                    eprintln!(
+                        "ask runtime: GPU model load failed for '{}' (gpu_layers={}): {}; falling back to CPU-only (0 GPU layers)",
+                        spec.id, spec.gpu_layers, gpu_error
+                    );
+                    let mut cpu_spec = spec.clone();
+                    cpu_spec.gpu_layers = 0;
+                    engine.load(&cpu_spec).map_err(|cpu_error| {
+                        if cpu_error == gpu_error {
+                            cpu_error
+                        } else {
+                            format!("{gpu_error} (CPU fallback also failed: {cpu_error})")
+                        }
+                    })
+                }
+                Err(error) => Err(error),
+            };
+            match load_result {
                 Ok(()) => {
                     loaded = Some(spec.clone());
                     let mut state = lock(&state);
@@ -768,6 +797,16 @@ mod llama {
         }
     }
 
+    pub(crate) fn model_params_for_gpu_layers(configured_gpu_layers: i32) -> LlamaModelParams {
+        let effective = crate::ai::effective_gpu_layers(configured_gpu_layers);
+        let params = LlamaModelParams::default();
+        if effective < 0 {
+            params.with_n_gpu_layers(u32::MAX)
+        } else {
+            params.with_n_gpu_layers(u32::try_from(effective).unwrap_or(0))
+        }
+    }
+
     impl Engine for LlamaEngine {
         fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
             if !spec.path.is_file() {
@@ -780,9 +819,12 @@ mod llama {
             }
             let backend = LlamaBackend::init()
                 .map_err(|error| format!("Could not start the llama backend: {error}"))?;
-            let model =
-                LlamaModel::load_from_file(&backend, &spec.path, &LlamaModelParams::default())
-                    .map_err(|error| format!("Could not load the model file: {error}"))?;
+            let model = LlamaModel::load_from_file(
+                &backend,
+                &spec.path,
+                &model_params_for_gpu_layers(spec.gpu_layers),
+            )
+            .map_err(|error| format!("Could not load the model file: {error}"))?;
             self.backend = Some(backend);
             self.model = Some(model);
             self.threads = spec.threads.clamp(1, 64);
@@ -912,15 +954,19 @@ mod tests {
             let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.state.max_active.fetch_max(active, Ordering::SeqCst);
             self.state.started.fetch_add(1, Ordering::SeqCst);
-            let mut remaining = self.delay;
-            while !remaining.is_zero() {
+            let deadline = Instant::now() + self.delay;
+            loop {
                 if cancel.should_stop() {
                     self.state.active.fetch_sub(1, Ordering::SeqCst);
                     return Err(cancel.error());
                 }
-                let step = remaining.min(Duration::from_millis(5));
-                thread::sleep(step);
-                remaining -= step;
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    break;
+                };
+                if remaining.is_zero() {
+                    break;
+                }
+                thread::sleep(remaining.min(Duration::from_millis(5)));
             }
             self.state.active.fetch_sub(1, Ordering::SeqCst);
             Ok("{}".to_string())
@@ -1015,7 +1061,7 @@ mod tests {
         let first_spec = spec.clone();
         let first = tokio::spawn(async move {
             first_runtime
-                .infer(&first_spec, "one", Duration::from_secs(2))
+                .infer(&first_spec, "one", Duration::from_secs(10))
                 .await
         });
         while state.started.load(Ordering::SeqCst) == 0 {
@@ -1025,11 +1071,11 @@ mod tests {
         let second_spec = spec.clone();
         let second = tokio::spawn(async move {
             second_runtime
-                .infer(&second_spec, "two", Duration::from_secs(2))
+                .infer(&second_spec, "two", Duration::from_secs(10))
                 .await
         });
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let third = runtime.infer(&spec, "three", Duration::from_secs(2));
+        let third = runtime.infer(&spec, "three", Duration::from_secs(10));
         assert_eq!(third.await.unwrap_err(), RuntimeError::Busy);
         assert_eq!(first.await.unwrap().unwrap(), "{}");
         assert_eq!(second.await.unwrap().unwrap(), "{}");
@@ -1101,5 +1147,79 @@ mod tests {
         );
         assert!(state.resets.load(Ordering::SeqCst) > 0);
         assert_eq!(state.active.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn gpu_load_failure_falls_back_to_cpu_and_completes_inference() {
+        struct GpuFallbackEngine {
+            seen_gpu_layers: Arc<Mutex<Vec<i32>>>,
+        }
+        impl Engine for GpuFallbackEngine {
+            fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
+                self.seen_gpu_layers.lock().unwrap().push(spec.gpu_layers);
+                if spec.gpu_layers != 0 {
+                    Err("no GPU device available".into())
+                } else {
+                    Ok(())
+                }
+            }
+            fn unload(&mut self) {}
+            fn generate(
+                &mut self,
+                _prompt: &str,
+                _cancel: &CancelToken,
+            ) -> Result<String, InferenceError> {
+                Ok("{}".to_string())
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let runtime = Runtime::spawn(
+            Box::new(GpuFallbackEngine {
+                seen_gpu_layers: seen.clone(),
+            }),
+            4,
+        );
+        let gpu_spec = spec(Duration::from_secs(10)).with_gpu_layers(-1);
+        let first = runtime
+            .infer(&gpu_spec, "one", Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(first, "{}");
+        assert_eq!(*seen.lock().unwrap(), vec![-1, 0]);
+
+        // Subsequent inference with the same spec must reuse the fallen-back model
+        // without retrying the failing GPU load.
+        let second = runtime
+            .infer(&gpu_spec, "two", Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(second, "{}");
+        assert_eq!(*seen.lock().unwrap(), vec![-1, 0]);
+
+        // Changing gpu_layers reloads the model.
+        let partial_spec = spec(Duration::from_secs(10)).with_gpu_layers(16);
+        let third = runtime
+            .infer(&partial_spec, "three", Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(third, "{}");
+        assert_eq!(*seen.lock().unwrap(), vec![-1, 0, 16, 0]);
+    }
+
+    #[cfg(feature = "llama")]
+    #[test]
+    fn model_params_respect_compiled_gpu_feature_and_zero_override() {
+        let auto = super::llama::model_params_for_gpu_layers(-1);
+        let partial = super::llama::model_params_for_gpu_layers(16);
+        let cpu = super::llama::model_params_for_gpu_layers(0);
+        assert_eq!(cpu.n_gpu_layers(), 0);
+        if crate::ai::gpu_offload_supported() {
+            assert_eq!(auto.n_gpu_layers(), i32::MAX);
+            assert_eq!(partial.n_gpu_layers(), 16);
+        } else {
+            assert_eq!(auto.n_gpu_layers(), 0);
+            assert_eq!(partial.n_gpu_layers(), 0);
+        }
     }
 }

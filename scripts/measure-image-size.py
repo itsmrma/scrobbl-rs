@@ -108,7 +108,7 @@ def distribution_bytes(reference: str, path_in_image: str) -> int:
     return int(output.split()[0])
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", help="official image reference to measure")
     parser.add_argument(
@@ -137,7 +137,12 @@ def main() -> int:
         type=Path,
         help="write the measurement and budget verdict as JSON",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="measure and report sizes without failing on budget thresholds (used for :vulkan)",
+    )
+    args = parser.parse_args(argv)
 
     if args.image is None and args.binary is None:
         parser.error("pass --image, --binary, or both")
@@ -186,7 +191,7 @@ def main() -> int:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
-    return 0 if result["ok"] else 1
+    return 0 if (result["ok"] or args.report_only) else 1
 
 
 if __name__ == "__main__":

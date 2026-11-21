@@ -18,6 +18,8 @@ Dalla cartella del progetto:
 ./scripts/run-local.sh
 ```
 
+Su **macOS Apple Silicon**, per abilitare l'accelerazione GPU nativa **Metal** per Ask, avvia con `--features metal` (`cargo run --locked --features metal`) oppure scarica il pacchetto precompilato `scrobbl-rs-macos-arm64-metal.tar.gz` dalle GitHub Release (i container Docker su macOS girano in una VM Linux priva di accesso a Metal).
+
 Apri **http://127.0.0.1:3210**. Crea uno username del proprietario e una password unica di almeno 8 caratteri, con una lettera, un numero e un carattere speciale, senza sequenze o ripetizioni e diversa dallo username.
 Le installazioni già configurate chiedono di scegliere lo username dopo l’accesso con la password esistente.
 Non serve Docker. Il processo Rust deve restare avviato per raccogliere gli ascolti; puoi chiudere

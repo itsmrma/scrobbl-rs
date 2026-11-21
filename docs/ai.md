@@ -25,6 +25,7 @@ Settings live in the archive `settings` table and are written through the archiv
 | `ai_active_model` | `""` | catalog id (or custom model folder id) selected for questions |
 | `ai_custom_model_path` | `""` | optional path to a local `.gguf` file (absolute path or relative to `ai_model_dir`); overrides `ai_active_model` when set |
 | `ai_threads` | `"4"` | inference thread count (`1–64`) |
+| `ai_gpu_layers` | `"-1"` | GPU offload layers (`-1` = automatic/all layers, `0` = CPU-only, `1–256` = custom layer count; forced to `0` on CPU-only builds, with automatic CPU fallback if GPU load fails at runtime) |
 | `ai_unload_minutes` | `"15"` | idle unload delay (`1–1440` minutes) |
 | `ai_model_dir` | `""` | optional absolute model folder; empty means `<data_dir>/models` |
 
@@ -74,9 +75,14 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 
 `POST /api/v1/ai/models/{id}/download` enqueues the durable job `kind = "model_download"`, visible in Activities. The job refuses to start without enough free disk space (`model_disk_full`), supports `Range` resume into `<file>.part`, verifies byte size and SHA-256 (`model_checksum_mismatch` on failure), and promotes `<file>` + `metadata.json` atomically.
 
-## Runtime feature
+## Runtime features (CPU, Vulkan, Metal)
 
-`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`). Building with `--no-default-features` keeps settings and model management functional while reporting `runtime_available: false` on Ask endpoints.
+`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`).
+
+- **Vulkan (Linux / Windows)**: compile with `cargo build --release --features vulkan` (or use the `:vulkan` Docker image built from `Dockerfile.vulkan`). On Linux, install `libvulkan-dev` and `glslc` (plus `libvulkan1` / `mesa-vulkan-drivers` at runtime); on Windows, install the LunarG Vulkan SDK (`glslc` on `PATH`). `compiled_backend()` reports `"vulkan"` and the curated Qwen3.5 2B SQL model or any custom `.gguf` offloads layers to GPU according to `gpu_layers` (with automatic CPU fallback if no Vulkan device is available).
+- **Metal (macOS Apple Silicon)**: build with `--features metal` (or use the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` release archive, since Docker containers on macOS run inside a Linux VM without Metal passthrough). `compiled_backend()` reports `"metal"`, the catalog reports `llama.cpp (Metal)`, `gpu_layers = -1` (default) offloads all layers to Metal, `1..=256` offloads that layer count, and `0` (or any build without `--features metal`) forces `0` layers on GPU.
+- **Offline evaluation (`ask-eval`)**: run `cargo run --locked --features metal --bin ask-eval -- --model <path.gguf> --gpu-layers -1` on macOS Apple Silicon (or `--features vulkan` on Linux/Windows) to benchmark the curated Qwen3.5 2B SQL model or any custom `.gguf` on GPU.
+- **No runtime (`--no-default-features`)**: keeps settings and model management functional while reporting `runtime_available: false` (`compiled_backend() == "unavailable"`) on Ask endpoints.
 
 ## Licenses and attribution
 
@@ -102,9 +108,9 @@ Remove-Item Env:SCROBBL_TEST_MODEL
 
 ## API summary
 
-- `GET /api/v1/ai/settings` — owner session; current local settings (`enabled`, `active_model`, `custom_model_path`, `threads`, `unload_minutes`, `model_dir`).
-- `POST /api/v1/ai/settings` — owner + CSRF; validates `threads`, `unload_minutes`, `model_dir`, `active_model`, and `custom_model_path` (`.gguf` regular file), deletes any legacy deprecated keys, and unloads any loaded session if selection changes.
-- `GET /api/v1/ai/catalog` — curated Qwen3.5 catalog merged with local installed/custom GGUF entries and download job progress.
+- `GET /api/v1/ai/settings` — owner session; current local settings (`enabled`, `active_model`, `custom_model_path`, `threads`, `gpu_layers`, `backend`, `unload_minutes`, `model_dir`).
+- `POST /api/v1/ai/settings` — owner + CSRF; validates `threads`, `gpu_layers` (`-1..=256`), `unload_minutes`, `model_dir`, `active_model`, and `custom_model_path` (`.gguf` regular file), deletes any legacy deprecated keys, and unloads any loaded session if selection or `gpu_layers` changes.
+- `GET /api/v1/ai/catalog` — curated Qwen3.5 2B SQL catalog (`gpu_optional: true`, dynamic compiled `backend`) merged with local installed/custom GGUF entries, `gpu_layers`, and download job progress.
 - `POST /api/v1/ai/models/{id}/download` — requires AI enabled; catalog models only.
 - `POST /api/v1/ai/models/{id}/cancel` — cancels active download job.
 - `DELETE /api/v1/ai/models/{id}` — body `{ "confirm": true, "force": bool }`.

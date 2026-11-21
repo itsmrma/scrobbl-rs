@@ -233,7 +233,7 @@ pub async fn freeze(store: &Storage, path: &Path) -> anyhow::Result<()> {
     storage::sync_file(path)?;
     Ok(())
 }
-const LOCAL_ONLY_AI_SETTINGS_SQL: &str = "DELETE FROM settings WHERE key IN ('ai_remote_key','ai_remote_url','ai_remote_model','ai_provider','ai_answer_mode_local','ai_answer_mode_remote','ai_model_dir','ai_custom_model_path','ai_enabled')";
+const LOCAL_ONLY_AI_SETTINGS_SQL: &str = "DELETE FROM settings WHERE key IN ('ai_remote_key','ai_remote_url','ai_remote_model','ai_provider','ai_answer_mode_local','ai_answer_mode_remote','ai_model_dir','ai_custom_model_path','ai_enabled','ai_gpu_layers')";
 
 async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<(Manifest, Vec<(String, i64)>)> {
     let mut conn = connect(snapshot, false).await?;

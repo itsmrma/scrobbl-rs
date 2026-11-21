@@ -3,7 +3,7 @@
 The published image runs on **linux/amd64** (x86-64), including Linux hosts and
 Docker Desktop using Linux containers. The same Dockerfile also builds for
 **linux/arm64**, but only the amd64 image is smoke-tested and published today;
-see [Architectures and the CPU-only AI runtime](#architectures-and-the-cpu-only-ai-runtime).
+see [Architectures and AI runtime variants](#architectures-and-ai-runtime-variants).
 The image contains the Rust executable, embedded React interface, source bundle
 and notices. Node and Rust are not needed on the host. Use Docker Compose or
 paste the same service configuration into a Docker stack manager. No particular
@@ -44,30 +44,41 @@ The image works with either bind mounts or named volumes; the supplied Compose
 uses a bind mount to make the data location explicit. For a named volume, replace
 that mount with `scrobbl-data:/data` and declare `volumes: {scrobbl-data: {}}`.
 
-## Architectures and the CPU-only AI runtime
+## Architectures and AI runtime variants
 
-| Platform | Built by CI | Smoke-tested | Published |
+| Artifact / Platform | Built by CI | Smoke-tested | Published |
 | --- | --- | --- | --- |
-| `linux/amd64` | Every application change (required PR check) | Yes, `scripts/verify-docker.py` | Yes, from trusted `main`/`v*` pushes |
-| `linux/arm64` | Pushes to `main` and `v*` tags (buildx on native `ubuntu-24.04-arm`, `load: false`) | Build only | Not yet |
+| `linux/amd64` (CPU-only, default `Dockerfile`) | Every application change (required PR check) | Yes, `scripts/verify-docker.py` | Yes, `:main`, `:v*`, `:sha-<commit>` |
+| `linux/amd64` (`:vulkan`, `Dockerfile.vulkan`) | Every application change (required PR check) | Yes, `scripts/verify-docker.py --backend vulkan` | Yes, `:vulkan`, `:v*-vulkan`, `:sha-<commit>-vulkan` |
+| `linux/arm64` (CPU-only) | Pushes to `main` and `v*` tags (`ubuntu-24.04-arm`, `load: false`) | Build only | Not yet |
+| macOS Apple Silicon (Metal) | Native macOS CI build (`--features metal`) | Native binary | Release archive (`scrobbl-rs-macos-arm64-metal.tar.gz`) |
 
-The arm64 job builds the same Dockerfile and catches architecture-specific
+The arm64 job builds the same CPU-only Dockerfile and catches architecture-specific
 compiler or llama.cpp failures. It is intentionally skipped on pull requests to
 keep the required amd64 check fast. Publishing still consumes only the tested
-amd64 image tar from the same run: combining it with a second, untested arm64
+amd64 image tars from the same run: combining them with an untested arm64
 build would publish bytes that no smoke test exercised, so a multi-arch manifest
 is deferred until the workflow can build and test both platforms before
 publication. Treat arm64 as a build-regression signal, not a release artifact:
 an arm64 build failure is visible but does not block publication of the
-smoke-tested amd64 image.
+smoke-tested amd64 images.
 
-Both builds compile the local inference runtime behind the default `llama`
-feature. It is **CPU-only**: `llama-cpp-2` is pinned and built with
-`default-features = false`, so OpenMP (`GGML_OPENMP=OFF`) and `libgomp1` are not
-used, and CUDA/Metal/Vulkan/BLAS are not built. The builder installs `cmake`,
-`clang`, `libclang-dev` and `python3`; the runtime stage installs `libstdc++6`
-(the linked C++ runtime) and `ca-certificates`. No weights, GPU toolchain or
-model files are present in either image.
+- **Default CPU-only image (`Dockerfile`)**: compiles the local inference runtime behind the default `llama` feature. `llama-cpp-2` is pinned and built with `default-features = false`, so OpenMP (`GGML_OPENMP=OFF`) and `libgomp1` are not used, and CUDA/Metal/Vulkan/BLAS are not built. The builder installs `cmake`, `clang`, `libclang-dev` and `python3`; the runtime stage installs `libstdc++6` and `ca-certificates`. Ideal for NAS and headless servers without a GPU.
+- **Vulkan GPU image (`Dockerfile.vulkan`, `:vulkan` tags)**: compiles with `--features vulkan` (using `libvulkan-dev` and `glslc` at build time) and installs `libvulkan1` plus `mesa-vulkan-drivers` in the runtime layer. Supports AMD, Intel, and NVIDIA GPUs via Vulkan, and automatically falls back to CPU if no physical GPU device is exposed. Includes the full matching source and notices bundle in `/usr/share/scrobbl-rs`.
+- **macOS Apple Silicon**: Docker Desktop on macOS runs a Linux VM without Apple Metal passthrough; use the native Metal build instead.
+
+### GPU passthrough in Docker Compose (`:vulkan`)
+
+To offload Qwen3.5 2B (or a custom `.gguf`) layers to an AMD or Intel GPU on Linux, set `SCROBBL_IMAGE` to the `:vulkan` tag and pass `/dev/dri` to the container in a Compose override (for example `compose.override.yaml`):
+
+```yaml
+services:
+  scrobbl:
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+On hosts where `/dev/dri` is owned by a `render` or `video` group, add that numeric GID via `group_add` in the override while keeping `user: "10001:10001"` and `read_only: true`. If no GPU device is attached, Ask automatically falls back to CPU inference.
 
 ## AI model storage and read-only root filesystem
 
@@ -266,8 +277,11 @@ tests are separate evidence and do not establish these live results.
 
 ## Distribution budget
 
-The image stays single and CPU-only; model weights are downloaded later and do
-not count against the image. The release profile strips symbols (LTO is not
+The default image stays CPU-only and within the 30 MiB budget; model weights are
+downloaded later and do not count against the image. The `:vulkan` image adds
+user-space Vulkan/Mesa runtime packages (`libvulkan1`, `mesa-vulkan-drivers`) and
+is measured with `--report-only` in CI for transparency without failing on the
+CPU-only 30 MiB threshold. The release profile strips symbols (LTO is not
 enabled: the measured binary is already below the limit and LTO would add link
 time to every release and CI build for no measured need).
 

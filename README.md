@@ -55,7 +55,7 @@ Inspired by [Maloja](https://github.com/krateng/maloja). This is a personal pass
 
 Ask answers questions such as *"Who did I listen to most on my phone last month?"* or *"Quanto ho saltato Ado nel 2025?"*. A **local Qwen3.5 2B** model translates the question into one read-only SQL query. scrobbl.rs runs that query in a strict [SQL sandbox](docs/ask-projection.md) over a separate projection of your archive. Nothing leaves the server. The model never sees your listens, only the schema. Every answer shows its SQL, which you can edit and run again.
 
-AI is off by default. Enable it in **Settings → AI**, download the pinned model (verified by SHA-256), or point to any local `.gguf`. The project includes a sandbox-validated fine-tuning dataset and recipe that specialize the 2B model on scrobbl.rs SQL: see [Training the Ask SQL model](docs/ask-training.md).
+AI is off by default. Enable it in **Settings → AI**, download the pinned Qwen3.5 2B SQL model (verified by SHA-256), or point to any local `.gguf`, with optional GPU layer offload (`gpu_layers`) and automatic CPU fallback. The project includes a sandbox-validated fine-tuning dataset and recipe that specialize the 2B model on scrobbl.rs SQL: see [Training the Ask SQL model](docs/ask-training.md).
 
 ### Own your data
 
@@ -67,7 +67,7 @@ AI is off by default. Enable it in **Settings → AI**, download the pinned mode
 
 ### Docker (server)
 
-Use an image published by the **Docker** workflow and follow the [Docker installation guide](docs/docker.md):
+Use an image published by the **Docker** workflow and follow the [Docker installation guide](docs/docker.md) (use `:sha-FULL_COMMIT` for CPU-only, or `:sha-FULL_COMMIT-vulkan` / `:vulkan` with `/dev/dri` passthrough for Linux/Windows GPU acceleration):
 
 ```sh
 SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:sha-FULL_COMMIT docker compose up -d
@@ -77,11 +77,13 @@ Then follow the [Spotify setup guide](docs/spotify-setup.md). It covers the priv
 
 ### From source (local)
 
-Install a stable [Rust toolchain](https://rustup.rs/) (1.94 or later) and your system's native build tools (Xcode Command Line Tools on macOS). Then run:
+Install a stable [Rust toolchain](https://rustup.rs/) (1.94 or later) and your system's native build tools (Xcode Command Line Tools on macOS; Vulkan SDK / `libvulkan-dev` + `glslc` if building with `--features vulkan`). Then run:
 
 ```sh
 ./scripts/run-local.sh      # or: cargo run --locked
 ```
+
+On **macOS Apple Silicon**, Docker Desktop runs containers inside a Linux VM without access to Apple Metal. For native Metal GPU acceleration in Ask, either build from source with `--features metal` (`cargo run --locked --features metal`) or download the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` archive from GitHub Releases.
 
 Open **http://127.0.0.1:3210**, create the owner account, and connect Spotify or import your history from **Import history**. The service binds only to `127.0.0.1`; use that exact address instead of `localhost`. An [Italian local setup guide](docs/local-setup.it.md) is also available.
 
