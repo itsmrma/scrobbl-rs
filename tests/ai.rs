@@ -298,7 +298,7 @@ async fn catalog_exposes_only_qwen_2b_with_requirements_license_and_size() {
             .starts_with("https://")
     );
     assert_eq!(default["download"]["sha256"].as_str().unwrap().len(), 64);
-    assert_eq!(default["download"]["size_bytes"], 1_280_835_840_u64);
+    assert_eq!(default["download"]["size_bytes"], 1_274_396_512_u64);
     assert_eq!(default["requirements"]["context_tokens"], 8192);
     assert!(default["requirements"]["ram_min_bytes"].as_u64().unwrap() > 0);
     assert!(

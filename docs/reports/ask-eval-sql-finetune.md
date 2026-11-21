@@ -57,7 +57,7 @@ From [Training the Ask SQL model](../ask-training.md#4-acceptance-gate):
 | 3. p95 latency within 10% of base | `9024 ms` vs `21788 ms` (`-58.6%`) | **Pass** |
 | 4. `tests/ask_runtime.rs` (`--ignored`) passes | `real_model_answers_three_supported_questions` passed | **Pass** |
 
-Because criterion 1 requires strictly more correct answers in **both** English and Italian, `src/ai/catalog.rs` is left pinned to base `qwen3.5-2b-q4_k_m` for now, and the GGUF is not promoted as the default catalog download yet. To clear the gate in the next training iteration, add English template coverage / paraphrases for:
+Even though English tied (`10/13` vs `10/13`) rather than strictly exceeding base, the owner elected to publish this v1 fine-tune at [`itsmrma/scrobbl-ask-qwen3.5-2b-sql-GGUF`](https://huggingface.co/itsmrma/scrobbl-ask-qwen3.5-2b-sql-GGUF) (revision `aa1c44ceda918948cb6f376cf0d05df7a2a3037e`) and pin it in `src/ai/catalog.rs` given the `22/26` vs `15/26` overall improvement, `12/13` vs `5/13` Italian jump, and `6/6` unsupported refusal rate. For a future v2 (or Qwen4 follow-up), add English template coverage / paraphrases for:
 
 1. Total `SUM(listened_ms)` on counted plays with known duration (`sql-en-002`, where it returned `COUNT` instead of `SUM`).
 2. `MIN(local_date)` vs `MIN(played_at_local)` for "When did I first listen to ..." (`sql-en-004` / `sql-it-004`).

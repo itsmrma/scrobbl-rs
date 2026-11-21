@@ -32,15 +32,15 @@ Enabling AI does not download anything. Saving a custom path or switching the ac
 
 `GET /api/v1/ask/status` reports `enabled`, `active_model`, `custom_model_path`, `runtime_available`, `model_ready` and `model_loading`. `model_ready` reflects verified filesystem readiness for the selected model; `model_loading` comes from the live inference worker and is true only while a load is in progress.
 
-## Curated catalog (Qwen3.5 2B)
+## Curated catalog (Qwen3.5 2B Ask SQL)
 
-The curated catalog is compiled into the binary (`src/ai/catalog.rs`) and holds a single model: every Ask prompt, grammar and evaluation is tuned for Qwen3.5 2B. A download URL is derived from the pinned repository, revision and file; clients never supply a URL for catalog downloads. Weights are verified by exact byte size and SHA-256 against the Hugging Face LFS object ids.
+The curated catalog is compiled into the binary (`src/ai/catalog.rs`) and holds a single model: Qwen3.5 2B fine-tuned on scrobbl.rs Ask SQL ([Training the Ask SQL model](ask-training.md)). A download URL is derived from the pinned repository, revision and file; clients never supply a URL for catalog downloads. Weights are verified by exact byte size and SHA-256 against the Hugging Face LFS object ids.
 
 | id | repo | revision | file | bytes | SHA-256 |
 | --- | --- | --- | --- | ---: | --- |
-| `qwen3.5-2b-q4_k_m` | `unsloth/Qwen3.5-2B-GGUF` | `f6d5376be1edb4d416d56da11e5397a961aca8ae` | `Qwen3.5-2B-Q4_K_M.gguf` | 1,280,835,840 | `aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223` |
+| `qwen3.5-2b-q4_k_m` | `itsmrma/scrobbl-ask-qwen3.5-2b-sql-GGUF` | `aa1c44ceda918948cb6f376cf0d05df7a2a3037e` | `scrobbl-ask-qwen3.5-2b-sql-Q4_K_M.gguf` | 1,274,396,512 | `a62c87f95a0b721bf1ddc6f7bdb5ada18fbe4fe5e33698ed8720b106cfefe50f` |
 
-Earlier releases also listed 0.8B, 4B, 9B and 27B. Files of those models already downloaded stay listed under installed models, where they can be deleted. [Training the Ask SQL model](ask-training.md) describes how the 2B entry will be replaced by a version fine-tuned on scrobbl.rs SQL.
+Earlier releases listed base `unsloth/Qwen3.5-2B-GGUF` (`0.8B`, `2B`, `4B`, `9B`, `27B`). Files of those models already downloaded stay listed under installed models, where they can be deleted.
 
 The model runs SQL generation with an **8192-token** context window and up to **1024** generated tokens (`src/ask/runtime.rs`).
 
