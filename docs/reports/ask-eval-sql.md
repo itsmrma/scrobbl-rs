@@ -130,6 +130,7 @@ and no network access.
 
 ## Related documents
 
+- [Ask SQL fine-tune evaluation report](ask-eval-sql-finetune.md)
 - [Local AI settings and custom `.gguf` models](../ai.md)
 - [Ask projection and SQL sandbox](../ask-projection.md)
 - [Ask eval corpus format](../../evals/ask/README.md)
