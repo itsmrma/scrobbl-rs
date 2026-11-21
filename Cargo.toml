@@ -12,6 +12,7 @@ license = "GPL-3.0-or-later"
 default = ["llama"]
 llama = ["dep:llama-cpp-2"]
 metal = ["llama", "llama-cpp-2/metal"]
+vulkan = ["llama", "llama-cpp-2/vulkan"]
 
 # Offline parser evaluation. Never built or run by the normal test suite; the
 # model is passed by path and nothing is downloaded.

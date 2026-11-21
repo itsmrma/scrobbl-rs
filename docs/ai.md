@@ -75,12 +75,14 @@ Catalog `metadata.json` is written atomically after SHA-256 verification succeed
 
 `POST /api/v1/ai/models/{id}/download` enqueues the durable job `kind = "model_download"`, visible in Activities. The job refuses to start without enough free disk space (`model_disk_full`), supports `Range` resume into `<file>.part`, verifies byte size and SHA-256 (`model_checksum_mismatch` on failure), and promotes `<file>` + `metadata.json` atomically.
 
-## Runtime feature
+## Runtime features (CPU, Vulkan, Metal)
 
-`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` in CPU-only mode (`default-features = false`, `GGML_OPENMP=OFF`). Building with `--no-default-features` keeps settings and model management functional while reporting `runtime_available: false` on Ask endpoints.
+`src/ai/mod.rs::runtime_available()` returns `cfg!(feature = "llama")`. The default `llama` feature compiles `llama-cpp-2` (CPU-only, `default-features = false`, `GGML_OPENMP=OFF`).
 
-- **macOS Apple Silicon (`metal` feature)**: Build with `--features metal` (or use the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` release archive, since Docker containers on macOS run inside a Linux VM without Metal passthrough). `compiled_backend()` reports `"metal"`, the catalog reports `llama.cpp (Metal)`, `gpu_layers = -1` (default) offloads all layers to Metal, `1..=256` offloads that layer count, and `0` (or any build without `--features metal`) forces `0` layers on GPU.
-- **Offline evaluation (`ask-eval`)**: Run `cargo run --locked --features metal --bin ask-eval -- --model <path.gguf> --gpu-layers -1` on macOS Apple Silicon to benchmark the curated Qwen3.5 2B SQL model or any custom `.gguf` on Metal.
+- **Vulkan (Linux / Windows)**: compile with `cargo build --release --features vulkan` (or use the `:vulkan` Docker image built from `Dockerfile.vulkan`). On Linux, install `libvulkan-dev` and `glslc` (plus `libvulkan1` / `mesa-vulkan-drivers` at runtime); on Windows, install the LunarG Vulkan SDK (`glslc` on `PATH`). `compiled_backend()` reports `"vulkan"` and the curated Qwen3.5 2B SQL model or any custom `.gguf` offloads layers to GPU according to `gpu_layers` (with automatic CPU fallback if no Vulkan device is available).
+- **Metal (macOS Apple Silicon)**: build with `--features metal` (or use the prebuilt `scrobbl-rs-macos-arm64-metal.tar.gz` release archive, since Docker containers on macOS run inside a Linux VM without Metal passthrough). `compiled_backend()` reports `"metal"`, the catalog reports `llama.cpp (Metal)`, `gpu_layers = -1` (default) offloads all layers to Metal, `1..=256` offloads that layer count, and `0` (or any build without `--features metal`) forces `0` layers on GPU.
+- **Offline evaluation (`ask-eval`)**: run `cargo run --locked --features metal --bin ask-eval -- --model <path.gguf> --gpu-layers -1` on macOS Apple Silicon (or `--features vulkan` on Linux/Windows) to benchmark the curated Qwen3.5 2B SQL model or any custom `.gguf` on GPU.
+- **No runtime (`--no-default-features`)**: keeps settings and model management functional while reporting `runtime_available: false` (`compiled_backend() == "unavailable"`) on Ask endpoints.
 
 ## Licenses and attribution
 

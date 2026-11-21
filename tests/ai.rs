@@ -1040,6 +1040,8 @@ async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
         "unavailable"
     } else if cfg!(feature = "metal") {
         "metal"
+    } else if cfg!(feature = "vulkan") {
+        "vulkan"
     } else {
         "cpu"
     };
@@ -1062,6 +1064,8 @@ async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
         assert_eq!(qwen["backend"], "llama.cpp (unavailable)");
     } else if cfg!(feature = "metal") {
         assert_eq!(qwen["backend"], "llama.cpp (Metal)");
+    } else if cfg!(feature = "vulkan") {
+        assert_eq!(qwen["backend"], "llama.cpp (Vulkan)");
     } else {
         assert_eq!(qwen["backend"], "llama.cpp (CPU)");
     }
