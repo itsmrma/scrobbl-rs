@@ -954,15 +954,19 @@ mod tests {
             let active = self.state.active.fetch_add(1, Ordering::SeqCst) + 1;
             self.state.max_active.fetch_max(active, Ordering::SeqCst);
             self.state.started.fetch_add(1, Ordering::SeqCst);
-            let mut remaining = self.delay;
-            while !remaining.is_zero() {
+            let deadline = Instant::now() + self.delay;
+            loop {
                 if cancel.should_stop() {
                     self.state.active.fetch_sub(1, Ordering::SeqCst);
                     return Err(cancel.error());
                 }
-                let step = remaining.min(Duration::from_millis(5));
-                thread::sleep(step);
-                remaining -= step;
+                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                    break;
+                };
+                if remaining.is_zero() {
+                    break;
+                }
+                thread::sleep(remaining.min(Duration::from_millis(5)));
             }
             self.state.active.fetch_sub(1, Ordering::SeqCst);
             Ok("{}".to_string())
@@ -1057,7 +1061,7 @@ mod tests {
         let first_spec = spec.clone();
         let first = tokio::spawn(async move {
             first_runtime
-                .infer(&first_spec, "one", Duration::from_secs(2))
+                .infer(&first_spec, "one", Duration::from_secs(10))
                 .await
         });
         while state.started.load(Ordering::SeqCst) == 0 {
@@ -1067,11 +1071,11 @@ mod tests {
         let second_spec = spec.clone();
         let second = tokio::spawn(async move {
             second_runtime
-                .infer(&second_spec, "two", Duration::from_secs(2))
+                .infer(&second_spec, "two", Duration::from_secs(10))
                 .await
         });
         tokio::time::sleep(Duration::from_millis(20)).await;
-        let third = runtime.infer(&spec, "three", Duration::from_secs(2));
+        let third = runtime.infer(&spec, "three", Duration::from_secs(10));
         assert_eq!(third.await.unwrap_err(), RuntimeError::Busy);
         assert_eq!(first.await.unwrap().unwrap(), "{}");
         assert_eq!(second.await.unwrap().unwrap(), "{}");

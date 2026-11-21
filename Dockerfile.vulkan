@@ -10,11 +10,11 @@ COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
 FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
-# cmake, clang, libclang-dev, python3, libvulkan-dev and glslc build the
-# Vulkan-enabled llama.cpp runtime behind the `vulkan` Cargo feature.
+# cmake, clang, libclang-dev, python3, libvulkan-dev, glslc and spirv-headers
+# build the Vulkan-enabled llama.cpp runtime behind the `vulkan` Cargo feature.
 # `llama-cpp-2` still uses default-features = false, so OpenMP stays off.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 cmake clang libclang-dev libvulkan-dev glslc \
+        python3 cmake clang libclang-dev libvulkan-dev glslc spirv-headers \
     && rm -rf /var/lib/apt/lists/* && rustup component add rust-docs
 WORKDIR /work
 COPY . .
