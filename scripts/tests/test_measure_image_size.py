@@ -82,6 +82,16 @@ class EvaluateTests(unittest.TestCase):
                 binary_bytes=None,
             )
 
+    def test_report_only_returns_zero_even_when_over_budget(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile() as binary:
+            binary.write(b"\0" * (31 * MIB))
+            binary.flush()
+            self.assertEqual(
+                budget.main(["--binary", binary.name, "--report-only"]),
+                0,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

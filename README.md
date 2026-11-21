@@ -67,7 +67,7 @@ AI is off by default. Enable it in **Settings → AI**, download the pinned Qwen
 
 ### Docker (server)
 
-Use an image published by the **Docker** workflow and follow the [Docker installation guide](docs/docker.md):
+Use an image published by the **Docker** workflow and follow the [Docker installation guide](docs/docker.md) (use `:sha-FULL_COMMIT` for CPU-only, or `:sha-FULL_COMMIT-vulkan` / `:vulkan` with `/dev/dri` passthrough for Linux/Windows GPU acceleration):
 
 ```sh
 SCROBBL_IMAGE=ghcr.io/itsmrma/scrobbl-rs:sha-FULL_COMMIT docker compose up -d
@@ -77,7 +77,7 @@ Then follow the [Spotify setup guide](docs/spotify-setup.md). It covers the priv
 
 ### From source (local)
 
-Install a stable [Rust toolchain](https://rustup.rs/) (1.94 or later) and your system's native build tools (Xcode Command Line Tools on macOS). Then run:
+Install a stable [Rust toolchain](https://rustup.rs/) (1.94 or later) and your system's native build tools (Xcode Command Line Tools on macOS; Vulkan SDK / `libvulkan-dev` + `glslc` if building with `--features vulkan`). Then run:
 
 ```sh
 ./scripts/run-local.sh      # or: cargo run --locked

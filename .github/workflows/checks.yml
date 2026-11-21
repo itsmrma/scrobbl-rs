@@ -312,28 +312,39 @@ jobs:
       contents: read
       packages: write
     steps:
-      # No repository/PR code runs here. Download only this trusted run's image.
+      # No repository/PR code runs here. Download only this trusted run's images.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: tested-image-${{ github.sha }}
-      - run: docker load --input tested-image.tar
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: tested-image-vulkan-${{ github.sha }}
+      - run: |
+          docker load --input tested-image.tar
+          docker load --input tested-image-vulkan.tar
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Publish the exact image that passed the smoke test
+      - name: Publish the exact images that passed the smoke test
         env:
           IMAGE: ghcr.io/${{ github.repository }}
         run: |
           docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:sha-$GITHUB_SHA"
           docker push "$IMAGE:sha-$GITHUB_SHA"
+          docker tag "scrobbl-ci:$GITHUB_SHA-vulkan" "$IMAGE:sha-$GITHUB_SHA-vulkan"
+          docker push "$IMAGE:sha-$GITHUB_SHA-vulkan"
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:$GITHUB_REF_NAME"
             docker push "$IMAGE:$GITHUB_REF_NAME"
+            docker tag "scrobbl-ci:$GITHUB_SHA-vulkan" "$IMAGE:$GITHUB_REF_NAME-vulkan"
+            docker push "$IMAGE:$GITHUB_REF_NAME-vulkan"
           else
             docker tag "scrobbl-ci:$GITHUB_SHA" "$IMAGE:main"
             docker push "$IMAGE:main"
+            docker tag "scrobbl-ci:$GITHUB_SHA-vulkan" "$IMAGE:vulkan"
+            docker push "$IMAGE:vulkan"
           fi
 
   release-sources:

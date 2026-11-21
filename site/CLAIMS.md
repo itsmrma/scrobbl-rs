@@ -32,7 +32,7 @@ no software behaviour beyond the claim listed next to them.
 | Ask | Optional and off by default | `docs/ai.md` Activation and privacy ("AI is optional and off by default") |
 | Ask | The model never sees archive rows | `docs/ai.md` ("The model never sees archive rows") |
 | Ask | Local GGUF model writes read-only SQL executed in a sandbox | `docs/ai.md` ("local GGUF models that translate questions into read-only SQL over a sandboxed projection") |
-| Ask | Curated SQL-tuned Qwen3.5 2B or custom local GGUF path with optional GPU offload | `docs/ai.md` (single curated Qwen3.5 2B SQL model or custom `.gguf` model file path, `gpu_layers`) |
+| Ask | Curated SQL-tuned Qwen3.5 2B or custom local GGUF path with optional GPU offload | `docs/ai.md`, `docs/docker.md` (single curated Qwen3.5 2B SQL model or custom `.gguf` model file path, `gpu_layers`, CPU-only default image, `:vulkan` container image, native Metal on macOS) |
 | Ask | Example question and answer | Demo data; "Ask questions in plain words" per `docs/ai.md` |
 | Keep | Export JSON or CSV | `README.md` What you can do |
 | Keep | Portable backups | `README.md` What you can do; `docs/recovery.md` |

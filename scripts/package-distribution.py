@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOTS = (
     "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "LICENSE",
     "REUSE.toml", "README.md", "THIRD_PARTY_NOTICES.md", "GLOSSARY.md", "AGENTS.md",
-    "Dockerfile", ".dockerignore", "compose.yaml", ".env.example", ".gitignore",
+    "Dockerfile", "Dockerfile.vulkan", ".dockerignore", "compose.yaml", ".env.example", ".gitignore",
     "vite.config.mts", "playwright.config.cjs", "frontend", "static", "src",
     "migrations", "release-migrations", "private-migrations", "tests", "scripts",
     "docs", "evals", ".github", ".cargo", "vendor", "node_modules",
@@ -62,14 +62,16 @@ def main():
     parser.add_argument("--output", type=Path, default=default_output)
     parser.add_argument("--target", default="x86_64-unknown-linux-gnu")
     parser.add_argument("--revision", required=True)
+    parser.add_argument("--features", default="")
     args = parser.parse_args()
+    feature_args = ["--features", args.features] if args.features else []
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     notices = out / "THIRD_PARTY_LICENSES"
     notices.mkdir(exist_ok=True)
-    metadata = json.loads(command("cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", args.target))
+    metadata = json.loads(command("cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", args.target, *feature_args))
     # Include build dependencies as well as runtime dependencies. Preserve the exact target/feature tree.
-    tree = command("cargo", "tree", "--locked", "--offline", "--target", args.target, "--edges", "normal,build", "--format", "{p}", "--prefix", "none")
+    tree = command("cargo", "tree", "--locked", "--offline", "--target", args.target, *feature_args, "--edges", "normal,build", "--format", "{p}", "--prefix", "none")
     (out / "cargo-tree.txt").write_text(tree)
     selected = {tuple(line.split()[:2]) for line in tree.splitlines()}
     manifest = {"revision": args.revision, "target": args.target, "rustc": command("rustc", "--version").strip(), "cargo": [], "npm": []}

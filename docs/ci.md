@@ -115,15 +115,19 @@ does not establish the library linked into the application.
 ## Publication and fork boundaries
 
 `docker.yml` is a reusable verification workflow called by `Checks`. It builds
-once without registry credentials or write permissions. PRs, including forks,
-never publish an image. No `pull_request_target`, privileged PR checkout or
-secret inheritance is used. Checkout does not persist its token. Fork runs may
-need GitHub's normal first-contributor approval; approval grants no extra secret.
+both the default CPU-only image (`Dockerfile`) and the Vulkan GPU image
+(`Dockerfile.vulkan`) without registry credentials or write permissions. PRs,
+including forks, never publish an image. No `pull_request_target`, privileged PR
+checkout or secret inheritance is used. Checkout does not persist its token.
+Fork runs may need GitHub's normal first-contributor approval; approval grants
+no extra secret.
 
 Only successful pushes to this repository's `main` or `v*` tags publish. After
 `PR checks` succeeds, a separate job with `packages: write` downloads the exact
-tested image from the **same run**, loads it and pushes `sha-FULL_COMMIT` and
-either `main` or the Git tag. It does not check out repository code or rebuild.
+tested images from the **same run**, loads them and pushes `sha-FULL_COMMIT`
+and either `main` or the Git tag for the CPU-only image, alongside
+`sha-FULL_COMMIT-vulkan` and either `vulkan` or `<tag>-vulkan` for the Vulkan
+image. It does not check out repository code or rebuild.
 Feature branch pushes do not publish images. Version tags additionally attach
 matching source archives to a draft GitHub release in a separate job with
 `contents: write`. Publishing does not update the private server or declare the

@@ -1036,10 +1036,12 @@ async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
     catalog::clear_test_models();
     let (_dir, state, token) = setup().await;
 
-    let expected_backend = if cfg!(feature = "llama") {
-        "cpu"
-    } else {
+    let expected_backend = if !cfg!(feature = "llama") {
         "unavailable"
+    } else if cfg!(feature = "vulkan") {
+        "vulkan"
+    } else {
+        "cpu"
     };
 
     let settings = get_json(&state, &token, "/api/v1/ai/settings").await;
@@ -1056,10 +1058,12 @@ async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
         .find(|model| model["id"] == "qwen3.5-2b-q4_k_m")
         .unwrap();
     assert_eq!(qwen["requirements"]["gpu_optional"], true);
-    if cfg!(feature = "llama") {
-        assert_eq!(qwen["backend"], "llama.cpp (CPU)");
-    } else {
+    if !cfg!(feature = "llama") {
         assert_eq!(qwen["backend"], "llama.cpp (unavailable)");
+    } else if cfg!(feature = "vulkan") {
+        assert_eq!(qwen["backend"], "llama.cpp (Vulkan)");
+    } else {
+        assert_eq!(qwen["backend"], "llama.cpp (CPU)");
     }
 
     for invalid in [-2, 257] {
