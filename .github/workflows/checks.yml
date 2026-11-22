@@ -375,7 +375,12 @@ jobs:
   publish:
     name: Publish tested image
     needs: [changes, required]
-    if: needs.changes.outputs.run_checks == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # required uses if: always(), so a skipped Site (pushes that touch neither
+    # site/ nor this workflow) propagates through the needs chain and the
+    # implicit success() would skip publication even with every verification
+    # green. Override the default status check and gate on required's explicit
+    # verdict, which already asserts that every verification ran and succeeded.
+    if: ${{ !cancelled() && needs.required.result == 'success' && needs.changes.outputs.run_checks == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
