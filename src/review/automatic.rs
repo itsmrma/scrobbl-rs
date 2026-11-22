@@ -1,7 +1,7 @@
 //! Batch review on request: preview, revalidate, apply atomically, and undo.
 //!
-//! Two kinds of evidence are decided automatically; everything else stays for
-//! manual comparison.
+//! Three kinds of evidence are decided automatically; everything else stays
+//! for manual comparison.
 //!
 //! - **One Spotify export playback logged more than once.** Spotify exports
 //!   sometimes write several rows for the same track ending in the same second
@@ -16,6 +16,11 @@
 //!   than one second apart, describing the same Spotify track or with exactly
 //!   matching title, album and artist credits, keeps actual playback over an
 //!   estimate.
+//! - **A flagged record with no duplicate candidate.** When no other flagged
+//!   record nearby could describe the same listen, there is nothing left to
+//!   compare: the record is kept as a listen and only its review flag and
+//!   unresolved conflicts are cleared, exactly like the manual single-record
+//!   action. Nothing moves to trash, and Undo restores flag and conflicts.
 use super::*;
 use std::collections::BTreeMap;
 
@@ -130,6 +135,7 @@ struct Plan {
     groups: Vec<Decision>,
     token: String,
     flagged: i64,
+    lonely: usize,
 }
 
 impl Plan {
@@ -235,7 +241,7 @@ async fn plan(conn: &mut sqlx::SqliteConnection) -> Result<Plan> {
             [Some(true)] => None,
             _ => continue,
         };
-        decided.extend(members.iter().map(|m| m.id.as_str()));
+        decided.extend(members.iter().map(|m| m.id.clone()));
         groups.push(Decision {
             ids: members.iter().map(|m| m.id.clone()).collect(),
             revisions: members.iter().map(|m| m.revision).collect(),
@@ -261,6 +267,8 @@ async fn plan(conn: &mut sqlx::SqliteConnection) -> Result<Plan> {
                 && compatible(a, b)
             {
                 let keep = if quality(a) >= quality(b) { a } else { b };
+                decided.insert(a.id.clone());
+                decided.insert(b.id.clone());
                 groups.push(Decision {
                     ids: vec![a.id.clone(), b.id.clone()],
                     revisions: vec![a.revision, b.revision],
@@ -269,6 +277,43 @@ async fn plan(conn: &mut sqlx::SqliteConnection) -> Result<Plan> {
             }
         }
         start = end;
+    }
+    // Lonely rule: a flagged record with no other flagged record nearby that
+    // could describe the same listen has nothing left to compare. Keep it as a
+    // listen and clear the flag, like the manual single-record action. The
+    // window and identity match mirror the comparison list's clustering, so a
+    // record that still has a candidate stays manual. Records already decided
+    // by the export rule (same end second, far-apart starts) are skipped.
+    let lonely_rows: Vec<(String, i64)> = sqlx::query_as(
+        r#"
+        SELECT l.id, l.revision FROM listens l
+        WHERE l.needs_review=1 AND l.trashed_at_ms IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM listens p
+          JOIN tracks pt ON pt.id=p.track_id
+          JOIN tracks lt ON lt.id=l.track_id
+          WHERE p.id!=l.id AND p.needs_review=1 AND p.trashed_at_ms IS NULL
+          AND p.played_at_ms BETWEEN l.played_at_ms-2000 AND l.played_at_ms+2000
+          AND (p.track_id=l.track_id OR (pt.title=lt.title AND EXISTS(
+            SELECT 1 FROM track_artists x JOIN artists a ON a.id=x.artist_id
+            JOIN track_artists y JOIN artists b ON b.id=y.artist_id
+            WHERE x.track_id=pt.id AND y.track_id=lt.id AND a.name=b.name)))
+        ) ORDER BY l.played_at_ms, l.id
+        "#,
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let mut lonely = 0;
+    for (id, revision) in lonely_rows {
+        if !decided.insert(id.clone()) {
+            continue;
+        }
+        lonely += 1;
+        groups.push(Decision {
+            ids: vec![id],
+            revisions: vec![revision],
+            keep_id: None,
+        });
     }
     let mut signature = serde_json::to_string(&groups).map_err(|_| AppError::Internal)?;
     let matched_ids: Vec<&str> = groups
@@ -302,6 +347,7 @@ async fn plan(conn: &mut sqlx::SqliteConnection) -> Result<Plan> {
         groups,
         token: auth::digest(&signature),
         flagged,
+        lonely,
     })
 }
 
@@ -317,6 +363,7 @@ pub async fn preview(State(state): State<AppState>, headers: HeaderMap) -> Resul
         "records": records,
         "trash": trashed,
         "separate": plan.groups.iter().filter(|g| g.keep_id.is_none()).count(),
+        "lonely": plan.lonely,
         "remaining": plan.flagged - records as i64,
     })))
 }
