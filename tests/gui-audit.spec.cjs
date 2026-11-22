@@ -1073,7 +1073,7 @@ test("review controls share a row and automatic review collapses with aligned an
   });
   const summary = automatic.locator(":scope > summary");
   await expect(automatic).not.toHaveAttribute("open");
-  await expect(summary).toContainText("0 matching groups");
+  await expect(summary).toContainText("Nothing to resolve");
   const collapsed = await automatic.boundingBox();
   expect(collapsed.height).toBeLessThan(80);
   const views = await page
@@ -1876,7 +1876,7 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
   });
   await automatic.locator(":scope > summary").click();
   await settleDisclosure(automatic);
-  await expect(automatic).toContainText("1 matching group");
+  await expect(automatic).toContainText("1 group to resolve");
   const [resolution] = await Promise.all([
     page.waitForResponse(
       (response) =>

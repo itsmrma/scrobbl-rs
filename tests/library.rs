@@ -1038,8 +1038,115 @@ async fn automatic_review_includes_same_source_duplicates_within_one_second() {
     )
     .await;
     let preview = get(&state, &token, "/api/v1/review/automatic").await;
-    assert_eq!(preview["groups"], 1);
+    // The same-source pair is resolved together; the seeded listen has no
+    // nearby candidate and is kept on its own by the lonely rule.
+    assert_eq!(preview["groups"], 2);
+    assert_eq!(preview["records"], 3);
+    assert_eq!(preview["trash"], 1);
+    assert_eq!(preview["lonely"], 1);
+}
+
+#[tokio::test]
+async fn automatic_review_keeps_lonely_flagged_records_and_undo_restores_flags_and_conflicts() {
+    let (_dir, state, token) = setup().await;
+    // Far from the seeded listen and on its own track: no other flagged record
+    // could describe the same listen, so there is nothing left to compare.
+    review_copy(
+        &state,
+        "spotify_import",
+        "lonely:one",
+        5000000,
+        "Lonely title",
+        "spotify:track:0000000000000000000005",
+    )
+    .await;
+    // A stale export conflict must not force a manual click when no peer remains.
+    sqlx::query("INSERT INTO conflicts(id,listen_id,kind,evidence_json) SELECT 'lonely-conflict',id,'spotify_export_duration','{}' FROM listens WHERE played_at_ms=5000000")
+        .execute(&state.db)
+        .await
+        .unwrap();
+    let preview = get(&state, &token, "/api/v1/review/automatic").await;
+    assert_eq!(preview["groups"], 2, "{preview}");
     assert_eq!(preview["records"], 2);
+    assert_eq!(preview["trash"], 0);
+    assert_eq!(preview["lonely"], 2);
+    assert_eq!(preview["remaining"], 0);
+    let (status, body) = call(
+        &state,
+        &token,
+        "POST",
+        "/api/v1/review/automatic",
+        serde_json::to_vec(&json!({"token":preview["token"]})).unwrap(),
+        true,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let result: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(result["removed"], 0);
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 0);
+    assert_eq!(
+        get(&state, &token, "/api/v1/review/trash").await["total"],
+        0
+    );
+    assert_eq!(
+        get(&state, &token, "/api/history?period=all&status=all").await["total"],
+        2
+    );
+    let resolved: bool = sqlx::query_scalar(
+        "SELECT resolved_at_ms IS NOT NULL FROM conflicts WHERE id='lonely-conflict'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(resolved);
+    let undo = format!(
+        "/api/v1/review/{}/undo",
+        result["decision_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        call(&state, &token, "POST", &undo, b"{}".to_vec(), true)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(get(&state, &token, "/api/v1/review").await["total"], 2);
+    let restored: bool = sqlx::query_scalar(
+        "SELECT resolved_at_ms IS NULL FROM conflicts WHERE id='lonely-conflict'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .unwrap();
+    assert!(restored);
+}
+
+#[tokio::test]
+async fn automatic_review_lonely_rule_matches_the_comparison_window() {
+    // The seeded listen is always lonely; the two copies are peers only when
+    // they fall inside the comparison list's inclusive ±2000 ms window.
+    for (gap, lonely) in [(2000_i64, 1_usize), (2001, 3)] {
+        let (_dir, state, token) = setup().await;
+        review_copy(
+            &state,
+            "spotify_import",
+            "near:one",
+            5000000,
+            "Near title",
+            "spotify:track:0000000000000000000005",
+        )
+        .await;
+        review_copy(
+            &state,
+            "spotify_import",
+            "near:two",
+            5000000 + gap,
+            "Near title",
+            "spotify:track:0000000000000000000005",
+        )
+        .await;
+        let preview = get(&state, &token, "/api/v1/review/automatic").await;
+        assert_eq!(preview["lonely"], lonely, "gap {gap}: {preview}");
+        assert_eq!(preview["trash"], 0, "gap {gap}");
+    }
 }
 
 #[tokio::test]

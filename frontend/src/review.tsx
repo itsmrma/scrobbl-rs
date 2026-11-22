@@ -203,10 +203,12 @@ function Comparison({
           <p>
             {group.items.length > 1
               ? "Compare the source and playback time, then choose what to keep."
-              : "Check this record and mark it reviewed when it looks correct."}
+              : "Flagged as a possible duplicate, but no other record looks like this listen. Keep it to confirm it is distinct."}
           </p>
         </div>
-        <span className="subtle">{group.items.length} records</span>
+        <span className="subtle">
+          {group.items.length} {group.items.length === 1 ? "record" : "records"}
+        </span>
       </header>
       <div className="review-records">
         {group.items.map((item) => (
@@ -214,16 +216,18 @@ function Comparison({
             className={`review-record ${selected === item.id ? "selected" : ""}`}
             key={item.id}
           >
-            {group.items.length > 1 && (
-              <input
-                type="radio"
-                name={`keep-${group.id}`}
-                aria-label={`Keep ${item.sources.join(" + ")} record`}
-                checked={selected === item.id}
-                disabled={busy}
-                onChange={() => setSelected(item.id)}
-              />
-            )}
+            <span className="review-select">
+              {group.items.length > 1 && (
+                <input
+                  type="radio"
+                  name={`keep-${group.id}`}
+                  aria-label={`Keep ${item.sources.join(" + ")} record`}
+                  checked={selected === item.id}
+                  disabled={busy}
+                  onChange={() => setSelected(item.id)}
+                />
+              )}
+            </span>
             <Cover url={item.cover_url} />
             <span className="review-identity">
               <Link to={musicLink("tracks", item.track_id)}>{item.title}</Link>
@@ -273,7 +277,7 @@ function Comparison({
           <Icon>done_all</Icon>
           {group.items.length > 1
             ? "Keep all as separate listens"
-            : "Mark reviewed"}
+            : "Keep as listen"}
         </button>
         {group.items.length > 1 && (
           <button
@@ -383,8 +387,10 @@ export function ReviewPage({
   return (
     <>
       <Heading title="Review possible duplicates">
-        Decide which records describe the same listen. Original source records
-        stay saved, and you can undo each decision below.
+        Some records were flagged because they might describe a listen already
+        in the archive. Resolve the clear cases automatically, then compare the
+        rest. Nothing is deleted: removed records go to trash, and you can undo
+        each decision below.
       </Heading>
       <div className="review-toolbar review-controls">
         <Link
@@ -427,7 +433,8 @@ export function ReviewPage({
         </button>
         {view === "comparisons" && result.data && (
           <strong className="review-count">
-            {number.format(currentTotal)} records to review
+            {number.format(currentTotal)}{" "}
+            {currentTotal === 1 ? "record" : "records"} to review
           </strong>
         )}
       </div>
@@ -460,7 +467,7 @@ export function ReviewPage({
               aria-label="Automatic duplicate review"
             >
               <summary>
-                <h2>Resolve matching duplicates automatically</h2>
+                <h2>Resolve duplicates automatically</h2>
                 <span
                   className="automatic-preview-count"
                   role="status"
@@ -469,7 +476,11 @@ export function ReviewPage({
                   {automatic.error ? (
                     "Preview unavailable"
                   ) : automatic.data ? (
-                    `${number.format(automatic.data.groups)} matching ${automatic.data.groups === 1 ? "group" : "groups"}`
+                    automatic.data.groups === 0 ? (
+                      "Nothing to resolve"
+                    ) : (
+                      `${number.format(automatic.data.groups)} ${automatic.data.groups === 1 ? "group" : "groups"} to resolve`
+                    )
                   ) : (
                     <>
                       <span className="visually-hidden">
@@ -499,19 +510,25 @@ export function ReviewPage({
                     Spotify track or exactly matching title, album and artists.
                     Actual playback time wins over an estimate.
                   </li>
+                  <li>
+                    <strong>No duplicate candidate.</strong> A flagged record
+                    with no other flagged record nearby that could be the same
+                    listen is kept as it is; only the review flag is cleared.
+                    Nothing moves to trash.
+                  </li>
                 </ul>
                 <p>
-                  Anything else, such as online and offline rows mixed together
-                  or missing device details, stays for manual review. Removed
-                  records move to trash, every original stays saved, and Undo
-                  below restores the whole batch.
+                  Ambiguous groups, such as online and offline rows mixed
+                  together or missing device details, stay for manual review.
+                  Removed records move to trash, every original stays saved, and
+                  Undo below restores the whole batch.
                 </p>
                 <ErrorText>{automatic.error}</ErrorText>
                 {automatic.data ? (
                   <div className="review-actions">
                     <span role="status">
                       <strong>
-                        {number.format(automatic.data.groups)} matching{" "}
+                        {number.format(automatic.data.groups)}{" "}
                         {automatic.data.groups === 1 ? "group" : "groups"}
                       </strong>{" "}
                       · {number.format(automatic.data.trash)} to trash ·{" "}
@@ -528,7 +545,7 @@ export function ReviewPage({
                         void action(
                           () =>
                             api.executeAutomaticReview(automatic.data!.token),
-                          "Matching duplicates resolved. Undo below restores the entire batch.",
+                          "Duplicates resolved automatically. Undo below restores the entire batch.",
                         )
                       }
                     >

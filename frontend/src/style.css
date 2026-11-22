@@ -792,6 +792,58 @@ input[type="checkbox"]:disabled {
   opacity: 0.55;
 }
 
+/* Radios share the checkbox's drawn style: a round box that fills with the
+   accent and shows an ink dot, instead of the native platform control. */
+input[type="radio"] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--surface-raised);
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+input[type="radio"]::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+  transform: scale(0);
+  transition: transform 120ms ease;
+}
+
+input[type="radio"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+input[type="radio"]:checked::before {
+  transform: scale(1);
+}
+
+input[type="radio"]:hover:not(:disabled) {
+  border-color: var(--accent-mark);
+}
+
+input[type="radio"]:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--focus);
+}
+
+input[type="radio"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 /* On/off settings read as a switch rather than a form tick box. */
 input.switch {
   appearance: none;
@@ -856,7 +908,9 @@ label.switch-field small {
 
 @media (prefers-reduced-motion: reduce) {
   input[type="checkbox"],
-  input[type="checkbox"]::before {
+  input[type="checkbox"]::before,
+  input[type="radio"],
+  input[type="radio"]::before {
     transition: none;
   }
 }
@@ -4768,6 +4822,14 @@ dialog.artwork-lightbox {
   border-color: var(--accent);
 }
 
+/* The select cell is always present so the cover, identity, evidence and
+   duration columns line up whether or not a group offers a radio choice. */
+.review-select {
+  display: grid;
+  place-content: center;
+  width: 20px;
+}
+
 .review-identity,
 .review-evidence,
 .review-duration {
@@ -6104,6 +6166,12 @@ dialog.artwork-lightbox {
   .review-record,
   .trash-record {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Single-record groups have no radio; drop the empty select cell so it does
+     not add a blank row to the stacked mobile layout. */
+  .review-select:empty {
+    display: none;
   }
 
   .now-section-toggle {

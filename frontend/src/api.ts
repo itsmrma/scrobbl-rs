@@ -302,6 +302,7 @@ export const api = {
       records: number;
       trash: number;
       separate: number;
+      lonely: number;
       remaining: number;
     }>("/api/v1/review/automatic"),
   executeAutomaticReview: (token: string) =>

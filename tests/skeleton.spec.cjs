@@ -151,7 +151,7 @@ for (const [name, path, endpoint, label] of cases) {
       if (name === "automatic review")
         await page
           .getByRole("heading", {
-            name: "Resolve matching duplicates automatically",
+            name: "Resolve duplicates automatically",
           })
           .click();
       const skeleton = page
