@@ -3462,7 +3462,7 @@ dialog.artwork-lightbox {
   min-width: 0;
 }
 
-/* Same face as the title, but a smaller step with outlined numerals, so the
+/* Same face as the title, but a smaller step in solid muted numerals, so the
    position reads as a chart mark rather than a second title line. The solid
    accent # anchors it. */
 .music-rank {
@@ -3477,17 +3477,9 @@ dialog.artwork-lightbox {
   white-space: nowrap;
 }
 
-@supports (-webkit-text-stroke: 1px currentColor) {
-  .music-rank {
-    color: transparent;
-    -webkit-text-stroke: 1.5px var(--text);
-  }
-}
-
 .music-rank-hash {
   margin-right: 0.02em;
   color: var(--accent-mark);
-  -webkit-text-stroke: 0;
 }
 
 .music-back {
