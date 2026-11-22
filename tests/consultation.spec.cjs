@@ -1700,6 +1700,29 @@ test.describe("consultation", () => {
     await expect(page.locator(".music-title-main .music-rank")).toContainText(
       "#1",
     );
+    // The position reads as solid type, never hollow outlined numerals (#256),
+    // and as a chart mark in the list's mono voice, never as title type.
+    const rankPaint = await page
+      .locator(".music-title-main .music-rank")
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        return {
+          color: style.color,
+          stroke: style.webkitTextStrokeWidth,
+          family: style.fontFamily,
+          size: parseFloat(style.fontSize),
+        };
+      });
+    const titlePaint = await page
+      .locator(".music-heading h1")
+      .evaluate((el) => {
+        const style = getComputedStyle(el);
+        return { family: style.fontFamily, size: parseFloat(style.fontSize) };
+      });
+    expect(rankPaint.color).not.toBe("transparent");
+    expect(rankPaint.stroke).toBe("0px");
+    expect(rankPaint.family).not.toBe(titlePaint.family);
+    expect(rankPaint.size).toBeLessThan(titlePaint.size);
     const trackStats = page.locator(
       ".dashboard-widget[data-widget-type='totals'] .stats-grid",
     );
