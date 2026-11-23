@@ -204,7 +204,7 @@ test.describe("consultation", () => {
     await page.getByLabel("Through", { exact: true }).fill("2025-06-02");
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.locator(".history-filter-disclosure > summary").click();
     await settleDisclosure(page.locator(".history-filter-disclosure"));
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(page.getByLabel("Results per page")).toHaveAttribute(
@@ -1722,7 +1722,72 @@ test.describe("consultation", () => {
     expect(rankPaint.color).not.toBe("transparent");
     expect(rankPaint.stroke).toBe("0px");
     expect(rankPaint.family).not.toBe(titlePaint.family);
+    expect(rankPaint.size).toBe(20);
     expect(rankPaint.size).toBeLessThan(titlePaint.size);
+
+    // Optical left alignment of personal rating stars with title & #N, compact
+    // vertical grouping above actions, and compact Clear rating button (#270).
+    const titleBox = await page.locator(".music-heading h1").boundingBox();
+    const rankBox = await page
+      .locator(".music-title-main .music-rank")
+      .boundingBox();
+    const firstStarIcon = page
+      .locator(".music-personal .star-button")
+      .first()
+      .locator(".material-icons-outlined");
+    const firstStarIconBox = await firstStarIcon.boundingBox();
+    expect(Math.abs(firstStarIconBox.x - titleBox.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(firstStarIconBox.x - rankBox.x)).toBeLessThanOrEqual(2);
+
+    const personalBox = await page.locator(".music-personal").boundingBox();
+    const toolbarBox = await page.locator(".music-toolbar").boundingBox();
+    expect(personalBox.y - (rankBox.y + rankBox.height)).toBeLessThanOrEqual(
+      14,
+    );
+    expect(
+      toolbarBox.y - (personalBox.y + personalBox.height),
+    ).toBeLessThanOrEqual(20);
+
+    await page.locator(".music-personal .star-button").nth(3).click();
+    const clearButton = page.getByRole("button", { name: "Clear rating" });
+    await expect(clearButton).toBeVisible();
+    const clearBox = await clearButton.boundingBox();
+    const starsBox = await page
+      .locator(".music-personal .rating-stars")
+      .boundingBox();
+    expect(clearBox.width).toBeLessThan(36);
+    expect(clearBox.height).toBeLessThan(36);
+    expect(
+      Math.abs(
+        clearBox.y + clearBox.height / 2 - (starsBox.y + starsBox.height / 2),
+      ),
+    ).toBeLessThanOrEqual(2);
+    const clearStyle = await clearButton.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        borderWidth: style.borderTopWidth,
+        background: style.backgroundColor,
+      };
+    });
+    expect(clearStyle.borderWidth).toBe("0px");
+    expect(clearStyle.background).toBe("rgba(0, 0, 0, 0)");
+    await clearButton.click();
+    await expect(clearButton).toBeHidden();
+
+    // Mobile baseline (<= 600px): no horizontal overflow or overlapping header rows.
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 375, height: 812 });
+    const mobileOverflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    );
+    expect(mobileOverflow).toBe(false);
+    const mobileStarIconBox = await firstStarIcon.boundingBox();
+    expect(mobileStarIconBox.x).toBeGreaterThanOrEqual(0);
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
     const trackStats = page.locator(
       ".dashboard-widget[data-widget-type='totals'] .stats-grid",
     );

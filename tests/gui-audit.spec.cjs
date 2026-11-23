@@ -1896,8 +1896,98 @@ test("duplicate review supports an explicit choice, trash and undo from actual s
     page.getByRole("heading", { name: "All caught up" }),
   ).toBeVisible();
   await expect(automatic.getByRole("button")).toBeDisabled();
+  const feedback = page.locator(".review-feedback");
+  await expect(feedback).toBeVisible();
+  await expect(feedback).toContainText(
+    "Duplicates resolved automatically. Undo below restores the entire batch.",
+  );
+  const decisions = page.locator(".review-decisions");
   await page.getByText("Review decisions · Undo", { exact: true }).click();
-  await settleDisclosure(page.locator(".review-decisions"));
+  await settleDisclosure(decisions);
+  for (const [width, height] of [
+    [1280, 800],
+    [390, 844],
+  ]) {
+    await page.setViewportSize({ width, height });
+    for (const light of [false, true]) {
+      await page.evaluate((useLight) => {
+        document.documentElement.classList.toggle("theme-light", useLight);
+      }, light);
+      const metrics = await page.evaluate(() => {
+        const fb = document.querySelector(".review-feedback");
+        const fbStyle = getComputedStyle(fb);
+        const fbRect = fb.getBoundingClientRect();
+        const fbIconRect = fb
+          .querySelector(".material-icons-outlined")
+          .getBoundingClientRect();
+        const panel = document.querySelector(".review-decisions");
+        const summary = panel.querySelector(":scope > summary");
+        const summaryStyle = getComputedStyle(summary);
+        const row = panel.querySelector(".review-decision");
+        const rowStyle = getComputedStyle(row);
+        const rowRect = row.getBoundingClientRect();
+        const strongRect = row.querySelector("strong").getBoundingClientRect();
+        const smallRect = row.querySelector("small").getBoundingClientRect();
+        const undoRect = row.querySelector("button").getBoundingClientRect();
+        return {
+          docOverflow: document.documentElement.scrollWidth > innerWidth,
+          fbDisplay: fbStyle.display,
+          fbAlign: fbStyle.alignItems,
+          fbGap: parseFloat(fbStyle.columnGap || fbStyle.gap || "0"),
+          fbPaddingLeft: parseFloat(fbStyle.paddingLeft),
+          fbPaddingTop: parseFloat(fbStyle.paddingTop),
+          fbBorderWidth: parseFloat(fbStyle.borderTopWidth),
+          fbBg: fbStyle.backgroundColor,
+          fbRight: fbRect.right,
+          fbOverflow: fb.scrollWidth > fb.clientWidth,
+          fbIconWidth: fbIconRect.width,
+          summaryListStyle: summaryStyle.listStyleType,
+          summaryPaddingLeft: parseFloat(summaryStyle.paddingLeft),
+          summaryPaddingTop: parseFloat(summaryStyle.paddingTop),
+          panelOverflow: panel.scrollWidth > panel.clientWidth,
+          panelRight: panel.getBoundingClientRect().right,
+          rowPaddingLeft: parseFloat(rowStyle.paddingLeft),
+          rowPaddingTop: parseFloat(rowStyle.paddingTop),
+          rowBorderWidth: parseFloat(rowStyle.borderTopWidth),
+          rowBg: rowStyle.backgroundColor,
+          rowOverflow: row.scrollWidth > row.clientWidth,
+          summaryDateGap: smallRect.left - strongRect.right,
+          summaryDateStacked: smallRect.top >= strongRect.bottom,
+          undoRight: undoRect.right,
+          rowRight: rowRect.right,
+        };
+      });
+      expect(metrics.docOverflow).toBe(false);
+      expect(metrics.fbDisplay).toBe("flex");
+      expect(metrics.fbAlign).toBe("center");
+      expect(metrics.fbGap).toBeGreaterThanOrEqual(8);
+      expect(metrics.fbPaddingLeft).toBeGreaterThanOrEqual(12);
+      expect(metrics.fbPaddingTop).toBeGreaterThanOrEqual(10);
+      expect(metrics.fbBorderWidth).toBeGreaterThanOrEqual(1);
+      expect(metrics.fbBg).not.toBe("rgba(0, 0, 0, 0)");
+      expect(metrics.fbOverflow).toBe(false);
+      expect(metrics.fbRight).toBeLessThanOrEqual(width + 0.5);
+      expect(metrics.fbIconWidth).toBeGreaterThan(0);
+      expect(metrics.summaryListStyle).toBe("none");
+      expect(metrics.summaryPaddingLeft).toBeGreaterThanOrEqual(16);
+      expect(metrics.summaryPaddingTop).toBeGreaterThanOrEqual(12);
+      expect(metrics.panelOverflow).toBe(false);
+      expect(metrics.panelRight).toBeLessThanOrEqual(width + 0.5);
+      expect(metrics.rowPaddingLeft).toBeGreaterThanOrEqual(12);
+      expect(metrics.rowPaddingTop).toBeGreaterThanOrEqual(8);
+      expect(metrics.rowBorderWidth).toBeGreaterThanOrEqual(1);
+      expect(metrics.rowBg).not.toBe("rgba(0, 0, 0, 0)");
+      expect(metrics.rowOverflow).toBe(false);
+      expect(metrics.summaryDateStacked || metrics.summaryDateGap >= 8).toBe(
+        true,
+      );
+      expect(metrics.undoRight).toBeLessThanOrEqual(metrics.rowRight + 0.5);
+      expect(metrics.rowRight - metrics.undoRight).toBeLessThanOrEqual(20);
+    }
+  }
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("theme-light");
+  });
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator(".review-record")).toHaveCount(2);
   await page
@@ -2534,11 +2624,13 @@ test("history filters collapse without clearing the selection and music history 
     localStorage.setItem("scrobbl:accent", JSON.stringify("#c5a3ee")),
   );
   await login(page, "/history?period=all&source=spotify_import");
+  await expect(
+    page.locator(".history-actions").getByRole("button", { name: "Filters" }),
+  ).toHaveCount(0);
   const titleBox = await page
     .getByRole("heading", { name: "Listening history." })
     .boundingBox();
   for (const control of [
-    page.getByRole("button", { name: "Filters", exact: true }),
     page.getByRole("link", { name: "Review possible duplicates", exact: true }),
   ]) {
     const box = await control.boundingBox();
@@ -2552,13 +2644,13 @@ test("history filters collapse without clearing the selection and music history 
   });
   const disclosure = page.locator(".history-filter-disclosure");
   await expect(disclosure).not.toHaveAttribute("open");
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await disclosure.locator("> summary").click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
   await expect(page.getByLabel("Source", { exact: true })).toHaveAttribute(
     "data-value",
     "spotify_import",
   );
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await disclosure.locator("> summary").click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
   await expect(page.getByLabel("Source", { exact: true })).toBeHidden();
   await expect(page).toHaveURL(/source=spotify_import/);
@@ -2692,7 +2784,7 @@ test("selected filters and source-entry checkboxes stay compact", async ({
   page,
 }) => {
   await login(page, "/history?period=all");
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page.locator(".history-filter-disclosure > summary").click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
   await page.getByLabel("Find artist").fill("Seed");
   await page
@@ -5149,8 +5241,7 @@ test("mobile baseline: overview header uses a two-column filter grid, icon-only 
 
       // Period and Rank by fill one half each of the two-column filter grid;
       // Order takes the whole next row.
-      const expected =
-        i < 2 ? (filtersBox.width - 12) / 2 : filtersBox.width;
+      const expected = i < 2 ? (filtersBox.width - 12) / 2 : filtersBox.width;
       expect(Math.abs(box.width - expected)).toBeLessThan(4);
     }
 
@@ -6170,4 +6261,73 @@ test("phones keep option rows on one line, give activity cards the full width an
       );
     });
   expect(gap).toBeGreaterThanOrEqual(6);
+});
+
+test("history active chips align above filters, period summary is human-readable, and Back returns from drill-down", async ({
+  page,
+}) => {
+  await login(page, "/history?period=30d");
+  const summary = page.locator(".history-filter-disclosure > summary");
+  await expect(summary).toContainText("Last 30 days");
+
+  await page.goto("/history?period=custom&from=2025-01-01&to=2025-12-31");
+  await expect(summary).toContainText("2025");
+  await expect(summary).not.toContainText("All time");
+  await expect(summary).not.toContainText("custom");
+
+  await page.goto("/history?period=all&year=2025&month=3&weekday=monday");
+  await expect(summary).toContainText("March 2025");
+  await expect(summary).toContainText("Monday");
+  await expect(summary).not.toContainText("All time");
+
+  const archive = await (
+    await page.request.get("/api/dashboard?period=all")
+  ).json();
+  const track = archive.rankings.tracks[0];
+  const artist = archive.rankings.artists[0];
+
+  // Direct URL with track + bucket: chips sit on one row above Filters with equal compact height, and Back falls back to /music/tracks/{id}.
+  await page.goto(
+    `/history?period=all&track=${encodeURIComponent(track.id)}&bucket=month&bucket_start=2025-03-01`,
+  );
+  const chipsRow = page.locator(".history-active-chips");
+  const trackChip = chipsRow.locator(".track-scope-chip");
+  const segmentChip = chipsRow.locator(".segment-filter");
+  await expect(trackChip).toBeVisible();
+  await expect(segmentChip).toBeVisible();
+
+  const [chipsBox, disclosureBox, trackBox, segmentBox] = await Promise.all([
+    chipsRow.boundingBox(),
+    page.locator(".history-filter-disclosure").boundingBox(),
+    trackChip.boundingBox(),
+    segmentChip.boundingBox(),
+  ]);
+  expect(chipsBox.y + chipsBox.height).toBeLessThanOrEqual(
+    disclosureBox.y + 1,
+  );
+  expect(Math.abs(trackBox.y - segmentBox.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(trackBox.height - segmentBox.height)).toBeLessThanOrEqual(2);
+  expect(segmentBox.height).toBeLessThanOrEqual(52);
+
+  const segmentClearBox = await segmentChip
+    .locator(".track-scope-clear")
+    .boundingBox();
+  expect(segmentClearBox.width).toBeCloseTo(28, 0);
+  expect(segmentClearBox.height).toBeCloseTo(28, 0);
+
+  const backButton = page
+    .locator(".history-heading")
+    .getByRole("button", { name: "Back", exact: true });
+  await expect(backButton).toBeVisible();
+  await backButton.click();
+  await expect(page).toHaveURL(new RegExp(`/music/tracks/${track.id}`));
+
+  // Clicking a chart segment on an artist page navigates to history with Back returning to the artist page.
+  await page.goto(`/music/artists/${artist.id}?period=all`);
+  await expect(page.locator(".chart-segment:visible").first()).toBeVisible();
+  await page.locator(".chart-segment:visible").first().click();
+  await expect(page).toHaveURL(/\/history/);
+  await expect(backButton).toBeVisible();
+  await backButton.click();
+  await expect(page).toHaveURL(new RegExp(`/music/artists/${artist.id}`));
 });

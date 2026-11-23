@@ -188,7 +188,7 @@ test("entity search replaces finding text with a skeleton and then results", asy
   const release = await hold(page, "**/api/v1/consultation/choices/artists?*");
   try {
     await page.goto("/history");
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.locator(".history-filter-disclosure > summary").click();
     await page.getByRole("searchbox", { name: "Find artist" }).fill("sample");
     const skeleton = page.locator(".entity-options .skeleton-container");
     await expect(skeleton).toBeVisible();

@@ -117,9 +117,10 @@ function Stars({
         </output>
         {value !== null && (
           <button
-            className="btn btn-icon icon-button"
+            className="rating-clear"
             type="button"
             aria-label="Clear rating"
+            title="Clear rating"
             onClick={() => {
               setPreview(null);
               change(null);
