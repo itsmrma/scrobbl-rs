@@ -2298,4 +2298,98 @@ test.describe("consultation", () => {
       ),
     ).toHaveCount(0);
   });
+
+  test("in-place period, rank-by, and custom dates keep Overview and music page headers mounted without skeletons", async ({
+    archive: { page },
+  }) => {
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await page.evaluate(() => {
+      document
+        .querySelector(".overview-heading")
+        ?.setAttribute("data-e2e-mounted", "1");
+    });
+
+    await chooseOption(page.getByLabel("Rank by", { exact: true }), "time");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".overview-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
+    const fromInput = page.getByLabel("From", { exact: true });
+    const throughInput = page.getByLabel("Through", { exact: true });
+    await expect(fromInput).toBeVisible();
+    await expect(throughInput).toBeVisible();
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator("#total-listens")).toHaveText("135");
+
+    await fromInput.focus();
+    await fromInput.fill("2025-06-02");
+    await expect(fromInput).toBeFocused();
+    await throughInput.focus();
+    await throughInput.fill("2025-06-02");
+    await expect(throughInput).toBeFocused();
+    await expect(page.locator("#total-listens")).toHaveText("0");
+    await expect(page.locator(".overview-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    // Navigate to artist page and verify header, personal rating, and PeriodFilters stay mounted
+    await chooseOption(page.getByLabel("Period", { exact: true }), "all");
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await page
+      .getByRole("link", { name: "Consultation artist", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Consultation artist." }),
+    ).toBeVisible();
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".music-personal")).toBeVisible();
+
+    await page.evaluate(() => {
+      document
+        .querySelector(".music-heading")
+        ?.setAttribute("data-e2e-mounted", "1");
+    });
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "month");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Rank by", { exact: true }), "time");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
+    const musicFrom = page.getByLabel("From", { exact: true });
+    const musicThrough = page.getByLabel("Through", { exact: true });
+    await expect(musicFrom).toBeVisible();
+    await expect(musicThrough).toBeVisible();
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await musicFrom.focus();
+    await musicFrom.fill("2025-06-01");
+    await expect(musicFrom).toBeFocused();
+    await musicThrough.focus();
+    await musicThrough.fill("2025-06-01");
+    await expect(musicThrough).toBeFocused();
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+  });
 });

@@ -21,20 +21,28 @@ export function useLoad<T>(
   enabled = true,
   interval?: number,
   remember = false,
+  keepPrevious: boolean | string = false,
 ) {
+  const keepScope = keepPrevious === true ? "__keep__" : keepPrevious || null;
   const [data, setData] = useState<T | null>(() =>
       remember ? previous<T>(key) : null,
     ),
     [error, setError] = useState("");
   const dataKey = useRef<string | null>(key);
+  const scopeKey = useRef<string | null>(keepScope);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (!enabled) return;
     setLoading(true);
+    const sameScope = keepScope !== null && scopeKey.current === keepScope;
     if (dataKey.current !== key) {
-      setData(remember ? previous<T>(key) : null);
+      const cached = remember ? previous<T>(key) : null;
+      if (cached !== null || !sameScope) {
+        setData(cached);
+      }
       dataKey.current = key;
     }
+    scopeKey.current = keepScope;
     setError("");
     let active = true,
       busy = false,
@@ -92,9 +100,18 @@ export function useLoad<T>(
     };
     // The serialized key defines the request. Callers avoid request-function identity as a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, enabled, interval, remember]);
+  }, [key, enabled, interval, remember, keepScope]);
+  const sameScope = keepScope !== null && scopeKey.current === keepScope;
+  const cached = remember ? previous<T>(key) : null;
   return {
-    data: dataKey.current === key ? data : remember ? previous<T>(key) : null,
+    data:
+      dataKey.current === key
+        ? data
+        : cached !== null
+          ? cached
+          : sameScope
+            ? data
+            : null,
     error,
     loading: enabled && (dataKey.current !== key || loading),
   };
