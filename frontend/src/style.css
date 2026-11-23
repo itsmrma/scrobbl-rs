@@ -460,7 +460,7 @@ dialog {
    4. Unified Controls: Buttons, Inputs, Selects, Segmented, Modals, Toasts
    -------------------------------------------------------------------------- */
 button:where(
-  :not(.star-button):not(.segmented-option):not(.swatch):not(
+  :not(.star-button):not(.rating-clear):not(.segmented-option):not(.swatch):not(
       .image-candidate-card
     ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
       .track-scope-clear
@@ -496,11 +496,11 @@ a.button {
 }
 
 button:where(
-    :not(.star-button):not(.segmented-option):not(.swatch):not(
-        .image-candidate-card
-      ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
-        .track-scope-clear
-      ):not(.widget-control)
+    :not(.star-button):not(.rating-clear):not(.segmented-option):not(
+        .swatch
+      ):not(.image-candidate-card):not(.sidebar-backdrop):not(.info-button):not(
+        .now-section-toggle
+      ):not(.track-scope-clear):not(.widget-control)
   ):hover:not(:disabled),
 .btn:hover:not(:disabled),
 a.button:hover {
@@ -3434,8 +3434,8 @@ dialog.artwork-lightbox {
 
 .music-header-content {
   display: grid;
-  gap: 18px;
-  align-content: space-between;
+  gap: 8px;
+  align-content: start;
   justify-items: start;
   min-width: 0;
 }
@@ -3468,7 +3468,7 @@ dialog.artwork-lightbox {
 .music-rank {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   line-height: 1;
   color: var(--muted);
@@ -3546,6 +3546,32 @@ dialog.artwork-lightbox {
   gap: 2px;
 }
 
+.music-personal .rating-stars {
+  /* Compensate the 12px horizontal padding around the 20px icon inside .star-button. */
+  margin-left: -12px;
+}
+
+.rating-clear {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.rating-clear:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
 .star-button {
   width: 44px;
   height: 44px;
@@ -3577,6 +3603,7 @@ dialog.artwork-lightbox {
   justify-content: space-between;
   gap: 12px 24px;
   width: 100%;
+  margin-top: 6px;
 }
 
 .label-short {
@@ -6277,11 +6304,11 @@ dialog.artwork-lightbox {
   }
 
   button:where(
-    :not(.star-button):not(.segmented-option):not(.swatch):not(
-        .image-candidate-card
-      ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
-        .track-scope-clear
-      ):not(.widget-control)
+    :not(.star-button):not(.rating-clear):not(.segmented-option):not(
+        .swatch
+      ):not(.image-candidate-card):not(.sidebar-backdrop):not(.info-button):not(
+        .now-section-toggle
+      ):not(.track-scope-clear):not(.widget-control)
   ),
   .btn,
   a.button {
