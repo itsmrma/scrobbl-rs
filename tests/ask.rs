@@ -812,7 +812,15 @@ async fn ask_sql_maps_exact_history_filters_and_omits_unmappable_queries() {
         ),
         (
             "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2024",
-            "/history?period=all&year=2024&status=counted",
+            "/history?period=custom&from=2024-01-01&to=2024-12-31&status=counted",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2024 AND local_month = 2",
+            "/history?period=custom&from=2024-02-01&to=2024-02-29&status=counted",
+        ),
+        (
+            "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_year = 2025 AND local_month = 2",
+            "/history?period=custom&from=2025-02-01&to=2025-02-28&status=counted",
         ),
         (
             "SELECT COUNT(*) AS plays FROM listens WHERE counted = 1 AND local_date >= '2024-05-01' AND local_date <= '2024-05-02'",
@@ -853,6 +861,218 @@ async fn ask_sql_maps_exact_history_filters_and_omits_unmappable_queries() {
         assert!(
             body["sql"]["history_href"].is_null(),
             "expected no history link for `{unmappable}`, got {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn ask_sql_promotes_text_columns_disambiguates_editions_and_propagates_period() {
+    let (_dir, state, token) = setup(true).await;
+    let events = vec![
+        event(
+            20,
+            at("2025-03-10T12:00:00Z"),
+            Some(240_000),
+            DurationKind::Actual,
+            "ar-bjork",
+            "Björk",
+            "al-homogenic",
+            "Homogenic",
+            "Jóga",
+        ),
+        event(
+            21,
+            at("2025-03-11T12:00:00Z"),
+            Some(240_000),
+            DurationKind::Actual,
+            "ar-bjork",
+            "Björk",
+            "al-homogenic",
+            "Homogenic",
+            "Jóga",
+        ),
+        event(
+            22,
+            at("2025-04-01T12:00:00Z"),
+            Some(240_000),
+            DurationKind::Actual,
+            "ar-bjork",
+            "Björk",
+            "al-homogenic-deluxe",
+            "Homogenic (Deluxe)",
+            "Jóga",
+        ),
+        event(
+            23,
+            at("2024-05-01T12:00:00Z"),
+            Some(200_000),
+            DurationKind::Actual,
+            "ar-radiohead",
+            "Radiohead",
+            "al-pablo",
+            "Pablo Honey",
+            "Creep",
+        ),
+    ];
+    save(&state.storage, &events).await;
+
+    // 1. Model declares `text` for tracks.title, artists.name, albums.name;
+    //    server promotes them and propagates `local_year = 2025` as custom period.
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT t.title AS track, ar.name AS artist, al.name AS album, COUNT(*) AS plays \
+                    FROM listens l \
+                    JOIN tracks t ON t.id = l.track_id \
+                    LEFT JOIN albums al ON al.id = t.album_id \
+                    JOIN track_artists ta ON ta.track_id = t.id \
+                    JOIN artists ar ON ar.id = ta.artist_id \
+                    WHERE l.counted = 1 AND l.local_year = 2025 \
+                    GROUP BY t.id \
+                    ORDER BY plays DESC, al.name ASC",
+            "answer_kind": "ranking",
+            "columns": [
+                {"name": "track", "format": "text"},
+                {"name": "artist", "format": "text"},
+                {"name": "album", "format": "text"},
+                {"name": "plays", "format": "count"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sql"]["columns"][0]["format"], "track", "{body}");
+    assert_eq!(body["sql"]["columns"][1]["format"], "artist", "{body}");
+    assert_eq!(body["sql"]["columns"][2]["format"], "album", "{body}");
+
+    let links = body["sql"]["cell_links"].as_array().unwrap();
+    assert_eq!(links.len(), 3, "{body}");
+    let row0 = links[0].as_array().unwrap();
+    assert!(
+        row0[0].as_str().unwrap().starts_with("/music/tracks/")
+            && row0[0]
+                .as_str()
+                .unwrap()
+                .ends_with("?period=custom&from=2025-01-01&to=2025-12-31"),
+        "{row0:?}"
+    );
+    assert!(
+        row0[1].as_str().unwrap().starts_with("/music/artists/")
+            && row0[1]
+                .as_str()
+                .unwrap()
+                .ends_with("?period=custom&from=2025-01-01&to=2025-12-31"),
+        "{row0:?}"
+    );
+    assert!(
+        row0[2].as_str().unwrap().starts_with("/music/albums/")
+            && row0[2]
+                .as_str()
+                .unwrap()
+                .ends_with("?period=custom&from=2025-01-01&to=2025-12-31"),
+        "{row0:?}"
+    );
+
+    // 2. Multiple editions of the same song without artist/album columns in SELECT
+    //    disambiguate deterministically to the most-played edition.
+    let (status2, body2) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT t.title AS track, COUNT(*) AS plays \
+                    FROM listens l \
+                    JOIN tracks t ON t.id = l.track_id \
+                    WHERE l.counted = 1 AND l.local_year = 2025 \
+                    GROUP BY t.edition_key \
+                    ORDER BY plays DESC",
+            "answer_kind": "ranking",
+            "columns": [
+                {"name": "track", "format": "text"},
+                {"name": "plays", "format": "count"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status2, StatusCode::OK, "{body2}");
+    let track_link = body2["sql"]["cell_links"][0][0].as_str().unwrap();
+    assert_eq!(track_link, row0[0].as_str().unwrap());
+}
+
+#[tokio::test]
+async fn ask_sql_maps_ranking_queries_to_rankings_with_period_sort_and_order() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    for (sql, answer_kind, expected) in [
+        (
+            "SELECT t.title AS track, COUNT(*) AS plays \
+             FROM listens l JOIN tracks t ON t.id = l.track_id \
+             WHERE l.counted = 1 AND l.local_year = 2025 \
+             GROUP BY t.id ORDER BY plays DESC LIMIT 5",
+            "ranking",
+            "/rankings/tracks?period=custom&from=2025-01-01&to=2025-12-31&sort=plays",
+        ),
+        (
+            "SELECT t.title AS track, COUNT(*) AS plays \
+             FROM listens l JOIN tracks t ON t.id = l.track_id \
+             WHERE l.counted = 1 AND l.local_year = 2025 AND l.local_month = 3 \
+             GROUP BY t.edition_key ORDER BY plays DESC",
+            "ranking",
+            "/rankings/tracks?period=custom&from=2025-03-01&to=2025-03-31&sort=plays",
+        ),
+        (
+            "SELECT ar.name AS artist, SUM(l.listened_ms) AS total_ms \
+             FROM listens l \
+             JOIN track_artists ta ON ta.track_id = l.track_id \
+             JOIN artists ar ON ar.id = ta.artist_id \
+             WHERE l.counted = 1 \
+             GROUP BY ar.id ORDER BY total_ms DESC",
+            "table",
+            "/rankings/artists?period=all&sort=time",
+        ),
+        (
+            "SELECT al.name AS album, COUNT(*) AS plays \
+             FROM listens l \
+             JOIN tracks t ON t.id = l.track_id \
+             LEFT JOIN albums al ON al.id = t.album_id \
+             WHERE l.counted = 1 \
+             GROUP BY al.id ORDER BY plays ASC",
+            "ranking",
+            "/rankings/albums?period=all&sort=plays&order=asc",
+        ),
+        // Incompatible filters with /rankings stay on /history.
+        (
+            "SELECT t.title AS track, COUNT(*) AS plays \
+             FROM listens l JOIN tracks t ON t.id = l.track_id \
+             WHERE l.counted = 1 AND l.weekday = 3 \
+             GROUP BY t.id ORDER BY plays DESC",
+            "ranking",
+            "/history?period=all&weekday=wednesday&status=counted",
+        ),
+        (
+            "SELECT t.title AS track, COUNT(*) AS plays \
+             FROM listens l JOIN tracks t ON t.id = l.track_id \
+             WHERE l.counted = 0 \
+             GROUP BY t.id ORDER BY plays DESC",
+            "ranking",
+            "/history?period=all&status=short",
+        ),
+    ] {
+        let (status, body) = post(
+            &state,
+            &token,
+            "/api/v1/ask/sql",
+            json!({"sql": sql, "answer_kind": answer_kind}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{sql}: {body}");
+        assert_eq!(
+            body["sql"]["history_href"].as_str(),
+            Some(expected),
+            "{sql}: {body}"
         );
     }
 }
