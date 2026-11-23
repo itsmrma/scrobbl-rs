@@ -9,7 +9,7 @@ COPY scripts/lint-frontend.cjs ./scripts/lint-frontend.cjs
 COPY scripts/frontend-notices.cjs ./scripts/frontend-notices.cjs
 RUN npm run build
 
-FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS build
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS build
 # cmake, clang, libclang-dev and python3 build the CPU-only llama.cpp runtime
 # behind the default `llama` feature. No GPU toolchain is installed.
 # `llama-cpp-2` uses default-features = false, so its OpenMP feature is off
