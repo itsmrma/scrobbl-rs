@@ -460,7 +460,7 @@ dialog {
    4. Unified Controls: Buttons, Inputs, Selects, Segmented, Modals, Toasts
    -------------------------------------------------------------------------- */
 button:where(
-  :not(.star-button):not(.segmented-option):not(.swatch):not(
+  :not(.star-button):not(.rating-clear):not(.segmented-option):not(.swatch):not(
       .image-candidate-card
     ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
       .track-scope-clear
@@ -496,11 +496,11 @@ a.button {
 }
 
 button:where(
-    :not(.star-button):not(.segmented-option):not(.swatch):not(
-        .image-candidate-card
-      ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
-        .track-scope-clear
-      ):not(.widget-control)
+    :not(.star-button):not(.rating-clear):not(.segmented-option):not(
+        .swatch
+      ):not(.image-candidate-card):not(.sidebar-backdrop):not(.info-button):not(
+        .now-section-toggle
+      ):not(.track-scope-clear):not(.widget-control)
   ):hover:not(:disabled),
 .btn:hover:not(:disabled),
 a.button:hover {
@@ -3434,8 +3434,8 @@ dialog.artwork-lightbox {
 
 .music-header-content {
   display: grid;
-  gap: 18px;
-  align-content: space-between;
+  gap: 8px;
+  align-content: start;
   justify-items: start;
   min-width: 0;
 }
@@ -3468,7 +3468,7 @@ dialog.artwork-lightbox {
 .music-rank {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   line-height: 1;
   color: var(--muted);
@@ -3546,6 +3546,32 @@ dialog.artwork-lightbox {
   gap: 2px;
 }
 
+.music-personal .rating-stars {
+  /* Compensate the 12px horizontal padding around the 20px icon inside .star-button. */
+  margin-left: -12px;
+}
+
+.rating-clear {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.rating-clear:hover:not(:disabled) {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
 .star-button {
   width: 44px;
   height: 44px;
@@ -3577,6 +3603,7 @@ dialog.artwork-lightbox {
   justify-content: space-between;
   gap: 12px 24px;
   width: 100%;
+  margin-top: 6px;
 }
 
 .label-short {
@@ -4908,6 +4935,98 @@ dialog.artwork-lightbox {
   justify-content: space-between;
 }
 
+.review-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border-radius: var(--radius-md);
+  background: var(--success-surface);
+  border: 1px solid color-mix(in oklab, var(--success) 38%, var(--border));
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-feedback > .material-icons-outlined {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.review-decisions {
+  margin-top: 16px;
+}
+
+.review-decisions > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  min-height: 52px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review-decisions > summary::-webkit-details-marker,
+.review-decisions > summary::marker {
+  display: none;
+}
+
+.review-decisions > summary > .material-icons-outlined {
+  transition: transform 160ms ease-out;
+}
+
+.review-decisions[open] > summary > .material-icons-outlined {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-decisions > summary > .material-icons-outlined {
+    transition: none;
+  }
+}
+
+.review-decisions > div {
+  display: grid;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.review-decision {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  background: var(--row-bg);
+  border: 1px solid var(--row-border);
+  min-width: 0;
+}
+
+.review-decision > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.review-decision > span > small {
+  color: var(--muted);
+}
+
+.review-decision > button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 /* Collage */
 .collage {
   display: grid;
@@ -6185,11 +6304,11 @@ dialog.artwork-lightbox {
   }
 
   button:where(
-    :not(.star-button):not(.segmented-option):not(.swatch):not(
-        .image-candidate-card
-      ):not(.sidebar-backdrop):not(.info-button):not(.now-section-toggle):not(
-        .track-scope-clear
-      ):not(.widget-control)
+    :not(.star-button):not(.rating-clear):not(.segmented-option):not(
+        .swatch
+      ):not(.image-candidate-card):not(.sidebar-backdrop):not(.info-button):not(
+        .now-section-toggle
+      ):not(.track-scope-clear):not(.widget-control)
   ),
   .btn,
   a.button {
