@@ -916,20 +916,7 @@ fn split_top_level_commas(tokens: &[Token]) -> Vec<&[Token]> {
 }
 
 fn strip_select_alias(tokens: &[Token]) -> &[Token] {
-    if tokens.len() >= 3 && is_word(tokens.get(tokens.len() - 2), "AS") {
-        if matches!(tokens.last(), Some(Token::Word(_))) {
-            return &tokens[..tokens.len() - 2];
-        }
-    } else if tokens.len() >= 2
-        && matches!(tokens.last(), Some(Token::Word(_)))
-        && !matches!(
-            tokens.get(tokens.len() - 2),
-            Some(Token::Dot | Token::LParen)
-        )
-    {
-        return &tokens[..tokens.len() - 1];
-    }
-    tokens
+    extract_select_alias_and_expr(tokens).1
 }
 
 fn unwrap_min_max(tokens: &[Token]) -> &[Token] {
@@ -972,8 +959,24 @@ fn infer_entity_format(expr: &[Token], aliases: &HashMap<String, String>) -> Opt
     }
 }
 
+fn infer_entity_format_from_alias(
+    alias: Option<&str>,
+    col_name: &str,
+    aliases: &HashMap<String, String>,
+) -> Option<ColumnFormat> {
+    let label = alias.unwrap_or(col_name).trim().to_ascii_lowercase();
+    let has_table = |table: &str| aliases.values().any(|t| t == table);
+    match label.as_str() {
+        "track" | "brano" | "canzone" if has_table("tracks") => Some(ColumnFormat::Track),
+        "artist" | "artista" if has_table("artists") => Some(ColumnFormat::Artist),
+        "album" if has_table("albums") => Some(ColumnFormat::Album),
+        _ => None,
+    }
+}
+
 /// Promote `ColumnFormat::Text` columns to `Track`/`Artist`/`Album` when the
-/// SQL `SELECT` projects `tracks.title`, `artists.name`, or `albums.name`.
+/// SQL `SELECT` projects `tracks.title`, `artists.name`, or `albums.name`, or
+/// when an alias/label names an entity whose table is in `FROM`/`JOIN`.
 pub fn promote_entity_columns(sql: &str, columns: &mut [SqlColumn]) {
     let Some(mut tokens) = tokenize(sql) else {
         return;
@@ -1018,8 +1021,10 @@ pub fn promote_entity_columns(sql: &str, columns: &mut [SqlColumn]) {
         if col.format != ColumnFormat::Text {
             continue;
         }
-        let expr = strip_select_alias(item);
-        if let Some(promoted) = infer_entity_format(expr, &aliases) {
+        let (alias, expr) = extract_select_alias_and_expr(item);
+        if let Some(promoted) = infer_entity_format(expr, &aliases)
+            .or_else(|| infer_entity_format_from_alias(alias.as_deref(), &col.name, &aliases))
+        {
             col.format = promoted;
         }
     }
@@ -1151,7 +1156,7 @@ fn ranking_sort_order(
 
     if kind == SqlAnswerKind::Ranking {
         for item in &select_items {
-            let (_, expr) = extract_select_alias_and_expr(item);
+            let expr = strip_select_alias(item);
             if let Some(sort) = classify_ranking_metric(expr) {
                 return Some((sort, false));
             }
@@ -1162,10 +1167,23 @@ fn ranking_sort_order(
 
 /// Map `sql` to an exact `/rankings/...` or `/history?...` URL, or return
 /// `None` when the query's filters cannot be represented without approximation.
-pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option<String> {
-    if kind == SqlAnswerKind::Unsupported {
-        return None;
-    }
+struct ParsedSelectQuery {
+    tokens: Vec<Token>,
+    from_start: usize,
+    group_idx: Option<usize>,
+    order_idx: Option<usize>,
+    limit_idx: Option<usize>,
+    has_where: bool,
+    aliases: HashMap<String, String>,
+    inner_albums: bool,
+    filters: ParsedFilters,
+}
+
+fn parse_select_query_and_filters(
+    sql: &str,
+    conn: Option<&Connection>,
+    projection_path: Option<&Path>,
+) -> Option<ParsedSelectQuery> {
     let mut tokens = tokenize(sql)?;
     if matches!(tokens.last(), Some(Token::Semi)) {
         tokens.pop();
@@ -1223,6 +1241,7 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
     let (aliases, inner_albums) = parse_from_and_joins(&tokens[from_start..from_end])?;
 
     let mut filters = ParsedFilters::default();
+    let has_where = where_idx.is_some();
     if let Some(w_idx) = where_idx {
         let w_start = w_idx + 1;
         let w_end = [group_idx, order_idx, limit_idx]
@@ -1236,14 +1255,17 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
             return None;
         }
         let predicates = split_top_level_and(where_tokens)?;
-        let conn = open_projection_read_only(projection_path)?;
+        let owned_conn;
+        let db = match conn {
+            Some(c) => c,
+            None => {
+                owned_conn = open_projection_read_only(projection_path?)?;
+                &owned_conn
+            }
+        };
         for pred in predicates {
-            apply_predicate(pred, &aliases, &conn, &mut filters)?;
+            apply_predicate(pred, &aliases, db, &mut filters)?;
         }
-    }
-
-    if inner_albums && filters.album.is_none() {
-        return None;
     }
 
     normalize_year_month_bounds(&mut filters)?;
@@ -1253,6 +1275,29 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
         return None;
     }
 
+    Some(ParsedSelectQuery {
+        tokens,
+        from_start,
+        group_idx,
+        order_idx,
+        limit_idx,
+        has_where,
+        aliases,
+        inner_albums,
+        filters,
+    })
+}
+
+pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option<String> {
+    if kind == SqlAnswerKind::Unsupported {
+        return None;
+    }
+    let parsed = parse_select_query_and_filters(sql, None, Some(projection_path))?;
+    if parsed.inner_albums && parsed.filters.album.is_none() {
+        return None;
+    }
+
+    let filters = parsed.filters;
     let ranking_compatible = filters.status == Some(HistoryStatus::Counted)
         && filters.month.is_none()
         && filters.weekday.is_none()
@@ -1260,27 +1305,31 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
         && filters.album.is_none()
         && filters.track.is_none();
     if ranking_compatible
-        && let Some(g_idx) = group_idx
-        && is_word(tokens.get(g_idx + 1), "BY")
+        && let Some(g_idx) = parsed.group_idx
+        && is_word(parsed.tokens.get(g_idx + 1), "BY")
     {
         let g_start = g_idx + 2;
-        let g_end = [order_idx, limit_idx]
+        let g_end = [parsed.order_idx, parsed.limit_idx]
             .into_iter()
             .flatten()
             .filter(|&p| p >= g_start)
             .min()
-            .unwrap_or(tokens.len());
-        let order_tokens = order_idx.map(|o_idx| {
-            let o_end = limit_idx.filter(|&p| p >= o_idx).unwrap_or(tokens.len());
-            &tokens[o_idx..o_end]
+            .unwrap_or(parsed.tokens.len());
+        let order_tokens = parsed.order_idx.map(|o_idx| {
+            let o_end = parsed
+                .limit_idx
+                .filter(|&p| p >= o_idx)
+                .unwrap_or(parsed.tokens.len());
+            &parsed.tokens[o_idx..o_end]
         });
-        let select_start = if is_word(tokens.get(1), "DISTINCT") {
+        let select_start = if is_word(parsed.tokens.get(1), "DISTINCT") {
             2
         } else {
             1
         };
-        let select_tokens = &tokens[select_start..from_start - 1];
-        if let Some(segment) = ranking_entity_segment(&tokens[g_start..g_end], &aliases)
+        let select_tokens = &parsed.tokens[select_start..parsed.from_start - 1];
+        if let Some(segment) =
+            ranking_entity_segment(&parsed.tokens[g_start..g_end], &parsed.aliases)
             && let Some((sort, asc)) = ranking_sort_order(order_tokens, select_tokens, kind)
         {
             let mut r_params: Vec<(&'static str, String)> = Vec::new();
@@ -1352,90 +1401,15 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
 }
 
 fn extract_period_query(conn: &Connection, sql: &str) -> Option<String> {
-    let mut tokens = tokenize(sql)?;
-    if matches!(tokens.last(), Some(Token::Semi)) {
-        tokens.pop();
-    }
-    if tokens.is_empty() || !is_word(tokens.first(), "SELECT") {
-        return None;
-    }
-    let mut depth = 0usize;
-    let mut from_idx = None;
-    let mut where_idx = None;
-    let mut group_idx = None;
-    let mut order_idx = None;
-    let mut limit_idx = None;
-    for (idx, tok) in tokens.iter().enumerate() {
-        match tok {
-            Token::LParen => depth += 1,
-            Token::RParen => depth = depth.checked_sub(1)?,
-            Token::Word(w) if depth == 0 => {
-                if w.eq_ignore_ascii_case("UNION")
-                    || w.eq_ignore_ascii_case("INTERSECT")
-                    || w.eq_ignore_ascii_case("EXCEPT")
-                    || w.eq_ignore_ascii_case("HAVING")
-                    || w.eq_ignore_ascii_case("WINDOW")
-                {
-                    return None;
-                }
-                if w.eq_ignore_ascii_case("FROM") && from_idx.is_none() {
-                    from_idx = Some(idx);
-                } else if w.eq_ignore_ascii_case("WHERE") && where_idx.is_none() {
-                    where_idx = Some(idx);
-                } else if w.eq_ignore_ascii_case("GROUP") && group_idx.is_none() {
-                    group_idx = Some(idx);
-                } else if w.eq_ignore_ascii_case("ORDER") && order_idx.is_none() {
-                    order_idx = Some(idx);
-                } else if w.eq_ignore_ascii_case("LIMIT") && limit_idx.is_none() {
-                    limit_idx = Some(idx);
-                }
-            }
-            _ => {}
-        }
-    }
-    if depth != 0 {
-        return None;
-    }
-    let from_start = from_idx? + 1;
-    let from_end = [where_idx, group_idx, order_idx, limit_idx]
-        .into_iter()
-        .flatten()
-        .filter(|&p| p >= from_start)
-        .min()
-        .unwrap_or(tokens.len());
-    let (aliases, _) = parse_from_and_joins(&tokens[from_start..from_end])?;
-    let w_idx = where_idx?;
-    let w_start = w_idx + 1;
-    let w_end = [group_idx, order_idx, limit_idx]
-        .into_iter()
-        .flatten()
-        .filter(|&p| p >= w_start)
-        .min()
-        .unwrap_or(tokens.len());
-    let where_tokens = &tokens[w_start..w_end];
-    if where_tokens.is_empty() {
-        return None;
-    }
-    let predicates = split_top_level_and(where_tokens)?;
-    let mut filters = ParsedFilters::default();
-    for pred in predicates {
-        apply_predicate(pred, &aliases, conn, &mut filters)?;
-    }
-    normalize_year_month_bounds(&mut filters)?;
-    if let (Some(from), Some(to)) = (filters.from, filters.to)
-        && from > to
-    {
-        return None;
-    }
-
-    if filters.from.is_none() && filters.to.is_none() {
+    let parsed = parse_select_query_and_filters(sql, Some(conn), None)?;
+    if !parsed.has_where || (parsed.filters.from.is_none() && parsed.filters.to.is_none()) {
         return None;
     }
     let mut params = vec![("period", "custom".to_string())];
-    if let Some(from) = filters.from {
+    if let Some(from) = parsed.filters.from {
         params.push(("from", from.to_string()));
     }
-    if let Some(to) = filters.to {
+    if let Some(to) = parsed.filters.to {
         params.push(("to", to.to_string()));
     }
     Some(

@@ -1752,11 +1752,16 @@ test.describe("consultation", () => {
     const clearButton = page.getByRole("button", { name: "Clear rating" });
     await expect(clearButton).toBeVisible();
     const clearBox = await clearButton.boundingBox();
+    const clearIconBox = await clearButton
+      .locator(".material-icons-outlined")
+      .boundingBox();
     const starsBox = await page
       .locator(".music-personal .rating-stars")
       .boundingBox();
-    expect(clearBox.width).toBeLessThan(36);
-    expect(clearBox.height).toBeLessThan(36);
+    expect(clearBox.width).toBeGreaterThanOrEqual(44);
+    expect(clearBox.height).toBeGreaterThanOrEqual(44);
+    expect(clearIconBox.width).toBeLessThanOrEqual(24);
+    expect(clearIconBox.height).toBeLessThanOrEqual(24);
     expect(
       Math.abs(
         clearBox.y + clearBox.height / 2 - (starsBox.y + starsBox.height / 2),

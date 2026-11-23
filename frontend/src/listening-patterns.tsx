@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import "./listening-patterns.css";
 import { api } from "./api";
 import { useLoad } from "./load";
-import { hasIncompleteCustomPeriod } from "./selection";
+import { entityScopeKey, hasIncompleteCustomPeriod } from "./selection";
 import { Select } from "./select";
 import { ErrorText, number } from "./ui";
 import { SkeletonPatterns } from "./skeleton";
@@ -30,7 +30,7 @@ export function ListeningPatterns({
 }) {
   const [view, setView] = useState("hours");
   const [inspected, setInspected] = useState<string | null>(null);
-  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.listeningPatterns(params),
     `patterns:${params}:${version}`,
@@ -192,7 +192,7 @@ export function ListeningPatternsWidget({
 }) {
   const [view, setView] = useState<"hours" | "weekdays">("hours");
   const [inspected, setInspected] = useState<string | null>(null);
-  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.listeningPatterns(params),
     `patterns:${params}:${version}`,

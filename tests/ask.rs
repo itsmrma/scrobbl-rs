@@ -1076,3 +1076,60 @@ async fn ask_sql_maps_ranking_queries_to_rankings_with_period_sort_and_order() {
         );
     }
 }
+
+#[tokio::test]
+async fn ask_sql_promotes_entity_columns_from_alias_fallback() {
+    let (_dir, state, token) = setup(true).await;
+    save(&state.storage, &fixture_events()).await;
+
+    let (status, body) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT COALESCE(t.title, '') AS brano, \
+                           COALESCE(ar.name, '') AS artista, \
+                           COALESCE(al.name, '') AS album, \
+                           COUNT(*) AS plays \
+                    FROM listens l \
+                    JOIN tracks t ON t.id = l.track_id \
+                    JOIN albums al ON al.id = t.album_id \
+                    JOIN track_artists ta ON ta.track_id = t.id \
+                    JOIN artists ar ON ar.id = ta.artist_id \
+                    WHERE l.counted = 1 \
+                    GROUP BY t.id \
+                    ORDER BY plays DESC",
+            "answer_kind": "ranking",
+            "columns": [
+                {"name": "brano", "format": "text"},
+                {"name": "artista", "format": "text"},
+                {"name": "album", "format": "text"},
+                {"name": "plays", "format": "count"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sql"]["columns"][0]["format"], "track", "{body}");
+    assert_eq!(body["sql"]["columns"][1]["format"], "artist", "{body}");
+    assert_eq!(body["sql"]["columns"][2]["format"], "album", "{body}");
+
+    // Without the corresponding table in FROM/JOIN, alias alone must not promote.
+    let (status2, body2) = post(
+        &state,
+        &token,
+        "/api/v1/ask/sql",
+        json!({
+            "sql": "SELECT 'placeholder' AS track, COALESCE(ar.name, '') AS canzone FROM artists ar LIMIT 1",
+            "answer_kind": "table",
+            "columns": [
+                {"name": "track", "format": "text"},
+                {"name": "canzone", "format": "text"}
+            ]
+        }),
+    )
+    .await;
+    assert_eq!(status2, StatusCode::OK, "{body2}");
+    assert_eq!(body2["sql"]["columns"][0]["format"], "text", "{body2}");
+    assert_eq!(body2["sql"]["columns"][1]["format"], "text", "{body2}");
+}

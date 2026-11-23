@@ -68,6 +68,7 @@ import {
 } from "./preferences";
 import {
   context,
+  entityScopeKey,
   hasIncompleteCustomPeriod,
   kinds,
   musicLink,
@@ -660,7 +661,7 @@ function RankingsPanel({
     scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
   );
   query.set("page_size", scrolling ? "100" : String(list.size));
-  const entityScope = `${kind}:${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+  const entityScope = `${kind}:${entityScopeKey(params)}`;
   const result = useLoad(
     async () => {
       const first = await api.rankings(kind, query);
@@ -931,7 +932,7 @@ function Chart({
   }, []);
   const chartParams = new URLSearchParams(params);
   chartParams.delete("grain");
-  const entityScope = `${chartParams.get("artist") || ""}:${chartParams.get("album") || ""}:${chartParams.get("track") || ""}`;
+  const entityScope = entityScopeKey(chartParams);
   const result = useLoad(
     () => api.chart(chartParams),
     `chart:${chartParams}:${version}`,
@@ -1532,7 +1533,7 @@ export function ListeningCalendarWidget({
     return p;
   }, [params, selectedYear]);
 
-  const entityScope = `${queryParams.get("artist") || ""}:${queryParams.get("album") || ""}:${queryParams.get("track") || ""}`;
+  const entityScope = entityScopeKey(queryParams);
   const result = useLoad(
     () => api.calendar(queryParams),
     `calendar:${queryParams.toString()}:${version}`,
@@ -1661,7 +1662,7 @@ export function ListeningMilestonesWidget({
   preferences: Preferences;
   version: number;
 }) {
-  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.milestones(params),
     `milestones:${params.toString()}:${version}`,
@@ -1800,7 +1801,7 @@ export function DiscoveryRatioWidget({
   version: number;
   periodOverride?: string | null;
 }) {
-  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.discoveryRatio(params),
     `discovery-ratio:${params}:${version}`,
@@ -3265,7 +3266,7 @@ function historyPeriodSummary(params: URLSearchParams): string {
     } else {
       parts.push("Custom dates");
     }
-  } else if (year || month || weekday) {
+  } else if (year || month) {
     const monthNum = Number(month);
     const monthLabel =
       month && Number.isInteger(monthNum) && monthNum >= 1 && monthNum <= 12
@@ -3277,13 +3278,13 @@ function historyPeriodSummary(params: URLSearchParams): string {
     if (monthLabel && year) parts.push(`${monthLabel} ${year}`);
     else if (year) parts.push(year);
     else if (monthLabel) parts.push(monthLabel);
-    if (weekday) {
-      parts.push(weekday.charAt(0).toUpperCase() + weekday.slice(1));
-    }
   } else if (period && period !== "all") {
     parts.push(periodBadgeLabel(period));
-  } else {
+  } else if (!weekday) {
     parts.push("All time");
+  }
+  if (weekday) {
+    parts.push(weekday.charAt(0).toUpperCase() + weekday.slice(1));
   }
   return parts.join(" · ");
 }

@@ -127,3 +127,6 @@ export function hasIncompleteCustomPeriod(params: URLSearchParams) {
     !params.get("to")
   );
 }
+export function entityScopeKey(params: URLSearchParams): string {
+  return `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+}
