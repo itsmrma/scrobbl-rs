@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import "./listening-patterns.css";
 import { api } from "./api";
 import { useLoad } from "./load";
+import { hasIncompleteCustomPeriod } from "./selection";
 import { Select } from "./select";
 import { ErrorText, number } from "./ui";
 import { SkeletonPatterns } from "./skeleton";
@@ -29,12 +30,14 @@ export function ListeningPatterns({
 }) {
   const [view, setView] = useState("hours");
   const [inspected, setInspected] = useState<string | null>(null);
+  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
   const result = useLoad(
     () => api.listeningPatterns(params),
     `patterns:${params}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `patterns:${entityScope}`,
   );
   const bins = result.data?.series[view] || [];
   const max = Math.max(1, ...bins.map((bin) => bin.count));
@@ -189,12 +192,14 @@ export function ListeningPatternsWidget({
 }) {
   const [view, setView] = useState<"hours" | "weekdays">("hours");
   const [inspected, setInspected] = useState<string | null>(null);
+  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
   const result = useLoad(
     () => api.listeningPatterns(params),
     `patterns:${params}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `patterns:${entityScope}`,
   );
   const bins = result.data?.series[view] || [];
   const max = Math.max(1, ...bins.map((bin) => bin.count));

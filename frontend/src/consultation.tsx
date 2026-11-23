@@ -62,6 +62,7 @@ import {
 } from "./preferences";
 import {
   context,
+  hasIncompleteCustomPeriod,
   kinds,
   musicLink,
   scoped,
@@ -653,6 +654,7 @@ function RankingsPanel({
     scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
   );
   query.set("page_size", scrolling ? "100" : String(list.size));
+  const entityScope = `${kind}:${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
   const result = useLoad(
     async () => {
       const first = await api.rankings(kind, query);
@@ -668,9 +670,10 @@ function RankingsPanel({
       return { ...first, items };
     },
     `rankings:${scrolling ? "scroll" : "page"}:${query}:${kind}:${version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(query),
     undefined,
     true,
+    `rankings:${scrolling ? "scroll" : "page"}:${entityScope}`,
   );
   const update = (patch: Record<string, string>, resetPages = true) => {
     const next = new URLSearchParams(location.search);
@@ -922,12 +925,14 @@ function Chart({
   }, []);
   const chartParams = new URLSearchParams(params);
   chartParams.delete("grain");
+  const entityScope = `${chartParams.get("artist") || ""}:${chartParams.get("album") || ""}:${chartParams.get("track") || ""}`;
   const result = useLoad(
     () => api.chart(chartParams),
     `chart:${chartParams}:${version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(chartParams),
     undefined,
     true,
+    `chart:${entityScope}`,
   );
   const [inspected, setInspected] = useState<string | null>(null);
   const byTime = params.get("sort") === "time";
@@ -1521,12 +1526,14 @@ export function ListeningCalendarWidget({
     return p;
   }, [params, selectedYear]);
 
+  const entityScope = `${queryParams.get("artist") || ""}:${queryParams.get("album") || ""}:${queryParams.get("track") || ""}`;
   const result = useLoad(
     () => api.calendar(queryParams),
     `calendar:${queryParams.toString()}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(queryParams),
     undefined,
     true,
+    `calendar:${entityScope}`,
   );
 
   const days = result.data?.days || [];
@@ -1648,12 +1655,14 @@ export function ListeningMilestonesWidget({
   preferences: Preferences;
   version: number;
 }) {
+  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
   const result = useLoad(
     () => api.milestones(params),
     `milestones:${params.toString()}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `milestones:${entityScope}`,
   );
 
   return (
@@ -1785,12 +1794,14 @@ export function DiscoveryRatioWidget({
   version: number;
   periodOverride?: string | null;
 }) {
+  const entityScope = `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
   const result = useLoad(
     () => api.discoveryRatio(params),
     `discovery-ratio:${params}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `discovery-ratio:${entityScope}`,
   );
 
   return (
@@ -1937,8 +1948,10 @@ function OverriddenDashboardWidget({
   const result = useLoad<Dashboard>(
     () => api.dashboard(queryParams),
     `dashboard-override:${widget.id}:${queryParams.toString()}:${preferences.version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(queryParams),
     (status?.sync_seconds || 120) * 1000,
+    false,
+    `dashboard-override:${widget.id}`,
   );
 
   const loading = !result.data && !result.error;
@@ -2626,7 +2639,10 @@ function OverriddenArtistTotalsWidget({
   const result = useLoad(
     () => api.music(kind, id, widgetParams),
     `music-totals-override:${kind}:${id}:${widgetParams.toString()}`,
-    !isPreview,
+    !isPreview && !hasIncompleteCustomPeriod(widgetParams),
+    undefined,
+    false,
+    `music-totals-override:${kind}:${id}`,
   );
   if (isPreview) {
     return (
@@ -2731,8 +2747,12 @@ export function Overview({
   const result = useLoad<Dashboard>(
     () => api.dashboard(dashboardParams),
     `${dashboardParams}:${preferences.version}`,
-    visible && requestedWidgets.length > 0,
+    visible &&
+      requestedWidgets.length > 0 &&
+      !hasIncompleteCustomPeriod(dashboardParams),
     (status?.sync_seconds || 120) * 1000,
+    false,
+    "overview",
   );
 
   const renderWidgetContent = (widget: WidgetConfig) => {
@@ -2908,7 +2928,7 @@ export function Overview({
       <div
         id="dashboard-grid"
         className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
-        aria-busy={result.loading && !result.data}
+        aria-busy={result.loading}
       >
         {result.loading && !result.data && (
           <span className="visually-hidden" role="status">
@@ -3249,12 +3269,16 @@ export function HistoryPage({
   }, [search, visible]);
   params.set("page_size", String(list.size));
   if (embedded) params.set("page", params.get("history_page") || "1");
+  const historyScope = embedded
+    ? `embedded:${musicKind || ""}:${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`
+    : "history-page";
   const result = useLoad<History>(
     () => api.history(params),
     `history:${params}:${preferences.version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    historyScope,
   );
   const change = (patch: Record<string, string>) =>
     selection.update({
@@ -3653,9 +3677,10 @@ export function MusicPage({
   const apiResult = useLoad(
     () => api.music(kind, id, musicParams),
     `music:${kind}:${id}:${musicParams}:${preferences.version}:${artVersion}`,
-    !isPreview,
+    !isPreview && !hasIncompleteCustomPeriod(musicParams),
     undefined,
     true,
+    `music:${kind}:${id}`,
   );
 
   const entityDetails = useLoad(
@@ -3664,6 +3689,7 @@ export function MusicPage({
     !isPreview,
     undefined,
     true,
+    `music-details:${kind}:${id}`,
   );
 
   const result = isPreview
