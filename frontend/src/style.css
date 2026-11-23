@@ -4908,6 +4908,98 @@ dialog.artwork-lightbox {
   justify-content: space-between;
 }
 
+.review-feedback {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border-radius: var(--radius-md);
+  background: var(--success-surface);
+  border: 1px solid color-mix(in oklab, var(--success) 38%, var(--border));
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.review-feedback > .material-icons-outlined {
+  color: var(--success);
+  flex-shrink: 0;
+}
+
+.review-decisions {
+  margin-top: 16px;
+}
+
+.review-decisions > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  min-height: 52px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.review-decisions > summary::-webkit-details-marker,
+.review-decisions > summary::marker {
+  display: none;
+}
+
+.review-decisions > summary > .material-icons-outlined {
+  transition: transform 160ms ease-out;
+}
+
+.review-decisions[open] > summary > .material-icons-outlined {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .review-decisions > summary > .material-icons-outlined {
+    transition: none;
+  }
+}
+
+.review-decisions > div {
+  display: grid;
+  gap: 8px;
+  padding: 0 20px 16px;
+}
+
+.review-decision {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: var(--radius-control);
+  background: var(--row-bg);
+  border: 1px solid var(--row-border);
+  min-width: 0;
+}
+
+.review-decision > span {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+.review-decision > span > small {
+  color: var(--muted);
+}
+
+.review-decision > button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
 /* Collage */
 .collage {
   display: grid;
