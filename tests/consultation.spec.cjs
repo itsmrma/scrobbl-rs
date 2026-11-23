@@ -204,7 +204,7 @@ test.describe("consultation", () => {
     await page.getByLabel("Through", { exact: true }).fill("2025-06-02");
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.locator(".history-filter-disclosure > summary").click();
     await settleDisclosure(page.locator(".history-filter-disclosure"));
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(page.getByLabel("Results per page")).toHaveAttribute(
