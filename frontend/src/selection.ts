@@ -120,3 +120,13 @@ export function scoped(params: URLSearchParams, kind: Kind, id: string) {
   );
   return next;
 }
+export function hasIncompleteCustomPeriod(params: URLSearchParams) {
+  return (
+    params.get("period") === "custom" &&
+    !params.get("from") &&
+    !params.get("to")
+  );
+}
+export function entityScopeKey(params: URLSearchParams): string {
+  return `${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`;
+}

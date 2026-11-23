@@ -509,7 +509,7 @@ test("SQL results render value, series, ranking, entity/history links, paginatio
     card.getByRole("link", { name: "See these listens" }),
   ).toHaveCount(0);
 
-  // 3. Ranking answer with entity links and literal HTML+SQL track title (no XSS).
+  // 3. Ranking answer with 2 columns renders both chart and clickable table, plus "See in rankings".
   setSpec({
     sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 GROUP BY t.id ORDER BY plays DESC, t.title ASC",
     title: "Top tracks",
@@ -524,12 +524,17 @@ test("SQL results render value, series, ranking, entity/history links, paginatio
   await page.getByRole("button", { name: "Ask", exact: true }).click();
   const segments = card.locator(".ask-chart .chart-segment.ask-chart-link");
   await expect(segments).toHaveCount(3);
+  await expect(card.locator(".ask-table tbody tr")).toHaveCount(3);
+  await expect(card.locator(".ask-table tbody tr td a")).toHaveCount(3);
+  await expect(
+    card.getByRole("link", { name: "See in rankings" }),
+  ).toHaveAttribute("href", "/rankings/tracks?period=all&sort=plays");
   await expect(segments.nth(1)).toContainText(
     '<img src=x onerror="window.__askXss=1">\'; DROP TABLE listens;--',
   );
   expect(await page.evaluate(() => window.__askXss)).toBeUndefined();
 
-  await segments.nth(0).click();
+  await card.locator(".ask-table tbody tr td a").nth(0).click();
   await expect(page).toHaveURL(/\/music\/tracks\//);
   await expect(page.getByRole("heading", { name: "Jóga." })).toBeVisible();
   await page.goBack();
@@ -736,4 +741,109 @@ test.describe("SQL query timeout", () => {
     await expect(page.getByText("I couldn't answer that")).toBeVisible();
     await expect(page.locator(".notice")).toContainText("timeout");
   });
+});
+
+test("Ask ranking with text columns, multiple track editions, and year filter links to track pages and See in rankings", async ({
+  harness: { page, setSpec },
+}) => {
+  const session = await (await page.request.get("/api/session")).json();
+  const editionRows = [
+    {
+      ts: "2025-03-10T10:00:00Z",
+      ms_played: 240000,
+      master_metadata_track_name: "Jóga",
+      master_metadata_album_artist_name: "SecretArchiveArtist",
+      master_metadata_album_album_name: "Homogenic",
+      spotify_track_uri: "spotify:track:0000000000000000000001",
+    },
+    {
+      ts: "2025-03-11T10:00:00Z",
+      ms_played: 240000,
+      master_metadata_track_name: "Jóga",
+      master_metadata_album_artist_name: "SecretArchiveArtist",
+      master_metadata_album_album_name: "Homogenic",
+      spotify_track_uri: "spotify:track:0000000000000000000001",
+    },
+    {
+      ts: "2025-04-01T10:00:00Z",
+      ms_played: 240000,
+      master_metadata_track_name: "Jóga",
+      master_metadata_album_artist_name: "SecretArchiveArtist",
+      master_metadata_album_album_name: "Homogenic (Deluxe)",
+      spotify_track_uri: "spotify:track:0000000000000000000009",
+    },
+  ];
+  const upload = await page.request.post("/api/import/spotify", {
+    headers: {
+      "x-csrf-token": session.csrf,
+      origin: new URL(page.url()).origin,
+    },
+    multipart: {
+      files: {
+        name: "editions-2025.json",
+        mimeType: "application/json",
+        buffer: Buffer.from(JSON.stringify(editionRows)),
+      },
+    },
+  });
+  expect(upload.ok(), await upload.text()).toBeTruthy();
+  const { job_id } = await upload.json();
+  await expect
+    .poll(
+      async () =>
+        (
+          await (await page.request.get(`/api/v1/activities/${job_id}`)).json()
+        ).activity.state,
+    )
+    .toBe("completed");
+
+  await page.goto("/settings/ai");
+  await page.getByLabel("Enable AI").check();
+  await page
+    .getByLabel("Custom local model path (.gguf)")
+    .fill("custom-test/custom-qwen3.gguf");
+  await page.getByRole("button", { name: "Save AI settings" }).click();
+  await expect(page.getByText("AI settings saved.")).toBeVisible();
+
+  await page.goto("/ask");
+  setSpec({
+    sql: "SELECT t.title AS track, COUNT(*) AS plays FROM listens l JOIN tracks t ON t.id = l.track_id WHERE l.counted = 1 AND l.local_year = 2025 GROUP BY t.edition_key ORDER BY plays DESC LIMIT 5",
+    title: "Top tracks in 2025",
+    computed: "Top tracks by counted plays in 2025.",
+    answer_kind: "ranking",
+    columns: [
+      { name: "track", format: "text" },
+      { name: "plays", format: "count" },
+    ],
+  });
+  await page
+    .getByLabel("Your question", { exact: true })
+    .fill("What were my top 5 tracks in 2025?");
+  await page.getByRole("button", { name: "Ask", exact: true }).click();
+
+  const card = page.locator(".ask-result");
+  await expect(card).toBeVisible();
+  await expect(card.locator(".ask-chart .chart-segment.ask-chart-link")).toHaveCount(1);
+  const trackLink = card.locator(".ask-table tbody tr td a").first();
+  await expect(trackLink).toHaveText("Jóga");
+  await expect(trackLink).toHaveAttribute(
+    "href",
+    /^\/music\/tracks\/.+\?period=custom&from=2025-01-01&to=2025-12-31$/,
+  );
+
+  const rankingsLink = card.getByRole("link", { name: "See in rankings" });
+  await expect(rankingsLink).toHaveAttribute(
+    "href",
+    "/rankings/tracks?period=custom&from=2025-01-01&to=2025-12-31&sort=plays",
+  );
+  await rankingsLink.click();
+  await expect(page).toHaveURL(
+    "/rankings/tracks?period=custom&from=2025-01-01&to=2025-12-31&sort=plays",
+  );
+  await expect(page.getByLabel("From", { exact: true })).toHaveValue(
+    "2025-01-01",
+  );
+  await expect(page.getByLabel("Through", { exact: true })).toHaveValue(
+    "2025-12-31",
+  );
 });
