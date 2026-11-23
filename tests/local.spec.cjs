@@ -157,7 +157,7 @@ test("owner setup, private history, imports, search, preferences and Spotify con
   await page
     .getByRole("link", { name: "Listening history", exact: true })
     .click();
-  await page.getByRole("button", { name: "Filters", exact: true }).click();
+  await page.locator(".history-filter-disclosure > summary").click();
   await settleDisclosure(page.locator(".history-filter-disclosure"));
   await chooseOption(page.locator("#history-status"), "short");
   await page.getByRole("button", { name: "Search", exact: true }).click();

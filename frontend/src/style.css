@@ -4140,6 +4140,17 @@ dialog.artwork-lightbox {
   gap: 8px;
 }
 
+.history-actions .music-back {
+  margin: 0;
+}
+
+.history-active-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .history-filter-disclosure > summary {
   list-style: none;
   display: grid;
