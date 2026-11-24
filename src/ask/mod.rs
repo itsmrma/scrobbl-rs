@@ -771,9 +771,10 @@ async fn execute_sql_once(
                 sandbox_cancel.as_ref(),
             )
             .map(|table| {
-                let columns = match_columns(&table.columns, &declared_columns);
+                let mut columns = match_columns(&table.columns, &declared_columns);
+                history_link::promote_entity_columns(&sql_text, &mut columns);
                 let cell_links =
-                    history_link::resolve_cell_links(&proj_path, &columns, &table.rows);
+                    history_link::resolve_cell_links(&proj_path, &sql_text, &columns, &table.rows);
                 let history_href = history_link::resolve(&proj_path, &sql_text, answer_kind);
                 (table, columns, cell_links, history_href)
             });

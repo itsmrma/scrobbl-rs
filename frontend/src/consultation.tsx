@@ -33,7 +33,13 @@ import {
   ListeningPatternsWidget,
 } from "./listening-patterns";
 import { NowPlayingWidget } from "./library";
-import { BackButton, Link, navigate, useSearch } from "./navigation";
+import {
+  BackButton,
+  Link,
+  hasBackNavigation,
+  navigate,
+  useSearch,
+} from "./navigation";
 import {
   Cover,
   date,
@@ -62,6 +68,8 @@ import {
 } from "./preferences";
 import {
   context,
+  entityScopeKey,
+  hasIncompleteCustomPeriod,
   kinds,
   musicLink,
   scoped,
@@ -653,6 +661,7 @@ function RankingsPanel({
     scrolling ? "1" : params.get(pageKey) || params.get("page") || "1",
   );
   query.set("page_size", scrolling ? "100" : String(list.size));
+  const entityScope = `${kind}:${entityScopeKey(params)}`;
   const result = useLoad(
     async () => {
       const first = await api.rankings(kind, query);
@@ -668,9 +677,10 @@ function RankingsPanel({
       return { ...first, items };
     },
     `rankings:${scrolling ? "scroll" : "page"}:${query}:${kind}:${version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(query),
     undefined,
     true,
+    `rankings:${scrolling ? "scroll" : "page"}:${entityScope}`,
   );
   const update = (patch: Record<string, string>, resetPages = true) => {
     const next = new URLSearchParams(location.search);
@@ -922,12 +932,14 @@ function Chart({
   }, []);
   const chartParams = new URLSearchParams(params);
   chartParams.delete("grain");
+  const entityScope = entityScopeKey(chartParams);
   const result = useLoad(
     () => api.chart(chartParams),
     `chart:${chartParams}:${version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(chartParams),
     undefined,
     true,
+    `chart:${entityScope}`,
   );
   const [inspected, setInspected] = useState<string | null>(null);
   const byTime = params.get("sort") === "time";
@@ -1521,12 +1533,14 @@ export function ListeningCalendarWidget({
     return p;
   }, [params, selectedYear]);
 
+  const entityScope = entityScopeKey(queryParams);
   const result = useLoad(
     () => api.calendar(queryParams),
     `calendar:${queryParams.toString()}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(queryParams),
     undefined,
     true,
+    `calendar:${entityScope}`,
   );
 
   const days = result.data?.days || [];
@@ -1648,12 +1662,14 @@ export function ListeningMilestonesWidget({
   preferences: Preferences;
   version: number;
 }) {
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.milestones(params),
     `milestones:${params.toString()}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `milestones:${entityScope}`,
   );
 
   return (
@@ -1785,12 +1801,14 @@ export function DiscoveryRatioWidget({
   version: number;
   periodOverride?: string | null;
 }) {
+  const entityScope = entityScopeKey(params);
   const result = useLoad(
     () => api.discoveryRatio(params),
     `discovery-ratio:${params}:${version}`,
-    true,
+    !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    `discovery-ratio:${entityScope}`,
   );
 
   return (
@@ -1937,8 +1955,10 @@ function OverriddenDashboardWidget({
   const result = useLoad<Dashboard>(
     () => api.dashboard(queryParams),
     `dashboard-override:${widget.id}:${queryParams.toString()}:${preferences.version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(queryParams),
     (status?.sync_seconds || 120) * 1000,
+    false,
+    `dashboard-override:${widget.id}`,
   );
 
   const loading = !result.data && !result.error;
@@ -2626,7 +2646,10 @@ function OverriddenArtistTotalsWidget({
   const result = useLoad(
     () => api.music(kind, id, widgetParams),
     `music-totals-override:${kind}:${id}:${widgetParams.toString()}`,
-    !isPreview,
+    !isPreview && !hasIncompleteCustomPeriod(widgetParams),
+    undefined,
+    false,
+    `music-totals-override:${kind}:${id}`,
   );
   if (isPreview) {
     return (
@@ -2731,8 +2754,12 @@ export function Overview({
   const result = useLoad<Dashboard>(
     () => api.dashboard(dashboardParams),
     `${dashboardParams}:${preferences.version}`,
-    visible && requestedWidgets.length > 0,
+    visible &&
+      requestedWidgets.length > 0 &&
+      !hasIncompleteCustomPeriod(dashboardParams),
     (status?.sync_seconds || 120) * 1000,
+    false,
+    "overview",
   );
 
   const renderWidgetContent = (widget: WidgetConfig) => {
@@ -2908,7 +2935,7 @@ export function Overview({
       <div
         id="dashboard-grid"
         className={`dashboard-grid${layoutEditor.editing ? " editing" : ""}${result.loading && !result.data ? " skeleton-container" : ""}`}
-        aria-busy={result.loading && !result.data}
+        aria-busy={result.loading}
       >
         {result.loading && !result.data && (
           <span className="visually-hidden" role="status">
@@ -3217,6 +3244,50 @@ function TrackScope({ id, clear }: { id: string; clear: () => void }) {
     </div>
   );
 }
+function historyPeriodSummary(params: URLSearchParams): string {
+  const period = params.get("period") || "";
+  const from = params.get("from") || "";
+  const to = params.get("to") || "";
+  const year = params.get("year") || "";
+  const month = params.get("month") || "";
+  const weekday = params.get("weekday") || "";
+
+  const parts: string[] = [];
+  if (period === "custom" || from || to) {
+    const fullYear = from.match(/^(\d{4})-01-01$/);
+    if (fullYear && to === `${fullYear[1]}-12-31`) {
+      parts.push(fullYear[1]);
+    } else if (from && to) {
+      parts.push(`${from} – ${to}`);
+    } else if (from) {
+      parts.push(`From ${from}`);
+    } else if (to) {
+      parts.push(`Through ${to}`);
+    } else {
+      parts.push("Custom dates");
+    }
+  } else if (year || month) {
+    const monthNum = Number(month);
+    const monthLabel =
+      month && Number.isInteger(monthNum) && monthNum >= 1 && monthNum <= 12
+        ? new Intl.DateTimeFormat("en", {
+            month: "long",
+            timeZone: "UTC",
+          }).format(new Date(Date.UTC(2000, monthNum - 1, 1)))
+        : "";
+    if (monthLabel && year) parts.push(`${monthLabel} ${year}`);
+    else if (year) parts.push(year);
+    else if (monthLabel) parts.push(monthLabel);
+  } else if (period && period !== "all") {
+    parts.push(periodBadgeLabel(period));
+  } else if (!weekday) {
+    parts.push("All time");
+  }
+  if (weekday) {
+    parts.push(weekday.charAt(0).toUpperCase() + weekday.slice(1));
+  }
+  return parts.join(" · ");
+}
 export function HistoryPage({
   preferences,
   visible,
@@ -3249,12 +3320,16 @@ export function HistoryPage({
   }, [search, visible]);
   params.set("page_size", String(list.size));
   if (embedded) params.set("page", params.get("history_page") || "1");
+  const historyScope = embedded
+    ? `embedded:${musicKind || ""}:${params.get("artist") || ""}:${params.get("album") || ""}:${params.get("track") || ""}`
+    : "history-page";
   const result = useLoad<History>(
     () => api.history(params),
     `history:${params}:${preferences.version}`,
-    visible,
+    visible && !hasIncompleteCustomPeriod(params),
     undefined,
     true,
+    historyScope,
   );
   const change = (patch: Record<string, string>) =>
     selection.update({
@@ -3298,6 +3373,25 @@ export function HistoryPage({
       .catch(() => {});
   }
   if (!visible) return null;
+  const trackId = params.get("track");
+  const albumId = params.get("album");
+  const artistId = params.get("artist");
+  const hasDrillDown = Boolean(
+    trackId ||
+      artistId ||
+      albumId ||
+      params.get("bucket") ||
+      params.get("bucket_start"),
+  );
+  const showBack = !embedded && (hasDrillDown || hasBackNavigation());
+  const backFallback = trackId
+    ? musicLink("tracks", trackId, params)
+    : albumId
+      ? musicLink("albums", albumId, params)
+      : artistId
+        ? musicLink("artists", artistId, params)
+        : "/dashboard";
+  const hasActiveChips = Boolean((!embedded && trackId) || params.get("bucket"));
   return (
     <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
@@ -3306,26 +3400,43 @@ export function HistoryPage({
             Search and combine period, artist, album and source filters.
           </Heading>
           <div className="history-actions">
+            {showBack && <BackButton fallback={backFallback} />}
             <Link className="button secondary" to="/review">
               <Icon>rule</Icon>Review possible duplicates
             </Link>
-            <button
-              className="secondary"
-              aria-expanded={filtersOpen}
-              aria-controls={filtersId}
-              onClick={toggleFilters}
-            >
-              <Icon>tune</Icon>Filters
-              <Icon>{filtersOpen ? "expand_less" : "expand_more"}</Icon>
-            </button>
           </div>
         </div>
       )}
-      {!embedded && params.get("track") && (
-        <TrackScope
-          id={params.get("track")!}
-          clear={() => change({ track: "" })}
-        />
+      {hasActiveChips && (
+        <div className="history-active-chips">
+          {!embedded && trackId && (
+            <TrackScope id={trackId} clear={() => change({ track: "" })} />
+          )}
+          {params.get("bucket") && (
+            <div className="segment-filter">
+              <Icon>date_range</Icon>
+              <span>
+                <small>Chart segment:</small>
+                <strong>
+                  {periodLabel(
+                    params.get("bucket_start") || "",
+                    params.get("bucket") || "",
+                    true,
+                  )}
+                </strong>
+              </span>
+              <button
+                type="button"
+                className="track-scope-clear"
+                aria-label="Clear segment"
+                title="Clear segment"
+                onClick={() => change({ bucket: "", bucket_start: "" })}
+              >
+                <Icon>close</Icon>
+              </button>
+            </div>
+          )}
+        </div>
       )}
       <details
         id={filtersId}
@@ -3346,9 +3457,7 @@ export function HistoryPage({
             <strong>Filters</strong>
             <small>
               {[
-                params.get("period") && params.get("period") !== "all"
-                  ? params.get("period")
-                  : "All time",
+                historyPeriodSummary(params),
                 params.get("q"),
                 params.get("source")?.replaceAll("_", " "),
                 params.get("artist") ? "Artist selected" : "",
@@ -3505,28 +3614,6 @@ export function HistoryPage({
           </p>
         </form>
       </details>
-      {params.get("bucket") && (
-        <div className="segment-filter">
-          <Icon>date_range</Icon>
-          <span>
-            <small>Chart segment:</small>
-            <strong>
-              {periodLabel(
-                params.get("bucket_start") || "",
-                params.get("bucket") || "",
-                true,
-              )}
-            </strong>
-          </span>
-          <button
-            className="icon-button"
-            aria-label="Clear segment"
-            onClick={() => change({ bucket: "", bucket_start: "" })}
-          >
-            <Icon>close</Icon>
-          </button>
-        </div>
-      )}
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
         <article className="panel">
@@ -3653,9 +3740,10 @@ export function MusicPage({
   const apiResult = useLoad(
     () => api.music(kind, id, musicParams),
     `music:${kind}:${id}:${musicParams}:${preferences.version}:${artVersion}`,
-    !isPreview,
+    !isPreview && !hasIncompleteCustomPeriod(musicParams),
     undefined,
     true,
+    `music:${kind}:${id}`,
   );
 
   const entityDetails = useLoad(
@@ -3664,6 +3752,7 @@ export function MusicPage({
     !isPreview,
     undefined,
     true,
+    `music-details:${kind}:${id}`,
   );
 
   const result = isPreview
@@ -3902,22 +3991,37 @@ export function MusicPage({
                     </>
                   )}
                 </Heading>
-                {result.data.rank !== null && (
-                  <p
-                    className="music-rank"
-                    title={`Position ${result.data.rank} by plays in this period`}
-                  >
-                    <span className="visually-hidden">Position </span>
-                    <span className="music-rank-hash" aria-hidden="true">
-                      #
-                    </span>
-                    {number.format(result.data.rank)}
-                    <span className="visually-hidden">
-                      {" "}
-                      in the ranking by plays for this period
-                    </span>
-                  </p>
-                )}
+                <p
+                  className="music-rank"
+                  title={
+                    result.data.rank !== null
+                      ? `Position ${result.data.rank} by plays in this period`
+                      : "No counted plays in this period"
+                  }
+                >
+                  {result.data.rank !== null ? (
+                    <>
+                      <span className="visually-hidden">Position </span>
+                      <span className="music-rank-hash" aria-hidden="true">
+                        #
+                      </span>
+                      {number.format(result.data.rank)}
+                      <span className="visually-hidden">
+                        {" "}
+                        in the ranking by plays for this period
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="visually-hidden">
+                        Not ranked: no counted plays in this period
+                      </span>
+                      <span aria-hidden="true">
+                        <span className="music-rank-hash">#</span>-
+                      </span>
+                    </>
+                  )}
+                </p>
               </div>
               <BackButton
                 fallback={`/rankings/${kind}?${context(selection.params)}`}

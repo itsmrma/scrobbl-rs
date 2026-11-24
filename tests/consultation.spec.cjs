@@ -204,7 +204,7 @@ test.describe("consultation", () => {
     await page.getByLabel("Through", { exact: true }).fill("2025-06-02");
     await expect(ranking).toContainText("No tracks with counted listens");
     await page.goto("/history?period=all");
-    await page.getByRole("button", { name: "Filters", exact: true }).click();
+    await page.locator(".history-filter-disclosure > summary").click();
     await settleDisclosure(page.locator(".history-filter-disclosure"));
     await expect(page.locator("#history-total")).toHaveText("135 records");
     await expect(page.getByLabel("Results per page")).toHaveAttribute(
@@ -1722,7 +1722,77 @@ test.describe("consultation", () => {
     expect(rankPaint.color).not.toBe("transparent");
     expect(rankPaint.stroke).toBe("0px");
     expect(rankPaint.family).not.toBe(titlePaint.family);
+    expect(rankPaint.size).toBe(20);
     expect(rankPaint.size).toBeLessThan(titlePaint.size);
+
+    // Optical left alignment of personal rating stars with title & #N, compact
+    // vertical grouping above actions, and compact Clear rating button (#270).
+    const titleBox = await page.locator(".music-heading h1").boundingBox();
+    const rankBox = await page
+      .locator(".music-title-main .music-rank")
+      .boundingBox();
+    const firstStarIcon = page
+      .locator(".music-personal .star-button")
+      .first()
+      .locator(".material-icons-outlined");
+    const firstStarIconBox = await firstStarIcon.boundingBox();
+    expect(Math.abs(firstStarIconBox.x - titleBox.x)).toBeLessThanOrEqual(2);
+    expect(Math.abs(firstStarIconBox.x - rankBox.x)).toBeLessThanOrEqual(2);
+
+    const personalBox = await page.locator(".music-personal").boundingBox();
+    const toolbarBox = await page.locator(".music-toolbar").boundingBox();
+    expect(personalBox.y - (rankBox.y + rankBox.height)).toBeLessThanOrEqual(
+      14,
+    );
+    expect(
+      toolbarBox.y - (personalBox.y + personalBox.height),
+    ).toBeLessThanOrEqual(20);
+
+    await page.locator(".music-personal .star-button").nth(3).click();
+    const clearButton = page.getByRole("button", { name: "Clear rating" });
+    await expect(clearButton).toBeVisible();
+    const clearBox = await clearButton.boundingBox();
+    const clearIconBox = await clearButton
+      .locator(".material-icons-outlined")
+      .boundingBox();
+    const starsBox = await page
+      .locator(".music-personal .rating-stars")
+      .boundingBox();
+    expect(clearBox.width).toBeGreaterThanOrEqual(44);
+    expect(clearBox.height).toBeGreaterThanOrEqual(44);
+    expect(clearIconBox.width).toBeLessThanOrEqual(24);
+    expect(clearIconBox.height).toBeLessThanOrEqual(24);
+    expect(
+      Math.abs(
+        clearBox.y + clearBox.height / 2 - (starsBox.y + starsBox.height / 2),
+      ),
+    ).toBeLessThanOrEqual(2);
+    const clearStyle = await clearButton.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        borderWidth: style.borderTopWidth,
+        background: style.backgroundColor,
+      };
+    });
+    expect(clearStyle.borderWidth).toBe("0px");
+    expect(clearStyle.background).toBe("rgba(0, 0, 0, 0)");
+    await clearButton.click();
+    await expect(clearButton).toBeHidden();
+
+    // Mobile baseline (<= 600px): no horizontal overflow or overlapping header rows.
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 375, height: 812 });
+    const mobileOverflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+    );
+    expect(mobileOverflow).toBe(false);
+    const mobileStarIconBox = await firstStarIcon.boundingBox();
+    expect(mobileStarIconBox.x).toBeGreaterThanOrEqual(0);
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
     const trackStats = page.locator(
       ".dashboard-widget[data-widget-type='totals'] .stats-grid",
     );
@@ -1863,6 +1933,35 @@ test.describe("consultation", () => {
     await expect(
       artistGrid.locator(".dashboard-widget[data-widget-type='top_albums']"),
     ).toBeVisible();
+  });
+
+  test("music page keeps the rank row as #- when the period has no counted plays", async ({
+    archive: { page },
+  }) => {
+    // 1. Open the top track for the all-time period: the header shows its rank.
+    await page.goto("/rankings/tracks?period=all");
+    const firstTrack = page.locator(".rank-name a").first();
+    const trackHref = (await firstTrack.getAttribute("href")).split("?")[0];
+    await firstTrack.click();
+    const rank = page.locator(".music-title-main .music-rank");
+    await expect(rank).toContainText("#1");
+    await expect(page.locator(".dashboard-grid")).toBeVisible();
+    const gridBox = await page.locator(".dashboard-grid").boundingBox();
+
+    // 2. The same track in a period without counted plays: the rank row stays
+    //    and reads #-, so the header height and the page below it do not shift.
+    await page.goto(`${trackHref}?period=custom&from=2024-01-01&to=2024-01-31`);
+    await expect(rank).toContainText("#-");
+    await expect(rank).toHaveAttribute(
+      "title",
+      "No counted plays in this period",
+    );
+    await expect(rank.locator("span.visually-hidden")).toHaveText(
+      "Not ranked: no counted plays in this period",
+    );
+    await expect(page.locator(".dashboard-grid")).toBeVisible();
+    const gridBoxAfter = await page.locator(".dashboard-grid").boundingBox();
+    expect(Math.abs(gridBoxAfter.y - gridBox.y)).toBeLessThanOrEqual(2);
   });
 
   test("track template handles dirty cancel, 409 conflict, empty layout, and settings entry", async ({
@@ -2232,5 +2331,99 @@ test.describe("consultation", () => {
         ".dashboard-widget[data-widget-type='discovery_ratio']",
       ),
     ).toHaveCount(0);
+  });
+
+  test("in-place period, rank-by, and custom dates keep Overview and music page headers mounted without skeletons", async ({
+    archive: { page },
+  }) => {
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await page.evaluate(() => {
+      document
+        .querySelector(".overview-heading")
+        ?.setAttribute("data-e2e-mounted", "1");
+    });
+
+    await chooseOption(page.getByLabel("Rank by", { exact: true }), "time");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".overview-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
+    const fromInput = page.getByLabel("From", { exact: true });
+    const throughInput = page.getByLabel("Through", { exact: true });
+    await expect(fromInput).toBeVisible();
+    await expect(throughInput).toBeVisible();
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator("#total-listens")).toHaveText("135");
+
+    await fromInput.focus();
+    await fromInput.fill("2025-06-02");
+    await expect(fromInput).toBeFocused();
+    await throughInput.focus();
+    await throughInput.fill("2025-06-02");
+    await expect(throughInput).toBeFocused();
+    await expect(page.locator("#total-listens")).toHaveText("0");
+    await expect(page.locator(".overview-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    // Navigate to artist page and verify header, personal rating, and PeriodFilters stay mounted
+    await chooseOption(page.getByLabel("Period", { exact: true }), "all");
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await page
+      .getByRole("link", { name: "Consultation artist", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Consultation artist." }),
+    ).toBeVisible();
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".music-personal")).toBeVisible();
+
+    await page.evaluate(() => {
+      document
+        .querySelector(".music-heading")
+        ?.setAttribute("data-e2e-mounted", "1");
+    });
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "month");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Rank by", { exact: true }), "time");
+    await expect(page.locator(".skeleton-container:visible")).toHaveCount(0);
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "custom");
+    const musicFrom = page.getByLabel("From", { exact: true });
+    const musicThrough = page.getByLabel("Through", { exact: true });
+    await expect(musicFrom).toBeVisible();
+    await expect(musicThrough).toBeVisible();
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
+
+    await musicFrom.focus();
+    await musicFrom.fill("2025-06-01");
+    await expect(musicFrom).toBeFocused();
+    await musicThrough.focus();
+    await musicThrough.fill("2025-06-01");
+    await expect(musicThrough).toBeFocused();
+    await expect(page.locator("#total-listens")).toHaveText("135");
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-e2e-mounted",
+      "1",
+    );
   });
 });
