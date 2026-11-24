@@ -197,7 +197,7 @@ jobs:
     if: needs.changes.outputs.run_checks == 'true'
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
     env:
       HOME: /root
     timeout-minutes: 30
