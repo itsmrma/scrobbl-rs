@@ -238,9 +238,11 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard static/dist)"
       - name: Install Rust build tools
         run: |
-          sed -i 's/azure\.archive\.ubuntu\.com/archive\.ubuntu\.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
-          apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 update
-          apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 install --no-install-recommends -y build-essential cmake clang libclang-dev
+          apt_opts="-o Acquire::ForceIPv4=true -o Acquire::http::Pipeline-Depth=0 -o Acquire::Retries=3 -o Acquire::http::Timeout=15"
+          apt-get $apt_opts update && apt-get $apt_opts install --no-install-recommends -y build-essential cmake clang libclang-dev || {
+            sed -i 's/azure\.archive\.ubuntu\.com/archive\.ubuntu\.com/g' /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null || true
+            apt-get $apt_opts update && apt-get $apt_opts install --no-install-recommends -y build-essential cmake clang libclang-dev
+          }
       - run: cargo build --locked --bin scrobbl-rs 2>&1 | tee ci-logs/server-build.log
       - run: HOME=/root npm run test:e2e -- --browser="$BROWSER" 2>&1 | tee ci-logs/browser.log
         env:
