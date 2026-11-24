@@ -614,7 +614,10 @@ export function ReviewPage({
             {!!result.data &&
               (result.data.decisions_total > 0 || decisionsPage > 0) && (
                 <details className="panel review-decisions">
-                  <summary>Review decisions · Undo</summary>
+                  <summary>
+                    <span>Review decisions · Undo</span>
+                    <Icon>expand_more</Icon>
+                  </summary>
                   <div>
                     {result.data.recent.map((decision) => (
                       <div className="review-decision" key={decision.id}>

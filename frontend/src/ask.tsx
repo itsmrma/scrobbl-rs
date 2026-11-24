@@ -825,7 +825,7 @@ function SqlResultCard({
             valueCol={chartCols.valueCol}
             preferences={preferences}
           />
-          {sql.columns.length > 2 && (
+          {(sql.answer_kind === "ranking" || sql.columns.length > 2) && (
             <SqlTable
               sql={sql}
               pageRows={pageRows}
@@ -878,7 +878,11 @@ function SqlResultCard({
       )}
       {sql.history_href && (
         <div className="ask-result-links">
-          <Link to={sql.history_href}>See these listens</Link>
+          <Link to={sql.history_href}>
+            {sql.history_href.startsWith("/rankings/")
+              ? "See in rankings"
+              : "See these listens"}
+          </Link>
         </div>
       )}
       <SqlDisclosure
