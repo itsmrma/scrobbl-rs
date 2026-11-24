@@ -3991,22 +3991,37 @@ export function MusicPage({
                     </>
                   )}
                 </Heading>
-                {result.data.rank !== null && (
-                  <p
-                    className="music-rank"
-                    title={`Position ${result.data.rank} by plays in this period`}
-                  >
-                    <span className="visually-hidden">Position </span>
-                    <span className="music-rank-hash" aria-hidden="true">
-                      #
-                    </span>
-                    {number.format(result.data.rank)}
-                    <span className="visually-hidden">
-                      {" "}
-                      in the ranking by plays for this period
-                    </span>
-                  </p>
-                )}
+                <p
+                  className="music-rank"
+                  title={
+                    result.data.rank !== null
+                      ? `Position ${result.data.rank} by plays in this period`
+                      : "No counted plays in this period"
+                  }
+                >
+                  {result.data.rank !== null ? (
+                    <>
+                      <span className="visually-hidden">Position </span>
+                      <span className="music-rank-hash" aria-hidden="true">
+                        #
+                      </span>
+                      {number.format(result.data.rank)}
+                      <span className="visually-hidden">
+                        {" "}
+                        in the ranking by plays for this period
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="visually-hidden">
+                        Not ranked: no counted plays in this period
+                      </span>
+                      <span aria-hidden="true">
+                        <span className="music-rank-hash">#</span>-
+                      </span>
+                    </>
+                  )}
+                </p>
               </div>
               <BackButton
                 fallback={`/rankings/${kind}?${context(selection.params)}`}

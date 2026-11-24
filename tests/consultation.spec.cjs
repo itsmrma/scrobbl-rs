@@ -1935,6 +1935,35 @@ test.describe("consultation", () => {
     ).toBeVisible();
   });
 
+  test("music page keeps the rank row as #- when the period has no counted plays", async ({
+    archive: { page },
+  }) => {
+    // 1. Open the top track for the all-time period: the header shows its rank.
+    await page.goto("/rankings/tracks?period=all");
+    const firstTrack = page.locator(".rank-name a").first();
+    const trackHref = (await firstTrack.getAttribute("href")).split("?")[0];
+    await firstTrack.click();
+    const rank = page.locator(".music-title-main .music-rank");
+    await expect(rank).toContainText("#1");
+    await expect(page.locator(".dashboard-grid")).toBeVisible();
+    const gridBox = await page.locator(".dashboard-grid").boundingBox();
+
+    // 2. The same track in a period without counted plays: the rank row stays
+    //    and reads #-, so the header height and the page below it do not shift.
+    await page.goto(`${trackHref}?period=custom&from=2024-01-01&to=2024-01-31`);
+    await expect(rank).toContainText("#-");
+    await expect(rank).toHaveAttribute(
+      "title",
+      "No counted plays in this period",
+    );
+    await expect(rank.locator("span.visually-hidden")).toHaveText(
+      "Not ranked: no counted plays in this period",
+    );
+    await expect(page.locator(".dashboard-grid")).toBeVisible();
+    const gridBoxAfter = await page.locator(".dashboard-grid").boundingBox();
+    expect(Math.abs(gridBoxAfter.y - gridBox.y)).toBeLessThanOrEqual(2);
+  });
+
   test("track template handles dirty cancel, 409 conflict, empty layout, and settings entry", async ({
     archive: { page },
   }) => {
