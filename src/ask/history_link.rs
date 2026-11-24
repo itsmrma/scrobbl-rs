@@ -806,12 +806,384 @@ fn encode(value: &str) -> String {
     out
 }
 
-/// Map `sql` to an exact `/history?...` URL, or return `None` when the query's
-/// filters cannot be represented without approximation.
-pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option<String> {
-    if kind == SqlAnswerKind::Unsupported {
+fn last_day_of_month(year: i32, month: u8) -> Option<NaiveDate> {
+    let (next_year, next_month) = if month == 12 {
+        (year.checked_add(1)?, 1)
+    } else {
+        (year, u32::from(month) + 1)
+    };
+    NaiveDate::from_ymd_opt(next_year, next_month, 1)?.pred_opt()
+}
+
+fn normalize_year_month_bounds(filters: &mut ParsedFilters) -> Option<()> {
+    if filters.year.is_some() && (filters.from.is_some() || filters.to.is_some()) {
         return None;
     }
+    if let Some(year) = filters.year.take() {
+        if let Some(month) = filters.month.take() {
+            filters.from = Some(NaiveDate::from_ymd_opt(year, u32::from(month), 1)?);
+            filters.to = Some(last_day_of_month(year, month)?);
+        } else {
+            filters.from = Some(NaiveDate::from_ymd_opt(year, 1, 1)?);
+            filters.to = Some(NaiveDate::from_ymd_opt(year, 12, 31)?);
+        }
+    }
+    Some(())
+}
+
+fn collect_loose_table_aliases(tokens: &[Token]) -> HashMap<String, String> {
+    let mut aliases = HashMap::new();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < tokens.len() {
+        match &tokens[i] {
+            Token::LParen => depth += 1,
+            Token::RParen => depth = depth.saturating_sub(1),
+            Token::Word(w)
+                if depth == 0
+                    && (w.eq_ignore_ascii_case("FROM") || w.eq_ignore_ascii_case("JOIN")) =>
+            {
+                if let Some(table) = word_str(tokens.get(i + 1)) {
+                    let canonical = table.to_ascii_lowercase();
+                    if matches!(
+                        canonical.as_str(),
+                        "listens"
+                            | "tracks"
+                            | "albums"
+                            | "track_artists"
+                            | "album_artists"
+                            | "artists"
+                    ) {
+                        let mut j = i + 2;
+                        let alias = if is_word(tokens.get(j), "AS") {
+                            j += 1;
+                            word_str(tokens.get(j))
+                                .map(str::to_ascii_lowercase)
+                                .unwrap_or_else(|| canonical.clone())
+                        } else if let Some(next_w) = word_str(tokens.get(j))
+                            && !matches!(
+                                next_w.to_ascii_uppercase().as_str(),
+                                "ON" | "WHERE"
+                                    | "GROUP"
+                                    | "ORDER"
+                                    | "LIMIT"
+                                    | "JOIN"
+                                    | "INNER"
+                                    | "LEFT"
+                                    | "CROSS"
+                                    | "RIGHT"
+                                    | "FULL"
+                                    | "NATURAL"
+                                    | "UNION"
+                                    | "INTERSECT"
+                                    | "EXCEPT"
+                            )
+                        {
+                            next_w.to_ascii_lowercase()
+                        } else {
+                            canonical.clone()
+                        };
+                        aliases.insert(alias, canonical);
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    aliases
+}
+
+fn split_top_level_commas(tokens: &[Token]) -> Vec<&[Token]> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (idx, tok) in tokens.iter().enumerate() {
+        match tok {
+            Token::LParen => depth += 1,
+            Token::RParen => depth = depth.saturating_sub(1),
+            Token::Comma if depth == 0 => {
+                out.push(&tokens[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    if start < tokens.len() {
+        out.push(&tokens[start..]);
+    }
+    out
+}
+
+fn strip_select_alias(tokens: &[Token]) -> &[Token] {
+    extract_select_alias_and_expr(tokens).1
+}
+
+fn unwrap_min_max(tokens: &[Token]) -> &[Token] {
+    match tokens {
+        [
+            Token::Word(fn_name),
+            Token::LParen,
+            inner @ ..,
+            Token::RParen,
+        ] if fn_name.eq_ignore_ascii_case("MIN") || fn_name.eq_ignore_ascii_case("MAX") => inner,
+        _ => tokens,
+    }
+}
+
+fn infer_entity_format(expr: &[Token], aliases: &HashMap<String, String>) -> Option<ColumnFormat> {
+    let expr = strip_outer_parens(unwrap_min_max(strip_outer_parens(expr)));
+    match expr {
+        [Token::Word(tbl), Token::Dot, Token::Word(col)] => {
+            let canonical = aliases.get(&tbl.to_ascii_lowercase())?;
+            match (canonical.as_str(), col.to_ascii_lowercase().as_str()) {
+                ("tracks", "title") => Some(ColumnFormat::Track),
+                ("artists", "name") => Some(ColumnFormat::Artist),
+                ("albums", "name") => Some(ColumnFormat::Album),
+                _ => None,
+            }
+        }
+        [Token::Word(col)] => {
+            let lower = col.to_ascii_lowercase();
+            let has_tracks = aliases.values().any(|t| t == "tracks");
+            let has_artists = aliases.values().any(|t| t == "artists");
+            let has_albums = aliases.values().any(|t| t == "albums");
+            match lower.as_str() {
+                "title" if has_tracks => Some(ColumnFormat::Track),
+                "name" if has_artists && !has_albums => Some(ColumnFormat::Artist),
+                "name" if has_albums && !has_artists => Some(ColumnFormat::Album),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn infer_entity_format_from_alias(
+    alias: Option<&str>,
+    col_name: &str,
+    aliases: &HashMap<String, String>,
+) -> Option<ColumnFormat> {
+    let label = alias.unwrap_or(col_name).trim().to_ascii_lowercase();
+    let has_table = |table: &str| aliases.values().any(|t| t == table);
+    match label.as_str() {
+        "track" | "brano" | "canzone" if has_table("tracks") => Some(ColumnFormat::Track),
+        "artist" | "artista" if has_table("artists") => Some(ColumnFormat::Artist),
+        "album" if has_table("albums") => Some(ColumnFormat::Album),
+        _ => None,
+    }
+}
+
+/// Promote `ColumnFormat::Text` columns to `Track`/`Artist`/`Album` when the
+/// SQL `SELECT` projects `tracks.title`, `artists.name`, or `albums.name`, or
+/// when an alias/label names an entity whose table is in `FROM`/`JOIN`.
+pub fn promote_entity_columns(sql: &str, columns: &mut [SqlColumn]) {
+    let Some(mut tokens) = tokenize(sql) else {
+        return;
+    };
+    if matches!(tokens.last(), Some(Token::Semi)) {
+        tokens.pop();
+    }
+    let mut depth = 0usize;
+    let mut select_idx = None;
+    let mut from_idx = None;
+    for (idx, tok) in tokens.iter().enumerate() {
+        match tok {
+            Token::LParen => depth += 1,
+            Token::RParen => depth = depth.saturating_sub(1),
+            Token::Word(w) if depth == 0 => {
+                if w.eq_ignore_ascii_case("SELECT") && select_idx.is_none() {
+                    select_idx = Some(idx);
+                } else if w.eq_ignore_ascii_case("FROM") && select_idx.is_some() {
+                    from_idx = Some(idx);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let (Some(s_idx), Some(f_idx)) = (select_idx, from_idx) else {
+        return;
+    };
+    let mut proj_start = s_idx + 1;
+    if is_word(tokens.get(proj_start), "DISTINCT") {
+        proj_start += 1;
+    }
+    if proj_start >= f_idx {
+        return;
+    }
+    let aliases = collect_loose_table_aliases(&tokens[f_idx..]);
+    let items = split_top_level_commas(&tokens[proj_start..f_idx]);
+    if items.len() != columns.len() {
+        return;
+    }
+    for (item, col) in items.iter().zip(columns.iter_mut()) {
+        if col.format != ColumnFormat::Text {
+            continue;
+        }
+        let (alias, expr) = extract_select_alias_and_expr(item);
+        if let Some(promoted) = infer_entity_format(expr, &aliases)
+            .or_else(|| infer_entity_format_from_alias(alias.as_deref(), &col.name, &aliases))
+        {
+            col.format = promoted;
+        }
+    }
+}
+
+fn extract_select_alias_and_expr(tokens: &[Token]) -> (Option<String>, &[Token]) {
+    if tokens.len() >= 3 && is_word(tokens.get(tokens.len() - 2), "AS") {
+        if let Some(Token::Word(alias)) = tokens.last() {
+            return (
+                Some(alias.to_ascii_lowercase()),
+                &tokens[..tokens.len() - 2],
+            );
+        }
+    } else if tokens.len() >= 2
+        && let Some(Token::Word(alias)) = tokens.last()
+        && !matches!(
+            tokens.get(tokens.len() - 2),
+            Some(Token::Dot | Token::LParen)
+        )
+    {
+        return (
+            Some(alias.to_ascii_lowercase()),
+            &tokens[..tokens.len() - 1],
+        );
+    }
+    (None, tokens)
+}
+
+fn ranking_entity_segment(
+    group_tokens: &[Token],
+    aliases: &HashMap<String, String>,
+) -> Option<&'static str> {
+    let items = split_top_level_commas(group_tokens);
+    if items.is_empty() {
+        return None;
+    }
+    let mut segment: Option<&'static str> = None;
+    for item in items {
+        let (tbl, col) = parse_column(strip_outer_parens(item), aliases)?;
+        let item_seg = match (tbl.as_str(), col.as_str()) {
+            ("artists", "id" | "name") => "artists",
+            ("albums", "id" | "name") => "albums",
+            ("tracks", "id" | "edition_key" | "title") => "tracks",
+            _ => return None,
+        };
+        if let Some(prev) = segment {
+            if prev != item_seg {
+                return None;
+            }
+        } else {
+            segment = Some(item_seg);
+        }
+    }
+    segment
+}
+
+fn classify_ranking_metric(tokens: &[Token]) -> Option<&'static str> {
+    let expr = strip_outer_parens(tokens);
+    if let [
+        Token::Word(fn_name),
+        Token::LParen,
+        inner @ ..,
+        Token::RParen,
+    ] = expr
+    {
+        if fn_name.eq_ignore_ascii_case("COALESCE") {
+            let args = split_top_level_commas(inner);
+            if let Some(first) = args.first() {
+                return classify_ranking_metric(first);
+            }
+            return None;
+        }
+        if fn_name.eq_ignore_ascii_case("COUNT") {
+            return Some("plays");
+        }
+        if fn_name.eq_ignore_ascii_case("SUM") {
+            let has_duration = inner.iter().any(|t| {
+                matches!(
+                    t,
+                    Token::Word(w)
+                        if w.eq_ignore_ascii_case("listened_ms")
+                            || w.eq_ignore_ascii_case("duration_ms")
+                )
+            });
+            if has_duration {
+                return Some("time");
+            }
+        }
+    }
+    None
+}
+
+fn ranking_sort_order(
+    order_tokens: Option<&[Token]>,
+    select_tokens: &[Token],
+    kind: SqlAnswerKind,
+) -> Option<(&'static str, bool)> {
+    let mut alias_map: HashMap<String, &[Token]> = HashMap::new();
+    let select_items = split_top_level_commas(select_tokens);
+    for item in &select_items {
+        let (alias, expr) = extract_select_alias_and_expr(item);
+        if let Some(name) = alias {
+            alias_map.insert(name, expr);
+        }
+    }
+
+    if let Some(ot) = order_tokens {
+        if ot.len() < 3 || !is_word(ot.get(1), "BY") {
+            return None;
+        }
+        let items = split_top_level_commas(&ot[2..]);
+        let primary = items.first()?;
+        let (expr, asc) = if is_word(primary.last(), "ASC") {
+            (&primary[..primary.len() - 1], true)
+        } else if is_word(primary.last(), "DESC") {
+            (&primary[..primary.len() - 1], false)
+        } else {
+            (*primary, false)
+        };
+        let resolved = match strip_outer_parens(expr) {
+            [Token::Word(w)] => alias_map
+                .get(&w.to_ascii_lowercase())
+                .copied()
+                .unwrap_or(expr),
+            _ => expr,
+        };
+        return classify_ranking_metric(resolved).map(|sort| (sort, asc));
+    }
+
+    if kind == SqlAnswerKind::Ranking {
+        for item in &select_items {
+            let expr = strip_select_alias(item);
+            if let Some(sort) = classify_ranking_metric(expr) {
+                return Some((sort, false));
+            }
+        }
+    }
+    None
+}
+
+/// Map `sql` to an exact `/rankings/...` or `/history?...` URL, or return
+/// `None` when the query's filters cannot be represented without approximation.
+struct ParsedSelectQuery {
+    tokens: Vec<Token>,
+    from_start: usize,
+    group_idx: Option<usize>,
+    order_idx: Option<usize>,
+    limit_idx: Option<usize>,
+    has_where: bool,
+    aliases: HashMap<String, String>,
+    inner_albums: bool,
+    filters: ParsedFilters,
+}
+
+fn parse_select_query_and_filters(
+    sql: &str,
+    conn: Option<&Connection>,
+    projection_path: Option<&Path>,
+) -> Option<ParsedSelectQuery> {
     let mut tokens = tokenize(sql)?;
     if matches!(tokens.last(), Some(Token::Semi)) {
         tokens.pop();
@@ -869,6 +1241,7 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
     let (aliases, inner_albums) = parse_from_and_joins(&tokens[from_start..from_end])?;
 
     let mut filters = ParsedFilters::default();
+    let has_where = where_idx.is_some();
     if let Some(w_idx) = where_idx {
         let w_start = w_idx + 1;
         let w_end = [group_idx, order_idx, limit_idx]
@@ -882,23 +1255,106 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
             return None;
         }
         let predicates = split_top_level_and(where_tokens)?;
-        let conn = open_projection_read_only(projection_path)?;
+        let owned_conn;
+        let db = match conn {
+            Some(c) => c,
+            None => {
+                owned_conn = open_projection_read_only(projection_path?)?;
+                &owned_conn
+            }
+        };
         for pred in predicates {
-            apply_predicate(pred, &aliases, &conn, &mut filters)?;
+            apply_predicate(pred, &aliases, db, &mut filters)?;
         }
     }
 
-    if inner_albums && filters.album.is_none() {
-        return None;
-    }
-
+    normalize_year_month_bounds(&mut filters)?;
     if let (Some(from), Some(to)) = (filters.from, filters.to)
         && from > to
     {
         return None;
     }
-    if filters.year.is_some() && (filters.from.is_some() || filters.to.is_some()) {
+
+    Some(ParsedSelectQuery {
+        tokens,
+        from_start,
+        group_idx,
+        order_idx,
+        limit_idx,
+        has_where,
+        aliases,
+        inner_albums,
+        filters,
+    })
+}
+
+pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option<String> {
+    if kind == SqlAnswerKind::Unsupported {
         return None;
+    }
+    let parsed = parse_select_query_and_filters(sql, None, Some(projection_path))?;
+    if parsed.inner_albums && parsed.filters.album.is_none() {
+        return None;
+    }
+
+    let filters = parsed.filters;
+    let ranking_compatible = filters.status == Some(HistoryStatus::Counted)
+        && filters.month.is_none()
+        && filters.weekday.is_none()
+        && filters.artist.is_none()
+        && filters.album.is_none()
+        && filters.track.is_none();
+    if ranking_compatible
+        && let Some(g_idx) = parsed.group_idx
+        && is_word(parsed.tokens.get(g_idx + 1), "BY")
+    {
+        let g_start = g_idx + 2;
+        let g_end = [parsed.order_idx, parsed.limit_idx]
+            .into_iter()
+            .flatten()
+            .filter(|&p| p >= g_start)
+            .min()
+            .unwrap_or(parsed.tokens.len());
+        let order_tokens = parsed.order_idx.map(|o_idx| {
+            let o_end = parsed
+                .limit_idx
+                .filter(|&p| p >= o_idx)
+                .unwrap_or(parsed.tokens.len());
+            &parsed.tokens[o_idx..o_end]
+        });
+        let select_start = if is_word(parsed.tokens.get(1), "DISTINCT") {
+            2
+        } else {
+            1
+        };
+        let select_tokens = &parsed.tokens[select_start..parsed.from_start - 1];
+        if let Some(segment) =
+            ranking_entity_segment(&parsed.tokens[g_start..g_end], &parsed.aliases)
+            && let Some((sort, asc)) = ranking_sort_order(order_tokens, select_tokens, kind)
+        {
+            let mut r_params: Vec<(&'static str, String)> = Vec::new();
+            if filters.from.is_some() || filters.to.is_some() {
+                r_params.push(("period", "custom".into()));
+                if let Some(from) = filters.from {
+                    r_params.push(("from", from.to_string()));
+                }
+                if let Some(to) = filters.to {
+                    r_params.push(("to", to.to_string()));
+                }
+            } else {
+                r_params.push(("period", "all".into()));
+            }
+            r_params.push(("sort", sort.into()));
+            if asc {
+                r_params.push(("order", "asc".into()));
+            }
+            let query = r_params
+                .iter()
+                .map(|(k, v)| format!("{k}={}", encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+            return Some(format!("/rankings/{segment}?{query}"));
+        }
     }
 
     let mut params: Vec<(&'static str, String)> = Vec::new();
@@ -912,9 +1368,6 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
         }
     } else {
         params.push(("period", "all".into()));
-        if let Some(year) = filters.year {
-            params.push(("year", year.to_string()));
-        }
     }
     if let Some(month) = filters.month {
         params.push(("month", month.to_string()));
@@ -947,8 +1400,32 @@ pub fn resolve(projection_path: &Path, sql: &str, kind: SqlAnswerKind) -> Option
     Some(format!("/history?{query}"))
 }
 
-fn music_href(segment: &str, id: &str) -> String {
-    format!("/music/{segment}/{}", encode(id))
+fn extract_period_query(conn: &Connection, sql: &str) -> Option<String> {
+    let parsed = parse_select_query_and_filters(sql, Some(conn), None)?;
+    if !parsed.has_where || (parsed.filters.from.is_none() && parsed.filters.to.is_none()) {
+        return None;
+    }
+    let mut params = vec![("period", "custom".to_string())];
+    if let Some(from) = parsed.filters.from {
+        params.push(("from", from.to_string()));
+    }
+    if let Some(to) = parsed.filters.to {
+        params.push(("to", to.to_string()));
+    }
+    Some(
+        params
+            .iter()
+            .map(|(k, v)| format!("{k}={}", encode(v)))
+            .collect::<Vec<_>>()
+            .join("&"),
+    )
+}
+
+fn music_href(segment: &str, id: &str, period_query: Option<&str>) -> String {
+    match period_query {
+        Some(pq) => format!("/music/{segment}/{}?{pq}", encode(id)),
+        None => format!("/music/{segment}/{}", encode(id)),
+    }
 }
 
 fn text_at(row: &[SqlValue], col: Option<usize>) -> Option<&str> {
@@ -968,11 +1445,90 @@ fn unique_query(conn: &Connection, sql: &str, params: &[&dyn rusqlite::ToSql]) -
     Some(first)
 }
 
+fn resolve_track_edition(
+    conn: &Connection,
+    title: &str,
+    artist: Option<&str>,
+    album: Option<&str>,
+) -> Option<String> {
+    let (distinct_sql, pick_sql, params): (&str, &str, Vec<&dyn rusqlite::ToSql>) =
+        match (&artist, &album) {
+            (Some(ar), Some(al)) => (
+                "SELECT COUNT(DISTINCT t.edition_key) FROM tracks t \
+                 JOIN albums al ON al.id = t.album_id \
+                 JOIN track_artists ta ON ta.track_id = t.id \
+                 JOIN artists ar ON ar.id = ta.artist_id \
+                 WHERE t.title = ?1 AND ar.name = ?2 AND al.name = ?3",
+                "SELECT t.id FROM tracks t \
+                 JOIN albums al ON al.id = t.album_id \
+                 JOIN track_artists ta ON ta.track_id = t.id \
+                 JOIN artists ar ON ar.id = ta.artist_id \
+                 LEFT JOIN listens l ON l.track_id = t.id AND l.counted = 1 \
+                 WHERE t.title = ?1 AND ar.name = ?2 AND al.name = ?3 \
+                 GROUP BY t.id \
+                 ORDER BY COUNT(l.id) DESC, t.id ASC \
+                 LIMIT 1",
+                vec![&title, ar, al],
+            ),
+            (Some(ar), None) => (
+                "SELECT COUNT(DISTINCT t.edition_key) FROM tracks t \
+                 JOIN track_artists ta ON ta.track_id = t.id \
+                 JOIN artists ar ON ar.id = ta.artist_id \
+                 WHERE t.title = ?1 AND ar.name = ?2",
+                "SELECT t.id FROM tracks t \
+                 JOIN track_artists ta ON ta.track_id = t.id \
+                 JOIN artists ar ON ar.id = ta.artist_id \
+                 LEFT JOIN listens l ON l.track_id = t.id AND l.counted = 1 \
+                 WHERE t.title = ?1 AND ar.name = ?2 \
+                 GROUP BY t.id \
+                 ORDER BY COUNT(l.id) DESC, t.id ASC \
+                 LIMIT 1",
+                vec![&title, ar],
+            ),
+            (None, Some(al)) => (
+                "SELECT COUNT(DISTINCT t.edition_key) FROM tracks t \
+                 JOIN albums al ON al.id = t.album_id \
+                 WHERE t.title = ?1 AND al.name = ?2",
+                "SELECT t.id FROM tracks t \
+                 JOIN albums al ON al.id = t.album_id \
+                 LEFT JOIN listens l ON l.track_id = t.id AND l.counted = 1 \
+                 WHERE t.title = ?1 AND al.name = ?2 \
+                 GROUP BY t.id \
+                 ORDER BY COUNT(l.id) DESC, t.id ASC \
+                 LIMIT 1",
+                vec![&title, al],
+            ),
+            (None, None) => (
+                "SELECT COUNT(DISTINCT edition_key) FROM tracks WHERE title = ?1",
+                "SELECT t.id FROM tracks t \
+                 LEFT JOIN listens l ON l.track_id = t.id AND l.counted = 1 \
+                 WHERE t.title = ?1 \
+                 GROUP BY t.id \
+                 ORDER BY COUNT(l.id) DESC, t.id ASC \
+                 LIMIT 1",
+                vec![&title],
+            ),
+        };
+    let distinct_editions: i64 = conn
+        .prepare_cached(distinct_sql)
+        .ok()?
+        .query_row(params.as_slice(), |r| r.get(0))
+        .ok()?;
+    if distinct_editions != 1 {
+        return None;
+    }
+    conn.prepare_cached(pick_sql)
+        .ok()?
+        .query_row(params.as_slice(), |r| r.get(0))
+        .ok()
+}
+
 /// Resolve `/music/{artists|albums|tracks}/{id}` links for `artist`, `album`,
 /// and `track` columns using the projection's link keys. Ambiguous names without
 /// an ID or disambiguating column in the same row stay unlinked (`None`).
 pub fn resolve_cell_links(
     projection_path: &Path,
+    sql: &str,
     columns: &[SqlColumn],
     rows: &[Vec<SqlValue>],
 ) -> Vec<Vec<Option<String>>> {
@@ -989,6 +1545,8 @@ pub fn resolve_cell_links(
     let Some(conn) = open_projection_read_only(projection_path) else {
         return Vec::new();
     };
+    let period_query = extract_period_query(&conn, sql);
+    let pq = period_query.as_deref();
 
     let entity_cols = columns
         .iter()
@@ -1056,7 +1614,7 @@ pub fn resolve_cell_links(
                                             "SELECT id FROM artists WHERE id = ?1 LIMIT 1",
                                             &[&id],
                                         )
-                                        .map(|found| music_href("artists", &found))
+                                        .map(|found| music_href("artists", &found, pq))
                                     })
                                     .clone();
                             }
@@ -1069,7 +1627,7 @@ pub fn resolve_cell_links(
                                         "SELECT id FROM artists WHERE name = ?1 LIMIT 2",
                                         &[&text],
                                     )
-                                    .map(|found| music_href("artists", &found))
+                                    .map(|found| music_href("artists", &found, pq))
                                 })
                                 .clone()
                         }
@@ -1083,7 +1641,7 @@ pub fn resolve_cell_links(
                                             "SELECT id FROM albums WHERE id = ?1 LIMIT 1",
                                             &[&id],
                                         )
-                                        .map(|found| music_href("albums", &found))
+                                        .map(|found| music_href("albums", &found, pq))
                                     })
                                     .clone();
                             }
@@ -1109,7 +1667,7 @@ pub fn resolve_cell_links(
                                             &[&text, &ar],
                                         )
                                     })
-                                    .map(|found| music_href("albums", &found))
+                                    .map(|found| music_href("albums", &found, pq))
                                 })
                                 .clone()
                         }
@@ -1123,7 +1681,7 @@ pub fn resolve_cell_links(
                                             "SELECT id FROM tracks WHERE id = ?1 LIMIT 1",
                                             &[&id],
                                         )
-                                        .map(|found| music_href("tracks", &found))
+                                        .map(|found| music_href("tracks", &found, pq))
                                     })
                                     .clone();
                             }
@@ -1165,7 +1723,15 @@ pub fn resolve_cell_links(
                                         ),
                                         (None, None) => None,
                                     })
-                                    .map(|found| music_href("tracks", &found))
+                                    .or_else(|| {
+                                        resolve_track_edition(
+                                            &conn,
+                                            text,
+                                            artist.as_deref(),
+                                            album.as_deref(),
+                                        )
+                                    })
+                                    .map(|found| music_href("tracks", &found, pq))
                                 })
                                 .clone()
                         }

@@ -76,6 +76,10 @@ export function returnTo(path: string) {
     window.dispatchEvent(new PopStateEvent("popstate"));
   }
 }
+export function hasBackNavigation(): boolean {
+  const current = navigationState();
+  return Boolean(current.back && current.back.index < current.index);
+}
 export function BackButton({ fallback }: { fallback: string }) {
   const current = navigationState();
   return (
