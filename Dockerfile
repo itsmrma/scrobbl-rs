@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:25-bookworm-slim@sha256:81db02c4b671288a03915da9534dbd54f96d0e7c24d80ccc54f5b36b2e684370 AS frontend
+FROM node:26-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS frontend
 WORKDIR /work
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci --ignore-scripts
