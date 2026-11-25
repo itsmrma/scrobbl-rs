@@ -81,7 +81,7 @@ La scelta di consultare separatamente una o più schede prima raggruppate per no
 _Avoid_: Decoupling, cancellazione di duplicati.
 
 **Template di pagina musicale**:
-La disposizione personalizzabile dei widget condivisa da tutte le pagine di uno stesso tipo: artista, album o brano. L'utente dispone di un template per ciascun tipo; modificarlo cambia la disposizione per tutte le pagine di quel tipo.
+La disposizione personalizzabile dei widget condivisa da tutte le pagine di uno stesso tipo: artista, album o brano. L'utente dispone di un template per ciascun tipo; modificarlo cambia la disposizione per tutte le pagine di quel tipo. Il template conserva anche la dimensione dell'intestazione dell'entità (piccola, media, grande, molto grande), che scala proporzionalmente l'artwork e i titoli mantenendo l'intestazione esterna alla griglia dei widget.
 _Avoid_: Layout del singolo artista, layout del singolo album, layout del singolo brano.
 
 **Calendario degli ascolti**:

@@ -139,6 +139,18 @@
   color: var(--muted);
 }
 
+.dashboard-header-size {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.dashboard-header-size-label {
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .dashboard-widget.editing {
   outline: 1px dashed
     color-mix(in oklab, var(--accent) 55%, var(--border-strong));
@@ -1507,6 +1519,10 @@
 
   .dashboard-edit-actions .button,
   .dashboard-edit-actions button {
+    width: 100%;
+  }
+
+  .dashboard-header-size .segmented-control {
     width: 100%;
   }
 

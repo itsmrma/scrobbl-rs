@@ -1713,6 +1713,85 @@ async fn music_page_template_layout_persistence_matrix_validation_and_concurrenc
 }
 
 #[tokio::test]
+async fn music_template_header_size_persists_and_is_rejected_on_home() {
+    let (_dir, state, token) = setup().await;
+
+    // 1. Default artist template omits headerSize
+    let (status, artist_default) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(artist_default.get("headerSize").is_none());
+
+    // 2. Saving headerSize="large" persists and is returned on GET
+    let mut with_large = artist_default.clone();
+    with_large["headerSize"] = json!("large");
+    let (status, saved) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        with_large,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["headerSize"], "large");
+
+    let (status, read_back) = get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read_back["headerSize"], "large");
+
+    // 3. Invalid headerSize value is rejected
+    let mut invalid_size = read_back.clone();
+    invalid_size["headerSize"] = json!("huge");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        invalid_size,
+    )
+    .await;
+    assert!(status.is_client_error());
+
+    // 4. headerSize is rejected on the Home template
+    let (status, home_default) = get(&state, &token, "/api/v1/dashboard/layout").await;
+    assert_eq!(status, StatusCode::OK);
+    let mut home_with_header = home_default;
+    home_with_header["headerSize"] = json!("large");
+    let (status, _) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout",
+        home_with_header,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // 5. Saving without headerSize restores the omitted default
+    let mut back_to_default = read_back;
+    back_to_default
+        .as_object_mut()
+        .unwrap()
+        .remove("headerSize");
+    let (status, reset_saved) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/dashboard/layout?template=artist",
+        back_to_default,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(reset_saved.get("headerSize").is_none());
+
+    let (status, final_read) =
+        get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(final_read.get("headerSize").is_none());
+}
+
+#[tokio::test]
 async fn album_template_layout_persistence_matrix_validation_and_concurrency() {
     let (_dir, state, token) = setup().await;
 

@@ -403,6 +403,7 @@ mod tests {
             crate::read_api::ApiRemoval::decl(&config),
             crate::read_api::ApiPage::decl(&config),
             crate::dashboard_layout::WidgetConfig::decl(&config),
+            crate::dashboard_layout::HeaderSize::decl(&config),
             crate::dashboard_layout::DashboardLayout::decl(&config),
             crate::ask::AskStatus::decl(&config),
             crate::ask::schema::SqlAnswerKind::decl(&config),

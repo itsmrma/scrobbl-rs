@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import type {
   Dashboard,
   DashboardLayout,
+  HeaderSize,
   History,
   Preferences,
   Ranking,
@@ -2066,6 +2067,30 @@ function reorderWidgets(widgets: WidgetConfig[], from: number, to: number) {
 
 export type TemplateKind = "home" | "artist" | "album" | "track";
 
+function headerGeometry(size: HeaderSize): { scale: number; maxShare: number } {
+  switch (size) {
+    case "small":
+      return { scale: 0.75, maxShare: 0.34 };
+    case "large":
+      return { scale: 1.3, maxShare: 0.48 };
+    case "xlarge":
+      return { scale: 1.6, maxShare: 0.55 };
+    default:
+      return { scale: 1, maxShare: 0.42 };
+  }
+}
+
+const HEADER_SIZE_OPTIONS: {
+  value: HeaderSize;
+  label: string;
+  shortLabel: string;
+}[] = [
+  { value: "small", label: "Small", shortLabel: "S" },
+  { value: "medium", label: "Medium", shortLabel: "M" },
+  { value: "large", label: "Large", shortLabel: "L" },
+  { value: "xlarge", label: "Extra large", shortLabel: "XL" },
+];
+
 export const DEFAULT_ARTIST_LAYOUT: DashboardLayout = {
   version: 0,
   widgets: [
@@ -2324,6 +2349,14 @@ export function useLayoutEditor({
     setCatalogOpen(false);
   };
 
+  const setHeaderSize = (size: HeaderSize) => {
+    setLayout((prev) => ({
+      version: prev.version,
+      widgets: prev.widgets,
+      ...(size === "medium" ? {} : { headerSize: size }),
+    }));
+  };
+
   return {
     editing,
     setEditing,
@@ -2343,6 +2376,7 @@ export function useLayoutEditor({
     removeWidget,
     moveWidget,
     addWidget,
+    setHeaderSize,
     layoutResult,
   };
 }
@@ -2351,6 +2385,8 @@ export function DashboardEditToolbar({
   template,
   saving,
   saveError,
+  headerSize,
+  onHeaderSizeChange,
   onAddWidget,
   onReset,
   onCancel,
@@ -2359,6 +2395,8 @@ export function DashboardEditToolbar({
   template: TemplateKind;
   saving: boolean;
   saveError: string | null;
+  headerSize?: HeaderSize;
+  onHeaderSizeChange?: (size: HeaderSize) => void;
   onAddWidget: () => void;
   onReset: () => void;
   onCancel: () => void;
@@ -2412,6 +2450,20 @@ export function DashboardEditToolbar({
           <Icon>check</Icon> Save layout
         </button>
       </div>
+      {template !== "home" && onHeaderSizeChange && (
+        <div className="dashboard-header-size">
+          <span className="dashboard-header-size-label" aria-hidden="true">
+            Header size
+          </span>
+          <SegmentedControl
+            ariaLabel="Header size"
+            value={headerSize ?? "medium"}
+            onChange={onHeaderSizeChange}
+            options={HEADER_SIZE_OPTIONS}
+            disabled={saving}
+          />
+        </div>
+      )}
       {template === "artist" && (
         <p className="dashboard-edit-notice">
           <Icon>info</Icon> Editing the artist template. Changes apply to every
@@ -3378,10 +3430,10 @@ export function HistoryPage({
   const artistId = params.get("artist");
   const hasDrillDown = Boolean(
     trackId ||
-      artistId ||
-      albumId ||
-      params.get("bucket") ||
-      params.get("bucket_start"),
+    artistId ||
+    albumId ||
+    params.get("bucket") ||
+    params.get("bucket_start"),
   );
   const showBack = !embedded && (hasDrillDown || hasBackNavigation());
   const backFallback = trackId
@@ -3391,7 +3443,9 @@ export function HistoryPage({
       : artistId
         ? musicLink("artists", artistId, params)
         : "/dashboard";
-  const hasActiveChips = Boolean((!embedded && trackId) || params.get("bucket"));
+  const hasActiveChips = Boolean(
+    (!embedded && trackId) || params.get("bucket"),
+  );
   return (
     <div className={`history-section ${embedded ? "embedded-history" : ""}`}>
       {!embedded && (
@@ -3759,6 +3813,7 @@ export function MusicPage({
     ? { data: dummyPreviewPage, error: null, loading: false }
     : apiResult;
 
+  const headerSize: HeaderSize = layoutEditor.layout.headerSize ?? "medium";
   const introduction = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const content = introduction.current;
@@ -3768,13 +3823,21 @@ export function MusicPage({
       // On phones the content box is `display: contents` and the cover size is
       // fixed in CSS, so there is nothing to measure.
       if (getComputedStyle(content).display === "contents") return;
-      // The artwork is as tall as the introduction beside it (title, rank,
-      // rating and toolbar), so the toolbar closes the header at the cover's
-      // bottom edge; it never takes more than 42% of the width.
-      const size = Math.min(
-        content.getBoundingClientRect().height,
-        header.clientWidth * 0.42,
-      );
+      // Measure the natural height of the introduction children rather than
+      // `content` itself, whose `min-height` tracks `--music-artwork-size`.
+      // Medium keeps the cover as tall as the introduction; other sizes scale
+      // it, and the toolbar still closes the header at the cover's bottom edge
+      // when the cover is taller.
+      const children = Array.from(content.children);
+      const rowGap = parseFloat(getComputedStyle(content).rowGap) || 0;
+      const natural =
+        children.reduce(
+          (sum, child) => sum + child.getBoundingClientRect().height,
+          0,
+        ) +
+        rowGap * Math.max(0, children.length - 1);
+      const { scale, maxShare } = headerGeometry(headerSize);
+      const size = Math.min(natural * scale, header.clientWidth * maxShare);
       const value = Math.round(size) + "px";
       if (header.style.getPropertyValue("--music-artwork-size") !== value)
         header.style.setProperty("--music-artwork-size", value);
@@ -3791,7 +3854,7 @@ export function MusicPage({
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [result.data?.id]);
+  }, [result.data?.id, headerSize]);
 
   // --- Music Page Consultation with Shared Grid Engine ---
   const renderMusicWidgetContent = (widget: WidgetConfig) => {
@@ -3959,7 +4022,7 @@ export function MusicPage({
     <>
       <ErrorText>{result.error}</ErrorText>
       {result.data ? (
-        <div className="music-heading">
+        <div className="music-heading" data-header-size={headerSize}>
           <Cover url={result.data.cover_url} large>
             <ArtworkCredits url={result.data.cover_url} />
           </Cover>
@@ -4087,6 +4150,8 @@ export function MusicPage({
           template={templateKind}
           saving={layoutEditor.saving}
           saveError={layoutEditor.saveError}
+          headerSize={headerSize}
+          onHeaderSizeChange={layoutEditor.setHeaderSize}
           onAddWidget={() => layoutEditor.setCatalogOpen(true)}
           onReset={layoutEditor.handleReset}
           onCancel={layoutEditor.handleCancel}
