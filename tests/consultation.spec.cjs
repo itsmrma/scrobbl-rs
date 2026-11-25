@@ -1264,6 +1264,52 @@ test.describe("consultation", () => {
     ).toBeVisible();
   });
 
+  test("artist template can resize the entity header and persist it", async ({
+    archive: { page },
+  }) => {
+    await page.goto("/rankings/artists?period=all");
+    await page.locator(".rank-name a").first().click();
+
+    await page
+      .getByRole("button", { name: "Customize artist template" })
+      .click();
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Customize artist template",
+    });
+    await expect(editToolbar).toBeVisible();
+
+    const heading = page.locator(".music-heading");
+    const cover = page.locator(".music-heading > .cover");
+    await expect(heading).toHaveAttribute("data-header-size", "medium");
+    const initialBox = await cover.boundingBox();
+    expect(initialBox).not.toBeNull();
+
+    const sizeGroup = editToolbar.getByRole("group", { name: "Header size" });
+    await sizeGroup.getByRole("button", { name: "Extra large" }).click();
+    await expect(heading).toHaveAttribute("data-header-size", "xlarge");
+    await expect
+      .poll(async () => (await cover.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(initialBox.width);
+
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
+    await expect(editToolbar).toBeHidden();
+
+    await page.reload();
+    await expect(heading).toHaveAttribute("data-header-size", "xlarge");
+
+    await page
+      .getByRole("button", { name: "Customize artist template" })
+      .click();
+    await expect(editToolbar).toBeVisible();
+    await editToolbar
+      .getByRole("group", { name: "Header size" })
+      .getByRole("button", { name: "Medium" })
+      .click();
+    await editToolbar.getByRole("button", { name: "Save layout" }).click();
+    await expect(editToolbar).toBeHidden();
+    await expect(heading).toHaveAttribute("data-header-size", "medium");
+  });
+
   test("artist template handles dirty cancel confirmation, 409 conflict preserving draft, and empty preview", async ({
     archive: { page },
   }) => {

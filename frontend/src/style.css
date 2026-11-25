@@ -3417,12 +3417,29 @@ dialog.artwork-lightbox {
    9. Artist, Album & Track Detail Headers (.music-heading) & Edit Layout
    -------------------------------------------------------------------------- */
 .music-heading {
-  --music-h1-size: clamp(28px, 3vw, 40px);
+  --music-header-scale: 1;
+  --music-mobile-cover-scale: 1;
+  --music-h1-size: calc(clamp(28px, 3vw, 40px) * var(--music-header-scale));
   display: grid;
   grid-template-columns: var(--music-artwork-size, 220px) minmax(0, 1fr);
   gap: 24px;
   align-items: start;
   min-width: 0;
+}
+
+.music-heading[data-header-size="small"] {
+  --music-header-scale: 0.85;
+  --music-mobile-cover-scale: 0.8;
+}
+
+.music-heading[data-header-size="large"] {
+  --music-header-scale: 1.15;
+  --music-mobile-cover-scale: 1.2;
+}
+
+.music-heading[data-header-size="xlarge"] {
+  --music-header-scale: 1.3;
+  --music-mobile-cover-scale: 1.4;
 }
 
 .music-heading > .cover.large {
@@ -3433,11 +3450,12 @@ dialog.artwork-lightbox {
 }
 
 .music-header-content {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  align-content: start;
-  justify-items: start;
+  align-items: flex-start;
   min-width: 0;
+  min-height: var(--music-artwork-size, 0px);
 }
 
 .music-header-content > * {
@@ -3451,8 +3469,9 @@ dialog.artwork-lightbox {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 16px;
-  justify-self: stretch;
+  align-self: stretch;
   width: 100%;
+  margin-bottom: auto;
 }
 
 /* Title, credits, then the period position set in the title's own type. */
@@ -3468,7 +3487,7 @@ dialog.artwork-lightbox {
 .music-rank {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 20px;
+  font-size: calc(20px * var(--music-header-scale, 1));
   font-weight: 600;
   line-height: 1;
   color: var(--muted);
@@ -6061,7 +6080,10 @@ dialog.artwork-lightbox {
   /* Back on top, cover beside the title, everything else full width. */
   .music-heading {
     --music-h1-size: 26px;
-    grid-template-columns: 140px minmax(0, 1fr);
+    grid-template-columns: min(
+        calc(140px * var(--music-mobile-cover-scale)),
+        46%
+      ) minmax(0, 1fr);
     gap: 12px 14px;
   }
 

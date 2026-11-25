@@ -594,6 +594,7 @@ export interface SegmentedControlProps<T extends string = string> extends Omit<
   onChange: (value: T) => void;
   options: SegmentedOption<T>[];
   ariaLabel: string;
+  disabled?: boolean;
 }
 
 export function SegmentedControl<T extends string = string>({
@@ -601,6 +602,7 @@ export function SegmentedControl<T extends string = string>({
   onChange,
   options,
   ariaLabel,
+  disabled = false,
   className = "",
   ...rest
 }: SegmentedControlProps<T>) {
@@ -621,6 +623,7 @@ export function SegmentedControl<T extends string = string>({
             className={`segmented-option ${option.className || ""}`.trim()}
             aria-pressed={active}
             aria-label={option.ariaLabel}
+            disabled={disabled}
             onClick={() => onChange(option.value)}
           >
             {option.icon && <Icon>{option.icon}</Icon>}

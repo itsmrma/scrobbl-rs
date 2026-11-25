@@ -140,11 +140,31 @@ pub struct WidgetConfig {
     pub period_override: Option<String>,
 }
 
+/// Size of the entity header (artwork, title and actions) above the widget
+/// grid of a music page template. `Medium` is the content-fitted default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(rename_all = "lowercase")]
+pub enum HeaderSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+    Xlarge,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 pub struct DashboardLayout {
     pub version: i64,
     pub widgets: Vec<WidgetConfig>,
+    /// Music templates only; absent means the default `Medium` header.
+    #[serde(
+        default,
+        rename = "headerSize",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(rename = "headerSize")]
+    pub header_size: Option<HeaderSize>,
 }
 
 impl Default for DashboardLayout {
@@ -202,6 +222,7 @@ impl DashboardLayout {
                     period_override: None,
                 },
             ],
+            header_size: None,
         }
     }
 
@@ -246,6 +267,7 @@ impl DashboardLayout {
                     period_override: None,
                 },
             ],
+            header_size: None,
         }
     }
 
@@ -284,6 +306,7 @@ impl DashboardLayout {
                     period_override: None,
                 },
             ],
+            header_size: None,
         }
     }
 
@@ -316,6 +339,7 @@ impl DashboardLayout {
                     period_override: None,
                 },
             ],
+            header_size: None,
         }
     }
 
@@ -330,6 +354,12 @@ impl DashboardLayout {
         } else if self.widgets.is_empty() || self.widgets.len() > max_widgets {
             return Err(AppError::BadRequest(
                 "Dashboard layout must contain between 1 and 32 widgets.".into(),
+            ));
+        }
+
+        if self.header_size.is_some() && !template.is_music_template() {
+            return Err(AppError::BadRequest(
+                "Header size is only available on music page templates.".into(),
             ));
         }
 
