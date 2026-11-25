@@ -3831,10 +3831,10 @@ export function MusicPage({
       const children = Array.from(content.children);
       const rowGap = parseFloat(getComputedStyle(content).rowGap) || 0;
       const natural =
-        children.reduce(
-          (sum, child) => sum + child.getBoundingClientRect().height,
-          0,
-        ) +
+        children.reduce((sum, child) => {
+          const marginTop = parseFloat(getComputedStyle(child).marginTop) || 0;
+          return sum + child.getBoundingClientRect().height + marginTop;
+        }, 0) +
         rowGap * Math.max(0, children.length - 1);
       const { scale, maxShare } = headerGeometry(headerSize);
       const size = Math.min(natural * scale, header.clientWidth * maxShare);
