@@ -2070,7 +2070,9 @@ export type TemplateKind = "home" | "artist" | "album" | "track";
 function headerGeometry(size: HeaderSize): { scale: number; maxShare: number } {
   switch (size) {
     case "small":
-      return { scale: 0.75, maxShare: 0.34 };
+      // The CSS compacts the whole introduction; the cover just matches the
+      // resulting height, so no gap is left under the photo.
+      return { scale: 1, maxShare: 0.34 };
     case "large":
       return { scale: 1.3, maxShare: 0.48 };
     case "xlarge":
@@ -2449,21 +2451,21 @@ export function DashboardEditToolbar({
         >
           <Icon>check</Icon> Save layout
         </button>
+        {template !== "home" && onHeaderSizeChange && (
+          <div className="dashboard-header-size">
+            <span className="dashboard-header-size-label" aria-hidden="true">
+              Header size
+            </span>
+            <SegmentedControl
+              ariaLabel="Header size"
+              value={headerSize ?? "medium"}
+              onChange={onHeaderSizeChange}
+              options={HEADER_SIZE_OPTIONS}
+              disabled={saving}
+            />
+          </div>
+        )}
       </div>
-      {template !== "home" && onHeaderSizeChange && (
-        <div className="dashboard-header-size">
-          <span className="dashboard-header-size-label" aria-hidden="true">
-            Header size
-          </span>
-          <SegmentedControl
-            ariaLabel="Header size"
-            value={headerSize ?? "medium"}
-            onChange={onHeaderSizeChange}
-            options={HEADER_SIZE_OPTIONS}
-            disabled={saving}
-          />
-        </div>
-      )}
       {template === "artist" && (
         <p className="dashboard-edit-notice">
           <Icon>info</Icon> Editing the artist template. Changes apply to every
@@ -3825,9 +3827,9 @@ export function MusicPage({
       if (getComputedStyle(content).display === "contents") return;
       // Measure the natural height of the introduction children rather than
       // `content` itself, whose `min-height` tracks `--music-artwork-size`.
-      // Medium keeps the cover as tall as the introduction; other sizes scale
-      // it, and the toolbar still closes the header at the cover's bottom edge
-      // when the cover is taller.
+      // Medium and small keep the cover as tall as the (size-scaled)
+      // introduction; large sizes stretch it, and the toolbar still closes
+      // the header at the cover's bottom edge when the cover is taller.
       const children = Array.from(content.children);
       const rowGap = parseFloat(getComputedStyle(content).rowGap) || 0;
       const natural =

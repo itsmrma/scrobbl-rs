@@ -3427,8 +3427,10 @@ dialog.artwork-lightbox {
   min-width: 0;
 }
 
+/* Small compacts the whole introduction (type, gaps and fixed-size
+   controls), so the cover can match it and no gap is left under the photo. */
 .music-heading[data-header-size="small"] {
-  --music-header-scale: 0.85;
+  --music-header-scale: 0.8;
   --music-mobile-cover-scale: 0.8;
 }
 
@@ -3442,6 +3444,28 @@ dialog.artwork-lightbox {
   --music-mobile-cover-scale: 1.4;
 }
 
+/* The fixed-size controls shrink with the small introduction on desktop;
+   phones keep full 44px touch targets. */
+@media (min-width: 601px) {
+  .music-heading[data-header-size="small"]
+    :is(.star-button, .rating-clear) {
+    width: calc(44px * var(--music-header-scale));
+    height: calc(44px * var(--music-header-scale));
+    min-width: calc(44px * var(--music-header-scale));
+    min-height: calc(44px * var(--music-header-scale));
+  }
+
+  .music-heading[data-header-size="small"]
+    :is(.music-toolbar :is(.btn, .select-trigger), .music-back) {
+    min-height: calc(44px * var(--music-header-scale));
+    padding-block: calc(8px * var(--music-header-scale));
+  }
+
+  .music-heading[data-header-size="small"] .music-personal-pending {
+    min-height: calc(44px * var(--music-header-scale));
+  }
+}
+
 .music-heading > .cover.large {
   width: 100%;
   height: auto;
@@ -3452,7 +3476,7 @@ dialog.artwork-lightbox {
 .music-header-content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: calc(8px * var(--music-header-scale, 1));
   align-items: flex-start;
   min-width: 0;
   min-height: var(--music-artwork-size, 0px);
@@ -3477,7 +3501,7 @@ dialog.artwork-lightbox {
 /* Title, credits, then the period position set in the title's own type. */
 .music-title-main {
   display: grid;
-  gap: 10px;
+  gap: calc(10px * var(--music-header-scale, 1));
   min-width: 0;
 }
 
@@ -3566,8 +3590,9 @@ dialog.artwork-lightbox {
 }
 
 .music-personal .rating-stars {
-  /* Compensate the 12px horizontal padding around the 20px icon inside .star-button. */
-  margin-left: -12px;
+  /* Compensate the horizontal padding around the 20px icon inside
+     .star-button: (44px * scale - 20px) / 2. */
+  margin-left: calc(10px - 22px * var(--music-header-scale, 1));
 }
 
 .rating-clear {
@@ -3622,7 +3647,7 @@ dialog.artwork-lightbox {
   justify-content: space-between;
   gap: 12px 24px;
   width: 100%;
-  margin-top: 6px;
+  margin-top: calc(6px * var(--music-header-scale, 1));
 }
 
 .label-short {

@@ -1310,6 +1310,66 @@ test.describe("consultation", () => {
     await expect(heading).toHaveAttribute("data-header-size", "medium");
   });
 
+  test("artist template small header stays compact on the actions row", async ({
+    archive: { page },
+  }) => {
+    await page.goto("/rankings/artists?period=all");
+    await page.locator(".rank-name a").first().click();
+
+    await page
+      .getByRole("button", { name: "Customize artist template" })
+      .click();
+    const editToolbar = page.getByRole("toolbar", {
+      name: "Customize artist template",
+    });
+    await expect(editToolbar).toBeVisible();
+
+    // The header size control shares the actions row of the edit toolbar.
+    const actionsRow = page.locator(".dashboard-edit-actions");
+    const sizeGroup = editToolbar.getByRole("group", { name: "Header size" });
+    const [rowBox, groupBox] = await Promise.all([
+      actionsRow.boundingBox(),
+      sizeGroup.boundingBox(),
+    ]);
+    expect(rowBox).not.toBeNull();
+    expect(groupBox).not.toBeNull();
+    expect(groupBox.x).toBeGreaterThanOrEqual(rowBox.x);
+    expect(groupBox.x + groupBox.width).toBeLessThanOrEqual(
+      rowBox.x + rowBox.width + 1,
+    );
+    expect(
+      Math.abs(
+        groupBox.y + groupBox.height / 2 - (rowBox.y + rowBox.height / 2),
+      ),
+    ).toBeLessThan(16);
+
+    const heading = page.locator(".music-heading");
+    const cover = page.locator(".music-heading > .cover");
+    const content = page.locator(".music-header-content");
+    const mediumCover = await cover.boundingBox();
+    const mediumContent = await content.boundingBox();
+    expect(mediumCover).not.toBeNull();
+    expect(mediumContent).not.toBeNull();
+
+    await sizeGroup.getByRole("button", { name: "Small" }).click();
+    await expect(heading).toHaveAttribute("data-header-size", "small");
+    // The compacted introduction shrinks, the cover stays flush with its
+    // bottom edge, so the toolbar moves up and no gap is left under the photo.
+    await expect
+      .poll(async () => {
+        const [coverBox, contentBox] = await Promise.all([
+          cover.boundingBox(),
+          content.boundingBox(),
+        ]);
+        return (
+          coverBox.width < mediumCover.width &&
+          contentBox.height < mediumContent.height &&
+          Math.abs(contentBox.height - coverBox.height) < 8
+        );
+      })
+      .toBeTruthy();
+  });
+
   test("artist template handles dirty cancel confirmation, 409 conflict preserving draft, and empty preview", async ({
     archive: { page },
   }) => {
