@@ -126,8 +126,8 @@
   gap: 10px;
 }
 
-.dashboard-edit-actions .button,
-.dashboard-edit-actions button {
+.dashboard-edit-actions > .button,
+.dashboard-edit-actions > button {
   min-height: 44px;
 }
 
@@ -139,11 +139,17 @@
   color: var(--muted);
 }
 
+/* Sits on the actions row; the row's own gap separates the group. Options
+   use the dense-toolbar padding so the whole group fits on one line. */
 .dashboard-header-size {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.dashboard-header-size .segmented-option {
+  padding: 6px 10px;
 }
 
 .dashboard-header-size-label {
@@ -1517,8 +1523,8 @@
     width: 100%;
   }
 
-  .dashboard-edit-actions .button,
-  .dashboard-edit-actions button {
+  .dashboard-edit-actions > .button,
+  .dashboard-edit-actions > button {
     width: 100%;
   }
 
