@@ -327,12 +327,12 @@ test("AI settings expose local SQL Qwen3.5 catalog and custom local GGUF path wi
     page.getByLabel("Unload from RAM after inactivity (minutes)"),
   ).toHaveValue("5");
 
-  await page.getByRole("radio", { name: "Custom / OpenAI API" }).click();
+  await page.getByRole("button", { name: "Custom / OpenAI API" }).click();
   await expect(
     page.getByLabel("Endpoint URL (OpenAI-compatible)"),
   ).toBeVisible();
   await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
-  await page.getByRole("radio", { name: "Local (CPU)" }).click();
+  await page.getByRole("button", { name: "Local (CPU)" }).click();
 });
 
 test("local SQL Ask executes query via sandbox, rejects unsafe SQL, and cleans up projection when AI is turned off", async ({

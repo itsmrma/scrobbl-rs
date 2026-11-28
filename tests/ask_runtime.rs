@@ -282,7 +282,11 @@ async fn the_model_is_lazy_and_unloads_after_idle() {
 async fn model_parser_refuses_without_consent_or_a_selected_model() {
     let dir = tempfile::tempdir().unwrap();
     let storage = scrobbl_rs::db::open(dir.path()).await.unwrap();
-    let parser = ModelParser::local(storage.writer.clone(), dir.path().to_path_buf());
+    let parser = ModelParser::local(
+        storage.writer.clone(),
+        storage.private.clone(),
+        dir.path().to_path_buf(),
+    );
 
     let ParsedQuestion::Unsupported { reason } = parser.parse("How many plays?").await.unwrap()
     else {
@@ -382,7 +386,7 @@ async fn real_model_answers_three_supported_questions() {
             .unwrap();
     }
 
-    let parser = ModelParser::local(storage.writer.clone(), data_dir);
+    let parser = ModelParser::local(storage.writer.clone(), storage.private.clone(), data_dir);
     for question in [
         "How many times did I listen to Björk?",
         "When did I first listen to Radiohead?",
@@ -564,6 +568,7 @@ async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_ou
     let bad_rt = Runtime::spawn(Box::new(bad_engine), 4);
     let bad_parser = ModelParser::new(
         storage.writer.clone(),
+        storage.private.clone(),
         dir.path().to_path_buf(),
         bad_rt,
         Duration::from_secs(5),

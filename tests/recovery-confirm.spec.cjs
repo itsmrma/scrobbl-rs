@@ -89,7 +89,7 @@ test("confirmed restore survives restart and requires new access and explicit re
       .getByRole("button", { name: "Create backup", exact: true })
       .click();
     const backup = page
-      .locator(".job")
+      .locator(".recovery-asset-row")
       .filter({ hasText: "Archive backup" })
       .first();
     await expect(

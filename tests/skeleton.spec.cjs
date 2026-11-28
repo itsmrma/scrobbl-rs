@@ -100,12 +100,7 @@ const cases = [
     "**/api/spotify/status",
     "Loading connection status",
   ],
-  [
-    "backups",
-    "/settings/data",
-    "**/api/v1/recovery",
-    "Loading exports and backups",
-  ],
+  ["backups", "/settings/data", "**/api/v1/recovery", "Loading backups…"],
   ["activities", "/activities", "**/api/v1/activities", "Loading activities"],
   [
     "activity report",
