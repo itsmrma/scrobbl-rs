@@ -20,6 +20,8 @@ use tokio::sync::oneshot;
 /// keep the page responsive without unbounded memory use.
 pub const DEFAULT_QUEUE_CAPACITY: usize = 4;
 
+pub const SQL_CONTEXT_TOKENS: u32 = 8192;
+pub const MAX_SQL_NEW_TOKENS: i32 = 1024;
 const OUTER_TIMEOUT_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,7 +29,6 @@ pub struct ModelSpec {
     pub id: String,
     pub path: PathBuf,
     pub threads: u32,
-    pub gpu_layers: i32,
     pub unload_minutes: u32,
     /// Idle delay before the model is dropped. Adapters use
     /// `unload_minutes * 60`; tests use a short duration.
@@ -45,15 +46,9 @@ impl ModelSpec {
             id: id.into(),
             path: path.into(),
             threads,
-            gpu_layers: crate::ai::DEFAULT_GPU_LAYERS,
             unload_minutes,
             idle: Duration::from_secs(u64::from(unload_minutes.max(1)) * 60),
         }
-    }
-
-    pub fn with_gpu_layers(mut self, gpu_layers: i32) -> Self {
-        self.gpu_layers = gpu_layers;
-        self
     }
 
     pub fn with_idle(mut self, idle: Duration) -> Self {
@@ -62,10 +57,7 @@ impl ModelSpec {
     }
 
     fn same_model(&self, other: &Self) -> bool {
-        self.id == other.id
-            && self.path == other.path
-            && self.threads == other.threads
-            && self.gpu_layers == other.gpu_layers
+        self.id == other.id && self.path == other.path && self.threads == other.threads
     }
 }
 
@@ -402,6 +394,7 @@ fn worker(
                     Ok(message) => message,
                     Err(RecvTimeoutError::Timeout) => {
                         engine.unload();
+                        crate::storage::reclaim_memory();
                         loaded = None;
                         idle_deadline = None;
                         *lock(&state) = RuntimeState::default();
@@ -420,6 +413,7 @@ fn worker(
             Message::Shutdown => break,
             Message::Unload => {
                 engine.unload();
+                crate::storage::reclaim_memory();
                 loaded = None;
                 idle_deadline = None;
                 *lock(&state) = RuntimeState::default();
@@ -454,25 +448,7 @@ fn worker(
                 state.loaded_model = None;
                 state.last_error = None;
             }
-            let load_result = match engine.load(&spec) {
-                Ok(()) => Ok(()),
-                Err(gpu_error) if spec.gpu_layers != 0 => {
-                    eprintln!(
-                        "ask runtime: GPU model load failed for '{}' (gpu_layers={}): {}; falling back to CPU-only (0 GPU layers)",
-                        spec.id, spec.gpu_layers, gpu_error
-                    );
-                    let mut cpu_spec = spec.clone();
-                    cpu_spec.gpu_layers = 0;
-                    engine.load(&cpu_spec).map_err(|cpu_error| {
-                        if cpu_error == gpu_error {
-                            cpu_error
-                        } else {
-                            format!("{gpu_error} (CPU fallback also failed: {cpu_error})")
-                        }
-                    })
-                }
-                Err(error) => Err(error),
-            };
+            let load_result = engine.load(&spec);
             match load_result {
                 Ok(()) => {
                     loaded = Some(spec.clone());
@@ -505,6 +481,7 @@ fn worker(
     }
 
     engine.unload();
+    crate::storage::reclaim_memory();
     *lock(&state) = RuntimeState::default();
 }
 
@@ -539,8 +516,6 @@ mod llama {
         sync::{LazyLock, Once},
     };
 
-    pub const SQL_CONTEXT_TOKENS: u32 = 8192;
-    pub const MAX_SQL_NEW_TOKENS: i32 = 1024;
     const MAX_OUTPUT_BYTES: usize = 32 * 1024;
     const PREFILL_BATCH_TOKENS: usize = 512;
 
@@ -631,7 +606,7 @@ mod llama {
                 .with_n_ctx(Some(
                     NonZeroU32::new(SQL_CONTEXT_TOKENS).unwrap_or(NonZeroU32::MIN),
                 ))
-                .with_n_batch(SQL_CONTEXT_TOKENS)
+                .with_n_batch(PREFILL_BATCH_TOKENS as u32)
                 .with_n_ubatch(PREFILL_BATCH_TOKENS as u32)
                 .with_n_threads(i32::try_from(self.threads).unwrap_or(4))
                 .with_n_threads_batch(i32::try_from(self.threads).unwrap_or(4));
@@ -797,16 +772,6 @@ mod llama {
         }
     }
 
-    pub(crate) fn model_params_for_gpu_layers(configured_gpu_layers: i32) -> LlamaModelParams {
-        let effective = crate::ai::effective_gpu_layers(configured_gpu_layers);
-        let params = LlamaModelParams::default();
-        if effective < 0 {
-            params.with_n_gpu_layers(u32::MAX)
-        } else {
-            params.with_n_gpu_layers(u32::try_from(effective).unwrap_or(0))
-        }
-    }
-
     impl Engine for LlamaEngine {
         fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
             if !spec.path.is_file() {
@@ -822,7 +787,7 @@ mod llama {
             let model = LlamaModel::load_from_file(
                 &backend,
                 &spec.path,
-                &model_params_for_gpu_layers(spec.gpu_layers),
+                &LlamaModelParams::default().with_n_gpu_layers(0),
             )
             .map_err(|error| format!("Could not load the model file: {error}"))?;
             self.backend = Some(backend);
@@ -861,7 +826,7 @@ mod llama {
 }
 
 #[cfg(feature = "llama")]
-pub use llama::{LlamaEngine, MAX_SQL_NEW_TOKENS, SQL_CONTEXT_TOKENS};
+pub use llama::LlamaEngine;
 
 /// A loaded engine reused for many prompts. Offline tools (`ask-eval`)
 /// use it to measure one model across a corpus without reloading the weights;
@@ -1147,79 +1112,5 @@ mod tests {
         );
         assert!(state.resets.load(Ordering::SeqCst) > 0);
         assert_eq!(state.active.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn gpu_load_failure_falls_back_to_cpu_and_completes_inference() {
-        struct GpuFallbackEngine {
-            seen_gpu_layers: Arc<Mutex<Vec<i32>>>,
-        }
-        impl Engine for GpuFallbackEngine {
-            fn load(&mut self, spec: &ModelSpec) -> Result<(), String> {
-                self.seen_gpu_layers.lock().unwrap().push(spec.gpu_layers);
-                if spec.gpu_layers != 0 {
-                    Err("no GPU device available".into())
-                } else {
-                    Ok(())
-                }
-            }
-            fn unload(&mut self) {}
-            fn generate(
-                &mut self,
-                _prompt: &str,
-                _cancel: &CancelToken,
-            ) -> Result<String, InferenceError> {
-                Ok("{}".to_string())
-            }
-        }
-
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let runtime = Runtime::spawn(
-            Box::new(GpuFallbackEngine {
-                seen_gpu_layers: seen.clone(),
-            }),
-            4,
-        );
-        let gpu_spec = spec(Duration::from_secs(10)).with_gpu_layers(-1);
-        let first = runtime
-            .infer(&gpu_spec, "one", Duration::from_secs(2))
-            .await
-            .unwrap();
-        assert_eq!(first, "{}");
-        assert_eq!(*seen.lock().unwrap(), vec![-1, 0]);
-
-        // Subsequent inference with the same spec must reuse the fallen-back model
-        // without retrying the failing GPU load.
-        let second = runtime
-            .infer(&gpu_spec, "two", Duration::from_secs(2))
-            .await
-            .unwrap();
-        assert_eq!(second, "{}");
-        assert_eq!(*seen.lock().unwrap(), vec![-1, 0]);
-
-        // Changing gpu_layers reloads the model.
-        let partial_spec = spec(Duration::from_secs(10)).with_gpu_layers(16);
-        let third = runtime
-            .infer(&partial_spec, "three", Duration::from_secs(2))
-            .await
-            .unwrap();
-        assert_eq!(third, "{}");
-        assert_eq!(*seen.lock().unwrap(), vec![-1, 0, 16, 0]);
-    }
-
-    #[cfg(feature = "llama")]
-    #[test]
-    fn model_params_respect_compiled_gpu_feature_and_zero_override() {
-        let auto = super::llama::model_params_for_gpu_layers(-1);
-        let partial = super::llama::model_params_for_gpu_layers(16);
-        let cpu = super::llama::model_params_for_gpu_layers(0);
-        assert_eq!(cpu.n_gpu_layers(), 0);
-        if crate::ai::gpu_offload_supported() {
-            assert_eq!(auto.n_gpu_layers(), i32::MAX);
-            assert_eq!(partial.n_gpu_layers(), 16);
-        } else {
-            assert_eq!(auto.n_gpu_layers(), 0);
-            assert_eq!(partial.n_gpu_layers(), 0);
-        }
     }
 }

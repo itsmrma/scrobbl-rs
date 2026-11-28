@@ -7,10 +7,25 @@ use ts_rs::TS;
 pub struct Preferences {
     pub name: String,
     pub initial_period: String,
+    #[serde(default)]
+    pub selected_period: String,
+    #[serde(default)]
+    pub selected_from: Option<String>,
+    #[serde(default)]
+    pub selected_to: Option<String>,
     pub hour_format: String,
     pub timezone: String,
     pub week_start: i64,
     pub version: i64,
+}
+#[derive(Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+pub struct SaveSelectedPeriod {
+    pub period: String,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
 }
 #[derive(Deserialize, TS)]
 pub struct SavePreferences {
@@ -344,6 +359,7 @@ mod tests {
         let types = [
             Preferences::decl(&config),
             SavePreferences::decl(&config),
+            SaveSelectedPeriod::decl(&config),
             CalendarScope::decl(&config),
             SavedPreferences::decl(&config),
             Artist::decl(&config),
@@ -435,6 +451,7 @@ mod tests {
             crate::ai::AiDeleteResult::decl(&config),
             crate::ai::AiSelection::decl(&config),
             crate::ai::AiTestResult::decl(&config),
+            crate::update_check::UpdateStatus::decl(&config),
         ];
         let content = format!(
             "// Generated from Rust DTOs. Run UPDATE_BROWSER_TYPES=1 cargo test browser_contract_is_current.\n{}\n",

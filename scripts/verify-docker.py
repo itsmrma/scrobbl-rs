@@ -31,24 +31,21 @@ def unexpected_diff_entries(diff_lines):
     return [line for line in diff_lines if line and not allowed.match(line)]
 
 
-def verify_ai_backend(ai, ask, catalog_info, expected_backend):
+def verify_ai_backend(ai, ask, catalog_info, expected_backend="cpu"):
     """Assert that AI settings, Ask status, and catalog report the expected backend."""
-    expected_label = "llama.cpp (Vulkan)" if expected_backend == "vulkan" else "llama.cpp (CPU)"
+    expected_label = "llama.cpp (CPU)"
     assert ai.get("backend") == expected_backend, ai
-    gpu_layers = ai.get("gpu_layers")
-    assert isinstance(gpu_layers, int) and not isinstance(gpu_layers, bool), ai
     assert ask.get("runtime_available") is True, ask
     assert catalog_info.get("backend") == expected_backend, catalog_info
     models = catalog_info.get("models") or []
     assert models and models[0].get("backend") == expected_label, catalog_info
-    assert (models[0].get("requirements") or {}).get("gpu_optional") is True, catalog_info
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image")
     parser.add_argument("--revision", required=True)
-    parser.add_argument("--backend", choices=("cpu", "vulkan"), default="cpu")
+    parser.add_argument("--backend", choices=("cpu",), default="cpu")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="scrobbl-docker-") as temporary:
         directory = Path(temporary)

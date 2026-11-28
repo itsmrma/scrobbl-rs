@@ -905,7 +905,7 @@ pub async fn worker(state: crate::AppState) {
     worker_loop(
         state.storage,
         state.ask.projection,
-        StdDuration::from_millis(500),
+        StdDuration::from_secs(30),
         StdDuration::from_millis(1000),
     )
     .await;
@@ -922,9 +922,11 @@ pub async fn worker_loop(
         if !ai_enabled(&storage).await {
             if path(&storage.directory).exists() {
                 let _ = remove(&storage.directory, &gate).await;
+                crate::storage::reclaim_memory();
             }
             tokio::select! {
                 _ = gate.notify.notified() => {}
+                _ = storage.archive_notify.notified() => {}
                 _ = tokio::time::sleep(poll_interval) => {}
             }
             continue;
@@ -943,6 +945,9 @@ pub async fn worker_loop(
                         _ = gate.notify.notified() => {
                             last_rev = storage.read_view().await.ok().map(|v| v.identity.revision);
                         }
+                        _ = storage.archive_notify.notified() => {
+                            last_rev = storage.read_view().await.ok().map(|v| v.identity.revision);
+                        }
                         _ = tokio::time::sleep(debounce) => {
                             let now_rev = storage.read_view().await.ok().map(|v| v.identity.revision);
                             if now_rev == last_rev {
@@ -958,12 +963,14 @@ pub async fn worker_loop(
                 if let Err(err) = rebuild_under_lock(&storage, &gate, &_build, true).await {
                     eprintln!("Ask projection background rebuild failed: {err}");
                 }
+                crate::storage::reclaim_memory();
             }
             continue;
         }
 
         tokio::select! {
             _ = gate.notify.notified() => {}
+            _ = storage.archive_notify.notified() => {}
             _ = tokio::time::sleep(poll_interval) => {}
         }
     }

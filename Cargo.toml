@@ -1,6 +1,6 @@
 [package]
 name = "scrobbl-rs"
-version = "0.1.0-alpha.1"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.94"
 publish = false
@@ -11,8 +11,6 @@ license = "GPL-3.0-or-later"
 # `--no-default-features` to compile a binary that reports AI as unavailable.
 default = ["llama"]
 llama = ["dep:llama-cpp-2"]
-metal = ["llama", "llama-cpp-2/metal"]
-vulkan = ["llama", "llama-cpp-2/vulkan"]
 
 # Offline parser evaluation. Never built or run by the normal test suite; the
 # model is passed by path and nothing is downloaded.

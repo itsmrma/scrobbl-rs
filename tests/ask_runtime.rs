@@ -438,17 +438,19 @@ fn sql_prompt_fits_the_context_window_and_uses_sql_grammar() {
     assert!(grammar.contains("\"\\\"sql\\\"\" ws \":\" ws string"));
 }
 
+#[cfg(feature = "llama")]
 struct RecordingEngine {
     seen: Arc<Mutex<Vec<(String, String)>>>,
     reply: String,
 }
 
+#[cfg(feature = "llama")]
 impl runtime::Engine for RecordingEngine {
     fn load(&mut self, spec: &runtime::ModelSpec) -> Result<(), String> {
-        self.seen.lock().unwrap().push((
-            "LOAD".into(),
-            format!("{}|gpu_layers={}", spec.path.display(), spec.gpu_layers),
-        ));
+        self.seen
+            .lock()
+            .unwrap()
+            .push(("LOAD".into(), spec.path.display().to_string()));
         Ok(())
     }
 
@@ -516,6 +518,7 @@ async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_ou
     let rt = Runtime::spawn(Box::new(engine), 4);
     let parser = ModelParser::new(
         storage.writer.clone(),
+        storage.private.clone(),
         dir.path().to_path_buf(),
         rt,
         Duration::from_secs(5),
@@ -526,14 +529,6 @@ async fn local_model_parser_uses_catalog_or_custom_gguf_and_reports_malformed_ou
         let recorded = seen.lock().unwrap();
         assert_eq!(recorded.len(), 2);
         assert_eq!(recorded[0].0, "LOAD");
-        let expected_gpu_layers = scrobbl_rs::ai::effective_gpu_layers(-1);
-        assert!(
-            recorded[0]
-                .1
-                .contains(&format!("gpu_layers={expected_gpu_layers}")),
-            "{:?}",
-            recorded[0]
-        );
         assert!(recorded[1].1.contains("listens("));
     }
 

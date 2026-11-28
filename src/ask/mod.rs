@@ -359,9 +359,13 @@ impl Ask {
         }
     }
 
-    pub fn installed(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
+    pub fn installed(
+        db: sqlx::SqlitePool,
+        private_db: sqlx::SqlitePool,
+        data_dir: PathBuf,
+    ) -> Self {
         Self {
-            parser: Arc::new(parser::ModelParser::local(db, data_dir)),
+            parser: Arc::new(parser::ModelParser::local(db, private_db, data_dir)),
             runtime_available: cfg!(feature = "llama"),
             model_ready: true,
             local: true,
@@ -622,6 +626,16 @@ async fn gate(state: &AppState) -> Result<std::result::Result<ai::StoredSettings
             AskStatus::ModelUnavailable,
             "AI is off. Enable it in Settings to ask questions.",
         )));
+    }
+    if stored.provider == "openai" {
+        if stored.openai_base_url.is_none() || stored.openai_model.is_none() {
+            return Ok(Err(refusal(
+                state,
+                AskStatus::ModelMissing,
+                "Configure the OpenAI-compatible Endpoint URL and Model in Settings -> AI before asking questions.",
+            )));
+        }
+        return Ok(Ok(stored));
     }
     if !state.ask.runtime_available {
         return Ok(Err(refusal(

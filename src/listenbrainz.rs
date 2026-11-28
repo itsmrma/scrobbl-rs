@@ -1268,14 +1268,21 @@ pub async fn worker(storage: Storage) {
             env!("CARGO_PKG_VERSION"),
             " ( https://github.com/itsmrma/scrobbl-rs )"
         ))
+        .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
+        .pool_idle_timeout(Duration::from_secs(60))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("HTTP client");
     loop {
+        let notified = storage.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let mut did_work = false;
         for kind in ["listenbrainz_file", "listenbrainz_fetch"] {
             match storage.claim(kind).await {
                 Ok(Some(lease)) => {
+                    did_work = true;
                     let result = if kind == "listenbrainz_file" {
                         let limits = serde_json::from_str::<Value>(&lease.parameters_json)
                             .ok()
@@ -1302,13 +1309,29 @@ pub async fn worker(storage: Storage) {
                                 )
                                 .await;
                         }
+                    } else {
+                        storage.notify_archive_changed();
                     }
+                    storage.shrink_memory().await;
+                    crate::storage::reclaim_memory();
                 }
                 Ok(None) => {}
                 Err(e) => eprintln!("ListenBrainz queue: {e}"),
             }
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        if did_work {
+            continue;
+        }
+        let wait = storage
+            .next_retry_delay(
+                &["listenbrainz_file", "listenbrainz_fetch"],
+                Duration::from_secs(60),
+            )
+            .await;
+        tokio::select! {
+            _ = &mut notified => {},
+            _ = tokio::time::sleep(wait) => {},
+        }
     }
 }
 

@@ -841,6 +841,10 @@ async fn sync_guarded(state: &AppState) -> Result<Value> {
         .ok_or_else(|| AppError::Conflict("Collection is waiting for its next attempt.".into()))?;
     diagnostic(state, "last_attempt_ms", &auth::now_ms().to_string()).await?;
     let result = sync_locked(state, &job).await;
+    if result.is_ok() {
+        state.storage.wake_workers();
+        state.storage.notify_archive_changed();
+    }
     // Coalescing uses the end of the run, so a long collection still protects
     // a waiting manual click or worker wake, even when the run failed.
     let _ = diagnostic(

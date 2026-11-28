@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SOURCE_ROOTS = (
     "Cargo.toml", "Cargo.lock", "package.json", "package-lock.json", "LICENSE",
     "REUSE.toml", "README.md", "THIRD_PARTY_NOTICES.md", "GLOSSARY.md", "AGENTS.md",
-    "Dockerfile", "Dockerfile.vulkan", ".dockerignore", "compose.yaml", ".env.example", ".gitignore",
+    "Dockerfile", ".dockerignore", "compose.yaml", ".env.example", ".gitignore",
     "vite.config.mts", "playwright.config.cjs", "frontend", "static", "src",
     "migrations", "release-migrations", "private-migrations", "tests", "scripts",
     "docs", "evals", ".github", ".cargo", "vendor", "node_modules",

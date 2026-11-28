@@ -178,6 +178,7 @@ pub async fn upload(
         }
         sqlx::query("INSERT INTO recovery_assets(id,job_id,kind,format,created_at_ms,size_bytes) VALUES(?,?,'uploaded_backup','zip',?,?)").bind(&id).bind(job).bind(now).bind(size as i64).execute(&mut *tx).await?;
         tx.commit().await?;
+        state.storage.wake_workers();
         Ok(Json(json!({"id":id})))
     }.await;
     let _ = tokio::fs::remove_file(&path).await;

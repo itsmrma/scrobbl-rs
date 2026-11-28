@@ -146,6 +146,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+  margin-inline-start: auto;
 }
 
 .dashboard-header-size .segmented-option {
@@ -1526,6 +1527,10 @@
   .dashboard-edit-actions > .button,
   .dashboard-edit-actions > button {
     width: 100%;
+  }
+
+  .dashboard-header-size {
+    margin-inline-start: 0;
   }
 
   .dashboard-header-size .segmented-control {

@@ -81,7 +81,7 @@ La scelta di consultare separatamente una o più schede prima raggruppate per no
 _Avoid_: Decoupling, cancellazione di duplicati.
 
 **Template di pagina musicale**:
-La disposizione personalizzabile dei widget condivisa da tutte le pagine di uno stesso tipo: artista, album o brano. L'utente dispone di un template per ciascun tipo; modificarlo cambia la disposizione per tutte le pagine di quel tipo. Il template conserva anche la dimensione dell'intestazione dell'entità (piccola, media, grande, molto grande), che scala proporzionalmente l'artwork, i titoli e i controlli così che l'intestazione resti compatta a ogni dimensione, mantenendola esterna alla griglia dei widget.
+La disposizione personalizzabile dei widget condivisa da tutte le pagine di uno stesso tipo: artista, album o brano. L'utente dispone di un template per ciascun tipo; modificarlo cambia la disposizione per tutte le pagine di quel tipo. La dimensione dell'intestazione dell'entità (piccola, media, grande, molto grande) è invece condivisa tra tutte le pagine musicali (artista, album e brano) e scala proporzionalmente l'artwork, i titoli e i controlli così che l'intestazione resti compatta a ogni dimensione, mantenendola esterna alla griglia dei widget.
 _Avoid_: Layout del singolo artista, layout del singolo album, layout del singolo brano.
 
 **Calendario degli ascolti**:
@@ -95,8 +95,8 @@ Una successione di giorni consecutivi, secondo il calendario assegnato, con alme
 _Avoid_: Streak senza indicazione dell'entità ascoltata.
 
 **Ask (SQL locale)**:
-La funzionalità di interrogazione in linguaggio naturale basata esclusivamente su modelli GGUF locali (il singolo modello curato Qwen3.5 2B fine-tunato su SQL dal catalogo, oppure un altro file `.gguf` locale indicato dall'amministratore sul server, con offload GPU opzionale e fallback automatico a CPU). Il modello traduce la domanda in SQL di sola lettura sulla proiezione per Ask, eseguito dentro la sandbox SQL; la correttezza dipende dal modello, e la query resta visibile e modificabile.
-_Avoid_: Server MCP, Bring Your Own AI, server AI remoti, domande guidate DSL, azioni sull'interfaccia.
+La funzionalità di interrogazione in linguaggio naturale basata sul modello GGUF locale fine-tunato su SQL eseguito su CPU (il singolo modello curato Qwen3.5 2B fine-tunato su SQL dal catalogo, oppure un altro file `.gguf` locale indicato dall'amministratore sul server) o, su scelta esplicita dell'amministratore, tramite un endpoint API OpenAI-compatible. Il modello traduce la domanda in SQL di sola lettura sulla proiezione per Ask, eseguito dentro la sandbox SQL; la correttezza dipende dal modello, e la query resta visibile e modificabile.
+_Avoid_: Server MCP, domande guidate DSL, azioni sull'interfaccia.
 
 **Proiezione per Ask**:
 La rappresentazione documentata e in sola lettura dei dati di ascolto che le domande libere possono interrogare, distinta dall'archivio e priva di impostazioni, credenziali e dati grezzi delle fonti.

@@ -238,7 +238,7 @@ async fn ai_is_off_by_default_but_allows_model_download() {
     let settings = get_json(&state, &token, "/api/v1/ai/settings").await;
     assert_eq!(settings["enabled"], false);
     assert_eq!(settings["threads"], 4);
-    assert_eq!(settings["unload_minutes"], 15);
+    assert_eq!(settings["unload_minutes"], 5);
     assert_eq!(settings["runtime_available"], cfg!(feature = "llama"));
     assert_eq!(settings["model_ready"], false);
     // The image sets SCROBBL_DATA_DIR=/data, so the default folder is /data/models
@@ -940,7 +940,7 @@ async fn custom_model_path_validates_gguf_and_safe_directory_scanning_and_deleti
     assert_eq!(status, StatusCode::OK, "{saved}");
     assert_eq!(saved["custom_model_path"], "my-custom-qwen/model.gguf");
     assert_eq!(saved["model_installed"], true);
-    assert_eq!(saved["model_ready"], cfg!(feature = "llama"));
+    assert_eq!(saved["model_ready"], true);
 
     let ask_status = get_json(&state, &token, "/api/v1/ask/status").await;
     assert_eq!(ask_status["custom_model_path"], "my-custom-qwen/model.gguf");
@@ -1031,90 +1031,191 @@ async fn previously_downloaded_legacy_catalog_model_remains_selectable_and_usabl
 }
 
 #[tokio::test]
-async fn gpu_layers_and_backend_are_exposed_validated_and_persisted() {
+async fn cpu_backend_unload_default_and_openai_provider_are_validated_and_persisted() {
     let _guard = TEST_LOCK.lock().await;
     catalog::clear_test_models();
     let (_dir, state, token) = setup().await;
 
-    let expected_backend = if !cfg!(feature = "llama") {
-        "unavailable"
-    } else if cfg!(feature = "metal") {
-        "metal"
-    } else if cfg!(feature = "vulkan") {
-        "vulkan"
-    } else {
+    let expected_backend = if cfg!(feature = "llama") {
         "cpu"
+    } else {
+        "unavailable"
     };
 
     let settings = get_json(&state, &token, "/api/v1/ai/settings").await;
     assert_eq!(settings["backend"], expected_backend);
-    assert_eq!(settings["gpu_layers"], -1);
+    assert_eq!(settings["provider"], "local");
+    assert_eq!(settings["unload_minutes"], 5);
+    assert_eq!(settings["openai_api_key_set"], false);
 
     let catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
     assert_eq!(catalog["backend"], expected_backend);
-    assert_eq!(catalog["gpu_layers"], -1);
     let qwen = catalog["models"]
         .as_array()
         .unwrap()
         .iter()
         .find(|model| model["id"] == "qwen3.5-2b-q4_k_m")
         .unwrap();
-    assert_eq!(qwen["requirements"]["gpu_optional"], true);
-    if !cfg!(feature = "llama") {
-        assert_eq!(qwen["backend"], "llama.cpp (unavailable)");
-    } else if cfg!(feature = "metal") {
-        assert_eq!(qwen["backend"], "llama.cpp (Metal)");
-    } else if cfg!(feature = "vulkan") {
-        assert_eq!(qwen["backend"], "llama.cpp (Vulkan)");
-    } else {
-        assert_eq!(qwen["backend"], "llama.cpp (CPU)");
-    }
+    assert_eq!(
+        qwen["backend"],
+        if cfg!(feature = "llama") {
+            "llama.cpp (CPU)"
+        } else {
+            "llama.cpp (unavailable)"
+        }
+    );
 
-    for invalid in [-2, 257] {
-        let (status, value) = post(
-            &state,
-            &token,
-            "/api/v1/ai/settings",
-            json!({
-                "enabled": false,
-                "active_model": null,
-                "threads": 4,
-                "unload_minutes": 15,
-                "gpu_layers": invalid,
-                "model_dir": null
+    // Invalid provider or invalid OpenAI URL is rejected.
+    let (status, _) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "openai",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 5,
+            "model_dir": null,
+            "openai_base_url": "ftp://invalid.example",
+            "openai_model": "gpt-4o-mini"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Enabling OpenAI-compatible provider persists settings and stores API key only in private_db.
+    let (status, saved) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "openai",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 5,
+            "model_dir": null,
+            "openai_base_url": "http://127.0.0.1:11434/v1/",
+            "openai_model": "qwen3:8b",
+            "openai_api_key": "sk-secret-key"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["provider"], "openai");
+    assert_eq!(saved["openai_base_url"], "http://127.0.0.1:11434/v1");
+    assert_eq!(saved["openai_model"], "qwen3:8b");
+    assert_eq!(saved["openai_api_key_set"], true);
+    assert!(saved.get("openai_api_key").is_none());
+
+    let stored_in_archive: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='ai_openai_api_key'")
+            .fetch_optional(&state.db)
+            .await
+            .unwrap();
+    assert!(stored_in_archive.is_none());
+
+    let stored_in_private: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='ai_openai_api_key'")
+            .fetch_optional(&state.private_db)
+            .await
+            .unwrap();
+    assert_eq!(stored_in_private.as_deref(), Some("sk-secret-key"));
+
+    let ask_status = get_json(&state, &token, "/api/v1/ask/status").await;
+    assert_eq!(ask_status["provider"], "openai");
+    assert_eq!(ask_status["model_ready"], true);
+
+    // Clearing the API key removes it from private_db.
+    let (status, cleared) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": false,
+            "provider": "local",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 5,
+            "model_dir": null,
+            "clear_openai_api_key": true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{cleared}");
+    assert_eq!(cleared["openai_api_key_set"], false);
+}
+
+#[tokio::test]
+async fn openai_compatible_endpoint_tests_and_executes_sql_in_sandbox() {
+    let _guard = TEST_LOCK.lock().await;
+    let (_dir, state, token) = setup().await;
+
+    let app = axum::Router::new()
+        .route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({
+                    "data": [{"id": "qwen3-sql"}]
+                }))
             }),
         )
-        .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{invalid}: {value}");
-    }
-
-    for valid in [0, 16, -1] {
-        let (status, saved) = post(
-            &state,
-            &token,
-            "/api/v1/ai/settings",
-            json!({
-                "enabled": false,
-                "active_model": null,
-                "threads": 4,
-                "unload_minutes": 15,
-                "gpu_layers": valid,
-                "model_dir": null
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async {
+                axum::Json(json!({
+                    "choices": [{
+                        "message": {
+                            "content": "{\"title\":\"Total plays\",\"computed\":\"Counted plays\",\"answer_kind\":\"value\",\"sql\":\"SELECT COUNT(*) AS plays FROM listens WHERE counted = 1\",\"columns\":[{\"name\":\"plays\",\"format\":\"count\"}]}"
+                        }
+                    }]
+                }))
             }),
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{valid}: {saved}");
-        assert_eq!(saved["gpu_layers"], valid);
-        assert_eq!(saved["backend"], expected_backend);
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
 
-        let reloaded = get_json(&state, &token, "/api/v1/ai/settings").await;
-        assert_eq!(reloaded["gpu_layers"], valid);
-        let reloaded_catalog = get_json(&state, &token, "/api/v1/ai/catalog").await;
-        assert_eq!(reloaded_catalog["gpu_layers"], valid);
+    let (status, _) = post(
+        &state,
+        &token,
+        "/api/v1/ai/settings",
+        json!({
+            "enabled": true,
+            "provider": "openai",
+            "active_model": null,
+            "threads": 4,
+            "unload_minutes": 5,
+            "model_dir": null,
+            "openai_base_url": format!("http://{addr}/v1"),
+            "openai_model": "qwen3-sql",
+            "openai_api_key": "test-key"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
 
-        let (test_status, test_result) = post(&state, &token, "/api/v1/ai/test", json!({})).await;
-        assert_eq!(test_status, StatusCode::OK, "{valid}: {test_result}");
-        assert_eq!(test_result["backend"], expected_backend);
-        assert_eq!(test_result["gpu_layers"], valid);
-    }
+    let (test_status, test_res) = post(&state, &token, "/api/v1/ai/test", json!({})).await;
+    assert_eq!(test_status, StatusCode::OK, "{test_res}");
+    assert_eq!(test_res["model_ready"], true);
+
+    scrobbl_rs::ask::projection::ensure(&state.storage, &state.ask.projection)
+        .await
+        .unwrap();
+
+    let (ask_status, ask_res) = post(
+        &state,
+        &token,
+        "/api/v1/ask",
+        json!({ "question": "How many plays?" }),
+    )
+    .await;
+    assert_eq!(ask_status, StatusCode::OK, "{ask_res}");
+    assert_eq!(ask_res["status"], "ok");
+    assert_eq!(ask_res["sql"]["rows"][0][0], 0);
+
+    server.abort();
 }

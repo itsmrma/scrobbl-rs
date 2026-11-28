@@ -1740,6 +1740,14 @@ async fn music_template_header_size_persists_and_is_rejected_on_home() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(read_back["headerSize"], "large");
 
+    // 2b. Shared across album and track templates
+    let (status, album_read) = get(&state, &token, "/api/v1/dashboard/layout?template=album").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(album_read["headerSize"], "large");
+    let (status, track_read) = get(&state, &token, "/api/v1/dashboard/layout?template=track").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(track_read["headerSize"], "large");
+
     // 3. Invalid headerSize value is rejected
     let mut invalid_size = read_back.clone();
     invalid_size["headerSize"] = json!("huge");
@@ -1789,6 +1797,29 @@ async fn music_template_header_size_persists_and_is_rejected_on_home() {
         get(&state, &token, "/api/v1/dashboard/layout?template=artist").await;
     assert_eq!(status, StatusCode::OK);
     assert!(final_read.get("headerSize").is_none());
+}
+
+#[tokio::test]
+async fn selected_period_persists_across_requests() {
+    let (_dir, state, token) = setup().await;
+    let (status, prefs) = get(&state, &token, "/api/v1/preferences").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(prefs["selected_period"], "all");
+
+    let (status, saved) = post(
+        &state,
+        Some(&token),
+        Some("test-csrf"),
+        "/api/v1/preferences/period",
+        json!({"period": "30d"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved["selected_period"], "30d");
+
+    let (status, reloaded) = get(&state, &token, "/api/v1/preferences").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reloaded["selected_period"], "30d");
 }
 
 #[tokio::test]

@@ -27,6 +27,76 @@ pub struct Storage {
     pub(crate) requests: Arc<tokio::sync::RwLock<()>>,
     pub(crate) recovery_operations: Arc<tokio::sync::Mutex<()>>,
     pub(crate) spool_operations: Arc<tokio::sync::RwLock<()>>,
+    pub(crate) jobs_notify: Arc<tokio::sync::Notify>,
+    pub(crate) archive_notify: Arc<tokio::sync::Notify>,
+}
+
+impl Storage {
+    pub fn wake_workers(&self) {
+        self.jobs_notify.notify_waiters();
+    }
+
+    pub fn notify_archive_changed(&self) {
+        self.archive_notify.notify_waiters();
+    }
+
+    pub async fn next_retry_delay(&self, kinds: &[&str], max_wait: Duration) -> Duration {
+        if kinds.is_empty() {
+            return max_wait;
+        }
+        let mut qb = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT MIN(retry_at_ms) FROM jobs WHERE kind IN (",
+        );
+        let mut separated = qb.separated(",");
+        for kind in kinds {
+            separated.push_bind(*kind);
+        }
+        separated.push_unseparated(
+            ") AND state='waiting' AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND retry_at_ms IS NOT NULL",
+        );
+        let due: Option<i64> = qb
+            .build_query_scalar()
+            .fetch_one(&self.readers)
+            .await
+            .ok()
+            .flatten();
+        let Some(due) = due else {
+            return max_wait;
+        };
+        let wait = due.saturating_sub(crate::auth::now_ms()).max(500) as u64;
+        Duration::from_millis(wait).min(max_wait)
+    }
+
+    pub async fn shrink_memory(&self) {
+        let _ = sqlx::query("PRAGMA shrink_memory")
+            .execute(&self.writer)
+            .await;
+    }
+
+    pub async fn maintain_storage(&self) {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+            .execute(&self.writer)
+            .await;
+        let _ = sqlx::query("PRAGMA optimize").execute(&self.writer).await;
+        let _ = sqlx::query("PRAGMA shrink_memory")
+            .execute(&self.writer)
+            .await;
+        let _ = sqlx::query("PRAGMA optimize").execute(&self.private).await;
+        let _ = sqlx::query("PRAGMA shrink_memory")
+            .execute(&self.private)
+            .await;
+        reclaim_memory();
+    }
+}
+
+pub(crate) fn reclaim_memory() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> std::ffi::c_int;
+        }
+        let _ = malloc_trim(0);
+    }
 }
 
 fn private_directory(path: &Path) -> anyhow::Result<()> {
@@ -80,13 +150,13 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
     );
     let options = options(&archive_path);
     // A bounded import batch touches several indexes. Keep its working pages in
-    // one modest writer cache and checkpoint less often; FULL durability stays on.
+    // one modest writer cache and checkpoint periodically; FULL durability stays on.
     let writer = pool(
         options
             .clone()
-            .pragma("cache_size", "-131072")
+            .pragma("cache_size", "-16384")
             .pragma("journal_size_limit", "8388608")
-            .pragma("wal_autocheckpoint", "16384"),
+            .pragma("wal_autocheckpoint", "1000"),
         1,
     )
     .await?;
@@ -134,7 +204,7 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         private.close().await;
         return Err(error);
     }
-    let readers = match pool(options.read_only(true).pragma("query_only", "ON"), 4).await {
+    let readers = match reader_pool(options.read_only(true).pragma("query_only", "ON"), 4).await {
         Ok(pool) => pool,
         Err(error) => {
             writer.close().await;
@@ -164,6 +234,8 @@ pub async fn open(directory: &Path) -> anyhow::Result<Storage> {
         requests: Default::default(),
         recovery_operations: Default::default(),
         spool_operations: Default::default(),
+        jobs_notify: Default::default(),
+        archive_notify: Default::default(),
     })
 }
 
@@ -197,14 +269,25 @@ fn options(path: &Path) -> SqliteConnectOptions {
         .journal_mode(SqliteJournalMode::Wal)
         .synchronous(SqliteSynchronous::Full)
         .busy_timeout(Duration::from_secs(30))
-        .pragma("cache_size", "-8192")
+        .pragma("cache_size", "-4096")
 }
 fn options_for_private(path: &Path) -> SqliteConnectOptions {
-    options(path).pragma("secure_delete", "ON")
+    options(path)
+        .pragma("cache_size", "-2048")
+        .pragma("secure_delete", "ON")
 }
 async fn pool(options: SqliteConnectOptions, size: u32) -> anyhow::Result<SqlitePool> {
     Ok(SqlitePoolOptions::new()
         .max_connections(size)
+        .acquire_timeout(Duration::from_secs(120))
+        .connect_with(options)
+        .await?)
+}
+async fn reader_pool(options: SqliteConnectOptions, size: u32) -> anyhow::Result<SqlitePool> {
+    Ok(SqlitePoolOptions::new()
+        .max_connections(size)
+        .min_connections(0)
+        .idle_timeout(Duration::from_secs(300))
         .acquire_timeout(Duration::from_secs(120))
         .connect_with(options)
         .await?)
@@ -345,6 +428,9 @@ impl Storage {
             .bind(enabled)
             .execute(&self.writer)
             .await?;
+        if !enabled {
+            self.wake_workers();
+        }
         Ok(())
     }
     /// Recovery calls this while the durable maintenance barrier is held.

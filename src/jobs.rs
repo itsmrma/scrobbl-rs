@@ -126,6 +126,7 @@ impl Storage {
         if inserted.rows_affected() != 1 {
             return Err(AppError::Conflict("Archive is in maintenance.".into()));
         }
+        self.wake_workers();
         Ok(id)
     }
 
@@ -146,13 +147,21 @@ impl Storage {
     }
     /// Atomic claim and attempt fencing. Each worker claims only kinds it can execute.
     pub async fn claim(&self, kind: &str) -> Result<Option<Job>> {
-        if self.directory.join("recovery.pending").exists()
-            || (!kind.starts_with("recovery_") && crate::recovery::paused(self).await)
-        {
+        if self.directory.join("recovery.pending").exists() {
             return Ok(None);
         }
-        Ok(sqlx::query_as("UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *")
-            .bind(auth::now_ms()).bind(kind).bind(auth::now_ms()).fetch_optional(&self.writer).await?)
+        let now = auth::now_ms();
+        let sql = if kind.starts_with("recovery_") {
+            "UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) RETURNING *"
+        } else {
+            "UPDATE jobs SET state='running',attempt=attempt+1,updated_at_ms=? WHERE id=(SELECT id FROM jobs WHERE kind=? AND state IN ('queued','waiting') AND cancel_requested=0 AND COALESCE(error_code,'')!='artwork_paused' AND (retry_at_ms IS NULL OR retry_at_ms<=?) ORDER BY created_at_ms,id LIMIT 1) AND NOT EXISTS(SELECT 1 FROM archive_state WHERE maintenance=1) AND NOT EXISTS(SELECT 1 FROM settings WHERE key='recovery_paused' AND value='true') RETURNING *"
+        };
+        Ok(sqlx::query_as(sql)
+            .bind(now)
+            .bind(kind)
+            .bind(now)
+            .fetch_optional(&self.writer)
+            .await?)
     }
     /// User pause is a durable waiting state, excluded from automatic claims.
     pub async fn pause_artwork(&self, id: &str) -> Result<()> {
@@ -163,6 +172,7 @@ impl Storage {
     pub async fn resume_artwork(&self, id: &str) -> Result<()> {
         sqlx::query("UPDATE jobs SET state='waiting',error_code='artwork_pacing',updated_at_ms=? WHERE id=? AND kind='artwork' AND state='waiting' AND error_code='artwork_paused'")
             .bind(auth::now_ms()).bind(id).execute(&self.writer).await?;
+        self.wake_workers();
         Ok(())
     }
     pub async fn cancel(&self, id: &str) -> Result<()> {
@@ -203,6 +213,7 @@ impl Storage {
         sqlx::query("UPDATE jobs SET state='queued',cancel_requested=0,retry_at_ms=NULL,error_code=NULL,outcome=NULL WHERE id=? AND (state IN ('failed','cancelled') OR outcome='partial') AND phase!='receiving'")
             .bind(id).execute(&mut *tx).await?;
         tx.commit().await?;
+        self.wake_workers();
         Ok(())
     }
     /// Rows must be a contiguous checkpoint interval. Invalid/skipped fingerprints and reasons persist too.

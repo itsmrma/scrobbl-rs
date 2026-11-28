@@ -693,20 +693,34 @@ function RankingsPanel({
         "albums_page",
         "tracks_page",
       ])
-        next.set(key, "1");
+        next.delete(key);
     for (const [key, value] of Object.entries(patch)) {
-      if (value) next.set(key, value);
-      else next.delete(key);
+      if (
+        !value ||
+        ([
+          "page",
+          "history_page",
+          "artists_page",
+          "albums_page",
+          "tracks_page",
+        ].includes(key) &&
+          value === "1")
+      ) {
+        next.delete(key);
+      } else {
+        next.set(key, value);
+      }
     }
+    const qs = next.toString();
     // Preserve the URL and browser history for return navigation.
-    navigate(`${location.pathname}?${next}`);
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname);
   };
   const reset = () =>
     update({
-      page: "1",
-      artists_page: "1",
-      albums_page: "1",
-      tracks_page: "1",
+      page: "",
+      artists_page: "",
+      albums_page: "",
+      tracks_page: "",
     });
   return (
     <article
@@ -2468,20 +2482,20 @@ export function DashboardEditToolbar({
       </div>
       {template === "artist" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Editing the artist template. Changes apply to every
-          artist page.
+          <Icon>info</Icon> Editing the artist template. Widget changes apply to
+          every artist page; header size applies to all music pages.
         </p>
       )}
       {template === "album" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Editing the album template. Changes apply to every
-          album page.
+          <Icon>info</Icon> Editing the album template. Widget changes apply to
+          every album page; header size applies to all music pages.
         </p>
       )}
       {template === "track" && (
         <p className="dashboard-edit-notice">
-          <Icon>info</Icon> Editing the track template. Changes apply to every
-          track page.
+          <Icon>info</Icon> Editing the track template. Widget changes apply to
+          every track page; header size applies to all music pages.
         </p>
       )}
       {saving && (
@@ -3388,10 +3402,10 @@ export function HistoryPage({
   const change = (patch: Record<string, string>) =>
     selection.update({
       ...patch,
-      history_page: "1",
-      artists_page: "1",
-      albums_page: "1",
-      tracks_page: "1",
+      history_page: "",
+      artists_page: "",
+      albums_page: "",
+      tracks_page: "",
     });
   function toggleFilters() {
     const details = filterDetails.current;
@@ -4000,20 +4014,28 @@ export function MusicPage({
 
   const startMusicEdit = useRef(layoutEditor.handleStartEditing);
   startMusicEdit.current = layoutEditor.handleStartEditing;
+  const cancelMusicEdit = useRef(layoutEditor.handleCancel);
+  cancelMusicEdit.current = layoutEditor.handleCancel;
 
   useEffect(() => {
-    if (!result.data || layoutEditor.editing) {
+    if (!result.data) {
       setTopbarCustomize(null);
       return;
     }
     setTopbarCustomize({
       ariaLabel: customizeAriaLabel,
       buttonRef: topbarMusicCustomizeRef,
-      onClick: () => startMusicEdit.current(),
+      pressed: layoutEditor.editing,
+      disabled: layoutEditor.saving,
+      onClick: () =>
+        layoutEditor.editing
+          ? cancelMusicEdit.current()
+          : startMusicEdit.current(),
     });
   }, [
     result.data,
     layoutEditor.editing,
+    layoutEditor.saving,
     customizeAriaLabel,
     setTopbarCustomize,
   ]);
@@ -4108,26 +4130,24 @@ export function MusicPage({
                   </div>
                 }
               >
-                {!layoutEditor.editing && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary button secondary change-artwork-button"
-                    onClick={() => setPickerOpen(true)}
-                    aria-label={
-                      kind === "tracks"
-                        ? "Change release artwork"
-                        : "Change artwork"
-                    }
-                  >
-                    <Icon>photo_library</Icon>
-                    <span className="label-long">
-                      {kind === "tracks"
-                        ? "Change release artwork"
-                        : "Change artwork"}
-                    </span>
-                    <span className="label-short">Artwork</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="btn btn-secondary button secondary change-artwork-button"
+                  onClick={() => setPickerOpen(true)}
+                  aria-label={
+                    kind === "tracks"
+                      ? "Change release artwork"
+                      : "Change artwork"
+                  }
+                >
+                  <Icon>photo_library</Icon>
+                  <span className="label-long">
+                    {kind === "tracks"
+                      ? "Change release artwork"
+                      : "Change artwork"}
+                  </span>
+                  <span className="label-short">Artwork</span>
+                </button>
               </MusicActions>
             )}
           </div>
