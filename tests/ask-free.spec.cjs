@@ -321,39 +321,18 @@ test("AI settings expose local SQL Qwen3.5 catalog and custom local GGUF path wi
   ).json();
   expect(clearedRes.custom_model_path).toBeNull();
 
-  // Compiled backend badge and GPU offload control persist across save and reload.
+  // Compiled backend badge, 5m unload default, and Custom / OpenAI API provider toggle.
   await expect(page.getByText("Backend: CPU", { exact: true })).toBeVisible();
   await expect(
-    page.getByText(/Vulkan container image or the native macOS Metal build/i),
+    page.getByLabel("Unload from RAM after inactivity (minutes)"),
+  ).toHaveValue("5");
+
+  await page.getByRole("button", { name: "Custom / OpenAI API" }).click();
+  await expect(
+    page.getByLabel("Endpoint URL (OpenAI-compatible)"),
   ).toBeVisible();
-
-  const gpuOffload = page.getByRole("combobox", { name: "GPU offload" });
-  await expect(gpuOffload).toContainText("Automatic (all layers on GPU)");
-
-  await gpuOffload.click();
-  await page
-    .getByRole("option", { name: "CPU only (disable GPU offload)" })
-    .click();
-  await page.getByRole("button", { name: "Save options" }).click();
-  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("combobox", { name: "GPU offload" }),
-  ).toContainText("CPU only (disable GPU offload)");
-
-  await page.getByRole("combobox", { name: "GPU offload" }).click();
-  await page
-    .getByRole("option", { name: "Custom layer count (1–256)" })
-    .click();
-  const customLayers = page.getByLabel("Custom GPU layers");
-  await customLayers.fill("16");
-  await page.getByRole("button", { name: "Save options" }).click();
-  await expect(page.getByText("AI settings saved.").last()).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("combobox", { name: "GPU offload" }),
-  ).toContainText("Custom layer count (1–256)");
-  await expect(page.getByLabel("Custom GPU layers")).toHaveValue("16");
+  await expect(page.getByLabel("Model", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Local (CPU)" }).click();
 });
 
 test("local SQL Ask executes query via sandbox, rejects unsafe SQL, and cleans up projection when AI is turned off", async ({

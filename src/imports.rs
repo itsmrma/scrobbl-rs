@@ -275,6 +275,7 @@ pub async fn upload(
                 .into(),
         ));
     }
+    state.storage.wake_workers();
     Ok(Json(ImportResponse { job_id: id }))
 }
 async fn receive_fields(state: &AppState, id: &str, multipart: &mut Multipart) -> Result<()> {

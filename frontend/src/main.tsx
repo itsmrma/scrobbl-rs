@@ -25,6 +25,7 @@ import {
   useBrowserPreference,
 } from "./preferences";
 import { SECTIONS, Settings } from "./settings";
+import { hydrateSharedPeriod } from "./shared-period";
 import { SpotifyConnectReturn } from "./spotify-connect";
 import { MusicEdit } from "./music-edit";
 import { ReviewPage } from "./review";
@@ -196,6 +197,30 @@ function Shell({
         }),
     ]);
   }
+
+  useEffect(() => {
+    if (preferences) {
+      hydrateSharedPeriod(
+        preferences.selected_period,
+        preferences.selected_from,
+        preferences.selected_to,
+      );
+    }
+  }, [
+    preferences?.selected_period,
+    preferences?.selected_from,
+    preferences?.selected_to,
+  ]);
+
+  useEffect(() => {
+    const onUpdated = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail) {
+        setPreferences(event.detail as Preferences);
+      }
+    };
+    window.addEventListener("preferences-updated", onUpdated);
+    return () => window.removeEventListener("preferences-updated", onUpdated);
+  }, []);
 
   useEffect(() => {
     alive.current = true;

@@ -30,9 +30,16 @@ pub async fn read(conn: &mut SqliteConnection) -> Result<Preferences> {
                 .unwrap_or_else(|| default.into()),
         )
     }
+    let initial_period = value(conn, "initial_period", "all").await?;
+    let selected_period = value(conn, "selected_period", &initial_period).await?;
+    let selected_from = value(conn, "selected_period_from", "").await?;
+    let selected_to = value(conn, "selected_period_to", "").await?;
     Ok(Preferences {
         name: value(conn, "instance_name", "scrobbl.rs").await?,
-        initial_period: value(conn, "initial_period", "all").await?,
+        initial_period,
+        selected_period,
+        selected_from: (!selected_from.is_empty()).then_some(selected_from),
+        selected_to: (!selected_to.is_empty()).then_some(selected_to),
         hour_format: value(conn, "hour_format", "24").await?,
         timezone: calendar.timezone,
         week_start: calendar.week_start,
@@ -95,6 +102,11 @@ pub async fn save(
     ] {
         db::set_setting(&mut tx, key, value).await?;
     }
+    if previous.initial_period != p.initial_period {
+        db::set_setting(&mut tx, "selected_period", &p.initial_period).await?;
+        db::set_setting(&mut tx, "selected_period_from", "").await?;
+        db::set_setting(&mut tx, "selected_period_to", "").await?;
+    }
     db::set_setting(
         &mut tx,
         "preferences_version",
@@ -103,8 +115,64 @@ pub async fn save(
     .await?;
     let preferences = read(&mut tx).await?;
     tx.commit().await?;
+    if job_id.is_some() {
+        state.storage.wake_workers();
+    }
     Ok(Json(SavedPreferences {
         preferences,
         job_id,
     }))
+}
+
+pub async fn save_period(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(form): Json<SaveSelectedPeriod>,
+) -> Result<Json<Preferences>> {
+    auth::require_write(&state, &headers).await?;
+    let period = form.period.trim();
+    let (from, to) = if PERIODS.contains(&period) {
+        (String::new(), String::new())
+    } else if period == "custom" {
+        let parse_opt = |raw: Option<&str>| -> Result<Option<chrono::NaiveDate>> {
+            match raw.map(str::trim).filter(|s| !s.is_empty()) {
+                None => Ok(None),
+                Some(s) => chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                    .map(Some)
+                    .map_err(|_| AppError::BadRequest("Use YYYY-MM-DD dates.".into())),
+            }
+        };
+        let from_date = parse_opt(form.from.as_deref())?;
+        let to_date = parse_opt(form.to.as_deref())?;
+        if from_date.is_none() && to_date.is_none() {
+            return Err(AppError::BadRequest(
+                "Choose at least one date for a custom period.".into(),
+            ));
+        }
+        if let (Some(f), Some(t)) = (from_date, to_date)
+            && f > t
+        {
+            return Err(AppError::BadRequest(
+                "The start date must be on or before the end date.".into(),
+            ));
+        }
+        (
+            from_date.map(|d| d.to_string()).unwrap_or_default(),
+            to_date.map(|d| d.to_string()).unwrap_or_default(),
+        )
+    } else {
+        return Err(AppError::BadRequest("Invalid period.".into()));
+    };
+
+    let mut tx = state.db.begin().await?;
+    sqlx::query("UPDATE archive_state SET revision=revision WHERE singleton=1 AND maintenance=0 RETURNING revision")
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| AppError::Conflict("Archive is in maintenance.".into()))?;
+    db::set_setting(&mut tx, "selected_period", period).await?;
+    db::set_setting(&mut tx, "selected_period_from", &from).await?;
+    db::set_setting(&mut tx, "selected_period_to", &to).await?;
+    let preferences = read(&mut tx).await?;
+    tx.commit().await?;
+    Ok(Json(preferences))
 }

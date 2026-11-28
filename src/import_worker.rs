@@ -535,12 +535,19 @@ pub async fn run(storage: &Storage, mut job: Job) -> Result<()> {
         .bind(if outcome=="error"{"failed"}else{"completed"}).bind(outcome).bind(error).bind(auth::now_ms()).bind(&job.id).execute(&mut *transaction).await?;
     crate::artwork::enqueue_missing(&mut transaction).await?;
     transaction.commit().await?;
+    storage.wake_workers();
+    storage.notify_archive_changed();
     Ok(())
 }
 pub async fn worker(storage: Storage) {
+    let mut fenced = false;
     loop {
+        let notified = storage.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         match storage.claim("spotify_import").await {
             Ok(Some(job)) => {
+                fenced = false;
                 let id = job.id.clone();
                 let attempt = job.attempt;
                 match run(&storage, job).await {
@@ -553,6 +560,7 @@ pub async fn worker(storage: Storage) {
                         // Maintenance also fences a running lease. Make its confirmed
                         // checkpoint takeable again without resurrecting cancelled work.
                         let _=sqlx::query("UPDATE jobs SET state='queued',updated_at_ms=? WHERE id=? AND attempt=? AND state='running' AND cancel_requested=0").bind(auth::now_ms()).bind(&id).bind(attempt).execute(&storage.writer).await;
+                        fenced = true;
                     }
                     Err(_) => {
                         if let Ok(current) = storage.job(&id).await
@@ -562,8 +570,27 @@ pub async fn worker(storage: Storage) {
                         }
                     }
                 }
+                storage.shrink_memory().await;
+                crate::storage::reclaim_memory();
+                if fenced {
+                    tokio::select! {
+                        _ = &mut notified => {},
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {},
+                    }
+                }
             }
-            _ => tokio::time::sleep(std::time::Duration::from_millis(300)).await,
+            _ => {
+                let cap = if fenced {
+                    std::time::Duration::from_secs(2)
+                } else {
+                    std::time::Duration::from_secs(60)
+                };
+                let wait = storage.next_retry_delay(&["spotify_import"], cap).await;
+                tokio::select! {
+                    _ = &mut notified => {},
+                    _ = tokio::time::sleep(wait) => {},
+                }
+            }
         }
     }
 }

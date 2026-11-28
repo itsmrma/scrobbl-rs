@@ -135,8 +135,6 @@ fn qwen(
 
 pub fn catalog_backend_label() -> &'static str {
     match super::compiled_backend() {
-        "metal" => "llama.cpp (Metal)",
-        "vulkan" => "llama.cpp (Vulkan)",
         "cpu" => "llama.cpp (CPU)",
         _ => "llama.cpp (unavailable)",
     }

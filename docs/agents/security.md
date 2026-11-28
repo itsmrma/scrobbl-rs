@@ -8,8 +8,8 @@ Nessuna modifica può aggirare questi confini (nessun `#[allow(...)]` ingiustifi
 
 ## 1. Superficie di attacco e invarianti di sicurezza
 
-### 1.1 Ask: solo modelli SQL locali e Sandbox SQLite
-- **Solo modelli locali `.gguf`**: Ask non supporta più server AI remoti (BYO AI), server MCP né domande guidate DSL. Opera esclusivamente traducendo domande in linguaggio naturale in query SQL `SELECT`/`WITH` di sola lettura tramite modelli locali (Qwen3.5 dal catalogo curato o un file `.gguf` locale indicato tramite `ai_custom_model_path` / `ai_model_dir`).
+### 1.1 Ask: modelli SQL locali (CPU) o API OpenAI-compatible e Sandbox SQLite
+- **Modello locale CPU-only o API OpenAI-compatible**: Ask traduce domande in linguaggio naturale in query SQL `SELECT`/`WITH` di sola lettura tramite il modello locale fine-tuned su CPU (`Qwen3.5 2B` dal catalogo curato o file `.gguf` locale indicato tramite `ai_custom_model_path` / `ai_model_dir`) oppure tramite un endpoint OpenAI-compatible configurato dall'amministratore (`ai_openai_base_url`, `ai_openai_model`, con eventuale chiave Bearer `ai_openai_api_key` custodita esclusivamente in `data/private/auth.db` e mai esposta nelle risposte GET o nei backup).
 - **Separazione fisica dei database**: I modelli AI non interrogano **mai** `data/archive.db` né `data/private/auth.db`. Ogni query generata dal modello o modificata dall'utente passa **esclusivamente** da `src/ask/sandbox.rs::execute` su `ask_projection.db`, aperto in sola lettura (`SQLITE_OPEN_READ_ONLY`, `query_only = ON`, `trusted_schema = OFF`, `DEFENSIVE`, estensioni disabilitate).
 - **Difesa in profondità nella sandbox (`src/ask/sandbox.rs`)**:
   - Controllo statico pre-prepare UTF-8 safe (`char_indices()`, mai byte slicing diretto `&sql[i..j]`), limite 8 KB, rifiuto NUL byte, rifiuto parametri (`?`, `:x`, `@x`, `$x`), singolo statement `SELECT`/`WITH`, tracking delle CTE dichiarate (`WithFrame` con `AS (` esplicito).

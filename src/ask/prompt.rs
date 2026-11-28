@@ -72,6 +72,10 @@ fn push_previous_context(text: &mut String, previous: Option<&Previous>) {
     }
 }
 
+pub fn sql_user_turn_for_openai(question: &str, previous: Option<&Previous>) -> String {
+    sql_user_turn(question, previous)
+}
+
 fn sql_user_turn(question: &str, previous: Option<&Previous>) -> String {
     if previous.is_none_or(|p| p.sql.as_ref().is_none_or(|s| s.sql.trim().is_empty())) {
         return question.trim().to_owned();

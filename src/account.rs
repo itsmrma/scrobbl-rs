@@ -46,20 +46,26 @@ impl Application {
 pub async fn profile(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Value>> {
     auth::session(&state, &headers).await?;
     let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT key, CASE WHEN key='profile_avatar' THEN '1' ELSE value END FROM settings WHERE key IN ('owner_username','profile_name','profile_avatar_etag','profile_avatar')",
+        "SELECT key, CASE WHEN key IN ('profile_avatar','profile_gravatar') THEN '1' ELSE value END FROM settings WHERE key IN ('owner_username','profile_name','profile_email','profile_avatar_etag','profile_avatar','profile_gravatar_etag','profile_gravatar')",
     )
     .fetch_all(&state.private_db)
     .await?;
     let mut username = None;
     let mut name = None;
+    let mut email = None;
     let mut avatar_etag = None;
     let mut has_avatar = false;
+    let mut gravatar_etag = None;
+    let mut has_gravatar = false;
     for (key, value) in rows {
         match key.as_str() {
             "owner_username" => username = Some(value),
             "profile_name" => name = Some(value),
+            "profile_email" => email = Some(value),
             "profile_avatar_etag" => avatar_etag = Some(value),
             "profile_avatar" => has_avatar = true,
+            "profile_gravatar_etag" => gravatar_etag = Some(value),
+            "profile_gravatar" => has_gravatar = true,
             _ => {}
         }
     }
@@ -79,21 +85,60 @@ pub async fn profile(State(state): State<AppState>, headers: HeaderMap) -> Resul
         .await;
         avatar_etag = Some(etag);
     }
-    let avatar_url = if has_avatar {
-        avatar_etag.map(|etag| format!("/api/v1/account/avatar?v={etag}"))
+    let (avatar_url, avatar_source) = if has_avatar {
+        (
+            avatar_etag.map(|etag| format!("/api/v1/account/avatar?v={etag}")),
+            "custom",
+        )
+    } else if has_gravatar {
+        (
+            gravatar_etag.map(|etag| format!("/api/v1/account/avatar?v={etag}")),
+            "gravatar",
+        )
     } else {
-        None
+        (None, "none")
     };
-    Ok(Json(
-        json!({"username":username,"name":name.unwrap_or_default(),"avatar_url":avatar_url}),
-    ))
+    Ok(Json(json!({
+        "username": username,
+        "name": name.unwrap_or_default(),
+        "email": email.unwrap_or_default(),
+        "avatar_url": avatar_url,
+        "avatar_source": avatar_source,
+    })))
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileEdit {
     pub name: String,
+    #[serde(default)]
+    pub email: Option<String>,
 }
+
+fn validate_profile_email(raw: Option<&str>) -> Result<Option<String>> {
+    let Some(trimmed) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if trimmed.len() > 254 || trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(AppError::BadRequest(
+            "Enter a valid email address of 254 characters or fewer.".into(),
+        ));
+    }
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return Err(AppError::BadRequest("Enter a valid email address.".into()));
+    };
+    if local.is_empty() || domain.is_empty() || !domain.contains('.') || domain.contains('@') {
+        return Err(AppError::BadRequest("Enter a valid email address.".into()));
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+pub fn gravatar_url(email: &str) -> String {
+    let normalized = email.trim().to_lowercase();
+    let hash = auth::digest(&normalized);
+    format!("https://gravatar.com/avatar/{hash}?s=256&d=404")
+}
+
 pub async fn edit_profile(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -106,7 +151,59 @@ pub async fn edit_profile(
             "Use a display name of 80 characters or fewer.".into(),
         ));
     }
-    sqlx::query("INSERT INTO settings(key,value) VALUES('profile_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(name).execute(&state.private_db).await?;
+    let email = validate_profile_email(form.email.as_deref())?;
+    let previous_email: Option<String> =
+        sqlx::query_scalar("SELECT value FROM settings WHERE key='profile_email'")
+            .fetch_optional(&state.private_db)
+            .await?
+            .filter(|v: &String| !v.is_empty());
+
+    sqlx::query("INSERT INTO settings(key,value) VALUES('profile_name',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(name)
+        .execute(&state.private_db)
+        .await?;
+
+    if let Some(ref addr) = email {
+        sqlx::query("INSERT INTO settings(key,value) VALUES('profile_email',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .bind(addr)
+            .execute(&state.private_db)
+            .await?;
+        if previous_email.as_deref() != Some(addr.as_str()) {
+            let url = gravatar_url(addr);
+            if let Ok(fetched) =
+                crate::artwork_http::get(&url, crate::artwork_http::IMAGE_LIMIT).await
+            {
+                match fetched {
+                    crate::artwork_http::Fetched::Body(bytes)
+                        if crate::library::image_type(&bytes).is_ok() =>
+                    {
+                        let encoded = auth::encode_hex(&bytes);
+                        let etag = auth::digest(&encoded);
+                        let mut tx = state.private_db.begin().await?;
+                        sqlx::query("INSERT INTO settings(key,value) VALUES('profile_gravatar',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                            .bind(&encoded)
+                            .execute(&mut *tx)
+                            .await?;
+                        sqlx::query("INSERT INTO settings(key,value) VALUES('profile_gravatar_etag',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                            .bind(&etag)
+                            .execute(&mut *tx)
+                            .await?;
+                        tx.commit().await?;
+                    }
+                    crate::artwork_http::Fetched::Missing => {
+                        sqlx::query("DELETE FROM settings WHERE key IN ('profile_gravatar','profile_gravatar_etag')")
+                            .execute(&state.private_db)
+                            .await?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    } else {
+        sqlx::query("DELETE FROM settings WHERE key IN ('profile_email','profile_gravatar','profile_gravatar_etag')")
+            .execute(&state.private_db)
+            .await?;
+    }
     profile(State(state), headers).await
 }
 
@@ -151,10 +248,20 @@ fn hex_nibble(b: u8) -> Option<u8> {
 }
 pub async fn avatar(State(state): State<AppState>, headers: HeaderMap) -> Result<Response> {
     auth::session(&state, &headers).await?;
-    let value: String = sqlx::query_scalar("SELECT value FROM settings WHERE key='profile_avatar'")
+    let value: String = match sqlx::query_scalar::<_, String>(
+        "SELECT value FROM settings WHERE key='profile_avatar'",
+    )
+    .fetch_optional(&state.private_db)
+    .await?
+    {
+        Some(v) => v,
+        None => sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key='profile_gravatar'",
+        )
         .fetch_optional(&state.private_db)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::NotFound)?,
+    };
     if !value.len().is_multiple_of(2) {
         return Err(AppError::Internal);
     }
@@ -337,4 +444,33 @@ pub async fn control(
         ));
     }
     Ok((StatusCode::ACCEPTED, Json(json!({"accepted":true}))).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gravatar_url_normalizes_and_hashes_sha256() {
+        assert_eq!(
+            gravatar_url("  User@Example.COM "),
+            format!(
+                "https://gravatar.com/avatar/{}?s=256&d=404",
+                auth::digest("user@example.com")
+            )
+        );
+    }
+
+    #[test]
+    fn validate_profile_email_rejects_invalid_addresses() {
+        assert_eq!(validate_profile_email(None).unwrap(), None);
+        assert_eq!(validate_profile_email(Some("   ")).unwrap(), None);
+        assert_eq!(
+            validate_profile_email(Some(" a@b.com ")).unwrap(),
+            Some("a@b.com".to_string())
+        );
+        assert!(validate_profile_email(Some("not-an-email")).is_err());
+        assert!(validate_profile_email(Some("a@localhost")).is_err());
+        assert!(validate_profile_email(Some("a b@example.com")).is_err());
+    }
 }

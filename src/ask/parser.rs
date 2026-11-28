@@ -280,30 +280,39 @@ pub fn inference_timeout() -> Duration {
 /// produces schema-constrained JSON containing a read-only SQL query.
 pub struct ModelParser {
     db: sqlx::SqlitePool,
+    private_db: sqlx::SqlitePool,
     data_dir: PathBuf,
     runtime: Runtime,
     timeout: Duration,
 }
 
 impl ModelParser {
-    pub fn local(db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
+    pub fn local(db: sqlx::SqlitePool, private_db: sqlx::SqlitePool, data_dir: PathBuf) -> Self {
         #[cfg(feature = "llama")]
         let engine: Box<dyn crate::ask::runtime::Engine> =
             Box::new(crate::ask::runtime::LlamaEngine::new());
         #[cfg(not(feature = "llama"))]
         let engine: Box<dyn crate::ask::runtime::Engine> =
             Box::new(crate::ask::runtime::UnavailableEngine);
-        Self::new(db, data_dir, Runtime::spawn(engine, 4), inference_timeout())
+        Self::new(
+            db,
+            private_db,
+            data_dir,
+            Runtime::spawn(engine, 4),
+            inference_timeout(),
+        )
     }
 
     pub fn new(
         db: sqlx::SqlitePool,
+        private_db: sqlx::SqlitePool,
         data_dir: PathBuf,
         runtime: Runtime,
         timeout: Duration,
     ) -> Self {
         Self {
             db,
+            private_db,
             data_dir,
             runtime,
             timeout,
@@ -329,6 +338,11 @@ impl ModelParser {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             });
         }
+        let today = active_calendar_today(&self.db).await;
+        if stored.provider == "openai" {
+            let user_turn = crate::ask::prompt::sql_user_turn_for_openai(question, previous);
+            return self.infer_openai(&stored, &today, &user_turn, cancel).await;
+        }
         let spec = match self.local_spec(&stored)? {
             Ok(spec) => spec,
             Err(reason) => return Ok(ParsedQuestion::Unsupported { reason }),
@@ -336,7 +350,6 @@ impl ModelParser {
         let token = cancel
             .cloned()
             .unwrap_or_else(|| CancelToken::new(self.timeout));
-        let today = active_calendar_today(&self.db).await;
         let prompt = crate::ask::prompt::build_sql_prompt_with_previous(question, previous, &today);
         let output = self
             .runtime
@@ -358,8 +371,7 @@ impl ModelParser {
                 path,
                 stored.threads.clamp(1, 64),
                 stored.unload_minutes.clamp(1, 1440),
-            )
-            .with_gpu_layers(crate::ai::effective_gpu_layers(stored.gpu_layers)))),
+            ))),
             Err(reason) => Ok(Err(reason)),
         }
     }
@@ -380,11 +392,21 @@ impl ModelParser {
                 reason: "AI is off. Enable it in Settings to ask questions.".into(),
             }));
         }
+        let today = active_calendar_today(&self.db).await;
+        if stored.provider == "openai" {
+            let user_turn = format!(
+                "A previous SQL query for this question was rejected by the sandbox. Write a corrected query, still answering the same question.\n\n{}",
+                crate::ask::prompt::sql_repair_user_turn(question, previous, attempts)
+            );
+            return self
+                .infer_openai(&stored, &today, &user_turn, cancel)
+                .await
+                .map(Some);
+        }
         let spec = match self.local_spec(&stored)? {
             Ok(spec) => spec,
             Err(reason) => return Ok(Some(ParsedQuestion::Unsupported { reason })),
         };
-        let today = active_calendar_today(&self.db).await;
         let prompt =
             crate::ask::prompt::build_sql_repair_prompt(question, previous, attempts, &today);
         let token = cancel
@@ -396,6 +418,230 @@ impl ModelParser {
             .await
             .map_err(runtime_error)?;
         interpret_local_sql(&raw).map(Some)
+    }
+
+    async fn infer_openai(
+        &self,
+        stored: &crate::ai::StoredSettings,
+        today: &str,
+        user_turn: &str,
+        cancel: Option<&CancelToken>,
+    ) -> Result<ParsedQuestion> {
+        let Some(base_url) = stored.openai_base_url.as_deref() else {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "OpenAI-compatible Base URL is not configured in Settings -> AI.".into(),
+            });
+        };
+        let Some(model) = stored.openai_model.as_deref() else {
+            return Ok(ParsedQuestion::Unsupported {
+                reason: "OpenAI-compatible model name is not configured in Settings -> AI.".into(),
+            });
+        };
+        let api_key = crate::ai::read_openai_api_key(&self.private_db).await?;
+        let system = crate::ask::prompt::local_sql_system_prompt(today);
+        let content = call_openai_chat(
+            base_url,
+            model,
+            api_key.as_deref(),
+            &system,
+            user_turn,
+            self.timeout,
+            cancel,
+        )
+        .await?;
+        interpret_local_sql(&content)
+    }
+}
+
+fn openai_client(timeout: Duration) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!(
+            "scrobbl.rs/",
+            env!("CARGO_PKG_VERSION"),
+            " (https://github.com/itsmrma/scrobbl-rs)"
+        ))
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| AppError::Internal)
+}
+
+fn openai_chat_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.ends_with("/chat/completions") {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}/chat/completions")
+    }
+}
+
+fn openai_models_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if let Some(prefix) = trimmed.strip_suffix("/chat/completions") {
+        format!("{prefix}/models")
+    } else {
+        format!("{trimmed}/models")
+    }
+}
+
+async fn call_openai_chat(
+    base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
+    system: &str,
+    user: &str,
+    timeout: Duration,
+    cancel: Option<&CancelToken>,
+) -> Result<String> {
+    let client = openai_client(timeout)?;
+    let url = openai_chat_url(base_url);
+    let body = serde_json::json!({
+        "model": model,
+        "temperature": 0,
+        "max_tokens": 1024,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user }
+        ]
+    });
+    let mut req = client.post(url).json(&body);
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        req = req.bearer_auth(key.trim());
+    }
+    let response = if let Some(token) = cancel {
+        let poll = async {
+            loop {
+                if token.should_stop() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        };
+        tokio::select! {
+            res = req.send() => res.map_err(|_| AppError::BadRequest("Could not reach the OpenAI-compatible API endpoint.".into()))?,
+            _ = poll => {
+                return Err(if token.is_cancelled() {
+                    runtime_error(RuntimeError::Cancelled)
+                } else {
+                    runtime_error(RuntimeError::Timeout)
+                });
+            }
+        }
+    } else {
+        req.send().await.map_err(|_| {
+            AppError::BadRequest("Could not reach the OpenAI-compatible API endpoint.".into())
+        })?
+    };
+
+    if !response.status().is_success() {
+        return Err(AppError::BadRequest(format!(
+            "OpenAI-compatible API returned HTTP {}.",
+            response.status().as_u16()
+        )));
+    }
+    let bytes = response.bytes().await.map_err(|_| {
+        AppError::BadRequest("Failed reading OpenAI-compatible API response.".into())
+    })?;
+    if bytes.len() > 256 * 1024 {
+        return Err(AppError::BadRequest(
+            "OpenAI-compatible API response exceeded 256 KiB.".into(),
+        ));
+    }
+    let json: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| AppError::BadRequest("OpenAI-compatible API returned invalid JSON.".into()))?;
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            AppError::BadRequest(
+                "OpenAI-compatible API response did not contain choices[0].message.content.".into(),
+            )
+        })
+}
+
+pub async fn test_openai_endpoint(
+    base_url: &str,
+    model: &str,
+    api_key: Option<&str>,
+) -> (bool, String) {
+    let Ok(client) = openai_client(Duration::from_secs(10)) else {
+        return (false, "Could not initialize HTTP client.".to_string());
+    };
+    let models_url = openai_models_url(base_url);
+    let mut req = client.get(&models_url);
+    if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+        req = req.bearer_auth(key.trim());
+    }
+    match req.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Ok(bytes) = resp.bytes().await
+                && bytes.len() <= 512 * 1024
+                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(data) = val["data"].as_array()
+            {
+                let found = data.iter().any(|item| item["id"].as_str() == Some(model));
+                if found {
+                    return (
+                        true,
+                        format!(
+                            "Connected to OpenAI-compatible API. Model '{model}' is available."
+                        ),
+                    );
+                }
+                return (
+                    true,
+                    format!(
+                        "Connected to OpenAI-compatible API ({} models listed). Verify '{model}' is accepted.",
+                        data.len()
+                    ),
+                );
+            }
+            (
+                true,
+                format!("Connected to OpenAI-compatible API for model '{model}'."),
+            )
+        }
+        Ok(resp) if resp.status().as_u16() == 404 || resp.status().as_u16() == 405 => {
+            let chat_url = openai_chat_url(base_url);
+            let mut chat_req = client.post(chat_url).json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "ok"}]
+            }));
+            if let Some(key) = api_key.filter(|k| !k.trim().is_empty()) {
+                chat_req = chat_req.bearer_auth(key.trim());
+            }
+            match chat_req.send().await {
+                Ok(r) if r.status().is_success() => (
+                    true,
+                    format!("Connected to OpenAI-compatible API for model '{model}'."),
+                ),
+                Ok(r) => (
+                    false,
+                    format!(
+                        "OpenAI-compatible API returned HTTP {}.",
+                        r.status().as_u16()
+                    ),
+                ),
+                Err(_) => (
+                    false,
+                    "Could not reach the OpenAI-compatible API endpoint.".to_string(),
+                ),
+            }
+        }
+        Ok(resp) => (
+            false,
+            format!(
+                "OpenAI-compatible API returned HTTP {}.",
+                resp.status().as_u16()
+            ),
+        ),
+        Err(_) => (
+            false,
+            "Could not reach the OpenAI-compatible API endpoint.".to_string(),
+        ),
     }
 }
 

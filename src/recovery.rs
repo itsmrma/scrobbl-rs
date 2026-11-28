@@ -233,7 +233,7 @@ pub async fn freeze(store: &Storage, path: &Path) -> anyhow::Result<()> {
     storage::sync_file(path)?;
     Ok(())
 }
-const LOCAL_ONLY_AI_SETTINGS_SQL: &str = "DELETE FROM settings WHERE key IN ('ai_remote_key','ai_remote_url','ai_remote_model','ai_provider','ai_answer_mode_local','ai_answer_mode_remote','ai_model_dir','ai_custom_model_path','ai_enabled','ai_gpu_layers')";
+const LOCAL_ONLY_AI_SETTINGS_SQL: &str = "DELETE FROM settings WHERE key IN ('ai_remote_key','ai_remote_url','ai_remote_model','ai_provider','ai_openai_base_url','ai_openai_model','ai_answer_mode_local','ai_answer_mode_remote','ai_model_dir','ai_custom_model_path','ai_enabled','ai_gpu_layers')";
 
 async fn sanitized_manifest(snapshot: &Path) -> anyhow::Result<(Manifest, Vec<(String, i64)>)> {
     let mut conn = connect(snapshot, false).await?;
@@ -609,6 +609,7 @@ pub async fn enqueue_asset(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    store.wake_workers();
     Ok(id)
 }
 async fn active_job<'a>(
@@ -743,6 +744,10 @@ async fn phase(store: &Storage, job: &crate::jobs::Job, phase: &str) -> anyhow::
 
 pub async fn worker(store: Storage) {
     loop {
+        let notified = store.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        let mut did_work = false;
         for kind in [
             "recovery_backup",
             "recovery_export",
@@ -750,6 +755,7 @@ pub async fn worker(store: Storage) {
             "recovery_inspect",
         ] {
             if let Ok(Some(job)) = store.claim(kind).await {
+                did_work = true;
                 let _operation = store.recovery_operations.lock().await;
                 if store.directory.join("recovery.pending").exists() {
                     continue;
@@ -773,9 +779,27 @@ pub async fn worker(store: Storage) {
                     let message = public_error(result.as_ref().expect_err("failed operation"));
                     let _=sqlx::query("UPDATE jobs SET state='failed',phase='finished',outcome='error',error_code=?,updated_at_ms=? WHERE id=? AND state='running' AND cancel_requested=0").bind(message).bind(auth::now_ms()).bind(&job.id).execute(&store.writer).await;
                 }
+                crate::storage::reclaim_memory();
             }
         }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if did_work {
+            continue;
+        }
+        let wait = store
+            .next_retry_delay(
+                &[
+                    "recovery_backup",
+                    "recovery_export",
+                    "recovery_verify",
+                    "recovery_inspect",
+                ],
+                std::time::Duration::from_secs(60),
+            )
+            .await;
+        tokio::select! {
+            _ = &mut notified => {},
+            _ = tokio::time::sleep(wait) => {},
+        }
     }
 }
 

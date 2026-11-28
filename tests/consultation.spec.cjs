@@ -2532,4 +2532,61 @@ test.describe("consultation", () => {
       "1",
     );
   });
+
+  test("customize keeps header actions visible, shares header size across music pages, and persists period with clean URLs", async ({
+    archive: { page },
+  }) => {
+    await page
+      .getByRole("link", { name: "Consultation artist", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Consultation artist." }),
+    ).toBeVisible();
+
+    const changeArtwork = page.getByRole("button", { name: /artwork|details/i }).first();
+    const customizeBtn = page.getByRole("button", { name: /Customize/i }).first();
+    await expect(changeArtwork).toBeVisible();
+    await expect(customizeBtn).toBeVisible();
+
+    await customizeBtn.click();
+    await expect(changeArtwork).toBeVisible();
+    await expect(customizeBtn).toBeVisible();
+
+    const saveBtn = page.getByRole("button", { name: /Save layout/i });
+    const headerSize = page.locator(".dashboard-edit-actions .dashboard-header-size");
+    await expect(headerSize).toBeVisible();
+    const saveBox = await saveBtn.boundingBox();
+    const sizeBox = await headerSize.boundingBox();
+    expect(Math.abs(saveBox.y - sizeBox.y)).toBeLessThan(16);
+
+    await headerSize.getByRole("button", { name: "Small", exact: true }).click();
+    await saveBtn.click();
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-header-size",
+      "small",
+    );
+
+    await page.locator('a[href*="/music/tracks/"]').first().click();
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-header-size",
+      "small",
+    );
+    await page.locator('.music-heading a[href*="/music/albums/"]').first().click();
+    await expect(page.locator(".music-heading")).toHaveAttribute(
+      "data-header-size",
+      "small",
+    );
+
+    await chooseOption(page.getByLabel("Period", { exact: true }), "month");
+    await expect(page.getByLabel("Period", { exact: true })).toContainText(/month/i);
+    const url = new URL(page.url());
+    expect(url.searchParams.has("period")).toBe(false);
+    for (const k of ["page", "history_page", "artists_page", "albums_page", "tracks_page"]) {
+      expect(url.searchParams.get(k)).not.toBe("1");
+    }
+
+    await page.reload();
+    await expect(page.getByLabel("Period", { exact: true })).toContainText(/month/i);
+  });
 });

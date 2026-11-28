@@ -21,13 +21,11 @@ use std::path::{Path as StdPath, PathBuf};
 use ts_rs::TS;
 
 pub const DEFAULT_THREADS: u32 = 4;
-pub const DEFAULT_UNLOAD_MINUTES: u32 = 15;
-pub const DEFAULT_GPU_LAYERS: i32 = -1;
-pub const MIN_GPU_LAYERS: i32 = -1;
-pub const MAX_GPU_LAYERS: i32 = 256;
+pub const DEFAULT_UNLOAD_MINUTES: u32 = 5;
+pub const DEFAULT_PROVIDER: &str = "local";
 
-fn default_gpu_layers() -> i32 {
-    DEFAULT_GPU_LAYERS
+fn default_provider() -> String {
+    DEFAULT_PROVIDER.to_string()
 }
 
 /// Whether this build contains the inference runtime. The runtime is part of
@@ -37,56 +35,41 @@ pub fn runtime_available() -> bool {
     cfg!(feature = "llama")
 }
 
-/// The compiled inference backend for this build (`cpu`, `metal`, `vulkan`, or
-/// `unavailable` when built without `llama`).
+/// The compiled inference backend for this build (`cpu` or `unavailable`
+/// when built without `llama`).
 pub fn compiled_backend() -> &'static str {
-    if !runtime_available() {
-        "unavailable"
-    } else if cfg!(feature = "metal") {
-        "metal"
-    } else if cfg!(feature = "vulkan") {
-        "vulkan"
-    } else {
+    if runtime_available() {
         "cpu"
-    }
-}
-
-/// Whether this build is compiled with GPU offload support (`metal` or `vulkan`).
-pub fn gpu_offload_supported() -> bool {
-    matches!(compiled_backend(), "metal" | "vulkan")
-}
-
-/// Effective GPU layers for the current build: forces `0` on CPU-only builds
-/// and passes the configured `-1..=256` value through on GPU-enabled builds.
-pub fn effective_gpu_layers(configured: i32) -> i32 {
-    if gpu_offload_supported() {
-        configured.clamp(MIN_GPU_LAYERS, MAX_GPU_LAYERS)
     } else {
-        0
+        "unavailable"
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredSettings {
     pub enabled: bool,
+    pub provider: String,
     pub active_model: Option<String>,
     pub custom_model_path: Option<String>,
     pub threads: u32,
-    pub gpu_layers: i32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
+    pub openai_base_url: Option<String>,
+    pub openai_model: Option<String>,
 }
 
 impl Default for StoredSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            provider: DEFAULT_PROVIDER.to_string(),
             active_model: None,
             custom_model_path: None,
             threads: DEFAULT_THREADS,
-            gpu_layers: DEFAULT_GPU_LAYERS,
             unload_minutes: DEFAULT_UNLOAD_MINUTES,
             model_dir: None,
+            openai_base_url: None,
+            openai_model: None,
         }
     }
 }
@@ -99,6 +82,11 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .await?
         .as_deref()
         .is_some_and(|value| value == "1");
+    let provider = setting("ai_provider")
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| value == "local" || value == "openai")
+        .unwrap_or_else(default_provider);
     let active_model = setting("ai_active_model")
         .await?
         .map(|value| value.trim().to_owned())
@@ -111,11 +99,6 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .await?
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(DEFAULT_THREADS);
-    let gpu_layers = setting("ai_gpu_layers")
-        .await?
-        .and_then(|value| value.parse::<i32>().ok())
-        .filter(|value| (MIN_GPU_LAYERS..=MAX_GPU_LAYERS).contains(value))
-        .unwrap_or(DEFAULT_GPU_LAYERS);
     let unload_minutes = setting("ai_unload_minutes")
         .await?
         .and_then(|value| value.parse::<u32>().ok())
@@ -124,15 +107,32 @@ pub async fn read_settings_from(db: &sqlx::SqlitePool) -> Result<StoredSettings>
         .await?
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
+    let openai_base_url = setting("ai_openai_base_url")
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let openai_model = setting("ai_openai_model")
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
     Ok(StoredSettings {
         enabled,
+        provider,
         active_model,
         custom_model_path,
         threads,
-        gpu_layers,
         unload_minutes,
         model_dir,
+        openai_base_url,
+        openai_model,
     })
+}
+
+pub async fn read_openai_api_key(private_db: &sqlx::SqlitePool) -> Result<Option<String>> {
+    Ok(crate::db::setting(private_db, "ai_openai_api_key")
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
 }
 
 pub async fn read_settings(state: &AppState) -> Result<StoredSettings> {
@@ -290,14 +290,17 @@ pub async fn selected_model_readiness(
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiSettings {
     pub enabled: bool,
+    pub provider: String,
     pub active_model: Option<String>,
     pub custom_model_path: Option<String>,
     pub threads: u32,
-    pub gpu_layers: i32,
     pub backend: String,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
     pub effective_model_dir: String,
+    pub openai_base_url: Option<String>,
+    pub openai_model: Option<String>,
+    pub openai_api_key_set: bool,
     pub runtime_available: bool,
     pub model_installed: bool,
     pub model_ready: bool,
@@ -307,21 +310,31 @@ pub struct AiSettings {
 #[derive(Clone, Debug, Deserialize, TS)]
 pub struct SaveAiSettings {
     pub enabled: bool,
+    #[serde(default = "default_provider")]
+    pub provider: String,
     pub active_model: Option<String>,
     #[serde(default)]
     pub custom_model_path: Option<String>,
     pub threads: u32,
-    #[serde(default = "default_gpu_layers")]
-    pub gpu_layers: i32,
     pub unload_minutes: u32,
     pub model_dir: Option<String>,
+    #[serde(default)]
+    pub openai_base_url: Option<String>,
+    #[serde(default)]
+    pub openai_model: Option<String>,
+    #[serde(default)]
+    pub openai_api_key: Option<String>,
+    #[serde(default)]
+    pub clear_openai_api_key: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct AiAskStatus {
     pub enabled: bool,
+    pub provider: String,
     pub active_model: Option<String>,
     pub custom_model_path: Option<String>,
+    pub openai_model: Option<String>,
     pub runtime_available: bool,
     pub model_ready: bool,
     pub model_loading: bool,
@@ -410,7 +423,6 @@ pub struct AiInstalledModel {
 pub struct AiCatalog {
     pub runtime_available: bool,
     pub backend: String,
-    pub gpu_layers: i32,
     pub model_dir: String,
     pub models: Vec<AiCatalogModel>,
     pub installed: Vec<AiInstalledModel>,
@@ -445,7 +457,6 @@ pub struct AiSelection {
 pub struct AiTestResult {
     pub runtime_available: bool,
     pub backend: String,
-    pub gpu_layers: i32,
     pub model_loaded: bool,
     pub model_ready: bool,
     pub message: String,
@@ -458,6 +469,15 @@ fn settings_message(
     selected_available: bool,
 ) -> Option<String> {
     if !stored.enabled {
+        return None;
+    }
+    if stored.provider == "openai" {
+        if stored.openai_base_url.is_none() || stored.openai_model.is_none() {
+            return Some(
+                "AI is enabled with OpenAI-compatible API, but Base URL and Model are required."
+                    .to_string(),
+            );
+        }
         return None;
     }
     if let Some(raw_custom) = stored.custom_model_path.as_deref() {
@@ -500,18 +520,30 @@ async fn present_settings(state: &AppState, stored: StoredSettings) -> Result<Ai
     let (root, readiness) = selected_model_state(state, &stored).await?;
     let installed = readiness.installed;
     let selected_available = readiness.selected_available;
-    let ready = stored.enabled && installed && selected_available;
+    let openai_api_key_set = read_openai_api_key(&state.private_db).await?.is_some();
+    let ready = if stored.provider == "openai" {
+        stored.enabled && stored.openai_base_url.is_some() && stored.openai_model.is_some()
+    } else {
+        stored.enabled && installed && selected_available
+    };
     Ok(AiSettings {
         enabled: stored.enabled,
+        provider: stored.provider.clone(),
         active_model: stored.active_model.clone(),
         custom_model_path: stored.custom_model_path.clone(),
         threads: stored.threads,
-        gpu_layers: stored.gpu_layers,
         backend: compiled_backend().to_string(),
         unload_minutes: stored.unload_minutes,
         model_dir: stored.model_dir.clone(),
         effective_model_dir: root.display().to_string(),
-        runtime_available: runtime_available(),
+        openai_base_url: stored.openai_base_url.clone(),
+        openai_model: stored.openai_model.clone(),
+        openai_api_key_set,
+        runtime_available: if stored.provider == "openai" {
+            true
+        } else {
+            runtime_available()
+        },
         model_installed: installed,
         model_ready: ready,
         message: settings_message(
@@ -544,20 +576,60 @@ fn validate_model_dir(value: Option<&str>) -> Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
+fn validate_openai_base_url(value: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.len() > 500 || raw.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(
+            "OpenAI-compatible Base URL must be 500 characters or fewer.".into(),
+        ));
+    }
+    let parsed = url::Url::parse(raw).map_err(|_| {
+        AppError::BadRequest("Enter a valid http(s) URL for the OpenAI-compatible API.".into())
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(AppError::BadRequest(
+            "OpenAI-compatible Base URL must be an http(s) URL without credentials, query, or fragment."
+                .into(),
+        ));
+    }
+    Ok(Some(raw.trim_end_matches('/').to_string()))
+}
+
+fn validate_openai_model(value: Option<&str>) -> Result<Option<String>> {
+    let Some(raw) = value.map(str::trim).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.chars().count() > 200 || raw.chars().any(char::is_control) {
+        return Err(AppError::BadRequest(
+            "OpenAI-compatible model name must be 200 characters or fewer.".into(),
+        ));
+    }
+    Ok(Some(raw.to_string()))
+}
+
 pub async fn settings_post(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(form): Json<SaveAiSettings>,
 ) -> Result<Json<AiSettings>> {
     auth::require_write(&state, &headers).await?;
+    let provider = form.provider.trim();
+    if provider != "local" && provider != "openai" {
+        return Err(AppError::BadRequest(
+            "AI provider must be 'local' or 'openai'.".into(),
+        ));
+    }
     if !(1..=64).contains(&form.threads) {
         return Err(AppError::BadRequest(
             "Threads must be between 1 and 64.".into(),
-        ));
-    }
-    if !(MIN_GPU_LAYERS..=MAX_GPU_LAYERS).contains(&form.gpu_layers) {
-        return Err(AppError::BadRequest(
-            "GPU layers must be between -1 and 256.".into(),
         ));
     }
     if !(1..=1440).contains(&form.unload_minutes) {
@@ -566,6 +638,14 @@ pub async fn settings_post(
         ));
     }
     let model_dir = validate_model_dir(form.model_dir.as_deref())?;
+    let openai_base_url = validate_openai_base_url(form.openai_base_url.as_deref())?;
+    let openai_model = validate_openai_model(form.openai_model.as_deref())?;
+    if form.enabled && provider == "openai" && (openai_base_url.is_none() || openai_model.is_none())
+    {
+        return Err(AppError::BadRequest(
+            "Enter both Base URL and Model name when enabling OpenAI-compatible API.".into(),
+        ));
+    }
     let previous = read_settings(&state).await?;
 
     let effective_root = match model_dir.as_deref() {
@@ -613,6 +693,7 @@ pub async fn settings_post(
 
     let mut tx = state.db.begin().await?;
     crate::db::set_setting(&mut tx, "ai_enabled", if form.enabled { "1" } else { "0" }).await?;
+    crate::db::set_setting(&mut tx, "ai_provider", provider).await?;
     crate::db::set_setting(
         &mut tx,
         "ai_active_model",
@@ -626,7 +707,6 @@ pub async fn settings_post(
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_threads", &form.threads.to_string()).await?;
-    crate::db::set_setting(&mut tx, "ai_gpu_layers", &form.gpu_layers.to_string()).await?;
     crate::db::set_setting(
         &mut tx,
         "ai_unload_minutes",
@@ -634,18 +714,52 @@ pub async fn settings_post(
     )
     .await?;
     crate::db::set_setting(&mut tx, "ai_model_dir", model_dir.as_deref().unwrap_or("")).await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_openai_base_url",
+        openai_base_url.as_deref().unwrap_or(""),
+    )
+    .await?;
+    crate::db::set_setting(
+        &mut tx,
+        "ai_openai_model",
+        openai_model.as_deref().unwrap_or(""),
+    )
+    .await?;
     sqlx::query(
-        "DELETE FROM settings WHERE key IN ('ai_provider','ai_remote_url','ai_remote_model','ai_remote_key','ai_answer_mode_local','ai_answer_mode_remote')",
+        "DELETE FROM settings WHERE key IN ('ai_remote_url','ai_remote_model','ai_remote_key','ai_answer_mode_local','ai_answer_mode_remote','ai_gpu_layers')",
     )
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
 
+    if form.clear_openai_api_key {
+        sqlx::query("DELETE FROM settings WHERE key='ai_openai_api_key'")
+            .execute(&state.private_db)
+            .await?;
+    } else if let Some(key) = form
+        .openai_api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        if key.chars().any(char::is_control) || key.len() > 1024 {
+            return Err(AppError::BadRequest(
+                "API key must be 1024 characters or fewer without control characters.".into(),
+            ));
+        }
+        let mut ptx = state.private_db.begin().await?;
+        crate::db::set_setting(&mut ptx, "ai_openai_api_key", key).await?;
+        ptx.commit().await?;
+    }
+
     if !form.enabled
+        || provider != "local"
         || previous.active_model != active_model
         || previous.custom_model_path != custom_model_path
         || previous.model_dir != model_dir
-        || previous.gpu_layers != form.gpu_layers
+        || previous.threads != form.threads
+        || previous.unload_minutes != form.unload_minutes
     {
         state.ask.unload();
     }
@@ -659,12 +773,14 @@ pub async fn settings_post(
 
     let stored = StoredSettings {
         enabled: form.enabled,
+        provider: provider.to_string(),
         active_model,
         custom_model_path,
         threads: form.threads,
-        gpu_layers: form.gpu_layers,
         unload_minutes: form.unload_minutes,
         model_dir,
+        openai_base_url,
+        openai_model,
     };
     Ok(Json(present_settings(&state, stored).await?))
 }
@@ -675,15 +791,35 @@ pub async fn ask_status(
 ) -> Result<Json<AiAskStatus>> {
     auth::session(&state, &headers).await?;
     let stored = read_settings(&state).await?;
+    if stored.provider == "openai" {
+        return Ok(Json(AiAskStatus {
+            enabled: stored.enabled,
+            provider: stored.provider,
+            active_model: stored.active_model,
+            custom_model_path: stored.custom_model_path,
+            openai_model: stored.openai_model.clone(),
+            runtime_available: state.ask.runtime_available || state.ask.local,
+            model_ready: stored.enabled
+                && stored.openai_base_url.is_some()
+                && stored.openai_model.is_some(),
+            model_loading: false,
+        }));
+    }
     let readiness = selected_model_readiness(&state, &stored).await?;
     Ok(Json(AiAskStatus {
         enabled: stored.enabled,
+        provider: stored.provider,
         active_model: stored.active_model,
         custom_model_path: stored.custom_model_path,
+        openai_model: stored.openai_model,
         // The build feature and the installed parser must both be present: a
         // test or a future fallback may install a stub/unavailable parser.
         runtime_available: runtime_available() && state.ask.runtime_available,
-        model_ready: stored.enabled && readiness.installed && readiness.selected_available,
+        model_ready: stored.enabled
+            && readiness.installed
+            && readiness.selected_available
+            && runtime_available()
+            && state.ask.runtime_available,
         model_loading: state.ask.model_loading(),
     }))
 }
@@ -703,7 +839,6 @@ pub async fn catalog_get(
     headers: HeaderMap,
 ) -> Result<Json<AiCatalog>> {
     auth::session(&state, &headers).await?;
-    let stored = read_settings(&state).await?;
     let root = models::root(&state).await?;
     let scanned = models::scan(&root);
     let rows: Vec<DownloadRow> = sqlx::query_as(
@@ -833,7 +968,6 @@ pub async fn catalog_get(
     Ok(Json(AiCatalog {
         runtime_available: runtime_available(),
         backend: compiled_backend().to_string(),
-        gpu_layers: stored.gpu_layers,
         model_dir: root.display().to_string(),
         models,
         installed,
@@ -1000,14 +1134,44 @@ pub async fn model_test(
 ) -> Result<Json<AiTestResult>> {
     auth::require_write(&state, &headers).await?;
     let stored = read_settings(&state).await?;
-    let runtime = runtime_available();
     let backend = compiled_backend().to_string();
-    let gpu_layers = stored.gpu_layers;
+    if stored.provider == "openai" {
+        let Some(base_url) = stored.openai_base_url.as_deref() else {
+            return Ok(Json(AiTestResult {
+                runtime_available: true,
+                backend: "openai".to_string(),
+                model_loaded: false,
+                model_ready: false,
+                message: "Enter a Base URL for the OpenAI-compatible API before testing."
+                    .to_string(),
+            }));
+        };
+        let Some(model_name) = stored.openai_model.as_deref() else {
+            return Ok(Json(AiTestResult {
+                runtime_available: true,
+                backend: "openai".to_string(),
+                model_loaded: false,
+                model_ready: false,
+                message: "Enter a Model name before testing.".to_string(),
+            }));
+        };
+        let api_key = read_openai_api_key(&state.private_db).await?;
+        let (ok, message) =
+            crate::ask::parser::test_openai_endpoint(base_url, model_name, api_key.as_deref())
+                .await;
+        return Ok(Json(AiTestResult {
+            runtime_available: true,
+            backend: "openai".to_string(),
+            model_loaded: false,
+            model_ready: ok,
+            message,
+        }));
+    }
+    let runtime = runtime_available();
     if !runtime {
         return Ok(Json(AiTestResult {
             runtime_available: false,
             backend,
-            gpu_layers,
             model_loaded: false,
             model_ready: false,
             message:
@@ -1019,7 +1183,6 @@ pub async fn model_test(
         Ok((_id, _path)) => Ok(Json(AiTestResult {
             runtime_available: true,
             backend,
-            gpu_layers,
             model_loaded: false,
             model_ready: true,
             message: if stored.custom_model_path.is_some() {
@@ -1033,7 +1196,6 @@ pub async fn model_test(
         Err(message) => Ok(Json(AiTestResult {
             runtime_available: true,
             backend,
-            gpu_layers,
             model_loaded: false,
             model_ready: false,
             message,
@@ -1062,26 +1224,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compiled_backend_and_gpu_offload_match_enabled_features() {
+    fn compiled_backend_matches_enabled_features() {
         let backend = compiled_backend();
         if !cfg!(feature = "llama") {
             assert_eq!(backend, "unavailable");
-            assert!(!gpu_offload_supported());
-            assert_eq!(effective_gpu_layers(-1), 0);
-        } else if cfg!(feature = "metal") {
-            assert_eq!(backend, "metal");
-            assert!(gpu_offload_supported());
-            assert_eq!(effective_gpu_layers(-1), -1);
-            assert_eq!(effective_gpu_layers(16), 16);
-        } else if cfg!(feature = "vulkan") {
-            assert_eq!(backend, "vulkan");
-            assert!(gpu_offload_supported());
-            assert_eq!(effective_gpu_layers(-1), -1);
-            assert_eq!(effective_gpu_layers(16), 16);
         } else {
             assert_eq!(backend, "cpu");
-            assert!(!gpu_offload_supported());
-            assert_eq!(effective_gpu_layers(-1), 0);
         }
+        assert_eq!(DEFAULT_UNLOAD_MINUTES, 5);
     }
 }

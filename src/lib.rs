@@ -35,6 +35,7 @@ pub mod retention;
 pub mod review;
 pub mod spotify;
 pub mod storage;
+pub mod update_check;
 pub mod web;
 
 use config::Config;
@@ -61,7 +62,11 @@ pub struct AppState {
 }
 impl AppState {
     pub fn new(storage: storage::Storage, config: Config) -> Self {
-        let ask = ask::Ask::installed(storage.writer.clone(), storage.directory.clone());
+        let ask = ask::Ask::installed(
+            storage.writer.clone(),
+            storage.private.clone(),
+            storage.directory.clone(),
+        );
         Self {
             application: account::Application::new(),
             db: storage.writer.clone(),

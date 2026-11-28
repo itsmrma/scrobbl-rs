@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqliteConnection;
 
 pub const ALLOWED_SPANS: &[u8] = &[2, 3, 4, 6];
+const MUSIC_HEADER_SIZE_KEY: &str = "music_header_size";
 pub const VALID_WIDGET_TYPES: &[&str] = &[
     "totals",
     "unified_rankings",
@@ -150,6 +151,27 @@ pub enum HeaderSize {
     Medium,
     Large,
     Xlarge,
+}
+
+impl HeaderSize {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::Xlarge => "xlarge",
+        }
+    }
+
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "small" => Some(Self::Small),
+            "medium" => Some(Self::Medium),
+            "large" => Some(Self::Large),
+            "xlarge" => Some(Self::Xlarge),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
@@ -429,12 +451,21 @@ pub async fn read(
     let key = template.setting_key();
     let value: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
         .bind(key)
-        .fetch_optional(conn)
+        .fetch_optional(&mut *conn)
         .await?;
-    let layout = match value {
+    let mut layout: DashboardLayout = match value {
         Some(v) => serde_json::from_str(&v).map_err(|_| AppError::Internal)?,
         None => template.default_layout(),
     };
+    if template.is_music_template() {
+        let shared: Option<String> = sqlx::query_scalar("SELECT value FROM settings WHERE key=?")
+            .bind(MUSIC_HEADER_SIZE_KEY)
+            .fetch_optional(&mut *conn)
+            .await?;
+        if let Some(size) = shared.as_deref().and_then(HeaderSize::parse) {
+            layout.header_size = (size != HeaderSize::Medium).then_some(size);
+        }
+    }
     layout.validate(template)?;
     Ok(layout)
 }
@@ -480,6 +511,11 @@ pub async fn save(
     }
     let mut to_save = layout;
     to_save.version = current.version + 1;
+    if template.is_music_template() {
+        let shared = to_save.header_size.unwrap_or(HeaderSize::Medium);
+        db::set_setting(&mut tx, MUSIC_HEADER_SIZE_KEY, shared.as_str()).await?;
+        to_save.header_size = (shared != HeaderSize::Medium).then_some(shared);
+    }
     let serialized = serde_json::to_string(&to_save).map_err(|_| AppError::Internal)?;
     db::set_setting(&mut tx, template.setting_key(), &serialized).await?;
     tx.commit().await?;

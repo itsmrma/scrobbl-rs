@@ -35,6 +35,11 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/application",
             get(crate::account::application).post(crate::account::control),
         )
+        .route("/api/v1/application/update", get(crate::update_check::get))
+        .route(
+            "/api/v1/application/update/check",
+            post(crate::update_check::check),
+        )
         .route("/license", get(license))
         .route("/licenses", get(licenses))
         .route("/app.js", get(js))
@@ -147,6 +152,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/preferences",
             get(crate::preferences::get).post(crate::preferences::save),
+        )
+        .route(
+            "/api/v1/preferences/period",
+            post(crate::preferences::save_period),
         )
         .route(
             "/api/v1/dashboard/layout",

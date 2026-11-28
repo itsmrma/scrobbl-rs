@@ -4,10 +4,18 @@ import { stored } from "./preferences";
 import {
   applySharedPeriod,
   rememberPeriod,
+  setSharedPeriod,
   sharedPeriod,
 } from "./shared-period";
 export type Kind = "artists" | "albums" | "tracks";
 export const kinds: Kind[] = ["artists", "albums", "tracks"];
+const PAGE_KEYS = [
+  "page",
+  "history_page",
+  "artists_page",
+  "albums_page",
+  "tracks_page",
+] as const;
 const isSize = (v: unknown): v is number =>
   typeof v === "number" && [10, 25, 50, 100].includes(v);
 const isView = (v: unknown): v is string => v === "list" || v === "grid";
@@ -55,6 +63,13 @@ export function useListPreferences(defaultView = "list", scope = "") {
 export function useSelection(visible: boolean, initialPeriod = "all") {
   const search = useSearch();
   const [saved, setSaved] = useState(search);
+  const [, setPeriodTick] = useState(0);
+  useEffect(() => {
+    const onPeriodChange = () => setPeriodTick((v) => v + 1);
+    window.addEventListener("selected-period-changed", onPeriodChange);
+    return () =>
+      window.removeEventListener("selected-period-changed", onPeriodChange);
+  }, []);
   useEffect(() => {
     if (visible) setSaved(search);
   }, [search, visible]);
@@ -62,27 +77,50 @@ export function useSelection(visible: boolean, initialPeriod = "all") {
     if (visible) rememberPeriod(new URLSearchParams(search));
   }, [search, visible]);
   const params = new URLSearchParams(visible ? search : saved);
-  // A screen opened without a period shows the one chosen elsewhere in the app.
+  // A screen opened without a period shows the persisted shared period.
   if (!params.has("period")) {
-    if (sharedPeriod()) applySharedPeriod(params);
+    if (sharedPeriod()) applySharedPeriod(params, false);
     else params.set("period", initialPeriod);
   }
   const update = (patch: Record<string, string>, resetPage = true) => {
-    const next = new URLSearchParams(params);
-    if (resetPage)
-      for (const key of [
-        "page",
-        "history_page",
-        "artists_page",
-        "albums_page",
-        "tracks_page",
-      ])
-        next.set(key, "1");
-    for (const [key, value] of Object.entries(patch)) {
-      if (value) next.set(key, value);
-      else next.delete(key);
+    const next = new URLSearchParams(visible ? search : saved);
+    if (resetPage) for (const key of PAGE_KEYS) next.delete(key);
+    const touchesPeriod = "period" in patch || "from" in patch || "to" in patch;
+    if (touchesPeriod) {
+      const nextPeriod =
+        patch.period ??
+        next.get("period") ??
+        params.get("period") ??
+        initialPeriod;
+      const nextFrom =
+        "from" in patch ? patch.from : next.get("from") || params.get("from") || "";
+      const nextTo =
+        "to" in patch ? patch.to : next.get("to") || params.get("to") || "";
+      setSharedPeriod(nextPeriod, nextFrom, nextTo, true);
+      for (const [key, value] of Object.entries(patch)) {
+        if (key === "period" || key === "from" || key === "to") continue;
+        if (!value || ((PAGE_KEYS as readonly string[]).includes(key) && value === "1")) {
+          next.delete(key);
+        } else {
+          next.set(key, value);
+        }
+      }
+      next.delete("period");
+      next.delete("from");
+      next.delete("to");
+      if (!("bucket" in patch)) next.delete("bucket");
+      if (!("bucket_start" in patch)) next.delete("bucket_start");
+    } else {
+      for (const [key, value] of Object.entries(patch)) {
+        if (!value || ((PAGE_KEYS as readonly string[]).includes(key) && value === "1")) {
+          next.delete(key);
+        } else {
+          next.set(key, value);
+        }
+      }
     }
-    navigate(`${location.pathname}?${next}`);
+    const qs = next.toString();
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname, false);
   };
   return { params, update };
 }
@@ -110,7 +148,10 @@ export function musicLink(
 ) {
   const next = context(params);
   for (const key of ["artist", "album", "track"]) next.delete(key);
-  return `/music/${kind}/${encodeURIComponent(id)}?${next}`;
+  const qs = next.toString();
+  return qs
+    ? `/music/${kind}/${encodeURIComponent(id)}?${qs}`
+    : `/music/${kind}/${encodeURIComponent(id)}`;
 }
 export function scoped(params: URLSearchParams, kind: Kind, id: string) {
   const next = new URLSearchParams(params);

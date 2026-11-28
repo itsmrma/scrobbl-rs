@@ -15,17 +15,19 @@ function getCargoCmd() {
   return "cargo";
 }
 
-const cargo = getCargoCmd();
-const build = spawnSync(cargo, ["build", "--locked", "--bin", "scrobbl-rs"], {
-  stdio: "inherit",
-  env: process.env,
-});
-if (build.error) {
-  console.error("Failed to execute cargo:", build.error);
-  process.exit(1);
-}
-if (build.status !== 0) {
-  process.exit(build.status ?? 1);
+if (process.env.SCROBBL_E2E_SKIP_BUILD !== "1") {
+  const cargo = getCargoCmd();
+  const build = spawnSync(cargo, ["build", "--locked", "--bin", "scrobbl-rs"], {
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (build.error) {
+    console.error("Failed to execute cargo:", build.error);
+    process.exit(1);
+  }
+  if (build.status !== 0) {
+    process.exit(build.status ?? 1);
+  }
 }
 
 const targetDir = process.env.CARGO_TARGET_DIR || "target";

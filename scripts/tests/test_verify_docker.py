@@ -64,23 +64,8 @@ class VerifyDockerDiffTests(unittest.TestCase):
 
 
 class VerifyAiBackendTests(unittest.TestCase):
-    def test_vulkan_backend_payload_passes(self):
-        ai = {"backend": "vulkan", "gpu_layers": -1}
-        ask = {"runtime_available": True}
-        catalog = {
-            "backend": "vulkan",
-            "models": [
-                {
-                    "id": "qwen3.5-2b-q4_k_m",
-                    "backend": "llama.cpp (Vulkan)",
-                    "requirements": {"gpu_optional": True},
-                }
-            ],
-        }
-        verify_docker.verify_ai_backend(ai, ask, catalog, "vulkan")
-
     def test_cpu_backend_payload_passes(self):
-        ai = {"backend": "cpu", "gpu_layers": -1}
+        ai = {"backend": "cpu"}
         ask = {"runtime_available": True}
         catalog = {
             "backend": "cpu",
@@ -88,40 +73,37 @@ class VerifyAiBackendTests(unittest.TestCase):
                 {
                     "id": "qwen3.5-2b-q4_k_m",
                     "backend": "llama.cpp (CPU)",
-                    "requirements": {"gpu_optional": True},
                 }
             ],
         }
         verify_docker.verify_ai_backend(ai, ask, catalog, "cpu")
 
     def test_mismatched_backend_payload_raises(self):
-        ai = {"backend": "cpu", "gpu_layers": -1}
+        ai = {"backend": "unavailable"}
         ask = {"runtime_available": True}
+        catalog = {
+            "backend": "unavailable",
+            "models": [
+                {
+                    "id": "qwen3.5-2b-q4_k_m",
+                    "backend": "llama.cpp (CPU)",
+                }
+            ],
+        }
+        with self.assertRaises(AssertionError):
+            verify_docker.verify_ai_backend(ai, ask, catalog, "cpu")
+
+    def test_missing_runtime_available_raises(self):
+        ai = {"backend": "cpu"}
+        ask = {"runtime_available": False}
         catalog = {
             "backend": "cpu",
             "models": [
                 {
                     "id": "qwen3.5-2b-q4_k_m",
                     "backend": "llama.cpp (CPU)",
-                    "requirements": {"gpu_optional": True},
                 }
             ],
         }
         with self.assertRaises(AssertionError):
-            verify_docker.verify_ai_backend(ai, ask, catalog, "vulkan")
-
-    def test_missing_runtime_available_raises(self):
-        ai = {"backend": "vulkan", "gpu_layers": -1}
-        ask = {"runtime_available": False}
-        catalog = {
-            "backend": "vulkan",
-            "models": [
-                {
-                    "id": "qwen3.5-2b-q4_k_m",
-                    "backend": "llama.cpp (Vulkan)",
-                    "requirements": {"gpu_optional": True},
-                }
-            ],
-        }
-        with self.assertRaises(AssertionError):
-            verify_docker.verify_ai_backend(ai, ask, catalog, "vulkan")
+            verify_docker.verify_ai_backend(ai, ask, catalog, "cpu")

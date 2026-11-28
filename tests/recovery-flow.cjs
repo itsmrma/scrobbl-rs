@@ -4,7 +4,7 @@ const { expect } = require("@playwright/test");
 module.exports = async function recoveryFlow(page) {
   await page.goto("/settings/data");
   await expect(
-    page.getByRole("heading", { name: "Manual backup" }),
+    page.getByRole("heading", { name: /Archive backups/ }),
   ).toBeVisible();
   const denied = await page.request.get("/api/v1/recovery", {
     headers: { Authorization: "Bearer read-only-test" },
@@ -27,7 +27,7 @@ module.exports = async function recoveryFlow(page) {
   await page.goto("/activities");
   await page.goto("/settings/data");
   const exportRow = page
-    .locator(".job")
+    .locator(".recovery-asset-row")
     .filter({ hasText: "JSON export" })
     .first();
   await expect(
@@ -48,7 +48,7 @@ module.exports = async function recoveryFlow(page) {
     .getByRole("button", { name: "Create backup", exact: true })
     .click();
   const backupRow = page
-    .locator(".job")
+    .locator(".recovery-asset-row")
     .filter({ hasText: "Archive backup" })
     .first();
   await expect(
@@ -58,7 +58,7 @@ module.exports = async function recoveryFlow(page) {
   await backupRow
     .getByRole("button", { name: "Verify backup", exact: true })
     .click();
-  await expect(backupRow).toContainText("Restore verified:");
+  await expect(backupRow).toContainText("Restore verified on");
   await backupRow
     .getByRole("button", { name: "Restore…", exact: true })
     .click();
@@ -86,7 +86,7 @@ module.exports = async function recoveryFlow(page) {
     .click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
-    page.getByRole("heading", { name: "Manual backup" }),
+    page.getByRole("heading", { name: /Archive backups/ }),
   ).toBeVisible();
   expect(
     await page.evaluate(

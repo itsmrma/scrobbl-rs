@@ -45,6 +45,7 @@ import type {
   AiDeleteResult,
   AiSelection,
   AiTestResult,
+  UpdateStatus,
 } from "./generated";
 
 export interface BootStatus {
@@ -196,7 +197,9 @@ export type Session = {
 export type AccountProfile = {
   username: string | null;
   name: string;
+  email?: string;
   avatar_url: string | null;
+  avatar_source?: "custom" | "gravatar" | "none";
 };
 
 export type ConnectOutcome = {
@@ -268,8 +271,8 @@ export function artworkPreviewUrl(url: string): string {
 
 export const api = {
   account: () => request<AccountProfile>("/api/v1/account"),
-  saveAccount: (name: string) =>
-    post<AccountProfile>("/api/v1/account", { name }),
+  saveAccount: (name: string, email?: string) =>
+    post<AccountProfile>("/api/v1/account", { name, email }),
   uploadAvatar: (image: Blob) =>
     request<AccountProfile>("/api/v1/account/avatar", {
       method: "POST",
@@ -279,6 +282,8 @@ export const api = {
   changePassword: (current_password: string, password: string) =>
     post("/api/v1/account/password", { current_password, password }),
   application: () => request<ApplicationInfo>("/api/v1/application"),
+  updateStatus: () => request<UpdateStatus>("/api/v1/application/update"),
+  checkUpdate: () => post<UpdateStatus>("/api/v1/application/update/check"),
   controlApplication: (action: "restart" | "stop") =>
     post("/api/v1/application", { action, confirmed: true }),
   listeningPatterns: (params: URLSearchParams) =>
@@ -398,6 +403,12 @@ export const api = {
   preferences: () => request<Preferences>("/api/v1/preferences"),
   savePreferences: (form: SavePreferences) =>
     post<SavedPreferences>("/api/v1/preferences", form),
+  saveSelectedPeriod: (period: string, from?: string, to?: string) =>
+    post<Preferences>("/api/v1/preferences/period", {
+      period,
+      from: from || null,
+      to: to || null,
+    }),
   dashboardLayout: (template?: string) =>
     request<DashboardLayout>(
       template

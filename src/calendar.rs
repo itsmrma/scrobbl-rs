@@ -293,10 +293,16 @@ impl Storage {
 }
 pub async fn worker(storage: Storage) {
     loop {
+        let notified = storage.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if let Ok(Some(mut lease)) = storage.claim("calendar").await {
             loop {
                 match storage.calendar_step(&lease).await {
-                    Ok(true) => break,
+                    Ok(true) => {
+                        storage.notify_archive_changed();
+                        break;
+                    }
                     Ok(false) => match storage.job(&lease.id).await {
                         Ok(job) => lease = job,
                         Err(_) => break,
@@ -310,8 +316,15 @@ pub async fn worker(storage: Storage) {
                 }
                 tokio::task::yield_now().await;
             }
+            continue;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let wait = storage
+            .next_retry_delay(&["calendar"], std::time::Duration::from_secs(60))
+            .await;
+        tokio::select! {
+            _ = &mut notified => {},
+            _ = tokio::time::sleep(wait) => {},
+        }
     }
 }
 

@@ -354,6 +354,47 @@ pub(crate) async fn json(target: &str) -> Result<Option<Value>> {
     }
 }
 
+/// GET JSON from GitHub API using the SSRF-safe public HTTPS client.
+pub(crate) async fn github_json(target: &str) -> Result<Option<Value>> {
+    let url = url::Url::parse(target)
+        .map_err(|_| AppError::BadRequest("Invalid update check URL.".into()))?;
+    if url.scheme() != "https" || url.host_str() != Some("api.github.com") {
+        return Err(AppError::BadRequest("Invalid update check host.".into()));
+    }
+    let response = CLIENT
+        .get(url)
+        .header(header::ACCEPT, "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|_| AppError::BadRequest("Could not reach GitHub.".into()))?;
+    let status = response.status();
+    if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(AppError::BadRequest(format!(
+            "GitHub returned HTTP {}.",
+            status.as_u16()
+        )));
+    }
+    if response
+        .content_length()
+        .is_some_and(|v| v > JSON_LIMIT as u64)
+    {
+        return Err(AppError::BadRequest("GitHub response too large.".into()));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|_| AppError::BadRequest("Failed reading GitHub response.".into()))?;
+    if bytes.len() > JSON_LIMIT {
+        return Err(AppError::BadRequest("GitHub response too large.".into()));
+    }
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| AppError::BadRequest("GitHub returned invalid JSON.".into()))
+}
+
 /// Download a PNG, JPEG or WebP image of at most 5 MB.
 pub(crate) async fn image(target: &str) -> Result<Option<Vec<u8>>> {
     match get(target, IMAGE_LIMIT).await? {

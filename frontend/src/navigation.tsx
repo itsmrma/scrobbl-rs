@@ -39,8 +39,10 @@ function destination(path: string) {
     if (selected && selected.startsWith("/") && !selected.startsWith("//")) {
       // Restore the screen's own filters, but with the period chosen since.
       const url = new URL(selected, location.origin);
-      if (url.searchParams.has("period") && applySharedPeriod(url.searchParams))
-        return `${url.pathname}?${url.searchParams}`;
+      if (url.searchParams.has("period") && applySharedPeriod(url.searchParams)) {
+        const qs = url.searchParams.toString();
+        return qs ? `${url.pathname}?${qs}` : url.pathname;
+      }
       return selected;
     }
   }
@@ -48,9 +50,30 @@ function destination(path: string) {
 }
 rememberSelection();
 window.addEventListener("popstate", rememberSelection);
-export function navigate(path: string) {
+window.addEventListener("selected-period-changed", () => {
+  for (const [key, value] of selections.entries()) {
+    const url = new URL(value, location.origin);
+    for (const param of [
+      "page",
+      "history_page",
+      "artists_page",
+      "albums_page",
+      "tracks_page",
+      "bucket",
+      "bucket_start",
+      "period",
+      "from",
+      "to",
+    ]) {
+      url.searchParams.delete(param);
+    }
+    const qs = url.searchParams.toString();
+    selections.set(key, qs ? `${url.pathname}?${qs}` : url.pathname);
+  }
+});
+export function navigate(path: string, restore = true) {
   rememberSelection();
-  const target = destination(path);
+  const target = restore ? destination(path) : path;
   const current = navigationState();
   const back =
     new URL(target, location.href).pathname === location.pathname

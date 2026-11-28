@@ -12,6 +12,7 @@ import {
   ErrorText,
   Icon,
   Modal,
+  SegmentedControl,
   lookupRecord,
   number,
   safeExternalUrl,
@@ -24,21 +25,23 @@ const TIER_LABELS: Record<string, string> = {
   light: "Light",
   default: "Default",
   quality: "Quality",
-  gpu: "GPU",
 };
 
 const STATUS_LABELS: Record<string, string> = {
   available: "Available",
-  gpu_future: "GPU · later release",
   unverified: "Unverified",
 };
 
 const BACKEND_LABELS: Record<string, string> = {
   cpu: "Backend: CPU",
-  metal: "Backend: Metal",
-  vulkan: "Backend: Vulkan",
+  openai: "Backend: OpenAI-compatible API",
   unavailable: "Backend: unavailable",
 };
+
+const PROVIDER_OPTIONS = [
+  { value: "local" as const, label: "Local (CPU)" },
+  { value: "openai" as const, label: "Custom / OpenAI API" },
+];
 
 const DOWNLOAD_ERRORS: Record<string, string> = {
   model_disk_full:
@@ -191,10 +194,7 @@ function ModelCard({
   return (
     <article className="ai-card" aria-labelledby={`ai-model-${model.id}`}>
       <div className="ai-card-head">
-        <div>
-          <h3 id={`ai-model-${model.id}`}>{model.name}</h3>
-          <p className="field-hint">{model.description}</p>
-        </div>
+        <h3 id={`ai-model-${model.id}`}>{model.name}</h3>
         <div className="ai-badges">
           <span className={`ai-badge ai-badge-${model.tier}`}>
             {lookupRecord(TIER_LABELS, model.tier) ?? model.tier}
@@ -211,6 +211,7 @@ function ModelCard({
           )}
         </div>
       </div>
+      <p className="field-hint ai-card-description">{model.description}</p>
       <dl className="ai-facts">
         <div>
           <dt>Download</dt>
@@ -245,14 +246,6 @@ function ModelCard({
         <div>
           <dt>Backend</dt>
           <dd>{model.backend}</dd>
-        </div>
-        <div>
-          <dt>GPU offload</dt>
-          <dd>
-            {model.requirements.gpu_optional
-              ? "Supported when available"
-              : "CPU only"}
-          </dd>
         </div>
         <div>
           <dt>License</dt>
@@ -327,12 +320,15 @@ export function AiSettingsSection() {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [catalog, setCatalog] = useState<AiCatalog | null>(null);
   const [enabled, setEnabled] = useState(false);
+  const [provider, setProvider] = useState<"local" | "openai">("local");
   const [active, setActive] = useState("");
   const [customModelPath, setCustomModelPath] = useState("");
   const [threads, setThreads] = useState("4");
-  const [gpuMode, setGpuMode] = useState<"auto" | "cpu" | "custom">("auto");
-  const [customGpuLayers, setCustomGpuLayers] = useState("16");
-  const [unload, setUnload] = useState("15");
+  const [unload, setUnload] = useState("5");
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState("");
+  const [openaiModel, setOpenaiModel] = useState("");
+  const [openaiApiKey, setOpenaiApiKey] = useState("");
+  const [clearApiKey, setClearApiKey] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -344,18 +340,15 @@ export function AiSettingsSection() {
   function adopt(next: AiSettings) {
     setSettings(next);
     setEnabled(next.enabled);
+    setProvider(next.provider === "openai" ? "openai" : "local");
     setActive(next.active_model ?? "");
     setCustomModelPath(next.custom_model_path ?? "");
     setThreads(String(next.threads));
-    if (next.gpu_layers === -1) {
-      setGpuMode("auto");
-    } else if (next.gpu_layers === 0) {
-      setGpuMode("cpu");
-    } else {
-      setGpuMode("custom");
-      setCustomGpuLayers(String(next.gpu_layers));
-    }
     setUnload(String(next.unload_minutes));
+    setOpenaiBaseUrl(next.openai_base_url ?? "");
+    setOpenaiModel(next.openai_model ?? "");
+    setOpenaiApiKey("");
+    setClearApiKey(false);
   }
 
   async function load() {
@@ -407,20 +400,18 @@ export function AiSettingsSection() {
     setError("");
     setNotice("");
     try {
-      const gpuLayers =
-        gpuMode === "auto"
-          ? -1
-          : gpuMode === "cpu"
-            ? 0
-            : Number(customGpuLayers);
       const next = await api.saveAiSettings({
         enabled,
+        provider,
         active_model: active || null,
         custom_model_path: customModelPath.trim() || null,
         threads: Number(threads),
-        gpu_layers: gpuLayers,
         unload_minutes: Number(unload),
         model_dir: settings?.model_dir ?? null,
+        openai_base_url: openaiBaseUrl.trim() || null,
+        openai_model: openaiModel.trim() || null,
+        openai_api_key: openaiApiKey.trim() || null,
+        clear_openai_api_key: clearApiKey,
       });
       adopt(next);
       setCatalog(await api.aiCatalog());
@@ -494,27 +485,29 @@ export function AiSettingsSection() {
           <h2>AI</h2>
           <div className="ai-badges">
             <span className="ai-badge">
-              {lookupRecord(BACKEND_LABELS, settings.backend) ??
-                settings.backend}
+              {provider === "openai"
+                ? BACKEND_LABELS.openai
+                : (lookupRecord(BACKEND_LABELS, settings.backend) ??
+                  settings.backend)}
             </span>
             <span className="ai-badge">
-              {settings.runtime_available
+              {settings.runtime_available || provider === "openai"
                 ? "Runtime available"
                 : "Runtime not in this build"}
             </span>
           </div>
         </div>
         <p>
-          Ask questions in natural language about your listening archive. A
-          local GGUF model writes read-only SQL against your listening
-          projection, and every number is computed locally inside a sandbox.
+          Ask questions in natural language about your listening archive. Use
+          the fine-tuned local model on CPU, or connect an OpenAI-compatible
+          API for larger models. All SQL runs locally inside a read-only
+          sandbox.
         </p>
         <p className="field-hint">
-          AI is off by default. You can download a curated Qwen3.5 model, drop a
-          custom GGUF folder inside the model folder, or point to any local GGUF
-          file on the server. The model only loads when AI is turned on.
+          AI is off by default. Local models load lazily on the first question
+          and automatically unload from RAM after inactivity.
         </p>
-        {!settings.runtime_available && (
+        {!settings.runtime_available && provider === "local" && (
           <div className="notice notice-warning" role="status">
             <Icon>info</Icon>
             <div className="notice-body">
@@ -557,58 +550,156 @@ export function AiSettingsSection() {
             <span>
               <strong>Enable AI</strong>
               <small>
-                Saving is an explicit consent to run local SQL generation on
+                Saving is an explicit consent to run SQL generation for Ask on
                 this instance.
               </small>
             </span>
           </label>
-          <label>
-            Active model
-            <Select
-              aria-label="Active model"
-              value={active}
-              onChange={setActive}
-            >
-              <option value="">No model selected</option>
-              {installedUsable.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name ?? model.id}
-                </option>
-              ))}
-              {activeModel &&
-                !installedUsable.some((model) => model.id === activeModel) && (
-                  <option value={activeModel} disabled>
-                    {activeModel} (not installed)
-                  </option>
-                )}
-            </Select>
-          </label>
-          <label>
-            Custom local model path (.gguf)
-            <input
-              value={customModelPath}
-              onChange={(event) => setCustomModelPath(event.target.value)}
-              placeholder="e.g. /models/my-qwen3.5.gguf or my-model/model.gguf"
-              autoComplete="off"
-              spellCheck={false}
+          <div className="ai-provider-row">
+            <span className="ai-provider-label">Inference provider</span>
+            <SegmentedControl
+              ariaLabel="Inference provider"
+              value={provider}
+              onChange={(next) => setProvider(next)}
+              options={PROVIDER_OPTIONS}
             />
-            <small className="field-hint">
-              Optional. Point to any local GGUF file on the server (absolute
-              path or relative to <code>{catalog.model_dir}</code>). When set,
-              Ask uses this model instead of the active catalog model above.
-            </small>
-          </label>
-          {customModelPath.trim() !== "" && (
-            <div className="ai-actions">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => setCustomModelPath("")}
-              >
-                <Icon>close</Icon>
-                Clear custom path
-              </Button>
-            </div>
+          </div>
+          {provider === "local" ? (
+            <>
+              <label>
+                Active model
+                <Select
+                  aria-label="Active model"
+                  value={active}
+                  onChange={setActive}
+                >
+                  <option value="">No model selected</option>
+                  {installedUsable.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name ?? model.id}
+                    </option>
+                  ))}
+                  {activeModel &&
+                    !installedUsable.some(
+                      (model) => model.id === activeModel,
+                    ) && (
+                      <option value={activeModel} disabled>
+                        {activeModel} (not installed)
+                      </option>
+                    )}
+                </Select>
+              </label>
+              <label>
+                Unload from RAM after inactivity (minutes)
+                <input
+                  type="number"
+                  min={1}
+                  max={1440}
+                  value={unload}
+                  onChange={(event) => setUnload(event.target.value)}
+                  inputMode="numeric"
+                />
+                <small className="field-hint">
+                  Default: 5 minutes. Frees model weights from RAM when Ask is
+                  idle.
+                </small>
+              </label>
+              <label>
+                Custom local model path (.gguf)
+                <input
+                  value={customModelPath}
+                  onChange={(event) => setCustomModelPath(event.target.value)}
+                  placeholder="e.g. /models/my-qwen3.5.gguf or my-model/model.gguf"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  Optional. Point to any local GGUF file on the server (absolute
+                  path or relative to <code>{catalog.model_dir}</code>). When
+                  set, Ask uses this model instead of the active catalog model
+                  above.
+                </small>
+              </label>
+              {customModelPath.trim() !== "" && (
+                <div className="ai-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setCustomModelPath("")}
+                  >
+                    <Icon>close</Icon>
+                    Clear custom path
+                  </Button>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <label>
+                Endpoint URL (OpenAI-compatible)
+                <input
+                  type="url"
+                  value={openaiBaseUrl}
+                  onChange={(event) => setOpenaiBaseUrl(event.target.value)}
+                  placeholder="https://api.openai.com/v1 or http://127.0.0.1:8080/v1"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <small className="field-hint">
+                  Any OpenAI-compatible endpoint (<code>llama-server</code>,
+                  Ollama, LM Studio, vLLM, OpenAI, OpenRouter). Accepts either a
+                  base URL (<code>.../v1</code>) or a full{" "}
+                  <code>.../v1/chat/completions</code> URL. Only the question
+                  and SQL schema are sent; query results stay local.
+                </small>
+              </label>
+              <label>
+                Model
+                <input
+                  value={openaiModel}
+                  onChange={(event) => setOpenaiModel(event.target.value)}
+                  placeholder="e.g. gpt-4o-mini or qwen3:8b"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              <label>
+                API key (optional for local servers)
+                <input
+                  type="password"
+                  value={openaiApiKey}
+                  onChange={(event) => {
+                    setOpenaiApiKey(event.target.value);
+                    if (event.target.value) setClearApiKey(false);
+                  }}
+                  placeholder={
+                    settings.openai_api_key_set && !clearApiKey
+                      ? "Saved on server (leave blank to keep)"
+                      : "sk-..."
+                  }
+                  autoComplete="off"
+                />
+                <small className="field-hint">
+                  Stored only in the private credentials database and never
+                  included in portable backups.
+                </small>
+              </label>
+              {settings.openai_api_key_set && !clearApiKey && (
+                <div className="ai-actions">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setClearApiKey(true);
+                      setOpenaiApiKey("");
+                    }}
+                  >
+                    <Icon>delete_outline</Icon>
+                    Remove saved API key
+                  </Button>
+                </div>
+              )}
+            </>
           )}
           <div className="ai-actions">
             <Button
@@ -623,233 +714,197 @@ export function AiSettingsSection() {
               )}
               {busy === "settings" ? "Saving…" : "Save AI settings"}
             </Button>
+            {provider === "openai" && (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={test}
+                disabled={busy === "test"}
+              >
+                {busy === "test" ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>play_circle_outline</Icon>
+                )}
+                {busy === "test" ? "Testing…" : "Test connection"}
+              </Button>
+            )}
           </div>
         </form>
       </article>
 
-      <article className="panel padded">
-        <div className="panel-title">
-          <h2>Models</h2>
-          <span className="field-hint tabular-nums">
-            {bytes(catalog.total_installed_bytes)} installed ·{" "}
-            {bytes(catalog.disk_used_bytes)} on disk
-          </span>
-        </div>
-        <p className="field-hint">
-          Default local SQL models (Qwen3.5) can be downloaded from this curated
-          catalog with pinned revisions and SHA-256 verification. You can also
-          import any local <code>.gguf</code> model via a subfolder in{" "}
-          <code>{catalog.model_dir}</code> or by setting the custom path above.
-        </p>
-        <div className="ai-grid">
-          {catalog.models.map((model) => (
-            <ModelCard
-              key={model.id}
-              model={model}
-              activeModel={activeModel}
-              busy={busy}
-              onDownload={() =>
-                action(
-                  model.id,
-                  async () => {
-                    await api.downloadAiModel(model.id);
-                  },
-                  "Model download queued. Progress appears here and in Activities.",
-                )
-              }
-              onCancel={() =>
-                action(model.id, async () => {
-                  await api.cancelAiModelDownload(model.id);
-                })
-              }
-              onSelect={() =>
-                action(
-                  model.id,
-                  async () => {
-                    await api.selectAiModel(model.id);
-                  },
-                  "Active model updated.",
-                )
-              }
-              onDelete={() =>
-                setDeleteTarget({
-                  id: model.id,
-                  name: model.name,
-                  file: model.download.file,
-                  size_bytes: model.download.size_bytes,
-                  installed_at_ms: null,
-                  checksum_verified: model.checksum_verified,
-                  custom: false,
-                  error: null,
-                })
-              }
-            />
-          ))}
-        </div>
-      </article>
+      {provider === "local" && (
+        <>
+          <article className="panel padded">
+            <div className="panel-title">
+              <h2>Models</h2>
+              <span className="field-hint tabular-nums">
+                {bytes(catalog.total_installed_bytes)} installed ·{" "}
+                {bytes(catalog.disk_used_bytes)} on disk
+              </span>
+            </div>
+            <p className="field-hint">
+              Default local SQL models (Qwen3.5) can be downloaded from this
+              curated catalog with pinned revisions and SHA-256 verification.
+              You can also import any local <code>.gguf</code> model via a
+              subfolder in <code>{catalog.model_dir}</code> or by setting the
+              custom path above.
+            </p>
+            <div className="ai-grid">
+              {catalog.models.map((model) => (
+                <ModelCard
+                  key={model.id}
+                  model={model}
+                  activeModel={activeModel}
+                  busy={busy}
+                  onDownload={() =>
+                    action(
+                      model.id,
+                      async () => {
+                        await api.downloadAiModel(model.id);
+                      },
+                      "Model download queued. Progress appears here and in Activities.",
+                    )
+                  }
+                  onCancel={() =>
+                    action(model.id, async () => {
+                      await api.cancelAiModelDownload(model.id);
+                    })
+                  }
+                  onSelect={() =>
+                    action(
+                      model.id,
+                      async () => {
+                        await api.selectAiModel(model.id);
+                      },
+                      "Active model updated.",
+                    )
+                  }
+                  onDelete={() =>
+                    setDeleteTarget({
+                      id: model.id,
+                      name: model.name,
+                      file: model.download.file,
+                      size_bytes: model.download.size_bytes,
+                      installed_at_ms: null,
+                      checksum_verified: model.checksum_verified,
+                      custom: false,
+                      error: null,
+                    })
+                  }
+                />
+              ))}
+            </div>
+          </article>
 
-      <article className="panel padded">
-        <div className="panel-title">
-          <h2>Installed models</h2>
-          <span className="field-hint tabular-nums">
-            {bytes(catalog.disk_used_bytes)} used in {catalog.model_dir}
-          </span>
-        </div>
-        {catalog.installed.length === 0 ? (
-          <div className="empty">
-            <Icon>memory</Icon>
-            <p>No models are installed yet.</p>
-          </div>
-        ) : (
-          <ul className="ai-installed-list">
-            {catalog.installed.map((model) => (
-              <li key={model.id}>
-                <div>
-                  <strong>{model.name ?? model.id}</strong>
-                  <span className="field-hint">
-                    {model.file ?? "No readable file"} ·{" "}
-                    {bytes(model.size_bytes)}
-                    {model.custom ? " · Custom GGUF" : ""}
-                    {model.id === activeModel ? " · Active" : ""}
-                  </span>
-                  {model.error && (
-                    <span className="form-error">{model.error}</span>
-                  )}
-                </div>
-                <Button
-                  variant="danger"
-                  onClick={() => setDeleteTarget(model)}
-                  disabled={busy === model.id}
-                >
-                  <Icon>delete_outline</Icon>
-                  Delete
-                </Button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </article>
-
-      <article className="panel padded">
-        <div className="panel-title">
-          <h2>Test and advanced options</h2>
-        </div>
-        <p className="field-hint">
-          The model loads lazily on the first question. Testing only reports
-          whether this build and the selected model file can run; it never
-          starts an inference or downloads anything.
-        </p>
-        <div className="ai-actions">
-          <Button
-            variant="secondary"
-            onClick={test}
-            disabled={busy === "test" || !settings.runtime_available}
-            title={
-              settings.runtime_available
-                ? undefined
-                : "This build does not include the inference runtime."
-            }
-          >
-            {busy === "test" ? (
-              <span className="spinner-dot spinner-sm" aria-hidden="true" />
+          <article className="panel padded">
+            <div className="panel-title">
+              <h2>Installed models</h2>
+              <span className="field-hint tabular-nums">
+                {bytes(catalog.disk_used_bytes)} used in {catalog.model_dir}
+              </span>
+            </div>
+            {catalog.installed.length === 0 ? (
+              <div className="empty">
+                <Icon>memory</Icon>
+                <p>No models are installed yet.</p>
+              </div>
             ) : (
-              <Icon>play_circle_outline</Icon>
+              <ul className="ai-installed-list">
+                {catalog.installed.map((model) => (
+                  <li key={model.id}>
+                    <div>
+                      <strong>{model.name ?? model.id}</strong>
+                      <span className="field-hint">
+                        {model.file ?? "No readable file"} ·{" "}
+                        {bytes(model.size_bytes)}
+                        {model.custom ? " · Custom GGUF" : ""}
+                        {model.id === activeModel ? " · Active" : ""}
+                      </span>
+                      {model.error && (
+                        <span className="form-error">{model.error}</span>
+                      )}
+                    </div>
+                    <Button
+                      variant="danger"
+                      onClick={() => setDeleteTarget(model)}
+                      disabled={busy === model.id}
+                    >
+                      <Icon>delete_outline</Icon>
+                      Delete
+                    </Button>
+                  </li>
+                ))}
+              </ul>
             )}
-            {busy === "test" ? "Testing model…" : "Test active model"}
-          </Button>
-        </div>
-        <form
-          className="ai-advanced"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
-          }}
-        >
-          <label>
-            Threads
-            <input
-              type="number"
-              min={1}
-              max={64}
-              value={threads}
-              onChange={(event) => setThreads(event.target.value)}
-              inputMode="numeric"
-            />
-          </label>
-          <label>
-            GPU offload
-            <Select
-              aria-label="GPU offload"
-              value={gpuMode}
-              onChange={(value) => {
-                if (value === "auto" || value === "cpu" || value === "custom") {
-                  setGpuMode(value);
+          </article>
+
+          <article className="panel padded">
+            <div className="panel-title">
+              <h2>Test and advanced options</h2>
+            </div>
+            <p className="field-hint">
+              The model loads lazily on the first question. Testing only reports
+              whether this build and the selected model file can run; it never
+              starts an inference or downloads anything.
+            </p>
+            <div className="ai-actions">
+              <Button
+                variant="secondary"
+                onClick={test}
+                disabled={busy === "test" || !settings.runtime_available}
+                title={
+                  settings.runtime_available
+                    ? undefined
+                    : "This build does not include the inference runtime."
                 }
+              >
+                {busy === "test" ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>play_circle_outline</Icon>
+                )}
+                {busy === "test" ? "Testing model…" : "Test active model"}
+              </Button>
+            </div>
+            <form
+              className="ai-advanced"
+              onSubmit={(event) => {
+                event.preventDefault();
+                save();
               }}
             >
-              <option value="auto">Automatic (all layers on GPU)</option>
-              <option value="cpu">CPU only (disable GPU offload)</option>
-              <option value="custom">Custom layer count (1–256)</option>
-            </Select>
-          </label>
-          {gpuMode === "custom" && (
-            <label>
-              Custom GPU layers
-              <input
-                type="number"
-                min={1}
-                max={256}
-                value={customGpuLayers}
-                onChange={(event) => setCustomGpuLayers(event.target.value)}
-                inputMode="numeric"
-              />
-            </label>
-          )}
-          {settings.backend === "cpu" ? (
-            <p className="field-hint">
-              This instance was built for CPU-only execution. GPU offload
-              settings are saved, but inference currently runs on CPU; GPU
-              offload requires the Vulkan container image or the native macOS
-              Metal build.
-            </p>
-          ) : (
-            (settings.backend === "metal" || settings.backend === "vulkan") && (
-              <p className="field-hint">
-                If GPU loading fails at runtime (e.g. insufficient VRAM or
-                missing driver), Ask automatically falls back to CPU-only
-                execution.
-              </p>
-            )
-          )}
-          <label>
-            Unload after inactivity (minutes)
-            <input
-              type="number"
-              min={1}
-              max={1440}
-              value={unload}
-              onChange={(event) => setUnload(event.target.value)}
-              inputMode="numeric"
-            />
-          </label>
-          <label>
-            Model folder
-            <code className="ai-path">{catalog.model_dir}</code>
-          </label>
-          <Button
-            type="submit"
-            variant="secondary"
-            disabled={busy === "settings"}
-          >
-            {busy === "settings" ? (
-              <span className="spinner-dot spinner-sm" aria-hidden="true" />
-            ) : (
-              <Icon>save</Icon>
-            )}
-            {busy === "settings" ? "Saving…" : "Save options"}
-          </Button>
-        </form>
-      </article>
+              <label>
+                CPU threads
+                <input
+                  type="number"
+                  min={1}
+                  max={64}
+                  value={threads}
+                  onChange={(event) => setThreads(event.target.value)}
+                  inputMode="numeric"
+                />
+              </label>
+              <label>
+                Model folder
+                <code className="ai-path">{catalog.model_dir}</code>
+              </label>
+              <Button
+                type="submit"
+                variant="secondary"
+                disabled={busy === "settings"}
+              >
+                {busy === "settings" ? (
+                  <span className="spinner-dot spinner-sm" aria-hidden="true" />
+                ) : (
+                  <Icon>save</Icon>
+                )}
+                {busy === "settings" ? "Saving…" : "Save options"}
+              </Button>
+            </form>
+          </article>
+        </>
+      )}
 
       {deleteTarget && (
         <Modal title="Delete model" close={() => setDeleteTarget(null)}>

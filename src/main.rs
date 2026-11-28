@@ -1,8 +1,20 @@
 use scrobbl_rs::{AppState, config::Config, db, spotify, web};
 
 fn main() -> anyhow::Result<()> {
+    let workers = std::env::var("SCROBBL_WORKER_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| (1..=64).contains(&n))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get().clamp(2, 4))
+                .unwrap_or(2)
+        });
     loop {
         let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(workers)
+            .max_blocking_threads(16)
+            .thread_keep_alive(std::time::Duration::from_secs(30))
             .enable_all()
             .build()?;
         let result = runtime.block_on(start());
@@ -125,6 +137,7 @@ async fn run(config: Config) -> anyhow::Result<scrobbl_rs::account::Action> {
                 tokio::spawn(scrobbl_rs::retention::worker(state.storage.clone())),
                 tokio::spawn(scrobbl_rs::artwork::worker(state.clone())),
                 tokio::spawn(scrobbl_rs::ai::worker(state.clone())),
+                tokio::spawn(scrobbl_rs::update_check::worker(state.clone())),
             ];
             if let Ok(canon) = config.data_dir.canonicalize() {
                 println!("Data: {}", canon.display());

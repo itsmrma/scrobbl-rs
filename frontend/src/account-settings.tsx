@@ -1,10 +1,18 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, setCsrf } from "./api";
 import type { AccountProfile } from "./api";
+import type { UpdateStatus } from "./generated";
 import { useLoad } from "./load";
 import { SkeletonCard } from "./skeleton";
 import { Link } from "./navigation";
-import { ErrorText, Icon, Modal, number, useToast } from "./ui";
+import {
+  ErrorText,
+  Icon,
+  Modal,
+  number,
+  safeExternalUrl,
+  useToast,
+} from "./ui";
 import { PasswordFeedback, passwordChecks } from "./account";
 import { LifecycleScreen } from "./lifecycle-screen";
 
@@ -57,6 +65,20 @@ function Avatar({
 
 export function AccountMenu({ logout }: { logout: () => void }) {
   const profile = useAccount();
+  const [updateRev, setUpdateRev] = useState(0);
+  const update = useLoad(
+    () => api.updateStatus(),
+    `update-status:${updateRev}`,
+    true,
+    undefined,
+    true,
+  );
+  useEffect(() => {
+    const onUpdate = () => setUpdateRev((v) => v + 1);
+    window.addEventListener("scrobbl-update-status", onUpdate);
+    return () => window.removeEventListener("scrobbl-update-status", onUpdate);
+  }, []);
+  const updateAvailable = Boolean(update.data?.update_available);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -85,12 +107,18 @@ export function AccountMenu({ logout }: { logout: () => void }) {
       <button
         ref={trigger}
         className="icon-button account-trigger"
-        aria-label="Account menu"
+        aria-label={
+          updateAvailable ? "Account menu (update available)" : "Account menu"
+        }
+        title={updateAvailable ? "Update available" : undefined}
         popoverTarget="account-menu"
         aria-expanded={open}
         onClick={(event) => event.currentTarget.focus()}
       >
         <Avatar profile={profile.data} />
+        {updateAvailable && (
+          <span className="account-update-dot" aria-hidden="true" />
+        )}
       </button>
       <div
         popover="auto"
@@ -115,6 +143,9 @@ export function AccountMenu({ logout }: { logout: () => void }) {
           </Link>
           <Link to="/settings/application" onClick={close}>
             <Icon>tune</Icon>Application settings
+            {updateAvailable && (
+              <span className="menu-update-badge">Update</span>
+            )}
           </Link>
           <hr />
           <button
@@ -160,6 +191,7 @@ export function AccountMenu({ logout }: { logout: () => void }) {
 export function AccountSettings() {
   const profile = useAccount();
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -170,6 +202,7 @@ export function AccountSettings() {
   useLayoutEffect(() => {
     if (profile.data && !initialized.current) {
       setName(profile.data.name);
+      setEmail(profile.data.email ?? "");
       initialized.current = true;
     }
   }, [profile.data]);
@@ -222,26 +255,36 @@ export function AccountSettings() {
                 <small>
                   PNG, JPEG or WebP · Large photos are resized automatically
                 </small>
-                {profile.data.avatar_url && (
-                  <div className="profile-photo-actions">
-                    <button
-                      type="button"
-                      className="secondary profile-photo-remove"
-                      disabled={busy}
-                      onClick={() =>
-                        void save(api.removeAvatar, "Profile photo removed.")
-                      }
-                    >
-                      <Icon>delete</Icon>Remove photo
-                    </button>
-                  </div>
+                {profile.data.avatar_source === "gravatar" && (
+                  <small className="field-hint">
+                    Using Gravatar from your email. Upload a photo to override
+                    it.
+                  </small>
                 )}
+                {profile.data.avatar_source === "custom" &&
+                  profile.data.avatar_url && (
+                    <div className="profile-photo-actions">
+                      <button
+                        type="button"
+                        className="secondary profile-photo-remove"
+                        disabled={busy}
+                        onClick={() =>
+                          void save(api.removeAvatar, "Profile photo removed.")
+                        }
+                      >
+                        <Icon>delete</Icon>Remove photo
+                      </button>
+                    </div>
+                  )}
               </div>
             </div>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void save(() => api.saveAccount(name), "Profile saved.");
+                void save(
+                  () => api.saveAccount(name, email),
+                  "Profile saved.",
+                );
               }}
             >
               <label>
@@ -258,6 +301,17 @@ export function AccountSettings() {
                   value={name}
                   maxLength={80}
                   onChange={(e) => setName(e.target.value)}
+                />
+              </label>
+              <label>
+                Email (optional — used for Gravatar)
+                <input
+                  type="email"
+                  value={email}
+                  maxLength={254}
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  onChange={(e) => setEmail(e.target.value)}
                 />
               </label>
               <button className="primary" disabled={busy}>
@@ -358,7 +412,34 @@ function size(bytes: number): string {
 
 function AboutApplication() {
   const info = useLoad(() => api.application(), "application-info");
+  const update = useLoad(() => api.updateStatus(), "application-update");
+  const [checked, setChecked] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
+  const toast = useToast();
   const data = info.data;
+  const updateData = checked ?? update.data;
+  const releaseHref = safeExternalUrl(updateData?.release_url ?? null);
+
+  async function checkUpdates() {
+    setChecking(true);
+    try {
+      const next = await api.checkUpdate();
+      setChecked(next);
+      window.dispatchEvent(new CustomEvent("scrobbl-update-status"));
+      if (next.error) {
+        toast(next.error, true);
+      } else if (next.update_available && next.latest_version) {
+        toast(`Update available: v${next.latest_version}`);
+      } else {
+        toast("scrobbl.rs is up to date.");
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
   return (
     <article className="panel padded about-application">
       <div className="about-identity">
@@ -446,6 +527,43 @@ function AboutApplication() {
       ) : (
         !info.error && <SkeletonCard label="Loading application details…" />
       )}
+      <div className="about-update-row">
+        <div className="about-update-copy">
+          <strong>Updates</strong>
+          <p className="field-hint">
+            {updateData?.update_available && updateData.latest_version ? (
+              <>
+                Version <strong>v{updateData.latest_version}</strong> is
+                available (current: v{updateData.current_version}).{" "}
+                {releaseHref && (
+                  <a href={releaseHref} target="_blank" rel="noreferrer">
+                    View release
+                  </a>
+                )}{" "}
+                Pull the latest Docker image and restart the container to
+                update.
+              </>
+            ) : updateData?.checked_at_ms ? (
+              <>
+                Up to date (v{updateData.current_version}). Last checked{" "}
+                {new Date(updateData.checked_at_ms).toLocaleString()}.
+              </>
+            ) : (
+              "Checked daily against GitHub Releases. You can also check manually."
+            )}
+          </p>
+          {updateData?.error && <ErrorText>{updateData.error}</ErrorText>}
+        </div>
+        <button
+          type="button"
+          className="btn btn-secondary secondary"
+          disabled={checking}
+          onClick={() => void checkUpdates()}
+        >
+          <Icon>system_update_alt</Icon>
+          {checking ? "Checking…" : "Check for updates"}
+        </button>
+      </div>
       <div className="about-links">
         <a
           href="https://github.com/itsmrma/scrobbl-rs"

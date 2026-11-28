@@ -56,7 +56,7 @@ LABEL org.opencontainers.image.source="https://github.com/itsmrma/scrobbl-rs" \
       org.opencontainers.image.licenses="GPL-3.0-or-later" \
       org.opencontainers.image.title="scrobbl.rs"
 ENV SCROBBL_BIND=0.0.0.0 SCROBBL_PORT=3210 SCROBBL_DATA_DIR=/data \
-    SCROBBL_EXTERNAL_ORIGIN=http://127.0.0.1:3210
+    SCROBBL_EXTERNAL_ORIGIN=http://127.0.0.1:3210 MALLOC_ARENA_MAX=2
 USER 10001:10001
 EXPOSE 3210
 STOPSIGNAL SIGTERM

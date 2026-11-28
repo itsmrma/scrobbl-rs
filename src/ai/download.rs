@@ -582,11 +582,26 @@ pub async fn enqueue(state: &AppState, model: &catalog::CatalogModel) -> Result<
 /// Long-running worker used by `main`.
 pub async fn worker(state: AppState) {
     loop {
+        let notified = state.storage.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         match run_once(&state).await {
-            Ok(true) => {}
-            Ok(false) => tokio::time::sleep(Duration::from_millis(500)).await,
+            Ok(true) => continue,
+            Ok(false) => {
+                let wait = state
+                    .storage
+                    .next_retry_delay(&["ai_model_download"], Duration::from_secs(60))
+                    .await;
+                tokio::select! {
+                    _ = &mut notified => {},
+                    _ = tokio::time::sleep(wait) => {},
+                }
+            }
             Err(_) => {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::select! {
+                    _ = &mut notified => {},
+                    _ = tokio::time::sleep(Duration::from_secs(15)) => {},
+                }
             }
         }
     }

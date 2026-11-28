@@ -216,11 +216,17 @@ pub async fn cleanup(store: &Storage) -> anyhow::Result<()> {
 
 pub async fn worker(store: Storage) {
     loop {
+        let notified = store.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if cleanup(&store).await.is_err() {
             eprintln!(
                 "Import source cleanup could not finish; check storage permissions and free space. It will retry."
             );
         }
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        tokio::select! {
+            _ = &mut notified => {},
+            _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {},
+        }
     }
 }

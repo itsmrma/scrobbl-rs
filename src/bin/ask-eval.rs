@@ -68,14 +68,12 @@ fn run() -> Result<(), String> {
         args.label.clone(),
         args.model.clone(),
         args.threads.clamp(1, 64),
-        15,
-    )
-    .with_gpu_layers(scrobbl_rs::ai::effective_gpu_layers(args.gpu_layers));
+        5,
+    );
     eprintln!(
-        "ask-eval: loading {} (backend={}, gpu_layers={}, {} threads)",
+        "ask-eval: loading {} (backend={}, {} threads)",
         args.model.display(),
         scrobbl_rs::ai::compiled_backend(),
-        spec.gpu_layers,
         spec.threads
     );
     let mut session = Session::open(spec.clone(), args.timeout)
@@ -96,7 +94,6 @@ struct Args {
     model: PathBuf,
     label: String,
     threads: u32,
-    gpu_layers: i32,
     limit: Option<usize>,
     out: Option<PathBuf>,
     report: Option<PathBuf>,
@@ -112,7 +109,6 @@ impl Default for Args {
             model: PathBuf::new(),
             label: String::new(),
             threads: 4,
-            gpu_layers: scrobbl_rs::ai::DEFAULT_GPU_LAYERS,
             limit: None,
             out: None,
             report: None,
@@ -156,7 +152,6 @@ impl Args {
                 "--label" => args.label = value()?,
                 "--corpus" | "--sql-corpus" => args.sql_corpus = PathBuf::from(value()?),
                 "--threads" => args.threads = parse_u32("--threads", &value()?)?,
-                "--gpu-layers" => args.gpu_layers = parse_gpu_layers(&value()?)?,
                 "--limit" => args.limit = Some(parse_usize("--limit", &value()?)?),
                 "--warmups" => args.warmups = parse_usize("--warmups", &value()?)?,
                 "--timeout-ms" => {
@@ -187,20 +182,6 @@ fn parse_u32(flag: &str, value: &str) -> Result<u32, String> {
     value
         .parse()
         .map_err(|_| format!("{flag} expects a positive integer, got {value:?}"))
-}
-
-fn parse_gpu_layers(value: &str) -> Result<i32, String> {
-    let parsed: i32 = value
-        .parse()
-        .map_err(|_| format!("--gpu-layers expects an integer in -1..=256, got {value:?}"))?;
-    if !(scrobbl_rs::ai::MIN_GPU_LAYERS..=scrobbl_rs::ai::MAX_GPU_LAYERS).contains(&parsed) {
-        return Err(format!(
-            "--gpu-layers must be between {} and {}, got {parsed}",
-            scrobbl_rs::ai::MIN_GPU_LAYERS,
-            scrobbl_rs::ai::MAX_GPU_LAYERS
-        ));
-    }
-    Ok(parsed)
 }
 
 fn parse_u64(flag: &str, value: &str) -> Result<u64, String> {
@@ -587,7 +568,6 @@ struct SqlModelInfo {
     label: String,
     file: String,
     backend: String,
-    gpu_layers: i32,
     threads: u32,
     context_tokens: u32,
     max_new_tokens: i32,
@@ -617,10 +597,9 @@ impl SqlRunResult {
         let mut report = String::new();
         report.push_str(&format!("# Ask local SQL eval - {}\n\n", self.model.label));
         report.push_str(&format!(
-            "- Model file: `{}`\n- Backend: {}\n- GPU layers: {}\n- Threads: {}\n- Context: {} tokens, greedy, max {} new tokens\n- Fixture: version {}, today `{}`\n",
+            "- Model file: `{}`\n- Backend: {}\n- Threads: {}\n- Context: {} tokens, greedy, max {} new tokens\n- Fixture: version {}, today `{}`\n",
             self.model.file,
             self.model.backend,
-            self.model.gpu_layers,
             self.model.threads,
             self.model.context_tokens,
             self.model.max_new_tokens,
@@ -760,7 +739,6 @@ async fn evaluate_sql(
             label: args.label.clone(),
             file: file_name(&args.model),
             backend: scrobbl_rs::ai::compiled_backend().to_string(),
-            gpu_layers: spec.gpu_layers,
             threads: spec.threads,
             context_tokens: runtime::SQL_CONTEXT_TOKENS,
             max_new_tokens: runtime::MAX_SQL_NEW_TOKENS,
@@ -895,42 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn args_parse_gpu_layers_and_reject_out_of_range() {
-        let default =
-            Args::parse(["--model".to_string(), "m.gguf".to_string()].into_iter()).unwrap();
-        assert_eq!(default.gpu_layers, -1);
-
-        for valid in ["-1", "0", "16", "256"] {
-            let parsed = Args::parse(
-                [
-                    "--model".to_string(),
-                    "m.gguf".to_string(),
-                    "--gpu-layers".to_string(),
-                    valid.to_string(),
-                ]
-                .into_iter(),
-            )
-            .unwrap();
-            assert_eq!(parsed.gpu_layers, valid.parse::<i32>().unwrap());
-        }
-
-        for invalid in ["-2", "257", "abc"] {
-            let err = Args::parse(
-                [
-                    "--model".to_string(),
-                    "m.gguf".to_string(),
-                    "--gpu-layers".to_string(),
-                    invalid.to_string(),
-                ]
-                .into_iter(),
-            )
-            .unwrap_err();
-            assert!(err.contains("--gpu-layers"), "{invalid}: {err}");
-        }
-    }
-
-    #[test]
-    fn sql_run_result_records_backend_and_gpu_layers_in_json_and_markdown() {
+    fn sql_run_result_records_backend_in_json_and_markdown() {
         let result = SqlRunResult {
             schema: 1,
             fixture: SqlFixtureInfo {
@@ -941,7 +884,6 @@ mod tests {
                 label: "qwen".to_string(),
                 file: "qwen.gguf".to_string(),
                 backend: "cpu".to_string(),
-                gpu_layers: 16,
                 threads: 4,
                 context_tokens: 8192,
                 max_new_tokens: 1024,
@@ -967,10 +909,8 @@ mod tests {
 
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["model"]["backend"], "cpu");
-        assert_eq!(json["model"]["gpu_layers"], 16);
 
         let md = result.markdown();
         assert!(md.contains("- Backend: cpu\n"), "{md}");
-        assert!(md.contains("- GPU layers: 16\n"), "{md}");
     }
 }

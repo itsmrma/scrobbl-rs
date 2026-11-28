@@ -121,6 +121,7 @@ pub async fn backfill(
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;
+    state.storage.wake_workers();
     Ok(Json(BackfillResult {
         ok: true,
         queued,
@@ -414,6 +415,9 @@ async fn enqueue_on_start(state: &AppState) -> Result<()> {
 pub async fn worker(state: AppState) {
     let _ = enqueue_on_start(&state).await;
     loop {
+        let notified = state.storage.jobs_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
         if let Ok(Some(mut lease)) = state.storage.claim("artwork").await {
             loop {
                 match step(&state, &lease).await {
@@ -429,8 +433,16 @@ pub async fn worker(state: AppState) {
                     _ => break,
                 }
             }
+            continue;
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        let wait = state
+            .storage
+            .next_retry_delay(&["artwork"], Duration::from_secs(60))
+            .await;
+        tokio::select! {
+            _ = &mut notified => {},
+            _ = tokio::time::sleep(wait) => {},
+        }
     }
 }
 
